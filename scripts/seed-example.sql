@@ -39,32 +39,44 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (
   100
 );
 
--- 渠道二：OpenAI 兼容端点（CC 客户端走这条）
+-- 渠道二、三：OpenAI 兼容端点。
+--
+-- 协议是**渠道**的属性（§7），所以同一个上游同时供 Chat Completions 与 Responses
+-- 时要建两条渠道：同 base_url、同凭证、同纳管模型，只有 protocol 不同。临时闸下
+-- 每条渠道各带一份凭证、各挂一个接入点。
 --
 -- base_url 同样填到「协议子路径之前」。中转站给的地址通常长这样：
 --   https://你的中转站/v1        ← 这是**端点**地址，不是这里要填的
 --   https://你的中转站           ← 填这个
 -- 判断方法：拿 https://你的中转站/v1/v1/models 试一下，返回 404 就说明多了一层。
 INSERT INTO channels (name, protocol, base_url) VALUES
-  ('openai-compatible', 'openai_cc', 'https://sub.aiqqyc.com');
+  ('openai-compatible-cc',   'openai_cc',        'https://sub.aiqqyc.com'),
+  ('openai-compatible-resp', 'openai_responses', 'https://sub.aiqqyc.com');
 
-INSERT INTO channel_keys (channel_id, credential) VALUES
-  ((SELECT id FROM channels WHERE name = 'openai-compatible'), 'sk-把这里换成真凭证');
+INSERT INTO channel_keys (channel_id, credential)
+  SELECT id, 'sk-把这里换成真凭证' FROM channels
+   WHERE name IN ('openai-compatible-cc', 'openai-compatible-resp');
 
 -- 纳管模型名要填**上游认得**的那个。不确定就先拿凭证问上游要一份清单：
 --   curl -s https://你的中转站/v1/models -H 'Authorization: Bearer sk-…' | jq -r '.data[].id'
-INSERT INTO channel_models (channel_id, upstream_model) VALUES
-  ((SELECT id FROM channels WHERE name = 'openai-compatible'), 'gpt-4o-mini');
+INSERT INTO channel_models (channel_id, upstream_model)
+  SELECT id, 'gpt-5.6-luna' FROM channels
+   WHERE name IN ('openai-compatible-cc', 'openai-compatible-resp');
 
-INSERT INTO access_points (model) VALUES ('gpt-mini');
+-- 两个接入点对外名不同，客户端靠它选走哪条协议入口：
+--   gpt-luna       → POST /v1/chat/completions
+--   gpt-luna-resp  → POST /v1/responses
+-- 打错入口会被临时闸挡下并回 501，不会静默发到上游。
+INSERT INTO access_points (model) VALUES ('gpt-luna'), ('gpt-luna-resp');
 
-INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (
-  (SELECT id FROM access_points WHERE model = 'gpt-mini'),
-  (SELECT cm.id FROM channel_models cm
-     JOIN channels ch ON ch.id = cm.channel_id
-    WHERE ch.name = 'openai-compatible' AND cm.upstream_model = 'gpt-4o-mini'),
-  100
-);
+INSERT INTO candidates (access_point_id, channel_model_id, weight)
+  SELECT ap.id, cm.id, 100
+    FROM access_points ap
+    JOIN channels ch ON ch.name = CASE ap.model
+           WHEN 'gpt-luna'      THEN 'openai-compatible-cc'
+           WHEN 'gpt-luna-resp' THEN 'openai-compatible-resp' END
+    JOIN channel_models cm ON cm.channel_id = ch.id
+   WHERE ap.model IN ('gpt-luna', 'gpt-luna-resp');
 
 -- ---------------------------------------------------------------------------
 -- 临时闸（M0~M2）：每个接入点恰好一个 weight>0 的候选、每个渠道恰好一份启用凭证。
