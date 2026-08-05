@@ -1,0 +1,244 @@
+package server_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+)
+
+// 刻意混入 cache_control、metadata.user_id、未知厂商字段与非常规键序，
+// 用来证明透传路径没有 re-marshal——任何 decode→encode 都会打乱这串字节。
+const anthropicRequest = `{"model":"gw-sonnet","metadata":{"user_id":"user_abc123"},"max_tokens":1024,` +
+	`"system":[{"type":"text","text":"be brief","cache_control":{"type":"ephemeral"}}],` +
+	`"vendor_unknown_field":{"nested":[1,2,3],"weird":1.50},` +
+	`"messages":[{"role":"user","content":"hi"}],"stream":false}`
+
+func newAnthropicGateway(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstream) {
+	t.Helper()
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", up.URL, "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	return gatewaytest.Start(t, db), up
+}
+
+func TestRelayForwardsRequestBytesVerbatim(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+
+	got := up.Last(t)
+	if string(got.Body) != anthropicRequest {
+		t.Errorf("上游收到的 body 与客户端发出的不一致\n发出: %s\n收到: %s", anthropicRequest, got.Body)
+	}
+	if got.Path != "/v1/messages" {
+		t.Errorf("上游 path = %q, 期望 /v1/messages", got.Path)
+	}
+}
+
+func TestRelayReturnsUpstreamBytesVerbatim(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	const upstreamBody = `{"id":"msg_01","type":"message","role":"assistant",` +
+		`"content":[{"type":"text","text":"你好"}],"usage":{"input_tokens":7,"output_tokens":3}}`
+	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"}, upstreamBody)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+
+	if body := gatewaytest.ReadBody(t, resp); body != upstreamBody {
+		t.Errorf("客户端收到的 body 与上游返回的不一致\n上游: %s\n客户端: %s", upstreamBody, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, 期望原样回传 application/json", ct)
+	}
+}
+
+func TestRelayPassesUpstreamErrorsThrough(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		header  map[string]string
+		body    string
+		wantHdr [2]string
+	}{
+		{
+			name:    "429 带 Retry-After",
+			status:  http.StatusTooManyRequests,
+			header:  map[string]string{"Content-Type": "application/json", "Retry-After": "30"},
+			body:    `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
+			wantHdr: [2]string{"Retry-After", "30"},
+		},
+		{
+			name:   "500",
+			status: http.StatusInternalServerError,
+			header: map[string]string{"Content-Type": "application/json"},
+			body:   `{"type":"error","error":{"type":"api_error","message":"boom"}}`,
+		},
+		{
+			name:   "非 JSON 错误体",
+			status: http.StatusBadGateway,
+			header: map[string]string{"Content-Type": "text/html"},
+			body:   "<html><body>502 Bad Gateway</body></html>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gw, up := newAnthropicGateway(t)
+			up.RespondWith(tc.status, tc.header, tc.body)
+
+			resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+
+			if resp.StatusCode != tc.status {
+				t.Errorf("状态码 = %d, 期望原样 %d", resp.StatusCode, tc.status)
+			}
+			if body := gatewaytest.ReadBody(t, resp); body != tc.body {
+				t.Errorf("body = %q, 期望原样 %q", body, tc.body)
+			}
+			if tc.wantHdr[0] != "" && resp.Header.Get(tc.wantHdr[0]) != tc.wantHdr[1] {
+				t.Errorf("%s = %q, 期望原样回传 %q", tc.wantHdr[0], resp.Header.Get(tc.wantHdr[0]), tc.wantHdr[1])
+			}
+		})
+	}
+}
+
+func TestRelayRebuildsHeadersFromWhitelist(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+
+	gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{
+		"Authorization":     "Bearer sk-aig-client-gateway-key",
+		"x-api-key":         "sk-aig-client-gateway-key",
+		"Cookie":            "session=leak-me",
+		"X-Forwarded-For":   "192.168.1.7",
+		"anthropic-beta":    "context-1m-2025-08-07",
+		"anthropic-version": "2024-10-22",
+	})
+
+	got := up.Last(t)
+	if v := got.Header.Get("x-api-key"); v != "sk-ant-upstream-secret" {
+		t.Errorf("x-api-key = %q, 期望注入渠道凭证", v)
+	}
+	if v := got.Header.Get("Authorization"); v != "" {
+		t.Errorf("Authorization 泄漏到上游: %q（M1 起那里是网关 key）", v)
+	}
+	if v := got.Header.Get("Cookie"); v != "" {
+		t.Errorf("Cookie 泄漏到上游: %q", v)
+	}
+	if v := got.Header.Get("X-Forwarded-For"); v != "" {
+		t.Errorf("不该注入 X-Forwarded-For, 收到 %q", v)
+	}
+	if v := got.Header.Get("anthropic-beta"); v != "context-1m-2025-08-07" {
+		t.Errorf("anthropic-beta = %q, 期望原样转发", v)
+	}
+	if v := got.Header.Get("anthropic-version"); v != "2024-10-22" {
+		t.Errorf("anthropic-version = %q, 期望取客户端值", v)
+	}
+}
+
+func TestRelayDefaultsAnthropicVersion(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+
+	gw.Post(t, "/v1/messages", anthropicRequest, nil)
+
+	if v := up.Last(t).Header.Get("anthropic-version"); v != "2023-06-01" {
+		t.Errorf("anthropic-version = %q, 客户端未给时应补 2023-06-01", v)
+	}
+}
+
+func TestRelayNormalisesBaseURLTrailingSlash(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", up.URL+"/", "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	gw := gatewaytest.Start(t, db)
+
+	gw.Post(t, "/v1/messages", anthropicRequest, nil)
+
+	if path := up.Last(t).Path; path != "/v1/messages" {
+		t.Errorf("path = %q, base_url 尾斜杠未归一化", path)
+	}
+}
+
+func TestRelayRejectsBadRequests(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantType   string
+	}{
+		{"接入点不存在", `{"model":"no-such-access-point","messages":[]}`, http.StatusNotFound, "not_found_error"},
+		{"model 缺失", `{"messages":[]}`, http.StatusBadRequest, "invalid_request_error"},
+		{"body 非法 JSON", `{"model":`, http.StatusBadRequest, "invalid_request_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gw, up := newAnthropicGateway(t)
+
+			resp := gw.Post(t, "/v1/messages", tc.body, nil)
+			body := gatewaytest.ReadBody(t, resp)
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("状态码 = %d, 期望 %d；body=%s", resp.StatusCode, tc.wantStatus, body)
+			}
+			assertAnthropicError(t, body, tc.wantType)
+			assertNoSecrets(t, body, up.URL)
+			if up.Count() != 0 {
+				t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
+			}
+		})
+	}
+}
+
+func TestRelayReportsUnreachableUpstreamWithoutLeakingSecrets(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	deadURL := up.URL
+	up.Close() // 端口随即空出，网关将连不上
+
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", deadURL, "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	gw := gatewaytest.Start(t, db)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("状态码 = %d, 期望 502；body=%s", resp.StatusCode, body)
+	}
+	assertAnthropicError(t, body, "api_error")
+	assertNoSecrets(t, body, deadURL)
+}
+
+func assertAnthropicError(t *testing.T, body, wantType string) {
+	t.Helper()
+	var parsed struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("错误响应不是合法 JSON: %v；body=%s", err, body)
+	}
+	if parsed.Type != "error" {
+		t.Errorf("顶层 type = %q, Anthropic 原生错误应为 error", parsed.Type)
+	}
+	if parsed.Error.Type != wantType {
+		t.Errorf("error.type = %q, 期望 %q", parsed.Error.Type, wantType)
+	}
+	if parsed.Error.Message == "" {
+		t.Error("error.message 为空")
+	}
+}
+
+func assertNoSecrets(t *testing.T, body, baseURL string) {
+	t.Helper()
+	if strings.Contains(body, "sk-ant-upstream-secret") {
+		t.Errorf("错误响应泄漏了上游凭证: %s", body)
+	}
+	if strings.Contains(body, baseURL) {
+		t.Errorf("错误响应泄漏了上游 base_url: %s", body)
+	}
+}
