@@ -39,9 +39,45 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (
   100
 );
 
+-- 渠道二：OpenAI 兼容端点（CC 客户端走这条）
+--
+-- base_url 同样填到「协议子路径之前」。中转站给的地址通常长这样：
+--   https://你的中转站/v1        ← 这是**端点**地址，不是这里要填的
+--   https://你的中转站           ← 填这个
+-- 判断方法：拿 https://你的中转站/v1/v1/models 试一下，返回 404 就说明多了一层。
+INSERT INTO channels (name, protocol, base_url) VALUES
+  ('openai-compatible', 'openai_cc', 'https://sub.aiqqyc.com');
+
+INSERT INTO channel_keys (channel_id, credential) VALUES
+  ((SELECT id FROM channels WHERE name = 'openai-compatible'), 'sk-把这里换成真凭证');
+
+-- 纳管模型名要填**上游认得**的那个。不确定就先拿凭证问上游要一份清单：
+--   curl -s https://你的中转站/v1/models -H 'Authorization: Bearer sk-…' | jq -r '.data[].id'
+INSERT INTO channel_models (channel_id, upstream_model) VALUES
+  ((SELECT id FROM channels WHERE name = 'openai-compatible'), 'gpt-4o-mini');
+
+INSERT INTO access_points (model) VALUES ('gpt-mini');
+
+INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (
+  (SELECT id FROM access_points WHERE model = 'gpt-mini'),
+  (SELECT cm.id FROM channel_models cm
+     JOIN channels ch ON ch.id = cm.channel_id
+    WHERE ch.name = 'openai-compatible' AND cm.upstream_model = 'gpt-4o-mini'),
+  100
+);
+
 -- ---------------------------------------------------------------------------
 -- 临时闸（M0~M2）：每个接入点恰好一个 weight>0 的候选、每个渠道恰好一份启用凭证。
 -- 多候选加权分流与凭证池聚合在 M4；现在多插一条，网关会拒绝启动并点名。
+--
+-- 只有一边有凭证时（比如手头只有 OpenAI 兼容端点的 key），把另一条渠道连同它的
+-- 接入点一起停用：
+--   UPDATE channels      SET disabled = 1 WHERE name  = 'anthropic-official';
+--   UPDATE access_points SET disabled = 1 WHERE model = 'claude-sonnet-4-5';
+--
+-- 两条都要。启动校验只数「接入点有几个 weight>0 的候选」，不看候选背后的渠道还
+-- 启不启用，所以光停渠道网关照样起得来——但那个接入点仍会出现在 /v1/models 里，
+-- 请求打过去才回 503「没有可用候选」。接入点跟着停掉才是干净状态。
 -- ---------------------------------------------------------------------------
 
 -- 验证：
