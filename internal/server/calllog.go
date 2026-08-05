@@ -4,28 +4,11 @@ import (
 	"time"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openairesponses"
 )
 
 // bodyCaptureLimit 是 log_bodies 打开时单侧 body 的记录上限。开这个开关是为了排障，
 // 不是为了留档；一条长流的完整响应进日志只会把日志冲垮。
 const bodyCaptureLimit = 64 << 10
-
-// newTap 按**渠道**协议挑 Tap。临时闸下它必然等于入口协议，M2 放开转换后就不是了
-// ——Tap 看的是上游回的字节，只能按上游协议解析。
-func newTap(p protocol.Protocol, stream bool) protocol.Tap {
-	switch p {
-	case protocol.Anthropic:
-		return anthropic.NewTap(stream)
-	case protocol.OpenAICC:
-		return openaicc.NewTap(stream)
-	case protocol.OpenAIResponses:
-		return openairesponses.NewTap(stream)
-	}
-	return nil
-}
 
 // captureWriter 是 log_bodies 打开时挂在旁路上的定量收集器。和 Tap 一样：永不报错，
 // 否则 io.MultiWriter 会把错误变成读错误、打断转发。

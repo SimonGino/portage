@@ -13,6 +13,7 @@ import (
 
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
 	"github.com/SimonGino/ai-gateway/internal/store"
 	"github.com/SimonGino/ai-gateway/internal/upstream"
 
@@ -254,7 +255,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
 		// 转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。
 		var observers []io.Writer
-		if tap := newTap(cand.Protocol, head.Stream); tap != nil {
+		if tap := taps.New(cand.Protocol, head.Stream); tap != nil {
 			observers = append(observers, tap)
 			defer func() {
 				rec.summary, rec.haveSummary = tap.Summary(), true

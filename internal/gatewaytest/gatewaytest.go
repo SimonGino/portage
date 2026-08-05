@@ -148,12 +148,19 @@ func (c *logCapture) Write(p []byte) (int, error) {
 type captureHandler struct {
 	c    *logCapture
 	text slog.Handler
+	// preset 是通过 log.With(...) 预置的属性。必须真的记下来：直接丢掉的话，
+	// 生产代码哪天改用 With 预置字段，这里的逐字段断言就会集体扑空——测试全绿，
+	// 字段却已经不在日志里了。
+	preset []slog.Attr
 }
 
 func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h *captureHandler) Handle(ctx context.Context, r slog.Record) error {
 	line := LogLine{Message: r.Message, Attrs: map[string]any{}}
+	for _, a := range h.preset {
+		line.Attrs[a.Key] = a.Value.Any()
+	}
 	r.Attrs(func(a slog.Attr) bool {
 		line.Attrs[a.Key] = a.Value.Any()
 		return true
@@ -164,8 +171,19 @@ func (h *captureHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.text.Handle(ctx, r)
 }
 
-func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &captureHandler{
+		c:      h.c,
+		text:   h.text.WithAttrs(attrs),
+		preset: append(append([]slog.Attr{}, h.preset...), attrs...),
+	}
+}
+
+// WithGroup 直接炸：本捕获器没实现分组的键名前缀语义，静默接受只会让断言查不到
+// 已经改了名的字段。生产代码真要用分组时，这里会立刻失败提醒补实现。
+func (h *captureHandler) WithGroup(name string) slog.Handler {
+	panic("gatewaytest 的日志捕获器尚不支持 slog 分组（" + name + "）：请先补实现再用")
+}
 
 // Lines returns every log record whose message is msg.
 func (g *Gateway) Lines(msg string) []LogLine {

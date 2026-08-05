@@ -23,6 +23,10 @@ type FrameScanner struct {
 // 4 MB 留足余量；再大就不是正常响应了，宁可降级也不让旁路解析吃满内存。
 const BufferLimit = 4 << 20
 
+// maxSepLen 是最长帧分隔符 \r\n\r\n 的长度。缓冲里随时可能压着最多 maxSepLen-1 个
+// 「差一点就凑成分隔符」的字节，判超限时得把它们排除在外。
+const maxSepLen = 4
+
 // Overflowed 报告是否发生过超限丢帧。
 func (s *FrameScanner) Overflowed() bool { return s.overflow }
 
@@ -57,14 +61,18 @@ func (s *FrameScanner) Push(p []byte, onFrame func(frame []byte)) {
 		s.skipping = false
 		s.buf = append(s.buf[:0], s.buf[end:]...)
 	}
-	if len(s.buf) <= s.limit() {
+	// 比的是 limit+maxSepLen-1 而不是 limit：缓冲里除了帧内容，还可能压着最多
+	// maxSepLen-1 个尚未凑成分隔符的字节。拿它们一起去比上限，帧长落在
+	// (limit-maxSepLen+1, limit] 区间时结论就会随上游怎么切块而翻转——
+	// 整帧一次到达走上面的 start > limit（不含分隔符）判定为不超限，
+	// 逐字节到达却会在这里被裁掉。
+	if len(s.buf) <= s.limit()+maxSepLen-1 {
 		return
 	}
-	// 超限：丢掉已攒的部分，只留可能跨块的边界前缀（最长边界 \r\n\r\n 为 4 字节，
-	// 留 3 字节足够拼出它），进入丢弃模式等下一个边界。
+	// 超限：丢掉已攒的部分，只留可能跨块的边界前缀，进入丢弃模式等下一个边界。
 	s.overflow = true
 	s.skipping = true
-	const keep = 3
+	const keep = maxSepLen - 1
 	if n := len(s.buf); n > keep {
 		s.buf = append(s.buf[:0], s.buf[n-keep:]...)
 	}

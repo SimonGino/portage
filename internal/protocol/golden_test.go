@@ -7,9 +7,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openairesponses"
+	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
 )
 
 // goldenDir 是全仓共用的转录库。它不放在某个包的 testdata/ 下，是因为同一份样本
@@ -68,7 +66,10 @@ func TestGoldenSamples(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			tap := newTap(t, protocol.Protocol(meta.Protocol), meta.Stream)
+			tap := taps.New(protocol.Protocol(meta.Protocol), meta.Stream)
+			if tap == nil {
+				t.Fatalf("meta.json 里的 protocol=%q 无效", meta.Protocol)
+			}
 			// 按 4 KB 切块喂，不整块灌：整块灌永远碰不到跨块的帧边界。
 			for i := 0; i < len(raw); i += 4096 {
 				end := min(i+4096, len(raw))
@@ -81,18 +82,4 @@ func TestGoldenSamples(t *testing.T) {
 			}
 		})
 	}
-}
-
-func newTap(t *testing.T, p protocol.Protocol, stream bool) protocol.Tap {
-	t.Helper()
-	switch p {
-	case protocol.Anthropic:
-		return anthropic.NewTap(stream)
-	case protocol.OpenAICC:
-		return openaicc.NewTap(stream)
-	case protocol.OpenAIResponses:
-		return openairesponses.NewTap(stream)
-	}
-	t.Fatalf("meta.json 里的 protocol=%q 无效", p)
-	return nil
 }

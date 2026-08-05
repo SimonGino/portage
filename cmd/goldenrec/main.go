@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,9 +31,7 @@ import (
 	"time"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openairesponses"
+	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
 )
 
 type recorder struct {
@@ -108,8 +107,12 @@ func (r *recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	_ = json.Unmarshal(reqBody, &head)
 
-	out, err := http.NewRequestWithContext(req.Context(), req.Method,
-		r.baseURL+req.URL.Path, strings.NewReader(string(reqBody)))
+	// 带上查询串：部分兼容端点（Azure 的 api-version 之类）把参数放在 URL 上。
+	target := r.baseURL + req.URL.Path
+	if req.URL.RawQuery != "" {
+		target += "?" + req.URL.RawQuery
+	}
+	out, err := http.NewRequestWithContext(req.Context(), req.Method, target, bytes.NewReader(reqBody))
 	if err != nil {
 		http.Error(w, "构造上游请求失败", http.StatusBadGateway)
 		return
@@ -134,7 +137,7 @@ func (r *recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	tap := newTap(r.proto, head.Stream)
+	tap := taps.New(r.proto, head.Stream)
 	var raw []byte
 	for k, vs := range resp.Header {
 		if strings.EqualFold(k, "Content-Length") {
@@ -201,15 +204,4 @@ func (r *recorder) save(reqBody, raw []byte, meta sampleMeta) error {
 	}
 	log.Printf("已录制 %s（status=%d, stream=%v）", dir, meta.Status, meta.Stream)
 	return nil
-}
-
-func newTap(p protocol.Protocol, stream bool) protocol.Tap {
-	switch p {
-	case protocol.OpenAICC:
-		return openaicc.NewTap(stream)
-	case protocol.OpenAIResponses:
-		return openairesponses.NewTap(stream)
-	default:
-		return anthropic.NewTap(stream)
-	}
 }

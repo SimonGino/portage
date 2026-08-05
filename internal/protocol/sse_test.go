@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -69,31 +70,43 @@ func TestFrameScannerDropsOversizedFrameThenResyncs(t *testing.T) {
 	}
 }
 
-// 超限判定不能取决于 TCP 恰好怎么切块：同一帧一次喂完和分两次喂完，结论必须一样。
-// 先前的实现只在一次 Push 结束时看残留缓冲，于是「整帧连同结尾空行在同一块里到达」
-// 的超限帧会被照常交出去。
+// 超限判定不能取决于 TCP 恰好怎么切块：同一帧一次喂完和逐字节喂完，结论必须一样。
+//
+// 帧长必须**贴着上限**扫一遍：只测远超上限的帧，两种判定路径（凑齐边界时按帧长判、
+// 攒不出边界时按缓冲长判）的分歧区间恰好被跳过——那正是先前假绿的成因。分歧区间是
+// (limit-maxSepLen+1, limit]，所以 limit±maxSepLen 这一段每个长度都要试。
 func TestFrameScannerOversizeVerdictDoesNotDependOnChunking(t *testing.T) {
-	frame := "data: " + strings.Repeat("x", 200) + "\n\n"
+	const limit = 32
+	for _, sep := range []string{"\n\n", "\r\n\r\n", "\r\r"} {
+		for length := limit - maxSepLen; length <= limit+maxSepLen; length++ {
+			t.Run(fmt.Sprintf("sep=%q/len=%d", sep, length), func(t *testing.T) {
+				frame := strings.Repeat("x", length) + sep
 
-	for _, tc := range []struct {
-		name  string
-		chunk int
-	}{{"整帧一次到达", len(frame)}, {"逐字节到达", 1}} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := FrameScanner{Limit: 64}
-			var got []string
-			for i := 0; i < len(frame); i += tc.chunk {
-				end := min(i+tc.chunk, len(frame))
-				s.Push([]byte(frame[i:end]), func(f []byte) { got = append(got, string(f)) })
-			}
-			if len(got) != 0 {
-				t.Errorf("超限帧被交了出去: %q", got)
-			}
-			if !s.Overflowed() {
-				t.Error("超限了却没有置 overflow")
-			}
-		})
+				// 同一帧、同一上限，只是切块方式不同，结论必须一致。
+				oneShot := scanOnce(frame, limit, len(frame))
+				byByte := scanOnce(frame, limit, 1)
+				if oneShot != byByte {
+					t.Fatalf("整帧一次到达 emitted=%v，逐字节到达 emitted=%v——超限判定被切块方式左右了",
+						oneShot, byByte)
+				}
+				// 且结论要对：帧长不超上限就得交出去。
+				if want := length <= limit; oneShot != want {
+					t.Errorf("emitted = %v, 期望 %v（帧长 %d，上限 %d）", oneShot, want, length, limit)
+				}
+			})
+		}
 	}
+}
+
+// scanOnce 按 chunk 大小把 frame 喂给一个新扫描器，报告那一帧有没有被交出来。
+func scanOnce(frame string, limit, chunk int) bool {
+	s := FrameScanner{Limit: limit}
+	emitted := false
+	for i := 0; i < len(frame); i += chunk {
+		end := min(i+chunk, len(frame))
+		s.Push([]byte(frame[i:end]), func([]byte) { emitted = true })
+	}
+	return emitted
 }
 
 func TestFrameScannerResyncsWhenBoundaryStraddlesTheDropPoint(t *testing.T) {

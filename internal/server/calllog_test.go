@@ -7,14 +7,20 @@ import (
 	"testing"
 
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
+
+// reportedModel 刻意不等于 upstreamModel（我们发过去的纳管模型名）：上游把它路由到
+// 了别的小版本。两者若取同一个值，把 sum.Model 误接成 cand.UpstreamModel 的实现照样
+// 能绿——那正是这条断言要防的回归。
+const reportedModel = "claude-sonnet-4-5-20251101"
 
 // anthropicStreamFrames 是一条完整的 Anthropic 流：usage 刻意拆在 message_start
 // 与 message_delta 两处，与真实上游一致。
 func anthropicStreamFrames() []string {
 	return []string{
 		sseFrame("message_start", `{"type":"message_start","message":{"id":"msg_01","model":`+
-			`"claude-sonnet-4-5-20250929","usage":{"input_tokens":31,"cache_creation_input_tokens":12,`+
+			`"`+reportedModel+`","usage":{"input_tokens":31,"cache_creation_input_tokens":12,`+
 			`"cache_read_input_tokens":2048,"output_tokens":1}}}`),
 		sseFrame("content_block_delta", `{"type":"content_block_delta","index":0,`+
 			`"delta":{"type":"text_delta","text":"你好"}}`),
@@ -62,7 +68,7 @@ func TestCallLogCarriesUsageFromTheRelayedStream(t *testing.T) {
 		"channel_protocol": "anthropic", "upstream_model": upstreamModel,
 		"stop_reason": "end_turn", "outcome": "ok",
 		// 上游自报的模型名与我们发过去的纳管模型名分开记：两者对不上是排障线索。
-		"upstream_reported_model": "claude-sonnet-4-5-20250929",
+		"upstream_reported_model": reportedModel,
 	} {
 		if got := line.Str(key); got != want {
 			t.Errorf("%s = %q, 期望 %q", key, got, want)
@@ -197,6 +203,41 @@ func TestCallLogMarksStreamAbortedAfterFirstByte(t *testing.T) {
 	// 断流前解出来的部分要留着，那是判断「断在哪」的线索。
 	if line.Int64("input_tokens") != 5 {
 		t.Errorf("input_tokens = %d, 期望 5", line.Int64("input_tokens"))
+	}
+}
+
+// Tap 的缓冲上限只许影响日志字段，绝不许碰转发字节。这条得在主接缝上验：单测只
+// 证明了 Tap 自己会降级，证明不了「客户端收到的还是原样」。
+func TestOversizedFrameDegradesLogButNotRelayedBytes(t *testing.T) {
+	gw, up := newLoggingGateway(t, gatewaytest.Options{})
+	// 一个超出 Tap 缓冲上限的巨帧，夹在正常帧之间——并行工具调用的大参数帧就长这样。
+	huge := sseFrame("content_block_delta", `{"type":"content_block_delta","index":0,`+
+		`"delta":{"type":"input_json_delta","partial_json":"`+
+		strings.Repeat("A", protocol.BufferLimit+4096)+`"}}`)
+	frames := []string{anthropicStreamFrames()[0], huge, anthropicStreamFrames()[2]}
+	up.Handler = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		for _, f := range frames {
+			_, _ = io.WriteString(w, f)
+			w.(http.Flusher).Flush()
+		}
+	}
+
+	resp := gw.Post(t, "/v1/messages", streamRequest, nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	if want := strings.Join(frames, ""); body != want {
+		t.Errorf("巨帧把转发字节改了：收到 %d 字节，期望 %d", len(body), len(want))
+	}
+	line := gw.LastCall(t)
+	if v, _ := line.Attrs["tap_degraded"].(bool); !v {
+		t.Error("丢了帧却没标 tap_degraded，日志会假装自己是准的")
+	}
+	// 丢的只是那一帧：巨帧之后的 message_delta 仍要解出来。
+	if line.Int64("output_tokens") != 57 || line.Str("stop_reason") != "end_turn" {
+		t.Errorf("巨帧之后的 usage 被带走了: output_tokens=%d stop_reason=%q",
+			line.Int64("output_tokens"), line.Str("stop_reason"))
 	}
 }
 

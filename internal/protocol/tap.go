@@ -81,7 +81,15 @@ func (t *TapCore) consume(p []byte) {
 	t.body = append(t.body, p...)
 }
 
+// feed 的 recover 必须在**这一层**，不能只靠 consume 外面那层。
+//
+// onFrame 是从 FrameScanner.Push 内部回调的：panic 从这里冒上去会把 Push 自己的
+// 「帧已消费、缓冲往前挪」那一步跳过。于是同一个坏帧在下一块字节到来时被重放，
+// 再 panic、再重放，其后所有帧都被压在缓冲里出不来，直到攒满上限才靠丢帧路径重新
+// 对齐——一帧的解析失败就这样毒化了整条流，而 Anthropic 的 output_tokens 恰恰在
+// 流的最后一帧。就地 recover 才真的做到「放弃的是那一帧」。
 func (t *TapCore) feed(frame []byte) {
+	defer t.guard()
 	if _, data := SSEFields(frame); len(data) > 0 {
 		t.onFrame(&t.sum, data)
 	}

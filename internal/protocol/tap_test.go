@@ -20,6 +20,40 @@ func TestTapCoreSwallowsPanicFromExtractor(t *testing.T) {
 	}
 }
 
+// 一帧解析失败只能毁掉那一帧。只 Write 一次的用例测不出区别：真正的故障形态是
+// panic 把 FrameScanner 的「缓冲往前挪」跳过去，坏帧被后续每一块字节反复重放，
+// 其后所有帧都出不来——而 Anthropic 的 output_tokens 就在流的最后一帧。
+func TestTapCorePanicOnOneFrameDoesNotPoisonTheRest(t *testing.T) {
+	var seen []string
+	core := NewTapCore(true, func(_ *Summary, data []byte) {
+		seen = append(seen, string(data))
+		if string(data) == "bad" {
+			panic("这一帧炸了")
+		}
+	}, nil)
+
+	// 逐字节喂：坏帧留在缓冲里时，后面每一块都会触发一次重放。
+	const raw = "data: bad\n\ndata: good1\n\ndata: good2\n\n"
+	for i := 0; i < len(raw); i++ {
+		if _, err := core.Write([]byte(raw[i : i+1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := []string{"bad", "good1", "good2"}
+	if len(seen) != len(want) {
+		t.Fatalf("提取器被调用序列 = %q，期望 %q（坏帧被重放或后续帧被吞了）", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("提取器被调用序列 = %q，期望 %q", seen, want)
+		}
+	}
+	if !core.Summary().Degraded {
+		t.Error("有帧解析失败却没标降级")
+	}
+}
+
 func TestTapCoreSwallowsPanicWhileFinishing(t *testing.T) {
 	// 非流式的提取在 Summary() 里才跑，那条路径同样不能把 panic 放出去。
 	core := NewTapCore(false, nil, func(*Summary, []byte) { panic("字段提取炸了") })
