@@ -26,22 +26,17 @@ func (p Protocol) Valid() bool {
 	return false
 }
 
-// Endpoint binds an inbound route to the upstream path it forwards to.
+// Endpoint is one inbound 端点（口径层 §2.1 用词），and the protocol it speaks.
 //
-// base_url 存「协议子路径之前」的前缀，Upstream 是追加在其后的固定后缀
-// （docs/MVP设计草案.md §6.1）。
+// Path doubles as the suffix appended to a 渠道 base_url: base_url 存「协议子路径
+// 之前」的前缀，入站与出站子路径同形（docs/MVP设计草案.md §6.1）。
 type Endpoint struct {
-	Path     string
-	Upstream string
-	Proto    Protocol
+	Path  string
+	Proto Protocol
 }
 
-var (
-	EndpointMessages        = Endpoint{"/v1/messages", "/v1/messages", Anthropic}
-	EndpointCountTokens     = Endpoint{"/v1/messages/count_tokens", "/v1/messages/count_tokens", Anthropic}
-	EndpointChatCompletions = Endpoint{"/v1/chat/completions", "/v1/chat/completions", OpenAICC}
-	EndpointResponses       = Endpoint{"/v1/responses", "/v1/responses", OpenAIResponses}
-)
+// 其余端点随各自的票落地：count_tokens 在 M0-2，CC 与 Responses 在 M0-3。
+var EndpointMessages = Endpoint{"/v1/messages", Anthropic}
 
 // WriteError renders msg in the protocol's own error shape so a harness can
 // parse it. Callers must never pass upstream credentials or base_url in msg.

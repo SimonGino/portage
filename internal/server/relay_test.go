@@ -9,22 +9,31 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
 )
 
-// 刻意混入 cache_control、metadata.user_id、未知厂商字段与非常规键序，
-// 用来证明透传路径没有 re-marshal——任何 decode→encode 都会打乱这串字节。
+const (
+	accessPointModel = "gw-sonnet"
+	upstreamModel    = "claude-sonnet-4-5-20250929"
+)
+
+// 刻意混入 cache_control、metadata.user_id、未知厂商字段、非常规键序与嵌套的同名
+// model 键。除顶层 model 值外任何一个字节变了，都说明透传路径偷偷 re-marshal 了。
 const anthropicRequest = `{"model":"gw-sonnet","metadata":{"user_id":"user_abc123"},"max_tokens":1024,` +
 	`"system":[{"type":"text","text":"be brief","cache_control":{"type":"ephemeral"}}],` +
-	`"vendor_unknown_field":{"nested":[1,2,3],"weird":1.50},` +
+	`"vendor_unknown_field":{"model":"must-not-change","nested":[1,2,3],"weird":1.50},` +
 	`"messages":[{"role":"user","content":"hi"}],"stream":false}`
+
+// forwardedRequest 是上游应当收到的样子：只有顶层 model 值被翻译。
+var forwardedRequest = strings.Replace(anthropicRequest,
+	`"model":"`+accessPointModel+`"`, `"model":"`+upstreamModel+`"`, 1)
 
 func newAnthropicGateway(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstream) {
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", up.URL, "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, upstreamModel, "sk-ant-upstream-secret")
 	return gatewaytest.Start(t, db), up
 }
 
-func TestRelayForwardsRequestBytesVerbatim(t *testing.T) {
+func TestRelayForwardsBytesVerbatimApartFromModelName(t *testing.T) {
 	gw, up := newAnthropicGateway(t)
 
 	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
@@ -33,11 +42,24 @@ func TestRelayForwardsRequestBytesVerbatim(t *testing.T) {
 	}
 
 	got := up.Last(t)
-	if string(got.Body) != anthropicRequest {
-		t.Errorf("上游收到的 body 与客户端发出的不一致\n发出: %s\n收到: %s", anthropicRequest, got.Body)
+	if string(got.Body) != forwardedRequest {
+		t.Errorf("上游收到的 body 与「仅翻译顶层 model」的期望不一致\n期望: %s\n收到: %s", forwardedRequest, got.Body)
 	}
 	if got.Path != "/v1/messages" {
 		t.Errorf("上游 path = %q, 期望 /v1/messages", got.Path)
+	}
+}
+
+func TestRelayLeavesBodyUntouchedWhenNamesCoincide(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, accessPointModel, "sk-ant-upstream-secret")
+	gw := gatewaytest.Start(t, db)
+
+	gw.Post(t, "/v1/messages", anthropicRequest, nil)
+
+	if body := string(up.Last(t).Body); body != anthropicRequest {
+		t.Errorf("对外名与纳管模型名相同时 body 仍被改动\n发出: %s\n收到: %s", anthropicRequest, body)
 	}
 }
 
@@ -109,15 +131,26 @@ func TestRelayRebuildsHeadersFromWhitelist(t *testing.T) {
 	gw, up := newAnthropicGateway(t)
 
 	gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{
-		"Authorization":     "Bearer sk-aig-client-gateway-key",
-		"x-api-key":         "sk-aig-client-gateway-key",
-		"Cookie":            "session=leak-me",
-		"X-Forwarded-For":   "192.168.1.7",
-		"anthropic-beta":    "context-1m-2025-08-07",
-		"anthropic-version": "2024-10-22",
+		"Authorization":       "Bearer sk-aig-client-gateway-key",
+		"x-api-key":           "sk-aig-client-gateway-key",
+		"Cookie":              "session=leak-me",
+		"X-Forwarded-For":     "192.168.1.7",
+		"anthropic-beta":      "context-1m-2025-08-07",
+		"anthropic-version":   "2024-10-22",
+		"Te":                  "trailers",
+		"Proxy-Authorization": "Basic bGVhaw==",
+		"X-Client-Trace-Id":   "should-not-cross",
 	})
 
 	got := up.Last(t)
+	for _, name := range []string{"Te", "Proxy-Authorization", "Upgrade", "X-Client-Trace-Id"} {
+		if v := got.Header.Get(name); v != "" {
+			t.Errorf("白名单外的头 %s 透到了上游: %q", name, v)
+		}
+	}
+	if strings.Contains(got.Host, gw.Listener.Addr().String()) {
+		t.Errorf("Host = %q, 应是上游自己的 host 而非网关的", got.Host)
+	}
 	if v := got.Header.Get("x-api-key"); v != "sk-ant-upstream-secret" {
 		t.Errorf("x-api-key = %q, 期望注入渠道凭证", v)
 	}

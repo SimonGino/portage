@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.10
+> 状态：草案 v0.11
+> v0.11 变更（M0-1 实现期，2026-08-05）：§6.1 补「模型名翻译走字节级 splice」——PO 裁定接入点对外名 → 纳管模型名的改写在 M0 就做，透传保真口径精确为「除顶层 `model` 值外逐字节相等」。另：路由解析（`Resolve`）实现落在 `internal/store` 而非 §3 列出的 `internal/router/`，理由与待办见 §3 脚注。
 > v0.10 变更（M0 开工前实现层展开，2026-08-05）：临时闸校验时机拆为「启动时校验单候选单凭证 / 请求时校验协议匹配」——接入点本身不绑协议，协议匹配只能到请求时才判（§7）；golden 样本子集提前到 M0 采集，因 Tap 测试需真实转录作输入（§9/§11）；新增 §6.1 透传实现细则（上游 URL 拼接、请求/响应头规则、流式转发与超时分层）。均为实现层展开，口径不变。
 > v0.9 变更（口径层 v0.17，2026-08-05）：初始渠道集改为 Anthropic / OpenAI / Gemini Vertex AI / 阿里百炼（oMLX、DeepSeek、硅基流动移出）；Vertex 与百炼走 OpenAI 兼容端点（协议矩阵不动）；渠道凭证类型 `api_key` / `service_account` 二选一，key 池泛化为凭证池（§0/§7/§11/§12）。
 > v0.8 变更（口径层 v0.13~v0.16，2026-08-05）：harness 验收分档（必过：Claude Code、Codex CLI；顺带：pi、OpenCode）；管理员 session 鉴权细则、全局限流配置项、key 前缀 `sk-aig-` 落定（§0/§7/§8/§10）。
@@ -89,6 +90,8 @@ internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRU
   - **`Codec`（P1，最深模块）**：实现 §5 接口，协议怪癖（tool call 增量重组、stop reason 映射等）全封在里面；P1 落地时 Tap 复用 Codec 的解码器。
 - **`upstream`**：负责把一次「canonical 请求 + 渠道」打成真实 HTTP 调用，返回事件流或错误；驱动 failover。
 - **`router`** 与 **`auth`** 保持浅薄，不藏逻辑。
+
+> **实现偏离待裁（v0.11）**：M0-1 把接入点解析（`Resolve`，返回命中候选 + 其渠道连通信息）实现在 `internal/store` 而非本节列出的 `internal/router/`。理由：临时闸下解析就是一条 SQL，单开一个只做转调的包是空壳。代价：`store` 同时管 schema、启动校验与解析，职责在发散。M4 上多候选加权分流时解析会长出真正的逻辑，届时要么拆出 `internal/router/`、要么本节按实际改写——请 PO 在 M4 排期时一并裁定。
 
 ## 4. 内部事件模型（canonical events）
 
@@ -205,6 +208,8 @@ logging：无论成败异步落 call_logs
 ### 6.1 透传实现细则（v0.10 定，M0 落地）
 
 **上游 URL 拼接**：`channels.base_url` 存「协议子路径之前」的前缀，网关按渠道协议追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
+
+**模型名翻译走字节级 splice，不是整体重编码**（v0.11 PO 裁定）：接入点对外模型名 → 纳管模型名的翻译（口径层 §2.3）必须发生，否则接入点在 M0 退化成没有翻译能力的空壳——对外叫 `qwen-fast`、上游叫 `qwen3-max-2025-09-23` 的接入点会带着对外名打到百炼被拒。做法是用 JSON 词法定位**顶层** `model` 值的字节区间，只替换那一段，其余字节一个不碰；嵌套对象里的同名键不受影响，顶层键重复时改最后一个（与 `encoding/json` 的 last-wins 一致）。这不违反「不做 decode→encode 转码」——整体重编码会打乱键序、改写数字字面量、丢掉未建模的厂商字段，splice 都不会。对外名与纳管名相同时原样返回，连 splice 都不做。因此透传路径的保真口径精确表述为：**除顶层 `model` 值外逐字节相等**。
 
 **请求头（网关 → 上游）重建而非复制**，默认丢弃客户端全部请求头，白名单构造：
 

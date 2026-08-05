@@ -53,7 +53,8 @@ func run(configPath string, log *slog.Logger) error {
 	srv := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: server.New(cfg, db, log).Engine(),
-		// 不设 WriteTimeout：它会掐断长 SSE 流。写超时按连接在 relay 内逐次推进。
+		// 不设 WriteTimeout：它会掐断长 SSE 流。写超时改由 relay 用
+		// http.NewResponseController(w).SetWriteDeadline 逐次推进。
 		ReadHeaderTimeout: 20 * time.Second,
 	}
 

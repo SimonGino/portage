@@ -45,8 +45,9 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Route is everything a passthrough needs to reach the upstream.
-type Route struct {
+// Candidate is the 候选 an 接入点 resolved to, carrying the connection details of
+// the 渠道 it belongs to — everything a 透传 needs to reach the upstream.
+type Candidate struct {
 	AccessPointModel string
 	UpstreamModel    string
 	ChannelName      string
@@ -55,21 +56,21 @@ type Route struct {
 	Credential       string
 }
 
-// Resolve maps an access point's public model name to its single candidate.
+// Resolve maps an 接入点 public model name to its single 候选.
 //
 // M0~M2 的临时闸保证每个接入点只有一个候选，因此这里不做加权抽取；多候选分流在 M4。
-func Resolve(ctx context.Context, db *sql.DB, model string) (Route, error) {
+func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
 	var apID int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM access_points WHERE model = ? AND disabled = 0`, model).Scan(&apID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Route{}, ErrAccessPointNotFound
+		return Candidate{}, ErrAccessPointNotFound
 	}
 	if err != nil {
-		return Route{}, err
+		return Candidate{}, err
 	}
 
-	r := Route{AccessPointModel: model}
+	c := Candidate{AccessPointModel: model}
 	err = db.QueryRowContext(ctx, `
 		SELECT cm.upstream_model, ch.name, ch.protocol, ch.base_url, ck.credential
 		FROM candidates cd
@@ -78,14 +79,14 @@ func Resolve(ctx context.Context, db *sql.DB, model string) (Route, error) {
 		JOIN channel_keys ck   ON ck.channel_id = ch.id       AND ck.disabled = 0
 		WHERE cd.access_point_id = ? AND cd.weight > 0
 		LIMIT 1`, apID).
-		Scan(&r.UpstreamModel, &r.ChannelName, &r.Protocol, &r.BaseURL, &r.Credential)
+		Scan(&c.UpstreamModel, &c.ChannelName, &c.Protocol, &c.BaseURL, &c.Credential)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Route{}, ErrNoUsableCandidate
+		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
-		return Route{}, err
+		return Candidate{}, err
 	}
-	return r, nil
+	return c, nil
 }
 
 // Validate is the startup gate. It reports every violation it finds, naming the

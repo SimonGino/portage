@@ -22,9 +22,12 @@ import (
 )
 
 // Received is one request as the fake upstream saw it.
+//
+// Host 单独存：net/http 把它从 Header 提升到了 Request.Host，断言时别去 Header 里找。
 type Received struct {
 	Method string
 	Path   string
+	Host   string
 	Header http.Header
 	Body   []byte
 }
@@ -52,7 +55,7 @@ func NewUpstream(t *testing.T) *Upstream {
 		body, _ := io.ReadAll(r.Body)
 		u.mu.Lock()
 		u.received = append(u.received, Received{
-			Method: r.Method, Path: r.URL.Path, Header: r.Header.Clone(), Body: body,
+			Method: r.Method, Path: r.URL.Path, Host: r.Host, Header: r.Header.Clone(), Body: body,
 		})
 		u.mu.Unlock()
 		u.Handler(w, r)

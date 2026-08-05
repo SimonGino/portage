@@ -5,7 +5,9 @@ package upstream
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,30 +36,39 @@ func NewClient() *Client {
 	}}
 }
 
-// Do forwards body verbatim to the route's channel and returns the live
-// response. The caller owns closing resp.Body.
-func (c *Client) Do(ctx context.Context, r store.Route, ep protocol.Endpoint, body []byte, clientHdr http.Header, stream bool) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(r.BaseURL, ep), bytes.NewReader(body))
+// Do 把 body 原样透传给候选所在渠道，返回实时响应。调用方负责 Close resp.Body。
+func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, body []byte, clientHdr http.Header, stream bool) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.ContentLength = int64(len(body))
-	applyHeaders(req.Header, clientHdr, r, stream)
+	applyHeaders(req.Header, clientHdr, cand, stream)
 	return c.http.Do(req)
 }
 
-// buildURL appends the endpoint's fixed suffix to the channel's base_url, which
-// stores everything *before* the protocol sub-path. 百炼这类自带路径前缀的兼容端点
-// 因此要填到 .../compatible-mode 为止。
+// buildURL appends the endpoint's fixed suffix to the 渠道 base_url, which stores
+// everything *before* the protocol sub-path. 百炼这类自带路径前缀的兼容端点因此要
+// 填到 .../compatible-mode 为止。
 func buildURL(baseURL string, ep protocol.Endpoint) string {
-	return strings.TrimRight(baseURL, "/") + ep.Upstream
+	return strings.TrimRight(baseURL, "/") + ep.Path
+}
+
+// Redact strips the request URL out of a transport error so the 渠道 base_url does
+// not reach a log line or, later, call_logs.error.
+func Redact(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }
 
 // applyHeaders rebuilds the upstream headers from a whitelist rather than
 // copying the client's. Anything not named here never reaches the upstream —
 // including the client's own Authorization / x-api-key, which from M1 onward
 // carries the gateway key.
-func applyHeaders(dst, client http.Header, r store.Route, stream bool) {
+func applyHeaders(dst, client http.Header, cand store.Candidate, stream bool) {
 	if ct := client.Get("Content-Type"); ct != "" {
 		dst.Set("Content-Type", ct)
 	} else {
@@ -76,9 +87,9 @@ func applyHeaders(dst, client http.Header, r store.Route, stream bool) {
 		dst.Set("Accept-Encoding", "identity")
 	}
 
-	switch r.Protocol {
+	switch cand.Protocol {
 	case protocol.Anthropic:
-		dst.Set("x-api-key", r.Credential)
+		dst.Set("x-api-key", cand.Credential)
 		version := client.Get("anthropic-version")
 		if version == "" {
 			version = "2023-06-01"
@@ -88,7 +99,7 @@ func applyHeaders(dst, client http.Header, r store.Route, stream bool) {
 			dst.Set("anthropic-beta", beta)
 		}
 	default:
-		dst.Set("Authorization", "Bearer "+r.Credential)
+		dst.Set("Authorization", "Bearer "+cand.Credential)
 	}
 }
 
