@@ -130,6 +130,7 @@ func Validate(ctx context.Context, db *sql.DB) error {
 		checkSingleCandidate,
 		checkSingleCredential,
 		checkDanglingCandidate,
+		checkCandidateReachable,
 		checkChannelFields,
 	} {
 		found, err := check(ctx, db)
@@ -214,6 +215,39 @@ func checkDanglingCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
 				return "", err
 			}
 			return fmt.Sprintf("接入点 %q 的候选 (id=%d) 引用了不存在的纳管模型或渠道", model, id), nil
+		})
+}
+
+// checkCandidateReachable catches the half-finished state left by disabling a
+// channel and forgetting its access point: checkSingleCandidate only counts
+// candidates, so the access point still passes the gate, still shows up in
+// /v1/models, and only fails at request time with a 503.
+//
+// 停用渠道时接入点要跟着停——这条把「跟着停」从口头约定变成启动就报。
+func checkCandidateReachable(ctx context.Context, db *sql.DB) ([]string, error) {
+	return collect(ctx, db, `
+		SELECT ap.model, ch.id, ch.name, ch.disabled
+		FROM candidates cd
+		JOIN access_points ap  ON ap.id = cd.access_point_id AND ap.disabled = 0
+		JOIN channel_models cm ON cm.id = cd.channel_model_id
+		JOIN channels ch       ON ch.id = cm.channel_id
+		WHERE cd.weight > 0
+		  AND (ch.disabled <> 0
+		       OR NOT EXISTS (SELECT 1 FROM channel_keys ck
+		                       WHERE ck.channel_id = ch.id AND ck.disabled = 0))`,
+		func(rows *sql.Rows) (string, error) {
+			var chID int64
+			var apModel, chName string
+			var chDisabled bool
+			if err := rows.Scan(&apModel, &chID, &chName, &chDisabled); err != nil {
+				return "", err
+			}
+			reason := "该渠道没有启用凭证"
+			if chDisabled {
+				reason = "该渠道已停用"
+			}
+			return fmt.Sprintf("接入点 %q 的候选指向渠道 %q (id=%d)，但%s；接入点要跟着停用",
+				apModel, chName, chID, reason), nil
 		})
 }
 

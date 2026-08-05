@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"database/sql"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,66 @@ func TestStartupGateRejectsDanglingCandidate(t *testing.T) {
 	assertRejects(t, err, "gw-dangling")
 }
 
+// 停用渠道时忘了把接入点一起停掉，是手写 SQL 最容易留下的半截状态：启动照样过，
+// 接入点还挂在 /v1/models 上，打过去才回 503。这类错该在启动就被点名。
+func TestStartupGateRejectsCandidateOnDisabledChannel(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	channelID := gatewaytest.SeedChannel(t, db, "anthropic-official", "anthropic", "https://api.anthropic.com", "sk-a")
+	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
+	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
+	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+	mustExec(t, db, `UPDATE channels SET disabled = 1 WHERE id = ?`, channelID)
+
+	err := store.Validate(t.Context(), db)
+
+	assertRejects(t, err, "gw-sonnet", "anthropic-official", "该渠道已停用")
+}
+
+// 渠道还开着但唯一那份凭证被停用，等价于没凭证：checkSingleCredential 数的是启用
+// 凭证，所以这一条已经被它挡住；这里钉的是**接入点也要被点名**，否则只知道渠道坏了，
+// 不知道哪个对外模型受影响。
+func TestStartupGateRejectsCandidateOnChannelWithDisabledCredential(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")
+	mustExec(t, db, `UPDATE channel_keys SET disabled = 1`)
+
+	err := store.Validate(t.Context(), db)
+
+	assertRejects(t, err, "gw-sonnet", "该渠道没有启用凭证")
+}
+
+// 渠道与接入点一起停用是干净状态，不该报错——否则「手头只有一边的 key」这个
+// 最常见的场景会被校验逼疯。
+func TestStartupGateAcceptsDisabledChannelWithDisabledAccessPoint(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")
+	mustExec(t, db, `UPDATE channels SET disabled = 1`)
+	mustExec(t, db, `UPDATE access_points SET disabled = 1 WHERE model = 'gw-sonnet'`)
+
+	if err := store.Validate(t.Context(), db); err != nil {
+		t.Fatalf("渠道与接入点一起停用被拒: %v", err)
+	}
+}
+
+// weight=0 的候选在临时闸下是死的（checkSingleCandidate 只数 weight>0），它指向
+// 哪条渠道都不该报错——否则「先把候选权重清零、渠道留着待用」这种写法会被误伤。
+func TestStartupGateIgnoresZeroWeightCandidateOnDisabledChannel(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")
+	spare := gatewaytest.SeedChannel(t, db, "spare", "anthropic", "https://api.anthropic.com", "sk-b")
+	spareModel := gatewaytest.SeedChannelModel(t, db, spare, "claude-opus-4-1")
+	var apID int64
+	if err := db.QueryRow(`SELECT id FROM access_points WHERE model = 'gw-sonnet'`).Scan(&apID); err != nil {
+		t.Fatal(err)
+	}
+	gatewaytest.SeedCandidate(t, db, apID, spareModel, 0)
+	mustExec(t, db, `UPDATE channels SET disabled = 1 WHERE id = ?`, spare)
+
+	if err := store.Validate(t.Context(), db); err != nil {
+		t.Fatalf("weight=0 的候选指向停用渠道被拒: %v", err)
+	}
+}
+
 func TestStartupGateRejectsUnknownProtocol(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	channelID := gatewaytest.SeedChannel(t, db, "typo-channel", "anthropic_messages", "https://api.anthropic.com", "sk-a")
@@ -137,6 +198,13 @@ func TestHealthz(t *testing.T) {
 	resp = gw.Get(t, "/healthz")
 	if resp.StatusCode == http.StatusOK {
 		t.Error("库不可用时 /healthz 仍回 200")
+	}
+}
+
+func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("执行 %q 失败: %v", query, err)
 	}
 }
 

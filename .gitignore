@@ -2,6 +2,7 @@
 /bin/
 /dist/
 *.exe
+/gateway
 
 # Go
 *.test
@@ -10,6 +11,8 @@ vendor/
 
 # data & secrets
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 .env

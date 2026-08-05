@@ -87,9 +87,9 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight)
 --   UPDATE channels      SET disabled = 1 WHERE name  = 'anthropic-official';
 --   UPDATE access_points SET disabled = 1 WHERE model = 'claude-sonnet-4-5';
 --
--- 两条都要。启动校验只数「接入点有几个 weight>0 的候选」，不看候选背后的渠道还
--- 启不启用，所以光停渠道网关照样起得来——但那个接入点仍会出现在 /v1/models 里，
--- 请求打过去才回 503「没有可用候选」。接入点跟着停掉才是干净状态。
+-- 两条都要，少停一条网关就不启动：只停渠道会留下「启用接入点的候选指向已停用渠道」
+-- 这种半截状态，启动校验会点名接入点与渠道。这是刻意的——否则那个接入点仍挂在
+-- /v1/models 上，请求打过去才回 503「没有可用候选」，错得太晚。
 -- ---------------------------------------------------------------------------
 
 -- 验证：
