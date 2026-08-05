@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.11
+> 状态：草案 v0.12
+> v0.12 变更（M0-3 实现期，2026-08-05）：`GET /v1/models` 实现落在 `internal/server` 而非 §3 列出的 `internal/admin/`，理由与待办见 §3 脚注。仅记实现偏离，口径不变。
 > v0.11 变更（M0-1 实现期，2026-08-05）：§6.1 补「模型名翻译走字节级 splice」——PO 裁定接入点对外名 → 纳管模型名的改写在 M0 就做，透传保真口径精确为「除顶层 `model` 值外逐字节相等」。另：路由解析（`Resolve`）实现落在 `internal/store` 而非 §3 列出的 `internal/router/`，理由与待办见 §3 脚注。
 > v0.10 变更（M0 开工前实现层展开，2026-08-05）：临时闸校验时机拆为「启动时校验单候选单凭证 / 请求时校验协议匹配」——接入点本身不绑协议，协议匹配只能到请求时才判（§7）；golden 样本子集提前到 M0 采集，因 Tap 测试需真实转录作输入（§9/§11）；新增 §6.1 透传实现细则（上游 URL 拼接、请求/响应头规则、流式转发与超时分层）。均为实现层展开，口径不变。
 > v0.9 变更（口径层 v0.17，2026-08-05）：初始渠道集改为 Anthropic / OpenAI / Gemini Vertex AI / 阿里百炼（oMLX、DeepSeek、硅基流动移出）；Vertex 与百炼走 OpenAI 兼容端点（协议矩阵不动）；渠道凭证类型 `api_key` / `service_account` 二选一，key 池泛化为凭证池（§0/§7/§11/§12）。
@@ -92,6 +93,8 @@ internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRU
 - **`router`** 与 **`auth`** 保持浅薄，不藏逻辑。
 
 > **实现偏离待裁（v0.11）**：M0-1 把接入点解析（`Resolve`，返回命中候选 + 其渠道连通信息）实现在 `internal/store` 而非本节列出的 `internal/router/`。理由：临时闸下解析就是一条 SQL，单开一个只做转调的包是空壳。代价：`store` 同时管 schema、启动校验与解析，职责在发散。M4 上多候选加权分流时解析会长出真正的逻辑，届时要么拆出 `internal/router/`、要么本节按实际改写——请 PO 在 M4 排期时一并裁定。
+>
+> **实现偏离待裁（v0.12）**：M0-3 把 `GET /v1/models` 实现在 `internal/server` 而非本节列出的 `internal/admin/`。理由：它是 harness 走网关 key 打的**业务**端点（Claude Code / Codex CLI 启动时拉模型列表），与管理端 CRUD 不是一类东西——放 `admin` 会让「业务面 vs 管理面」的边界糊掉。M3 上管理端时请 PO 确认：`admin` 只收管理面（`/healthz` 亦然待定），业务面的模型列表留在 `server`。
 
 ## 4. 内部事件模型（canonical events）
 

@@ -9,11 +9,13 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
 )
 
+const openaiCredential = "sk-upstream-secret"
+
 const ccRequest = `{"model":"gw-cc","messages":[{"role":"user","content":"hi"}],` +
 	`"tools":[{"type":"function","function":{"name":"get_weather"}}],"vendor_extra":{"model":"nested"}}`
 
 const responsesRequest = `{"model":"gw-resp","input":[{"role":"user","content":"hi"}],` +
-	`"reasoning":{"effort":"low"},"store":false}`
+	`"reasoning":{"effort":"low"},"metadata":{"model":"must-not-change"},"store":false}`
 
 // newOpenAIGateway 起一个入口协议为 proto 的网关，接入点对外名 apModel、纳管模型名
 // upstreamName。
@@ -21,7 +23,7 @@ func newOpenAIGateway(t *testing.T, apModel, proto, upstreamName string) (*gatew
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, apModel, proto, up.URL, upstreamName, "sk-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, apModel, proto, up.URL, upstreamName, openaiCredential)
 	return gatewaytest.Start(t, db), up
 }
 
@@ -57,6 +59,9 @@ func TestResponsesPassthrough(t *testing.T) {
 
 	resp := gw.Post(t, "/v1/responses", responsesRequest, nil)
 
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
 	if body := gatewaytest.ReadBody(t, resp); body != upstreamBody {
 		t.Errorf("响应体不是逐字节回传\n上游: %s\n客户端: %s", upstreamBody, body)
 	}
@@ -77,25 +82,36 @@ func TestOpenAIStreamPassthrough(t *testing.T) {
 		proto   string
 		apModel string
 		body    string
+		// frames 用各自协议真实的行格式：Responses 每帧带 event: 行，CC 不带。
+		// 两边都塞了 \r\n\r\n 帧和多行 data，任何按行重组的实现都会改字节。
+		frames []string
 	}{
 		{"chat completions", "/v1/chat/completions", "openai_cc", "gw-cc",
-			`{"model":"gw-cc","stream":true,"messages":[{"role":"user","content":"hi"}]}`},
-		{"responses", "/v1/responses", "openai_responses", "gw-resp",
-			`{"model":"gw-resp","stream":true,"input":[{"role":"user","content":"hi"}]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			gw, up := newOpenAIGateway(t, tc.apModel, tc.proto, "upstream-model")
-			frames := []string{
+			`{"model":"gw-cc","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+			[]string{
 				"data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n",
 				"data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\r\n\r\n",
 				"data: [DONE]\n\n",
-			}
-			streamUpstream(t, up, frames...)()
+			}},
+		{"responses", "/v1/responses", "openai_responses", "gw-resp",
+			`{"model":"gw-resp","stream":true,"input":[{"role":"user","content":"hi"}]}`,
+			[]string{
+				"event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0," +
+					"\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"in_progress\"}}\n\n",
+				"event: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\"," +
+					"\"sequence_number\":1,\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"你\"}\r\n\r\n",
+				"event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":2," +
+					"\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"total_tokens\":9}}}\n\n",
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw, up := newOpenAIGateway(t, tc.apModel, tc.proto, "upstream-model")
+			streamUpstream(t, up, tc.frames...)()
 
 			resp := gw.Post(t, tc.path, tc.body, nil)
 			body := gatewaytest.ReadBody(t, resp)
 
-			if want := strings.Join(frames, ""); body != want {
+			if want := strings.Join(tc.frames, ""); body != want {
 				t.Errorf("流式字节与上游写出的不一致\n上游: %q\n客户端: %q", want, body)
 			}
 		})
@@ -107,16 +123,19 @@ func TestOpenAIStreamPassthrough(t *testing.T) {
 func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 	gw, up := newOpenAIGateway(t, "gw-cc", "openai_cc", "qwen3-max")
 
+	// 客户端这三个头都得真发出来，否则「上游收不到」的断言恒真、抓不住任何回归。
 	gw.Post(t, "/v1/chat/completions", ccRequest, map[string]string{
-		"Authorization": "Bearer sk-aig-client-gateway-key",
+		"Authorization":     "Bearer sk-aig-client-gateway-key",
+		"x-api-key":         "sk-aig-client-gateway-key",
+		"anthropic-version": "2023-06-01",
 	})
 
 	got := up.Last(t)
-	if v := got.Header.Get("Authorization"); v != "Bearer sk-upstream-secret" {
-		t.Errorf("Authorization = %q, 期望注入渠道凭证", v)
+	if v := got.Header.Get("Authorization"); v != "Bearer "+openaiCredential {
+		t.Errorf("Authorization = %q, 期望注入渠道凭证而非客户端自带的", v)
 	}
 	if v := got.Header.Get("x-api-key"); v != "" {
-		t.Errorf("openai_cc 渠道不该收到 x-api-key: %q", v)
+		t.Errorf("客户端自带的 x-api-key 漏到了 openai_cc 上游: %q", v)
 	}
 	if v := got.Header.Get("anthropic-version"); v != "" {
 		t.Errorf("openai_cc 渠道不该收到 anthropic-version: %q", v)
@@ -138,13 +157,16 @@ func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 		if !strings.Contains(body, "尚未实现") {
 			t.Errorf("文案应点明转换路径尚未实现: %s", body)
 		}
-		assertNoSecrets(t, body, up.URL)
+		assertNoSecrets(t, body, openaiCredential, up.URL)
+		if up.Count() != 0 {
+			t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
+		}
 	})
 
 	t.Run("CC 入口打到 anthropic 渠道", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
-		gatewaytest.SeedPassthrough(t, db, "gw-cc", "anthropic", up.URL, "claude-sonnet-4-5", "sk-ant-upstream-secret")
+		gatewaytest.SeedPassthrough(t, db, "gw-cc", "anthropic", up.URL, "claude-sonnet-4-5", anthropicCredential)
 		gw := gatewaytest.Start(t, db)
 
 		resp := gw.Post(t, "/v1/chat/completions", ccRequest, nil)
@@ -157,9 +179,7 @@ func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 		if !strings.Contains(body, "尚未实现") {
 			t.Errorf("文案应点明转换路径尚未实现: %s", body)
 		}
-		if strings.Contains(body, "sk-ant-upstream-secret") || strings.Contains(body, up.URL) {
-			t.Errorf("错误体泄漏了凭证或 base_url: %s", body)
-		}
+		assertNoSecrets(t, body, anthropicCredential, up.URL)
 		if up.Count() != 0 {
 			t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 		}
@@ -174,7 +194,10 @@ func TestModelsListsEnabledAccessPoints(t *testing.T) {
 	enabled := gatewaytest.SeedAccessPoint(t, db, "gw-visible")
 	gatewaytest.SeedCandidate(t, db, enabled, modelID, 100)
 
+	// 停用的接入点同样配齐候选：否则一个「按有无可用候选过滤」的实现也能通过，
+	// 这条断言就证明不了它真的看了 disabled。
 	retired := gatewaytest.SeedAccessPoint(t, db, "gw-retired")
+	gatewaytest.SeedCandidate(t, db, retired, modelID, 100)
 	if _, err := db.Exec(`UPDATE access_points SET disabled = 1 WHERE id = ?`, retired); err != nil {
 		t.Fatal(err)
 	}

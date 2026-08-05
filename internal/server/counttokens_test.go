@@ -38,7 +38,7 @@ func TestCountTokensPassesThroughToAnthropicChannel(t *testing.T) {
 func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", "sk-upstream")
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", openaiCredential)
 	gw := gatewaytest.Start(t, db)
 
 	resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil)
@@ -48,7 +48,7 @@ func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 		t.Errorf("状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
 	}
 	assertAnthropicError(t, body, "api_error")
-	assertNoSecrets(t, body, up.URL)
+	assertNoSecrets(t, body, openaiCredential, up.URL)
 	if up.Count() != 0 {
 		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 	}
@@ -58,7 +58,7 @@ func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 func TestMessagesRejectsCrossProtocolCandidate(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", "sk-upstream")
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", openaiCredential)
 	gw := gatewaytest.Start(t, db)
 
 	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)

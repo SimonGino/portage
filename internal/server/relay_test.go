@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	accessPointModel = "gw-sonnet"
-	upstreamModel    = "claude-sonnet-4-5-20250929"
+	accessPointModel    = "gw-sonnet"
+	upstreamModel       = "claude-sonnet-4-5-20250929"
+	anthropicCredential = "sk-ant-upstream-secret"
 )
 
 // 刻意混入 cache_control、metadata.user_id、未知厂商字段、非常规键序与嵌套的同名
@@ -29,7 +30,7 @@ func newAnthropicGateway(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstr
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, upstreamModel, "sk-ant-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, upstreamModel, anthropicCredential)
 	return gatewaytest.Start(t, db), up
 }
 
@@ -53,7 +54,7 @@ func TestRelayForwardsBytesVerbatimApartFromModelName(t *testing.T) {
 func TestRelayLeavesBodyUntouchedWhenNamesCoincide(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, accessPointModel, "sk-ant-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, accessPointModel, anthropicCredential)
 	gw := gatewaytest.Start(t, db)
 
 	gw.Post(t, "/v1/messages", anthropicRequest, nil)
@@ -151,7 +152,7 @@ func TestRelayRebuildsHeadersFromWhitelist(t *testing.T) {
 	if strings.Contains(got.Host, gw.Listener.Addr().String()) {
 		t.Errorf("Host = %q, 应是上游自己的 host 而非网关的", got.Host)
 	}
-	if v := got.Header.Get("x-api-key"); v != "sk-ant-upstream-secret" {
+	if v := got.Header.Get("x-api-key"); v != anthropicCredential {
 		t.Errorf("x-api-key = %q, 期望注入渠道凭证", v)
 	}
 	if v := got.Header.Get("Authorization"); v != "" {
@@ -184,7 +185,7 @@ func TestRelayDefaultsAnthropicVersion(t *testing.T) {
 func TestRelayNormalisesBaseURLTrailingSlash(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", up.URL+"/", "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", up.URL+"/", "claude-sonnet-4-5-20250929", anthropicCredential)
 	gw := gatewaytest.Start(t, db)
 
 	gw.Post(t, "/v1/messages", anthropicRequest, nil)
@@ -216,7 +217,7 @@ func TestRelayRejectsBadRequests(t *testing.T) {
 				t.Errorf("状态码 = %d, 期望 %d；body=%s", resp.StatusCode, tc.wantStatus, body)
 			}
 			assertAnthropicError(t, body, tc.wantType)
-			assertNoSecrets(t, body, up.URL)
+			assertNoSecrets(t, body, anthropicCredential, up.URL)
 			if up.Count() != 0 {
 				t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 			}
@@ -230,7 +231,7 @@ func TestRelayReportsUnreachableUpstreamWithoutLeakingSecrets(t *testing.T) {
 	up.Close() // 端口随即空出，网关将连不上
 
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", deadURL, "claude-sonnet-4-5-20250929", "sk-ant-upstream-secret")
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", deadURL, "claude-sonnet-4-5-20250929", anthropicCredential)
 	gw := gatewaytest.Start(t, db)
 
 	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
@@ -240,7 +241,7 @@ func TestRelayReportsUnreachableUpstreamWithoutLeakingSecrets(t *testing.T) {
 		t.Errorf("状态码 = %d, 期望 502；body=%s", resp.StatusCode, body)
 	}
 	assertAnthropicError(t, body, "api_error")
-	assertNoSecrets(t, body, deadURL)
+	assertNoSecrets(t, body, anthropicCredential, deadURL)
 }
 
 func assertAnthropicError(t *testing.T, body, wantType string) {
@@ -266,9 +267,14 @@ func assertAnthropicError(t *testing.T, body, wantType string) {
 	}
 }
 
-func assertNoSecrets(t *testing.T, body, baseURL string) {
+// assertNoSecrets 必须显式收下这次配置里用的凭证——写死一个常量的话，凡是种了
+// 别的凭证的用例，凭证那一半断言就恒真、抓不住任何泄露。
+func assertNoSecrets(t *testing.T, body, credential, baseURL string) {
 	t.Helper()
-	if strings.Contains(body, "sk-ant-upstream-secret") {
+	if credential == "" {
+		t.Fatal("assertNoSecrets 需要本次配置里真实使用的凭证")
+	}
+	if strings.Contains(body, credential) {
 		t.Errorf("错误响应泄漏了上游凭证: %s", body)
 	}
 	if strings.Contains(body, baseURL) {

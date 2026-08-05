@@ -95,12 +95,14 @@ type AccessPoint struct {
 	CreatedAt int64
 }
 
-// ListAccessPoints returns every enabled 接入点, oldest first.
+// ListAccessPoints returns every enabled 接入点, in insertion order.
 //
-// created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。
+// created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。手写
+// SQL 塞进来的 created_at 未必是 strftime 认得的格式，那时它返回 NULL——COALESCE
+// 兜住，免得一行脏数据把整个 /v1/models 打成 500。
 func ListAccessPoints(ctx context.Context, db *sql.DB) ([]AccessPoint, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT model, CAST(strftime('%s', created_at) AS INTEGER)
+		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0)
 		FROM access_points WHERE disabled = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
