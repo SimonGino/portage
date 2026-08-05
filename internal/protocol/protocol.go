@@ -35,8 +35,13 @@ type Endpoint struct {
 	Proto Protocol
 }
 
-// 其余端点随各自的票落地：count_tokens 在 M0-2，CC 与 Responses 在 M0-3。
-var EndpointMessages = Endpoint{"/v1/messages", Anthropic}
+// CC 与 Responses 端点随 M0-3 落地。
+var (
+	EndpointMessages = Endpoint{"/v1/messages", Anthropic}
+	// count_tokens 是 Anthropic 独有端点；命中非 anthropic 渠道时由请求时临时闸
+	// 回 501，不做估算（估算属 M2）。
+	EndpointCountTokens = Endpoint{"/v1/messages/count_tokens", Anthropic}
+)
 
 // WriteError renders msg in the protocol's own error shape so a harness can
 // parse it. Callers must never pass upstream credentials or base_url in msg.

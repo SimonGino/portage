@@ -19,8 +19,45 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// writeDeadline 是单次向客户端写出的上限。非流式够用；流式在 #3 改为每帧推进。
-const writeDeadline = 30 * time.Second
+const (
+	// writeDeadline 是单次向客户端写出的上限，每写一块推进一次。它约束的是「客户端
+	// 收得多慢」，不是「流总共多长」——所以长流不会被它掐断，挂死的慢客户端会。
+	writeDeadline = 30 * time.Second
+
+	// copyBufferSize 是透传的读写块大小。按字节块复制、永不按帧切分：透传路径对 SSE
+	// 帧边界一无所知，因此并行工具调用那种远超缓冲区的大参数帧也不会被截断。
+	copyBufferSize = 32 * 1024
+)
+
+// relayBody 把上游响应按字节块复制给客户端，每块 flush 一次。
+//
+// 不用 io.Copy：它不 flush，SSE 帧会攒在 net/http 的缓冲里，客户端要等攒满或流结束
+// 才看得到——正是「逐字输出」失效的成因。也不用 bufio.Scanner 按行读再重组：那会引入
+// 换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。
+func relayBody(w gin.ResponseWriter, body io.Reader) error {
+	rc := http.NewResponseController(w)
+	buf := make([]byte, copyBufferSize)
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			if err := rc.SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				return err
+			}
+			if _, err := w.Write(buf[:n]); err != nil {
+				return err
+			}
+			if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
 
 type Server struct {
 	cfg config.Config
@@ -42,6 +79,7 @@ func (s *Server) Engine() *gin.Engine {
 	r.Use(gin.Recovery())
 	r.GET("/healthz", s.healthz)
 	r.POST(protocol.EndpointMessages.Path, s.relay(protocol.EndpointMessages))
+	r.POST(protocol.EndpointCountTokens.Path, s.relay(protocol.EndpointCountTokens))
 	return r
 }
 
@@ -118,14 +156,9 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		// 防慢客户端把 handler 永久挂住（§6.1）。#3 的流式拷贝里改为每帧推进。
-		if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil {
-			s.log.Warn("写超时设置未生效", "err", err)
-		}
-
 		upstream.CopyResponseHeaders(c.Writer.Header(), resp.Header)
 		c.Writer.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(c.Writer, resp.Body); err != nil {
+		if err := relayBody(c.Writer, resp.Body); err != nil {
 			// 首字节已写出，格式承诺已生效：只能断连并记日志，不改写、不重发。
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		}

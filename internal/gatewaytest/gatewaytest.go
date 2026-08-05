@@ -6,6 +6,7 @@
 package gatewaytest
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"log/slog"
@@ -15,11 +16,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/server"
 	"github.com/SimonGino/ai-gateway/internal/store"
 )
+
+// client 不设整体 Timeout（长流会被掐断），只限响应头的等待时长：网关若把首帧连同
+// 响应头一起缓冲住了，这里会在 5 秒内快速失败，而不是让测试挂到 go test -timeout。
+var client = &http.Client{
+	Transport: &http.Transport{ResponseHeaderTimeout: 5 * time.Second},
+}
 
 // Received is one request as the fake upstream saw it.
 //
@@ -188,11 +196,17 @@ func SeedCandidate(t *testing.T, db *sql.DB, accessPointID, channelModelID int64
 	}
 }
 
-// Post sends a request to the gateway and returns the response. The caller owns
-// closing the body.
+// Post sends a request to the gateway and returns the response with its body
+// still unread, so a streaming test can consume it frame by frame.
 func (g *Gateway) Post(t *testing.T, path, body string, header map[string]string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, g.URL+path, strings.NewReader(body))
+	return g.PostCtx(t, t.Context(), path, body, header)
+}
+
+// PostCtx is Post with a caller-owned context, for cancellation tests.
+func (g *Gateway) PostCtx(t *testing.T, ctx context.Context, path, body string, header map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("构造请求失败: %v", err)
 	}
@@ -200,9 +214,9 @@ func (g *Gateway) Post(t *testing.T, path, body string, header map[string]string
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("请求网关失败: %v", err)
+		t.Fatalf("请求网关失败（响应头迟迟不来通常意味着网关缓冲了首帧）: %v", err)
 	}
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp
@@ -215,12 +229,38 @@ func (g *Gateway) Get(t *testing.T, path string) *http.Response {
 	if err != nil {
 		t.Fatalf("构造请求失败: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("请求网关失败: %v", err)
+		t.Fatalf("请求网关失败（响应头迟迟不来通常意味着网关缓冲了首帧）: %v", err)
 	}
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp
+}
+
+// ReadSome reads whatever has arrived on r, failing the test if nothing shows up
+// within timeout. 这是 SSE 缓冲回归的探针：网关若把帧攒起来不 flush，这里就会超时。
+func ReadSome(t *testing.T, r io.Reader, timeout time.Duration) string {
+	t.Helper()
+	type result struct {
+		data string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := r.Read(buf)
+		ch <- result{string(buf[:n]), err}
+	}()
+	select {
+	case got := <-ch:
+		if got.data == "" && got.err != nil {
+			t.Fatalf("读流失败: %v", got.err)
+		}
+		return got.data
+	case <-time.After(timeout):
+		t.Fatalf("%s 内没有任何字节到达客户端——帧被缓冲住了", timeout)
+		return ""
+	}
 }
 
 // ReadBody drains and returns a response body.
