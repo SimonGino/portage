@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.9
+> 状态：草案 v0.10
+> v0.10 变更（M0 开工前实现层展开，2026-08-05）：临时闸校验时机拆为「启动时校验单候选单凭证 / 请求时校验协议匹配」——接入点本身不绑协议，协议匹配只能到请求时才判（§7）；golden 样本子集提前到 M0 采集，因 Tap 测试需真实转录作输入（§9/§11）；新增 §6.1 透传实现细则（上游 URL 拼接、请求/响应头规则、流式转发与超时分层）。均为实现层展开，口径不变。
 > v0.9 变更（口径层 v0.17，2026-08-05）：初始渠道集改为 Anthropic / OpenAI / Gemini Vertex AI / 阿里百炼（oMLX、DeepSeek、硅基流动移出）；Vertex 与百炼走 OpenAI 兼容端点（协议矩阵不动）；渠道凭证类型 `api_key` / `service_account` 二选一，key 池泛化为凭证池（§0/§7/§11/§12）。
 > v0.8 变更（口径层 v0.13~v0.16，2026-08-05）：harness 验收分档（必过：Claude Code、Codex CLI；顺带：pi、OpenCode）；管理员 session 鉴权细则、全局限流配置项、key 前缀 `sk-aig-` 落定（§0/§7/§8/§10）。
 > v0.7 变更（口径层 v0.12，2026-08-05）：候选改绑「渠道纳管的模型」（新增 `channel_models` 表，candidates 引用之）；里程碑重排——多候选分流/候选间转移/key 池聚合实现打包 M4 置于 M3 后，M0~M2 强制单候选单 key；占位假设 #2 关闭（§0/§6/§7/§11）。
@@ -201,6 +202,24 @@ logging：无论成败异步落 call_logs
 
 **关键约束：failover 边界 = 向 client 写出第一个字节之前。** 一旦开始下行写流，格式承诺已生效，再失败只能：终止连接或注入出口协议的错误事件，并记日志；**不得切换渠道重发**（new-api 同原则）。
 
+### 6.1 透传实现细则（v0.10 定，M0 落地）
+
+**上游 URL 拼接**：`channels.base_url` 存「协议子路径之前」的前缀，网关按渠道协议追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
+
+**请求头（网关 → 上游）重建而非复制**，默认丢弃客户端全部请求头，白名单构造：
+
+- `Content-Type` 取自客户端；`Accept` 取自客户端，未给且流式时补 `text/event-stream`。
+- 凭证注入按渠道协议：`anthropic` → `x-api-key: <凭证>`；`openai_cc` / `openai_responses` → `Authorization: Bearer <凭证>`。
+- Anthropic 渠道额外：`anthropic-version` 取自客户端、未给时默认 `2023-06-01`；`anthropic-beta` 客户端给了就原样转发（Claude Code 靠它开 1M 上下文、computer use 等能力，丢了会静默退化）。
+- 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关 key，绝不能漏到上游**。
+- `Accept-Encoding` 不转发客户端值，流式请求显式设 `identity`（避免上游压缩引入分块缓冲、拖长首字延迟）；不注入 `X-Forwarded-*`（个人自用零收益且泄露内网信息）。
+
+**响应头（上游 → 客户端）**：除 `Content-Length` 外原样回传（流式下无意义，非流式由 Go 按实际写入量重设），状态码原样。上游 `x-request-id` / `request-id` 既回传客户端也记日志——个人自用场景下能拿它去找上游对账，比藏起来有用。
+
+**流式转发按字节块复制，永不按帧切分**：循环 `Read`（32KB 量级）→ `Write` → `Flush` 直到 EOF。不用 `bufio.Scanner` 按行读再重组——会引入换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。SSE 帧解析**只发生在 Tap 内**，Tap 从 `io.TeeReader` 拿同一份字节自组帧、自管缓冲上限（MB 级，并行工具调用的 JSON 参数单帧可以很大），**超限即放弃解析并降级**：Tap 的上限只影响日志字段完整性，绝不截断转发字节。（new-api 按行 Scanner 读、靠把 token 上限调到 64MB 躲大参数帧截断，本设计不取该路径。）
+
+**超时分层，不设 `http.Client.Timeout`**——它覆盖整个 body 读取周期，长流必被拦腰掐断。改设 `TLSHandshakeTimeout`、`ResponseHeaderTimeout`（等上游首个响应头，120s 量级）、`IdleConnTimeout`。向客户端写出前用 `http.NewResponseController(w).SetWriteDeadline` 每次推进（30s 量级），防慢客户端把 handler 永久挂住。客户端断连靠把 `c.Request.Context()` 传给上游 request 自动传播取消。
+
 ## 7. 配置与数据模型
 
 ### 启动配置（config.yaml，最小）
@@ -217,7 +236,11 @@ rate_limit_burst: 20
 
 业务配置（渠道/接入点/key）全部落 DB，由管理端维护（M3）；管理端就绪前（M0~M2）用 SQL 手工维护（口径层 C2 收敛，v0.8）。
 
-> **配置校验规则（临时闸，随转换批次逐步放开）**：候选渠道协议与入口协议不同、且对应转换路径尚未实现时，校验报错。透传-only 阶段（P0）等价于「同一接入点候选协议必须一致且等于入口协议」。这不是 v1 边界——全互转属 v1 承诺（口径层 C1 已收敛）。校验时机：启动加载时 + 管理端保存时。
+> **配置校验规则（临时闸，随转换批次逐步放开）**：候选渠道协议与入口协议不同、且对应转换路径尚未实现时报错。这不是 v1 边界——全互转属 v1 承诺（口径层 C1 已收敛）。
+>
+> **校验时机拆两处**（v0.10）：接入点本身不绑定协议，入口协议要到请求时（由路径）才知道，因此「协议必须一致」无法在启动时判。
+> - **启动加载时 + 管理端保存时**：每个未停用接入点有且仅有一个 weight>0 的候选；每个未停用渠道有且仅有一份未停用凭证；每个候选引用的纳管模型确实属于存在的渠道。违规即拒绝启动，报错须点名违规记录的 id/name。
+> - **请求时**：入口协议 ≠ 命中候选所在渠道协议 → 按入口协议原生格式回错，文案明确为「该转换路径尚未实现」。
 
 ### SQLite 表
 
@@ -309,7 +332,7 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 
 ## 9. Golden 测试方案
 
-**样本采集（M1 就抓，别等写完代码）**：用真实渠道抓下列 SSE 转录（raw 字节存档）。样本 1~6 刻意选「同语义、双协议」场景，天然构成 P1 转换测试的黄金输入对。场景清单可对照 sub2api `apicompat/` 的测试文件命名（`tool_pairing`、`parallel_tool`、`stream_lifecycle`、`codex_events` 等）补漏：
+**样本采集（M0 抓子集、M1 补全，别等写完代码）**：用真实渠道抓下列 SSE 转录（raw 字节存档）。样本 1~6 刻意选「同语义、双协议」场景，天然构成 P1 转换测试的黄金输入对。场景清单可对照 sub2api `apicompat/` 的测试文件命名（`tool_pairing`、`parallel_tool`、`stream_lifecycle`、`codex_events` 等）补漏：
 
 | # | 样本 | 场景 |
 |---|------|------|
@@ -322,6 +345,8 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | 7 | 以上 1~6 的非流式版本 | |
 | 8 | OpenAI Responses streaming | function_call 事件序列（P1 备料） |
 | 9 | 上游 429 / 500 / 流中途断连 | failover 与流内错误注入 |
+
+**M0 必抓子集（v0.10）**：样本 1~3（Anthropic 流式：文本 / 单 tool_use / 并行 tool_use）、4~6（CC 流式：文本 / 单 tool_calls 参数跨 chunk / 并行 index 交错）及其非流式版本（样本 7 的对应部分）。理由是 Tap 的测试要真实转录作输入，M0 就得有，等不到 M1。样本 8（Responses）与 9（上游异常）仍留 M1。**raw 字节存档前须人工过一遍，去掉真实凭证与个人对话内容。**
 
 **测试方法**：样本 → DecodeStream → 内存事件序列 → （跨协议用例再过 EncodeStream+对方 DecodeStream）→ 语义比对（忽略空白与顺序无关差异，比对文本全文、工具调用 name/参数解析后相等、usage、stop reason）。字节级 diff 只用于透传回归。
 
@@ -343,7 +368,7 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 
 | 里程碑 | 内容 | 粗估 |
 |---|---|---|
-| M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取；渠道/接入点 SQL 手工建；golden 样本采集启动；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传 | 1~2 个周末 |
+| M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍 | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
 | M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制；公网部署（Caddy TLS + 全局限流） | 待估 |
