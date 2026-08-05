@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.12
+> 状态：草案 v0.13
+> v0.13 变更（M0-4 实现期，2026-08-05）：§6.1 收敛「放弃解析」的粒度为**丢帧后重新对齐**并明确超限判定与分块无关，补 Tap 两条硬约束的实现落点；§9 补 golden 样本库的目录结构、`cmd/goldenrec` 录制流程与 `verified` 人工关卡。均为实现层展开，口径不变。
 > v0.12 变更（M0-3 实现期，2026-08-05）：`GET /v1/models` 实现落在 `internal/server` 而非 §3 列出的 `internal/admin/`，理由与待办见 §3 脚注。仅记实现偏离，口径不变。
 > v0.11 变更（M0-1 实现期，2026-08-05）：§6.1 补「模型名翻译走字节级 splice」——PO 裁定接入点对外名 → 纳管模型名的改写在 M0 就做，透传保真口径精确为「除顶层 `model` 值外逐字节相等」。另：路由解析（`Resolve`）实现落在 `internal/store` 而非 §3 列出的 `internal/router/`，理由与待办见 §3 脚注。
 > v0.10 变更（M0 开工前实现层展开，2026-08-05）：临时闸校验时机拆为「启动时校验单候选单凭证 / 请求时校验协议匹配」——接入点本身不绑协议，协议匹配只能到请求时才判（§7）；golden 样本子集提前到 M0 采集，因 Tap 测试需真实转录作输入（§9/§11）；新增 §6.1 透传实现细则（上游 URL 拼接、请求/响应头规则、流式转发与超时分层）。均为实现层展开，口径不变。
@@ -226,6 +227,12 @@ logging：无论成败异步落 call_logs
 
 **流式转发按字节块复制，永不按帧切分**：循环 `Read`（32KB 量级）→ `Write` → `Flush` 直到 EOF。不用 `bufio.Scanner` 按行读再重组——会引入换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。SSE 帧解析**只发生在 Tap 内**，Tap 从 `io.TeeReader` 拿同一份字节自组帧、自管缓冲上限（MB 级，并行工具调用的 JSON 参数单帧可以很大），**超限即放弃解析并降级**：Tap 的上限只影响日志字段完整性，绝不截断转发字节。（new-api 按行 Scanner 读、靠把 token 上限调到 64MB 躲大参数帧截断，本设计不取该路径。）
 
+> **「放弃解析」的粒度（v0.13 实现期收敛）**：放弃的是**那一帧**，不是整条流——丢掉超限帧后在下一个帧边界重新对齐、继续解析。理由是 Anthropic 的 `output_tokens` 与 stop_reason 都在流最末的 `message_delta` 里，一超限就整条罢工等于一个畸形大帧把整次调用的 usage 全带走。两种读法下 `Degraded` 都会置位，日志的可信度标记不受影响。
+>
+> 超限判定与分块无关：整帧连同结尾空行落在同一个 TCP 块里到达时同样按帧长判超限，否则「这帧算不算超限」会取决于上游恰好怎么切块。
+>
+> Tap 的两条硬约束落在实现上是：`Write` 恒定返回 `(len(p), nil)`（返回错误会被 `io.TeeReader` 变成读错误、直接打断转发），提取逻辑外包一层 `recover`（panic 只降级日志字段）。
+
 **超时分层，不设 `http.Client.Timeout`**——它覆盖整个 body 读取周期，长流必被拦腰掐断。改设 `TLSHandshakeTimeout`、`ResponseHeaderTimeout`（等上游首个响应头，120s 量级）、`IdleConnTimeout`。向客户端写出前用 `http.NewResponseController(w).SetWriteDeadline` 每次推进（30s 量级），防慢客户端把 handler 永久挂住。客户端断连靠把 `c.Request.Context()` 传给上游 request 自动传播取消。
 
 ## 7. 配置与数据模型
@@ -355,6 +362,10 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | 9 | 上游 429 / 500 / 流中途断连 | failover 与流内错误注入 |
 
 **M0 必抓子集（v0.10）**：样本 1~3（Anthropic 流式：文本 / 单 tool_use / 并行 tool_use）、4~6（CC 流式：文本 / 单 tool_calls 参数跨 chunk / 并行 index 交错）及其非流式版本（样本 7 的对应部分）。理由是 Tap 的测试要真实转录作输入，M0 就得有，等不到 M1。样本 8（Responses）与 9（上游异常）仍留 M1。**raw 字节存档前须人工过一遍，去掉真实凭证与个人对话内容。**
+
+**采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
+
+`meta.json` 的 `expect` 由 goldenrec 用 Tap 自己预填，**只是草稿**：出自被测代码的期望值等于让实现给自己判卷，因此 `golden_test.go` 拒绝一切 `verified: false` 的样本。把 `verified` 置 true 是人工关卡，与「脱敏时人工过一遍」是同一道工序——核对脱敏、核对 expect 与原始字节相符，一起做。未采集的样本按名字逐个 skip，目录空着不会一路绿灯。
 
 **测试方法**：样本 → DecodeStream → 内存事件序列 → （跨协议用例再过 EncodeStream+对方 DecodeStream）→ 语义比对（忽略空白与顺序无关差异，比对文本全文、工具调用 name/参数解析后相等、usage、stop reason）。字节级 diff 只用于透传回归。
 

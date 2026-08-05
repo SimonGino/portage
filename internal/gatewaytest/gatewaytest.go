@@ -104,7 +104,102 @@ func (u *Upstream) RespondWith(status int, header map[string]string, body string
 // Gateway is a running gateway backed by a temporary database.
 type Gateway struct {
 	*httptest.Server
-	DB *sql.DB
+	DB  *sql.DB
+	log *logCapture
+}
+
+// LogLine is one slog record the gateway emitted, with its attributes flattened.
+type LogLine struct {
+	Message string
+	Attrs   map[string]any
+}
+
+// Str 取字符串属性；缺失即空串——断言「这个字段必须有值」时正好落空。
+func (l LogLine) Str(key string) string {
+	s, _ := l.Attrs[key].(string)
+	return s
+}
+
+// Int64 取整数属性。slog 把 Go 的各种整型都归到 int64。
+func (l LogLine) Int64(key string) int64 {
+	switch v := l.Attrs[key].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	}
+	return 0
+}
+
+type logCapture struct {
+	mu    sync.Mutex
+	lines []LogLine
+	raw   strings.Builder
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.raw.Write(p)
+}
+
+// captureHandler 两头都要：结构化的一份供逐字段断言，渲染后的一份供「整行里不该
+// 出现凭证/base_url」这类扫描——泄漏可能发生在任何一个属性上，只查已知字段会漏。
+type captureHandler struct {
+	c    *logCapture
+	text slog.Handler
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(ctx context.Context, r slog.Record) error {
+	line := LogLine{Message: r.Message, Attrs: map[string]any{}}
+	r.Attrs(func(a slog.Attr) bool {
+		line.Attrs[a.Key] = a.Value.Any()
+		return true
+	})
+	h.c.mu.Lock()
+	h.c.lines = append(h.c.lines, line)
+	h.c.mu.Unlock()
+	return h.text.Handle(ctx, r)
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+// Lines returns every log record whose message is msg.
+func (g *Gateway) Lines(msg string) []LogLine {
+	g.log.mu.Lock()
+	defer g.log.mu.Unlock()
+	var out []LogLine
+	for _, l := range g.log.lines {
+		if l.Message == msg {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// LastCall returns the调用日志 line of the most recent relayed call.
+func (g *Gateway) LastCall(t *testing.T) LogLine {
+	t.Helper()
+	lines := g.Lines("call")
+	if len(lines) == 0 {
+		t.Fatalf("没有落任何调用日志；已落的日志: %s", g.RawLog())
+	}
+	return lines[len(lines)-1]
+}
+
+// RawLog returns every log line as rendered text.
+func (g *Gateway) RawLog() string {
+	g.log.mu.Lock()
+	defer g.log.mu.Unlock()
+	return g.log.raw.String()
+}
+
+// Options overrides the startup configuration for the few tests that need it.
+type Options struct {
+	LogBodies bool
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -123,14 +218,22 @@ func NewDB(t *testing.T) *sql.DB {
 // directly when the rejection is what you are asserting.
 func Start(t *testing.T, db *sql.DB) *Gateway {
 	t.Helper()
+	return StartWith(t, db, Options{})
+}
+
+// StartWith is Start with configuration overrides.
+func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
+	t.Helper()
 	if err := store.Validate(t.Context(), db); err != nil {
 		t.Fatalf("启动校验未通过: %v", err)
 	}
 	cfg := config.Default()
-	log := slog.New(slog.DiscardHandler)
+	cfg.LogBodies = opts.LogBodies
+	capture := &logCapture{}
+	log := slog.New(&captureHandler{c: capture, text: slog.NewTextHandler(capture, nil)})
 	srv := httptest.NewServer(server.New(cfg, db, log).Engine())
 	t.Cleanup(srv.Close)
-	return &Gateway{Server: srv, DB: db}
+	return &Gateway{Server: srv, DB: db, log: capture}
 }
 
 // SeedPassthrough wires the smallest complete configuration: one channel with

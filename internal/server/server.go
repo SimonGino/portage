@@ -34,16 +34,21 @@ const (
 // 不用 io.Copy：它不 flush，SSE 帧会攒在 net/http 的缓冲里，客户端要等攒满或流结束
 // 才看得到——正是「逐字输出」失效的成因。也不用 bufio.Scanner 按行读再重组：那会引入
 // 换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。
-func relayBody(w gin.ResponseWriter, body io.Reader) error {
+func relayBody(w gin.ResponseWriter, body io.Reader, onFirstByte func()) error {
 	rc := http.NewResponseController(w)
 	// 先兜住响应头本身与空 body 的情形，之后每写一块再推进一次。
 	if err := advanceWriteDeadline(rc); err != nil {
 		return err
 	}
 	buf := make([]byte, copyBufferSize)
+	first := true
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
+			if first {
+				first = false
+				onFirstByte()
+			}
 			if err := advanceWriteDeadline(rc); err != nil {
 				return err
 			}
@@ -171,10 +176,27 @@ type requestHead struct {
 
 func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		rec := &callRecord{
+			start:        time.Now(),
+			endpoint:     ep.Path,
+			inboundProto: ep.Proto,
+			outcome:      "rejected",
+		}
+		// 一次调用一行日志，无论走到哪个分支收场——包括首字节后断流那条
+		// panic 路径（defer 在 panic 展开时照常执行）。
+		defer func() {
+			rec.status = c.Writer.Status()
+			s.logCall(rec)
+		}()
+
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			ep.Proto.WriteError(c.Writer, http.StatusBadRequest, "读取请求体失败")
 			return
+		}
+		if s.cfg.LogBodies {
+			rec.requestBody = &captureWriter{}
+			_, _ = rec.requestBody.Write(body)
 		}
 
 		var head requestHead
@@ -186,6 +208,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			ep.Proto.WriteError(c.Writer, http.StatusBadRequest, "请求体缺少 model 字段")
 			return
 		}
+		rec.accessPoint, rec.stream = head.Model, head.Stream
 
 		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model)
 		switch {
@@ -200,6 +223,8 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			ep.Proto.WriteError(c.Writer, http.StatusInternalServerError, "接入点解析失败")
 			return
 		}
+
+		rec.channel, rec.channelProto, rec.upstreamModel = cand.ChannelName, cand.Protocol, cand.UpstreamModel
 
 		// 临时闸：转换路径未实现前，入口协议必须等于命中候选所在渠道的协议。
 		if cand.Protocol != ep.Proto {
@@ -219,16 +244,37 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		resp, err := s.up.Do(c.Request.Context(), cand, ep, forward, c.Request.Header, head.Stream)
 		if err != nil {
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
+			rec.outcome = "upstream_error"
 			s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 			ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
 			return
 		}
 		defer resp.Body.Close()
 
+		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
+		// 转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。
+		var observers []io.Writer
+		if tap := newTap(cand.Protocol, head.Stream); tap != nil {
+			observers = append(observers, tap)
+			defer func() {
+				rec.summary, rec.haveSummary = tap.Summary(), true
+			}()
+		}
+		if s.cfg.LogBodies {
+			rec.responseBody = &captureWriter{}
+			observers = append(observers, rec.responseBody)
+		}
+		src := io.Reader(resp.Body)
+		if len(observers) > 0 {
+			src = io.TeeReader(resp.Body, io.MultiWriter(observers...))
+		}
+
 		upstream.CopyResponseHeaders(c.Writer.Header(), resp.Header)
 		c.Writer.WriteHeader(resp.StatusCode)
-		if err := relayBody(c.Writer, resp.Body); err != nil {
+		rec.outcome = "ok"
+		if err := relayBody(c.Writer, src, func() { rec.firstByte = time.Now() }); err != nil {
 			// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
+			rec.outcome = "stream_aborted"
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 			panic(http.ErrAbortHandler)
 		}
