@@ -1,0 +1,27 @@
+# binaries & build
+/bin/
+/dist/
+*.exe
+
+# Go
+*.test
+*.out
+vendor/
+
+# data & secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+config.yaml
+channels.yaml
+!*.example.yaml
+
+# frontend
+node_modules/
+web/dist/
+
+# tooling
+.DS_Store
+.idea/
+.vscode/

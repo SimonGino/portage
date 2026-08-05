@@ -1,0 +1,377 @@
+# 个人 AI 模型网关 MVP 设计草案
+
+> 状态：草案 v0.9
+> v0.9 变更（口径层 v0.17，2026-08-05）：初始渠道集改为 Anthropic / OpenAI / Gemini Vertex AI / 阿里百炼（oMLX、DeepSeek、硅基流动移出）；Vertex 与百炼走 OpenAI 兼容端点（协议矩阵不动）；渠道凭证类型 `api_key` / `service_account` 二选一，key 池泛化为凭证池（§0/§7/§11/§12）。
+> v0.8 变更（口径层 v0.13~v0.16，2026-08-05）：harness 验收分档（必过：Claude Code、Codex CLI；顺带：pi、OpenCode）；管理员 session 鉴权细则、全局限流配置项、key 前缀 `sk-aig-` 落定（§0/§7/§8/§10）。
+> v0.7 变更（口径层 v0.12，2026-08-05）：候选改绑「渠道纳管的模型」（新增 `channel_models` 表，candidates 引用之）；里程碑重排——多候选分流/候选间转移/key 池聚合实现打包 M4 置于 M3 后，M0~M2 强制单候选单 key；占位假设 #2 关闭（§0/§6/§7/§11）。
+> v0.6 变更（口径层 v0.11，2026-08-05）：占位假设 #1 关闭——v1 初始渠道集定为主流五渠道；渠道多 key 聚合（`channel_keys` 表 + key_mode + 401/403 摘 key）；§6 故障转移补 key 层内环（§0/§6/§7）。
+> v0.5 变更（口径层 C4 收敛，2026-08-05）：候选间故障转移定稿——429/5xx/网络错误/连接超时且未写首字节触发，剔除失败候选后剩余重新归一化权重再抽，其余 4xx 不切，无同候选重试，A-14 D3 范式无跨请求状态（§1/§6/§11）。
+> v0.4 变更（口径层 C2 收敛，2026-08-05）：配置载体由 YAML 改为「最小启动配置 + 业务配置（渠道/接入点/key）全 DB」，React 管理端入 v1（M3，含渠道/接入点写界面——PO 日常高频编辑渠道）；管理端就绪前用 SQL 手工维护。里程碑与口径层统一为 M0~M3（§0/§1/§3/§7/§8/§11）。
+> v0.3 变更（口径层 C1/C3 收敛，2026-08-05）：①协议转换确认属 **v1 承诺范围**，P1 = v1 内后续里程碑而非另立项，分批 ①~④ 按口径层 §2.1 优先级；跨协议校验降格为临时闸。②路由模型重写为「接入点 + 候选（渠道，上游模型名，权重）加权随机」，`routes`/「模型映射表」术语退役（§0/§2/§6/§7/§11）。
+> v0.2 变更：协议转换从 P0 降为 P1。设计态考虑保留四项交付物：架构 seam（§6）、canonical 事件模型（§4）、codec 接口与坑清单（§5）、golden 素材（§9），均按定稿标准维护。
+> 定位：个人使用的 AI 模型网关，参考 new-api 的转发内核重写，只做转发 + 协议转换 + key 鉴权 + 调用日志，不含任何运营功能。
+
+## 0. 待确认的占位假设
+
+以下四项中，#1/#2/#7 是起草时的默认假设（**正式开工前须替换为真实值**），#9 已决策定稿：
+
+| # | 项目 | 当前假设 | 待确认 |
+|---|------|---------|--------|
+| 1 | ~~上游渠道~~（已决 v0.17） | v1 初始集：Anthropic 官方、OpenAI 官方、Gemini Vertex AI（OpenAI 兼容端点 + SA 凭证）、阿里百炼（OpenAI 兼容）；渠道多凭证聚合见 §7 `channel_keys` | 已决 |
+| 2 | ~~接入点清单~~（已决） | 运营数据不冻结。候选 = 渠道纳管模型 + 权重（§7）。M0 验收集：`claude-sonnet-4-5`→Anthropic 官方；一个 CC 透传接入点→百炼（qwen 系）或 OpenAI 官方，各单候选 | 已决 |
+| 7 | ~~目标 harness~~（已决） | 必过档：Claude Code、Codex CLI（挡里程碑验收）；顺带档：pi、OpenCode（不挡，坏了再修）| 已决 |
+| 9 | ~~转换方向优先~~（已决） | 协议转换属 v1 承诺，P0 仅同协议透传，P1 按口径层 §2.1 优先级分批；设计态考虑见 §2 | 已决 |
+
+其余采用默认值：单用户（单管理员）、最小启动配置 + 业务配置全 DB、React 管理端（M3）、每 key 可限 allowed_models、默认不记录请求体。
+
+## 1. 目标与非目标
+
+**目标**
+
+- 对外提供 3 种协议入口：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages
+- 上游支持同三种协议出口；**P0 仅同协议透传，协议转换为 P1（属 v1 承诺范围，非另立项）**（设计态考虑，见 §2/§4/§5）
+- 候选间故障转移（429/5xx/网络错误/连接超时且未写首字节触发；剔除失败候选、重新归一化加权再抽；详见 §6）
+- API key 鉴权（可多张 key，区分调用来源）
+- 调用日志（含 token 用量，用于排障与自查用量）
+- React 管理端（M3）：渠道 / 接入点（候选+权重）/ key / 用量查询，构建产物 embed 进单二进制
+
+**非目标（明确不做）**
+
+多用户与注册、额度/计费/支付/兑换码、上游模型列表自动同步、批处理、文件上传、音频、图像生成、模型微调。
+
+## 2. 协议支持矩阵与分期
+
+入口 × 出口 共 9 格：
+
+| 入口 ↓ / 出口 → | Anthropic | Chat Completions | Responses |
+|---|---|---|---|
+| Anthropic Messages | **P0 透传** | P1-① 转换 | P1-④ 转换 |
+| Chat Completions | P1-③ 转换 | **P0 透传** | P1-③ 转换 |
+| Responses | P1-② 转换 | P1-① 转换 | **P0 透传** |
+
+- 分批号 ①~④ 即口径层 §2.1 实现优先级：**①** A→CC、R→CC（主诉求：harness 挂第三方便宜模型）；**②** R→A（Codex 用 Claude）；**③** CC→A、CC→R；**④** A→R（允许滑到最后）。
+- 首批特性集 = 纯文本 + tool calls（含并行调用）+ system prompt + 停止原因 + usage；图片、count_tokens 估算、thinking 精细策略等横切增强随 ③④ 批排期。
+- Responses 无状态化（`previous_response_id` 处理）随 ① 的 R→CC 一并落地。
+
+**「设计态考虑」落为三条硬约束：**
+1. **管线 seam 现在就定型**（§6）：同协议走原始字节透传，异协议走 canonical 编解码；P1 只是填充后一路，seam 位置不变。
+2. **canonical 事件模型与 codec 接口现在就按定稿标准写**（§4/§5），P1 开工不重设计。
+3. **golden 样本 M1 就采集**（§9），刻意选「同语义、双协议」场景，天然构成 P1 转换的黄金输入对。
+- 有损转换策略（已决）：
+  - thinking / reasoning：跨协议**丢弃 + 记日志警告**，不做伪映射；同协议透传保留。
+  - cache_control：仅「出口为 Anthropic」时保留；转往其他协议时静默剥离。
+  - temperature：Anthropic 区间 0~1，OpenAI 0~2，转换时 clamp。
+  - count_tokens：P0 上游非 Anthropic 时返回 501 风格错误；P1 做字符估算。
+
+## 3. 模块划分
+
+```
+cmd/gateway/main.go        # 装配：config → store → server
+internal/config/           # 最小启动配置加载；业务配置读 DB，校验 + 变更热生效
+internal/auth/             # API key 中间件：hash 校验、allowed_models 过滤
+internal/router/           # 模型名 → 有序渠道列表解析
+internal/protocol/         # canonical 事件模型（P0 定稿，§4）；codec 接口（P0 定稿，P1 实现，§5）
+  internal/protocol/anthropic/      # 每协议包内两层：Tap（P0）+ Codec（P1）
+  internal/protocol/openaicc/
+  internal/protocol/openairesponses/
+internal/convert/          # canonical 之间的请求级归一（其实是 codec 内部实现细节）
+internal/upstream/         # HTTP client、SSE 读取、failover 驱动
+internal/logging/          # 调用日志写库、查询
+internal/store/            # SQLite：channels、access_points、candidates、api_keys、call_logs
+internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRUD、用量查询，M3 扩全）、React 静态资源 embed
+```
+
+关键模块职责：
+
+- **`protocol/<proto>`**：包内两层——
+  - **`Tap`（P0，最深模块之一）**：旁路解析同协议透传流，只提取 usage / 模型 / stop reason 供日志，只读不改流。透传保真优先级最高——P0 **不做** decode→encode 转码，避免 canonical 模型丢字段。
+  - **`Codec`（P1，最深模块）**：实现 §5 接口，协议怪癖（tool call 增量重组、stop reason 映射等）全封在里面；P1 落地时 Tap 复用 Codec 的解码器。
+- **`upstream`**：负责把一次「canonical 请求 + 渠道」打成真实 HTTP 调用，返回事件流或错误；驱动 failover。
+- **`router`** 与 **`auth`** 保持浅薄，不藏逻辑。
+
+## 4. 内部事件模型（canonical events）
+
+> **P0 定稿、P1 实现。** P0 透传路径不经过本模型（由 Tap 旁路解析），本节用于锁定 P1 的语义底座。
+
+三个协议的流统一归一到以下事件序列；非流式响应当作「完整事件序列一次性回放」，上下游代码不分流式两套：
+
+```go
+type EventType int
+const (
+    EvMessageStart EventType = iota // {ID, Model}
+    EvTextDelta                     // {Text}
+    EvToolCallStart                 // {Index, ID, Name}
+    EvToolArgsDelta                 // {Index, JSONFragment}
+    EvToolCallEnd                   // {Index}
+    EvThinkingDelta                 // {Text, Signature?} 跨协议时由转换层丢弃
+    EvUsage                         // {InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}
+    EvDone                          // {StopReason: "stop"|"tool_calls"|"length"|...}
+    EvError                         // {Status, Message} 上游错误的流内表达
+)
+
+type Event struct {
+    Type EventType
+    // 按 Type 取用对应字段；用 struct 内嵌或 union 风格均可，实现时定
+}
+```
+
+请求侧同样有 canonical 模型：
+
+```go
+type Request struct {
+    Model        string
+    System       string            // 归一为独立字段，各出口自行落位
+    Messages     []Message         // role: user/assistant/tool; content blocks: text/image(P1)/tool_result
+    Tools        []Tool            // name/description/parameters(JSON schema)
+    ToolChoice   string            // auto/none/required/单工具，做能力对齐降级
+    MaxTokens    int               // Anthropic 必填：OpenAI 来源缺省时按配置 default_max_tokens 填充
+    Temperature  *float64          // 出口侧 clamp
+    Stop         []string
+    Extras       map[string]any    // 协议特有字段（cache_control、reasoning_effort…），同协议透传时取出
+}
+```
+
+设计要点：tool call 的 id 与 index 语义在 canonical 层固定（Index 为序，ID 为稳定标识），三个 codec 各自负责映射到本协议的增量格式。
+
+## 5. 转换器（codec）接口
+
+> **P0 定稿、P1 实现。** 接口与坑清单用于约束架构 seam 与 P1 验收标准。
+
+```go
+type Codec interface {
+    DecodeRequest(body []byte, stream bool) (*protocol.Request, error)   // 入口请求 → canonical
+    EncodeRequest(req *protocol.Request, stream bool) ([]byte, error)    // canonical → 出口请求
+    DecodeStream(r io.Reader) (<-chan protocol.Event, error)             // 上游 SSE → 事件流
+    EncodeStream(w io.Writer, events <-chan protocol.Event) error        // 事件流 → 下行 SSE（含 flush）
+    EncodeFullBody(events []protocol.Event) ([]byte, error)              // 非流式响应聚合
+    EncodeError(w io.Writer, status int, err error)                      // 协议原生错误格式
+}
+```
+
+- 每个协议一个包实现 `Codec`；「A→B 转换」= CodecA 解码 + CodecB 编码，**不存在两两互转的转换器**。实证依据：网桥式（逐对状态机）并非不可行——sub2api `apicompat/` 在三协议六方向上做成了生产级；但其 CC→A 流式路径是 `CC→Responses + R→Anthropic` 链式二次转换，恰说明无统一中枢时方向组合退化为拼凑链。枢纽式对新增协议保持 O(n) 扩展，本设计取枢纽。
+- `EncodeStream` 内部管理：SSE 分帧、index 追踪（OpenAI 工具调用按 index 分片需按出现顺序重建）、`[DONE]` 终止符、Anthropic 的 `message_start/stop` 包裹。
+
+### 转换坑清单（codec 实现时的验收关注点）
+
+| 坑 | 说明 |
+|---|---|
+| tool call 增量重组 | OpenAI 按 index 分发参数分片；Anthropic `input_json_delta`；并行调用下 index 交错出现，必须按 Index 缓存再按序输出 |
+| `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
+| 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
+| stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
+| 厂商私有推理字段 | DeepSeek 系 `reasoning_content` 等非标字段不建模，走 `Request.Extras` 透传 |
+| Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
+| Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
+| 角色交替约束 | Anthropic 要求 user/assistant 交替；OpenAI 允许多条连续同角色；转 Anthropic 前需合并相邻同角色消息 |
+| assistant 空 content | 纯 tool_calls 的 assistant 消息 content 可能为 null，转 Anthropic 时空块要剔除 |
+| tool_result id 对齐 | OpenAI `tool_call_id` ↔ Anthropic `tool_use_id`，互转时 id 原样携带 |
+| streaming usage | OpenAI 需 `stream_options.include_usage` 才在流末尾给 usage；向 OpenAI 出口发流式请求时**强制注入该参数**，否则日志拿不到 token 数 |
+| stop reason 映射 | `end_turn`↔`stop`、`tool_use`↔`tool_calls`/`function_call`、`max_tokens`↔`length` 查表，未知值统一 `stop` |
+
+## 6. 主链路时序
+
+```
+client (harness)
+  │ POST /v1/messages | /v1/chat/completions | /v1/responses
+  ▼
+auth 中间件：key hash 校验 → 取出 allowed_models
+  ▼
+入口协议识别（路径匹配）
+  ▼
+router：接入点（对外模型名）→ 命中候选（渠道纳管模型；M0~M2 单候选直连，M4 起加权随机；过滤 key 的 allowed_models）
+  ▼
+协议分流（seam，P0 定型）：
+  渠道协议 == 入口协议 ──► 原始字节透传，Tap 旁路提取 usage（P0）
+  渠道协议 != 入口协议 ──► codec 转换路径（P1；P0 期配置校验保证不命中，见 §7）
+  ▼
+upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、不记忆、不摘除。**实现在 M4**；M0~M2 单候选单 key 退化：失败不切换，直接按入口协议原生格式回错）：
+  候选集 = 该接入点 weight>0 的候选
+  loop：对未试过的候选重新归一化权重，加权随机抽一个
+      渠道内按 key_mode 选启用 key（key 层内环，v0.11）：
+          请求上游成功 ──► 透传 / 转换下行（写出首字节后不再切换）
+          429/401/403（未写首字节）──► 渠道内换未试过的启用 key 重试；401/403 同时摘除该 key（记原因，可恢复）
+          5xx/网络错误/连接超时 ──► 不换 key，跳出内环
+      渠道内 key 耗尽 或 5xx/网络错误/连接超时 ──► 剔除该候选，继续 loop
+      其余 4xx ──► 不切换，按入口协议原生错误格式直接返回
+      候选耗尽 ──► 最后一次上游错误按入口协议原生格式返回
+  无盲目原地重试；harness 自身重试逻辑保持生效（§10：候选耗尽后 429 原样透传）
+  ▼
+logging：无论成败异步落 call_logs
+```
+
+**关键约束：failover 边界 = 向 client 写出第一个字节之前。** 一旦开始下行写流，格式承诺已生效，再失败只能：终止连接或注入出口协议的错误事件，并记日志；**不得切换渠道重发**（new-api 同原则）。
+
+## 7. 配置与数据模型
+
+### 启动配置（config.yaml，最小）
+
+```yaml
+listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 Caddy/限流
+db_path: "./gateway.db"
+admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效
+default_max_tokens: 8192
+log_bodies: false                  # 排障开关；默认不记请求体
+rate_limit_qps: 10                 # 全局令牌桶（v0.15）；超限 429 + Retry-After
+rate_limit_burst: 20
+```
+
+业务配置（渠道/接入点/key）全部落 DB，由管理端维护（M3）；管理端就绪前（M0~M2）用 SQL 手工维护（口径层 C2 收敛，v0.8）。
+
+> **配置校验规则（临时闸，随转换批次逐步放开）**：候选渠道协议与入口协议不同、且对应转换路径尚未实现时，校验报错。透传-only 阶段（P0）等价于「同一接入点候选协议必须一致且等于入口协议」。这不是 v1 边界——全互转属 v1 承诺（口径层 C1 已收敛）。校验时机：启动加载时 + 管理端保存时。
+
+### SQLite 表
+
+```sql
+CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职责
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  protocol TEXT NOT NULL,          -- anthropic | openai_cc | openai_responses
+  base_url TEXT NOT NULL,
+  credential_type TEXT NOT NULL DEFAULT 'api_key',  -- api_key | service_account（Vertex：SA JSON→token 刷新，v0.17）
+  key_mode TEXT NOT NULL DEFAULT 'polling',  -- polling | random：凭证池选取模式
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE channel_keys (        -- 渠道凭证池（new-api 密钥聚合的建表版，不用 blob+JSON 状态 map）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  credential TEXT NOT NULL,        -- 静态 key 或 SA JSON（按渠道 credential_type）；仅存服务端，错误回显严禁泄露
+  disabled INTEGER NOT NULL DEFAULT 0,
+  disabled_reason TEXT,            -- 仅 401/403 确定性失效自动摘除；429/5xx 不摘；管理端可恢复
+  disabled_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE access_points (       -- 接入点：对外模型名（客户端 model 字段）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  model TEXT NOT NULL UNIQUE,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE channel_models (      -- 渠道纳管的可用模型（上游模型名）；候选只能引用纳管条目
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  upstream_model TEXT NOT NULL,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(channel_id, upstream_model)
+);
+
+CREATE TABLE candidates (          -- 候选 =（渠道纳管模型，权重）；weight=0 临时摘除
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  access_point_id INTEGER NOT NULL REFERENCES access_points(id) ON DELETE CASCADE,
+  channel_model_id INTEGER NOT NULL REFERENCES channel_models(id),
+  weight INTEGER NOT NULL DEFAULT 100,
+  UNIQUE(access_point_id, channel_model_id)
+);
+-- M0~M2 临时闸：配置校验强制每接入点单候选、每渠道单 key；多候选/多 key 的实现在 M4
+
+CREATE TABLE api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  key_hash TEXT NOT NULL UNIQUE,
+  allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE call_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  api_key_name TEXT NOT NULL,
+  client_protocol TEXT NOT NULL,       -- anthropic | openai_cc | openai_responses
+  upstream_protocol TEXT NOT NULL,
+  model_requested TEXT NOT NULL,
+  model_upstream TEXT NOT NULL,
+  channel_name TEXT NOT NULL,
+  status INTEGER NOT NULL,             -- 最终对 client 的状态
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  ttft_ms INTEGER,                     -- 首字节耗时（流式）
+  total_ms INTEGER NOT NULL,
+  input_tokens INTEGER, output_tokens INTEGER,
+  cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+  error TEXT                           -- 截断后的错误摘要
+);
+CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
+```
+
+注：若未来改 MySQL，表须显式 `CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`（与团队 DDL 规范一致）。
+
+## 8. 最小管理接口
+
+- `GET /healthz`
+- `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉）
+- `GET /admin/logs?limit=50&model=...`：近期调用日志（管理员 session 鉴权，细则见口径层 §2.7）
+- 管理端 CRUD API（渠道/接入点/key）随 M3 扩全，届时另列；上表为 M0~M2 最小集
+- Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501
+
+## 9. Golden 测试方案
+
+**样本采集（M1 就抓，别等写完代码）**：用真实渠道抓下列 SSE 转录（raw 字节存档）。样本 1~6 刻意选「同语义、双协议」场景，天然构成 P1 转换测试的黄金输入对。场景清单可对照 sub2api `apicompat/` 的测试文件命名（`tool_pairing`、`parallel_tool`、`stream_lifecycle`、`codex_events` 等）补漏：
+
+| # | 样本 | 场景 |
+|---|------|------|
+| 1 | Anthropic streaming | 纯文本长回复 |
+| 2 | Anthropic streaming | 单次 tool_use |
+| 3 | Anthropic streaming | 并行多 tool_use 交错增量 |
+| 4 | OpenAI CC streaming | 纯文本 |
+| 5 | OpenAI CC streaming | 单次 tool_calls（参数跨 chunk） |
+| 6 | OpenAI CC streaming | 并行 tool_calls，index 交错 |
+| 7 | 以上 1~6 的非流式版本 | |
+| 8 | OpenAI Responses streaming | function_call 事件序列（P1 备料） |
+| 9 | 上游 429 / 500 / 流中途断连 | failover 与流内错误注入 |
+
+**测试方法**：样本 → DecodeStream → 内存事件序列 → （跨协议用例再过 EncodeStream+对方 DecodeStream）→ 语义比对（忽略空白与顺序无关差异，比对文本全文、工具调用 name/参数解析后相等、usage、stop reason）。字节级 diff 只用于透传回归。
+
+## 10. harness 验收清单
+
+必过档挡里程碑验收；顺带档不挡、坏了再修（#7 已决）。
+
+| harness | 档位 | 协议 | 必过项 |
+|---|---|---|---|
+| Claude Code | 必过 | Anthropic | `/v1/messages` 流式工具调用整轮跑通；cache_control 透传（Anthropic 出口）；`count_tokens` 不阻塞启动 |
+| Codex CLI | 必过 | CC / Responses | CC 模式工具调用；Responses 模式透传（P0） |
+| pi | 顺带 | CC | 工具调用、streaming usage |
+| OpenCode | 顺带 | CC | `/v1/models` 列表 + 工具调用 |
+| 全部 | — | 429 原样透传不被网关吞掉；harness 自身重试逻辑生效 |
+
+## 11. 里程碑
+
+与口径层统一为 M0~M3（C2 收敛后统一编号）：
+
+| 里程碑 | 内容 | 粗估 |
+|---|---|---|
+| M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取；渠道/接入点 SQL 手工建；golden 样本采集启动；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传 | 1~2 个周末 |
+| M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
+| M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍 | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制；公网部署（Caddy TLS + 全局限流） | 待估 |
+| M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收 | 待估 |
+
+## 12. 参考对照
+
+仓库索引与各仓库定位、许可证注意事项见本仓库 `CLAUDE.md`「参考仓库」一节；下表是逐文件的路径对照。**本项目不参考公司 fork `maix_ops_go`**；下表 new-api 路径均为 `~/Code/GitHub/new-api`（上游）相对路径，已逐一核实存在。
+
+| 参考仓库 / 位置 | 参考什么 |
+|---|---|
+| `new-api/relaykit/dto/`（claude.go、openai_request.go） | canonical 请求模型的现实形态（注意：上游在 `relaykit/dto/`，非 fork 的 `dto/`） |
+| `new-api/relay/channel/claude/adaptor.go`、`relay/claude_handler.go` | Claude 编解码 |
+| `new-api/relay/chat_completions_via_responses.go`、`relay/responses_handler.go` | CC ↔ Responses 互转 |
+| `new-api/relay/helper/`、`relay/common/` | SSE 工具函数 |
+| `new-api/relay/relay_adaptor.go`、`model/channel*.go` | failover / 渠道选择思路（不取其复杂度）；`model/channel.go` 多 key 聚合语义（我们改为建表实现） |
+| `new-api/relay/channel/vertex/service_account.go` | Vertex service account → access token 刷新（credential_type=service_account 参考） |
+| `new-api/model/log.go` | 日志落库 |
+| `litellm/litellm/llms/*/chat/`（各 provider transformation） | P1 协议转换字段映射的交叉对照（thinking、tool calling、usage 语义） |
+| `sub2api/backend/internal/pkg/apicompat/` | **P1 转换的 Go 实现首要参考**：自包含转换库（A↔CC、Responses↔CC/A bridge、Responses SSE 事件线格式，含 Codex 事件流测试）；注意 LGPL-3.0，参考思路可、整包复制需评估义务 |
+| `sub2api/backend/` 其余 | Anthropic 协议侧处理与 Go 工程结构参考（订阅池/计费不抄） |
+
+## 附录：开放问题记录
+
+- ~~上游清单与各渠道 key 数~~（#1 已决 v0.17：Anthropic/OpenAI/Vertex/百炼四渠道 + 渠道多凭证聚合，见 §0/§7）
+- ~~真实接入点与候选清单~~（#2 已决：运营数据不冻结，M0 验收集见 §0）
+- ~~harness 清单增删~~（#7 已决：必过档 Claude Code、Codex CLI；顺带档 pi、OpenCode）
+- ~~转换方向优先级~~（#9 已决：协议转换属 v1、透传先行、按口径层 §2.1 分批，设计态考虑落 §2/§4/§5/§6）
+- ~~**转换方向集合**~~（已决：口径层 v0.3 裁定为三协议全互转，6 转换 + 3 透传，全集为准；分期之争已随 C1 收敛：属 v1 承诺、节奏透传先行）
+- 公网暴露与否 → 决定 TLS / 限流 / listen 地址默认值
+- ~~thinking 同协议透传是否进 P0~~（已随 P0 原始字节透传自动解决；跨协议丢弃仍是 P1 已决策略）
