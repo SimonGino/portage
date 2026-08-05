@@ -80,13 +80,19 @@ func TestStreamReachesClientBeforeUpstreamFinishes(t *testing.T) {
 	}
 }
 
+// 这些样本刻意挑「按行读再重组」会改写的形态。只用 \n\n 帧是测不出来的——
+// 拆成行再用 \n 拼回去，字节完全一样，一个 bufio.Scanner 实现能全绿通过。
 func TestStreamBytesAreVerbatim(t *testing.T) {
 	gw, up := newAnthropicGateway(t)
 	frames := []string{
 		sseFrame("message_start", `{"type":"message_start","message":{"id":"msg_01"}}`),
-		sseFrame("content_block_delta", `{"type":"content_block_delta","delta":{"text":"你好"}}`),
+		// SSE 允许 CRLF 行尾。bufio.ScanLines 会把 \r 吃掉，重组时补不回来。
+		"event: content_block_delta\r\ndata: {\"delta\":{\"text\":\"你好\"}}\r\n\r\n",
 		sseFrame("message_delta", `{"usage":{"output_tokens":3}}`),
 		sseFrame("message_stop", `{"type":"message_stop"}`),
+		// 收尾不带终止符：上游中途断连时就是这个形态。透传不该替它补换行，
+		// 也不该把这段没读完的尾巴丢掉。
+		"event: ping",
 	}
 	streamUpstream(t, up, frames...)()
 
@@ -134,6 +140,63 @@ func TestStreamSurvivesLongSilence(t *testing.T) {
 	}
 	if !strings.Contains(string(rest), "message_stop") {
 		t.Errorf("静默后的收尾帧没到: %q", rest)
+	}
+}
+
+// 流式请求的头处理（§6.1）：Accept 缺省补 SSE，Accept-Encoding 显式 identity——
+// 上游一压缩就会引入分块缓冲，首字延迟被拖长，逐字输出的观感就没了。
+func TestStreamRequestHeaders(t *testing.T) {
+	t.Run("客户端未给 Accept 时补 text/event-stream", func(t *testing.T) {
+		gw, up := newAnthropicGateway(t)
+		streamUpstream(t, up, sseFrame("message_stop", `{}`))()
+
+		gw.Post(t, "/v1/messages", streamRequest, nil)
+
+		got := up.Last(t)
+		if v := got.Header.Get("Accept"); v != "text/event-stream" {
+			t.Errorf("Accept = %q, 期望补 text/event-stream", v)
+		}
+		if v := got.Header.Get("Accept-Encoding"); v != "identity" {
+			t.Errorf("Accept-Encoding = %q, 流式必须显式 identity", v)
+		}
+	})
+
+	t.Run("客户端给了 Accept 就用它的", func(t *testing.T) {
+		gw, up := newAnthropicGateway(t)
+		streamUpstream(t, up, sseFrame("message_stop", `{}`))()
+
+		gw.Post(t, "/v1/messages", streamRequest, map[string]string{"Accept": "application/json"})
+
+		if v := up.Last(t).Header.Get("Accept"); v != "application/json" {
+			t.Errorf("Accept = %q, 期望取客户端值", v)
+		}
+	})
+}
+
+// 首字节边界：一旦开始下行写流，格式承诺已生效。上游中途挂掉只能断连，
+// 不能往流里追加错误对象（客户端已经在按 SSE 解析了），更不能换渠道重发。
+func TestStreamFailureAfterFirstByteIsNotRewritten(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	first := sseFrame("message_start", `{"type":"message_start"}`)
+	up.Handler = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, first)
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // 上游连接中途断掉
+	}
+
+	resp := gw.Post(t, "/v1/messages", streamRequest, nil)
+	got, err := io.ReadAll(resp.Body)
+
+	if err == nil {
+		t.Error("上游中途断连，客户端却读到了正常的流结束")
+	}
+	if string(got) != first {
+		t.Errorf("客户端收到的字节被改动了\n期望仅有首帧: %q\n实际: %q", first, got)
+	}
+	if up.Count() != 1 {
+		t.Errorf("上游被调用 %d 次，首字节写出后不得重发", up.Count())
 	}
 }
 

@@ -248,8 +248,14 @@ func ReadSome(t *testing.T, r io.Reader, timeout time.Duration) string {
 	ch := make(chan result, 1)
 	go func() {
 		buf := make([]byte, 4096)
-		n, err := r.Read(buf)
-		ch <- result{string(buf[:n]), err}
+		// (0, nil) 是合法的 Read 返回，要接着读而不是当成「读到了空内容」。
+		for {
+			n, err := r.Read(buf)
+			if n > 0 || err != nil {
+				ch <- result{string(buf[:n]), err}
+				return
+			}
+		}
 	}()
 	select {
 	case got := <-ch:

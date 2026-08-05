@@ -36,11 +36,15 @@ const (
 // 换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。
 func relayBody(w gin.ResponseWriter, body io.Reader) error {
 	rc := http.NewResponseController(w)
+	// 先兜住响应头本身与空 body 的情形，之后每写一块再推进一次。
+	if err := advanceWriteDeadline(rc); err != nil {
+		return err
+	}
 	buf := make([]byte, copyBufferSize)
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			if err := rc.SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			if err := advanceWriteDeadline(rc); err != nil {
 				return err
 			}
 			if _, err := w.Write(buf[:n]); err != nil {
@@ -57,6 +61,15 @@ func relayBody(w gin.ResponseWriter, body io.Reader) error {
 			return readErr
 		}
 	}
+}
+
+// advanceWriteDeadline 把「这一次写出」的截止时间往后推。ErrNotSupported 说明底层
+// writer 不支持 deadline（本项目的 gin ResponseWriter 支持），不该因此中断透传。
+func advanceWriteDeadline(rc *http.ResponseController) error {
+	if err := rc.SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return nil
 }
 
 type Server struct {
@@ -76,11 +89,38 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 func (s *Server) Engine() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(s.recovery())
 	r.GET("/healthz", s.healthz)
 	r.POST(protocol.EndpointMessages.Path, s.relay(protocol.EndpointMessages))
 	r.POST(protocol.EndpointCountTokens.Path, s.relay(protocol.EndpointCountTokens))
 	return r
+}
+
+// recovery 与 gin.Recovery 只差一处：http.ErrAbortHandler 原样再抛给 net/http。
+//
+// gin 把它归进 broken pipe 分支 recover 掉，于是响应被正常收尾——chunked 的终止块
+// 照发，客户端看到的是一个「干净结束」的流。而透传中途失败时我们要的恰恰相反：
+// 连接必须异常终止，客户端才能区分「上游说完了」和「上游死了」。net/http 自己的
+// recover 认得 ErrAbortHandler，会静默断连，正是这个语义。
+func (s *Server) recovery() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				panic(rec)
+			}
+			s.log.Error("handler panic", "path", c.Request.URL.Path, "panic", rec)
+			if !c.Writer.Written() {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+			c.Abort()
+		}()
+		c.Next()
+	}
 }
 
 func (s *Server) healthz(c *gin.Context) {
@@ -159,8 +199,9 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		upstream.CopyResponseHeaders(c.Writer.Header(), resp.Header)
 		c.Writer.WriteHeader(resp.StatusCode)
 		if err := relayBody(c.Writer, resp.Body); err != nil {
-			// 首字节已写出，格式承诺已生效：只能断连并记日志，不改写、不重发。
+			// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
+			panic(http.ErrAbortHandler)
 		}
 	}
 }
