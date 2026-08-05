@@ -35,12 +35,16 @@ type Endpoint struct {
 	Proto Protocol
 }
 
-// CC 与 Responses 端点随 M0-3 落地。
+// 入口协议由路径决定，不猜、不嗅探请求体。
 var (
 	EndpointMessages = Endpoint{"/v1/messages", Anthropic}
 	// count_tokens 是 Anthropic 独有端点；命中非 anthropic 渠道时由请求时临时闸
 	// 回 501，不做估算（估算属 M2）。
-	EndpointCountTokens = Endpoint{"/v1/messages/count_tokens", Anthropic}
+	EndpointCountTokens     = Endpoint{"/v1/messages/count_tokens", Anthropic}
+	EndpointChatCompletions = Endpoint{"/v1/chat/completions", OpenAICC}
+	// Responses 的有状态子路径（GET /v1/responses/{id}、cancel）不做：
+	// 口径层已定 v1 只支持无状态用法。
+	EndpointResponses = Endpoint{"/v1/responses", OpenAIResponses}
 )
 
 // WriteError renders msg in the protocol's own error shape so a harness can

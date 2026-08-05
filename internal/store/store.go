@@ -89,6 +89,35 @@ func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
 	return c, nil
 }
 
+// AccessPoint is one 接入点 as the models list exposes it.
+type AccessPoint struct {
+	Model     string
+	CreatedAt int64
+}
+
+// ListAccessPoints returns every enabled 接入点, oldest first.
+//
+// created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。
+func ListAccessPoints(ctx context.Context, db *sql.DB) ([]AccessPoint, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT model, CAST(strftime('%s', created_at) AS INTEGER)
+		FROM access_points WHERE disabled = 0 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AccessPoint
+	for rows.Next() {
+		var ap AccessPoint
+		if err := rows.Scan(&ap.Model, &ap.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ap)
+	}
+	return out, rows.Err()
+}
+
 // Validate is the startup gate. It reports every violation it finds, naming the
 // offending record, so a hand-written SQL row can be fixed in one pass.
 //

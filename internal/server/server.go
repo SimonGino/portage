@@ -91,8 +91,15 @@ func (s *Server) Engine() *gin.Engine {
 	r := gin.New()
 	r.Use(s.recovery())
 	r.GET("/healthz", s.healthz)
-	r.POST(protocol.EndpointMessages.Path, s.relay(protocol.EndpointMessages))
-	r.POST(protocol.EndpointCountTokens.Path, s.relay(protocol.EndpointCountTokens))
+	r.GET("/v1/models", s.models)
+	for _, ep := range []protocol.Endpoint{
+		protocol.EndpointMessages,
+		protocol.EndpointCountTokens,
+		protocol.EndpointChatCompletions,
+		protocol.EndpointResponses,
+	} {
+		r.POST(ep.Path, s.relay(ep))
+	}
 	return r
 }
 
@@ -131,6 +138,28 @@ func (s *Server) healthz(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// models 按 OpenAI models 列表格式列出全部未停用接入点——harness 启动时会拉它。
+// 对外暴露的是接入点名，不是纳管模型名：纳管模型是渠道的内部事实，不该泄露给客户端。
+func (s *Server) models(c *gin.Context) {
+	points, err := store.ListAccessPoints(c.Request.Context(), s.db)
+	if err != nil {
+		s.log.Error("列接入点失败", "err", err)
+		protocol.OpenAICC.WriteError(c.Writer, http.StatusInternalServerError, "接入点列表读取失败")
+		return
+	}
+
+	data := make([]gin.H, 0, len(points))
+	for _, ap := range points {
+		data = append(data, gin.H{
+			"id":       ap.Model,
+			"object":   "model",
+			"created":  ap.CreatedAt,
+			"owned_by": "ai-gateway",
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
 }
 
 // requestHead is the only part of the client body the gateway parses. Everything
