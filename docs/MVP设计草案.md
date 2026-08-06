@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.16
+> 状态：草案 v0.18
+> v0.18 变更（M0 验收回写，2026-08-06）：三条实测与 #1 规格的出入落档，均为实现层，口径不变。①§6.1 头部白名单加实测复核结论——录下 Codex 全部请求头逐条对照后**不放宽**白名单（私有头丢弃不影响整轮工具调用，且 `X-Codex-Turn-Metadata` 携带 `installation_id`）。②§8 `/v1/models` 注明**不迎合** Codex 期待的 OpenAI 私有目录格式（无公开契约、字段随版本漂移；实测降级路径可用，只多两条 warning）。③§5 坑清单补 Responses reasoning 的 `encrypted_content`——上游侧不透明密文，P1 跨协议转换必然作废，M2 须有用例钉住「带它的 input 不使转换报错」。
+> v0.17 变更（口径层 v0.20，2026-08-06）：harness 分档修订——CC 入口的必过 harness 由 Codex CLI 改为 pi（§0 占位假设 7、§10 验收清单）。依据 = Codex CLI 0.144.1 移除 `wire_api = "chat"`（openai/codex#7782），实测 `Error loading config.toml: wire_api = "chat" is no longer supported`；pi 0.83.0 已经网关跑通 CC 整轮工具调用（#6）。
 > v0.16 变更（口径层 v0.19，2026-08-06）：恢复同候选退避重试并从 M4 提前到 M2——§6 故障转移流程加最内环（429/5xx/网络错误且未写首字节触发，401/403 与其余 4xx 不重试，退避以 `Retry-After` 为下界）；§9 测试矩阵作废「harness 自身重试逻辑生效」一条；§11 M2/M4 描述随之调整。依据 = M0 验收实测（#6）：网关侧 429 逐字节透传成立，但 Codex 0.144.1 对 429 一次即弃、对 503 才退避，单上游限流时无人自愈。PO 裁定只取「同候选重试」，不放开临时闸单候选、候选间转移仍留 M4（jinpenga）。
 > v0.15 变更（M0 联调期，2026-08-06）：§7 启动校验的可达性判定扩到**渠道 / 纳管模型 / 凭证三者**，与 `Resolve` 的 JOIN 逐条对齐。v0.14 只覆盖渠道与凭证，漏了 `channel_models.disabled`——同一类错三种写法只拦两种；PO 裁定「纳入」（jinpenga）。口径层同步 v0.18。
 > v0.14 变更（M0 联调期，2026-08-06）：§7 启动校验补一条——未停用接入点的 weight>0 候选，其渠道必须未停用且有启用凭证。原规则字面上不含这条，实测「只停渠道、忘了停接入点」能通过启动、接入点仍挂在 `/v1/models` 上、请求时才 503；PO 裁定改为启动即报（jinpenga）。
@@ -26,7 +28,7 @@
 |---|------|---------|--------|
 | 1 | ~~上游渠道~~（已决 v0.17） | v1 初始集：Anthropic 官方、OpenAI 官方、Gemini Vertex AI（OpenAI 兼容端点 + SA 凭证）、阿里百炼（OpenAI 兼容）；渠道多凭证聚合见 §7 `channel_keys` | 已决 |
 | 2 | ~~接入点清单~~（已决） | 运营数据不冻结。候选 = 渠道纳管模型 + 权重（§7）。M0 验收集：`claude-sonnet-4-5`→Anthropic 官方；一个 CC 透传接入点→百炼（qwen 系）或 OpenAI 官方，各单候选 | 已决 |
-| 7 | ~~目标 harness~~（已决） | 必过档：Claude Code、Codex CLI（挡里程碑验收）；顺带档：pi、OpenCode（不挡，坏了再修）| 已决 |
+| 7 | ~~目标 harness~~（已决） | 必过档：Claude Code（Anthropic 入口）、Codex CLI（Responses 入口）、pi（CC 入口）——三者一人盖一条入口协议，挡里程碑验收；顺带档：OpenCode（不挡，坏了再修）。v0.20 修订：Codex CLI 0.144.1 移除 `wire_api = "chat"`，CC 入口改由 pi 承担 | 已决 |
 | 9 | ~~转换方向优先~~（已决） | 协议转换属 v1 承诺，P0 仅同协议透传，P1 按口径层 §2.1 优先级分批；设计态考虑见 §2 | 已决 |
 
 其余采用默认值：单用户（单管理员）、最小启动配置 + 业务配置全 DB、React 管理端（M3）、每 key 可限 allowed_models、默认不记录请求体。
@@ -171,6 +173,7 @@ type Codec interface {
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
 | 厂商私有推理字段 | DeepSeek 系 `reasoning_content` 等非标字段不建模，走 `Request.Extras` 透传 |
+| Responses reasoning 的 `encrypted_content`（M0 实测） | Codex CLI 的 `/v1/responses` 请求会在 `input` 里回带上一轮的 reasoning item，其 `encrypted_content` 是**上游侧不透明密文**，只有原上游解得开。P0 透传无影响；**P1 一旦跨协议转换就必然作废**——转成 CC/Anthropic 时它无处安放，转回来也已换了上游。落到口径上：这就是「thinking 跨协议丢弃」的具体形态之一，转换路径不得伪造或复用该字段，只能丢，且丢了会让 Codex 失去上一轮的推理上下文（表现为质量下降而非报错）。M2 做 R→CC / R→A 时须有专门用例钉住「带 `encrypted_content` 的 input 不使转换报错」 |
 | Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
 | Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
 | 角色交替约束 | Anthropic 要求 user/assistant 交替；OpenAI 允许多条连续同角色；转 Anthropic 前需合并相邻同角色消息 |
@@ -233,6 +236,8 @@ logging：无论成败异步落 call_logs
 - Anthropic 渠道额外：`anthropic-version` 取自客户端、未给时默认 `2023-06-01`；`anthropic-beta` 客户端给了就原样转发（Claude Code 靠它开 1M 上下文、computer use 等能力，丢了会静默退化）。
 - 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关 key，绝不能漏到上游**。
 - `Accept-Encoding` 不转发客户端值，流式请求显式设 `identity`（避免上游压缩引入分块缓冲、拖长首字延迟）；不注入 `X-Forwarded-*`（个人自用零收益且泄露内网信息）。
+
+> **白名单实测复核（M0 验收，2026-08-06）**：用一次性反代录下 Codex CLI 实际发出的全部请求头，逐条对照上面的白名单。结论是**白名单不放宽**，依据两条：① Codex 的私有头（`X-Codex-*` 一族、session/turn 标识等）全部被丢弃，整轮工具调用照样跑通——上游不需要它们；② 其中 `X-Codex-Turn-Metadata` 携带 `installation_id`，属于客户端安装标识，转发出去等于把本机指纹泄露给上游，个人自用场景零收益。若日后某个 harness 因缺头而降级，按「哪个头、丢了坏什么」逐个加白，不做整类放行。
 
 **响应头（上游 → 客户端）**：除 `Content-Length` 外原样回传（流式下无意义，非流式由 Go 按实际写入量重设），状态码原样。上游 `x-request-id` / `request-id` 既回传客户端也记日志——个人自用场景下能拿它去找上游对账，比藏起来有用。
 
@@ -353,7 +358,9 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 ## 8. 最小管理接口
 
 - `GET /healthz`
-- `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉）
+- `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
+
+> **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
 - `GET /admin/logs?limit=50&model=...`：近期调用日志（管理员 session 鉴权，细则见口径层 §2.7）
 - 管理端 CRUD API（渠道/接入点/key）随 M3 扩全，届时另列；上表为 M0~M2 最小集
 - Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501
@@ -389,8 +396,8 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | harness | 档位 | 协议 | 必过项 |
 |---|---|---|---|
 | Claude Code | 必过 | Anthropic | `/v1/messages` 流式工具调用整轮跑通；cache_control 透传（Anthropic 出口）；`count_tokens` 不阻塞启动 |
-| Codex CLI | 必过 | CC / Responses | CC 模式工具调用；Responses 模式透传（P0） |
-| pi | 顺带 | CC | 工具调用、streaming usage |
+| Codex CLI | 必过 | Responses | Responses 模式整轮工具调用与透传（P0）。**CC 模式已不可用**——0.144.1 移除 `wire_api = "chat"`（openai/codex#7782） |
+| pi | 必过 | CC | `/v1/chat/completions` 整轮工具调用、streaming usage。用 `PI_CODING_AGENT_DIR` 指向验收专用配置目录，避免动开发者全局 `~/.pi` |
 | OpenCode | 顺带 | CC | `/v1/models` 列表 + 工具调用 |
 | 全部 | — | 429 原样透传不被网关吞掉（M0 已验：状态码/头部/body 逐字节，见 #6）。**「harness 自身重试逻辑生效」这条已作废**——Codex 0.144.1 对 429 不重试，改由网关侧同候选退避重试兜底（v0.19，M2 验收） |
 
