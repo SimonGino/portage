@@ -12,7 +12,7 @@ import (
 //
 // 与之配套的行为测试（TestStreamSurvivesLongSilence）只覆盖秒级的短超时，别指望它。
 func TestClientHasNoOverallTimeout(t *testing.T) {
-	c := NewClient()
+	c := NewClient(DefaultRetryPolicy())
 
 	if c.http.Timeout != 0 {
 		t.Errorf("http.Client.Timeout = %v, 必须为 0——它覆盖整个 body 读取周期，"+
@@ -22,9 +22,9 @@ func TestClientHasNoOverallTimeout(t *testing.T) {
 
 // 不设整体超时不等于没有超时：三层分别兜住握手、上游迟迟不给响应头、空闲连接。
 func TestClientSetsLayeredTimeouts(t *testing.T) {
-	tr, ok := NewClient().http.Transport.(*http.Transport)
+	tr, ok := NewClient(DefaultRetryPolicy()).http.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("Transport 类型 = %T, 期望 *http.Transport", NewClient().http.Transport)
+		t.Fatalf("Transport 类型 = %T, 期望 *http.Transport", NewClient(DefaultRetryPolicy()).http.Transport)
 	}
 
 	for _, tc := range []struct {

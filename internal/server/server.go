@@ -89,7 +89,12 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, db: db, up: upstream.NewClient(), log: log}
+	retry := upstream.RetryPolicy{
+		MaxRetries: cfg.Retry.MaxRetries,
+		BaseDelay:  cfg.Retry.BaseDelay,
+		MaxDelay:   cfg.Retry.MaxDelay,
+	}
+	return &Server{cfg: cfg, db: db, up: upstream.NewClient(retry), log: log}
 }
 
 func (s *Server) Engine() *gin.Engine {
@@ -242,7 +247,8 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := s.up.Do(c.Request.Context(), cand, ep, forward, c.Request.Header, head.Stream)
+		resp, retries, err := s.up.Do(c.Request.Context(), cand, ep, forward, c.Request.Header, head.Stream)
+		rec.retries = retries
 		if err != nil {
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
 			rec.outcome = "upstream_error"

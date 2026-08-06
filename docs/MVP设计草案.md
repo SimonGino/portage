@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.20
+> 状态：草案 v0.21
+> v0.21 变更（M2 同候选退避重试落地 #13，2026-08-06）：v0.16 定的口径实现化，均为实现层，口径不变。①§6 重试段的「次数：可配，默认值随 M2 实测定」定稿为 `max_retries: 2` / `base_delay: 500ms` / `max_delay: 10s`（量级对齐 M0 实测的 Codex 5xx 退避 0.22→0.45→0.84→1.62s）；②补两条实现期新决策——退避抖动取**半区间** `[d/2, d)` 而非全区间（全区间会让实际退避短于上游明说的 `Retry-After`），`Retry-After` 超过 `max_delay` 时**不重试**而非照等（照等等于把客户端扣在网关一分钟，不如把那份 429 原样交出去让调用方自己决定）；③§7 配置补 `retry` 块并说明「块缺席 = 用默认、显式写 0 = 关闭」；④§7 `call_logs.retry_count` 注明对应的结构化日志字段 `retries`（仅非 0 时记，0 是常态、每行都背个恒 0 字段没意义）。
 > v0.20 变更（M0 遗留修复 #14，口径层 v0.21，2026-08-06）：①§6.1 超时分层补上**拨号**这一层——零值 `http.Transport` 用无超时的 `net.Dialer`，后面几个超时都在 TCP 连上之后才起算，地址被黑洞时请求挂到操作系统放弃。②§7 启动校验补一条——未停用渠道的 `base_url` 必须是带 host 的绝对 http/https 地址、且不带查询串与 fragment（后者会把协议子路径整个吞掉，请求永远打错地方），且该错误**不回显 `base_url` 原值**（可能带 userinfo）。两条均由 #8 / #15 的自动审查提出、人工核实后修复；②是口径层 v0.18「配置能过校验但请求时才炸不算合法状态」的同类缺陷换个写法，口径层同步 v0.21 把该原则从枚举改为通则。
 > v0.19 变更（M0 收官，2026-08-06）：§6.1「放弃解析」的粒度定稿为**丢那一帧**（v0.13 提出时标的待裁，PO 裁定 jinpenga），该段由待裁改为定稿。
 > v0.18 变更（M0 验收回写，2026-08-06）：三条实测与 #1 规格的出入落档，均为实现层，口径不变。①§6.1 头部白名单加实测复核结论——录下 Codex 全部请求头逐条对照后**不放宽**白名单（私有头丢弃不影响整轮工具调用，且 `X-Codex-Turn-Metadata` 携带 `installation_id`）。②§8 `/v1/models` 注明**不迎合** Codex 期待的 OpenAI 私有目录格式（无公开契约、字段随版本漂移；实测降级路径可用，只多两条 warning）。③§5 坑清单补 Responses reasoning 的 `encrypted_content`——上游侧不透明密文，P1 跨协议转换必然作废，M2 须有用例钉住「带它的 input 不使转换报错」。
@@ -214,7 +215,11 @@ upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、�
   同候选退避重试（v0.19，推翻 C4 的「无同候选重试」）：
       触发：429 / 5xx / 网络错误，且未向 client 写出首字节；401/403 与其余 4xx 不重试（确定性失效，重试必然同样失败）
       退避：指数退避 + 抖动；上游给了 `Retry-After` 就以它为下界
-      次数：可配，默认值随 M2 实测定
+            抖动取半区间 `[d/2, d)`，不是全区间 `[0, d)`——全区间会让实际退避短于 `Retry-After`，下界就白设了
+            `Retry-After` 超过 `max_delay` 时**不重试**，把那份 429 原样交给 client：照等等于把客户端在网关扣一分钟
+      次数：可配（`retry.max_retries`，见 §7），默认 2；退避 `base_delay: 500ms` / `max_delay: 10s`（v0.21 定稿）
+      超时不重试：刚超时的对端原地重试大概率再超时，只会把客户端的等待翻倍（与候选间转移的触发条件不同，那里超时要切候选）
+      客户端中途取消：不再打上游；退避途中那份响应的 body 已被读空丢弃，不能当结果交出去
       依据：C4 原本把重试留给 harness，M0 验收实测（#6）证伪一半——Codex 0.144.1 对 5xx 会退避重试，
             对 429 一次即弃（带不带 `Retry-After`、把 request_max_retries/stream_max_retries 调到 4 都只打一次）。
             单候选单上游被限流时无人自愈，故网关必须自己补这一环。
@@ -265,7 +270,13 @@ default_max_tokens: 8192
 log_bodies: false                  # 排障开关；默认不记请求体
 rate_limit_qps: 10                 # 全局令牌桶（v0.15）；超限 429 + Retry-After
 rate_limit_burst: 20
+retry:                             # 同候选退避重试（v0.19 口径，v0.21 定稿）
+  max_retries: 2                   # **重试**次数，不含首次尝试
+  base_delay: 500ms
+  max_delay: 10s
 ```
+
+> **`retry` 块缺席 = 用默认（重试 2 次），显式写 `max_retries: 0` = 关闭**。两者在 YAML 里都解出 0，靠「先填默认值再 Unmarshal 覆盖」区分：加载后不许再给 `max_retries` 补零值，否则「写了 0」被悄悄改回 2，重试就关不掉了。两个退避间隔反过来必须兜底——只写 `max_retries` 时不补就退了个寂寞。
 
 业务配置（渠道/接入点/key）全部落 DB，由管理端维护（M3）；管理端就绪前（M0~M2）用 SQL 手工维护（口径层 C2 收敛，v0.8）。
 
@@ -345,7 +356,7 @@ CREATE TABLE call_logs (
   model_upstream TEXT NOT NULL,
   channel_name TEXT NOT NULL,
   status INTEGER NOT NULL,             -- 最终对 client 的状态
-  retry_count INTEGER NOT NULL DEFAULT 0,
+  retry_count INTEGER NOT NULL DEFAULT 0,  -- 同候选重试次数；结构化日志里已有对应的 retries 字段（v0.21），落库时接过来
   ttft_ms INTEGER,                     -- 首字节耗时（流式）
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
