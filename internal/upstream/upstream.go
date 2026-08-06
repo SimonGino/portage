@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,11 +22,12 @@ import (
 // 刻意不设 http.Client.Timeout——它覆盖整个 body 读取周期，长流必被拦腰掐断
 // （docs/MVP设计草案.md §6.1）。超时按 TLS 握手 / 响应头 / 空闲连接分层。
 type Client struct {
-	http *http.Client
+	http  *http.Client
+	retry RetryPolicy
 }
 
-func NewClient() *Client {
-	return &Client{http: &http.Client{
+func NewClient(retry RetryPolicy) *Client {
+	return &Client{retry: retry, http: &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           newDialer().DialContext,
@@ -47,15 +49,57 @@ func newDialer() *net.Dialer {
 	return &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 }
 
-// Do 把 body 原样透传给候选所在渠道，返回实时响应。调用方负责 Close resp.Body。
-func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, body []byte, clientHdr http.Header, stream bool) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep), bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+// Do 把 body 原样透传给候选所在渠道，返回实时响应与「为拿到它重试了几次」。
+// 调用方负责 Close resp.Body。
+//
+// 失败按 RetryPolicy 原地退避重试（同候选同凭证，口径层 v0.19）。重试全部发生在
+// 向客户端写出首字节之前——Do 返回之后 relay 才开始写响应头，所以「首字节边界即
+// 承诺边界」这条约束不受影响。
+//
+// 重试耗尽时返回的是**最后一次**上游响应的原字节，网关不改写不吞：M0 已验证的
+// 429 逐字节透传，不能因为加了重试而失效。
+//
+// retries 在 err != nil 时同样有效——重试若干次仍拨不通，日志得看得出来。
+func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, body []byte, clientHdr http.Header, stream bool) (resp *http.Response, retries int, err error) {
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep), bytes.NewReader(body))
+		if err != nil {
+			return nil, attempt, err
+		}
+		req.ContentLength = int64(len(body))
+		applyHeaders(req.Header, clientHdr, cand, stream)
+
+		resp, err := c.http.Do(req)
+		if attempt >= c.retry.MaxRetries || !retriable(ctx, resp, err) {
+			return resp, attempt, err
+		}
+		// Retry-After 长过 MaxDelay：不等了，把这份响应原样交给客户端自己决定。
+		// 注意它必须在 drain 之前返回——drain 会把 body 读空。
+		d, ok := delayFor(c.retry, attempt, resp)
+		if !ok {
+			return resp, attempt, err
+		}
+		drain(resp)
+		if !sleep(ctx, d) {
+			// 退避途中客户端走了。此时 resp 的 body 已被读空关掉，不能再交出去。
+			if err == nil {
+				err = ctx.Err()
+			}
+			return nil, attempt, err
+		}
 	}
-	req.ContentLength = int64(len(body))
-	applyHeaders(req.Header, clientHdr, cand, stream)
-	return c.http.Do(req)
+}
+
+// drain 丢掉这次不要的响应体。
+//
+// 不读完就 Close 会让连接无法复用（Go 只在 body 读到 EOF 后才把连接放回池子），
+// 重试场景下这等于每次都新建一条连接。上限是防着上游拿一个巨大的错误体拖死我们。
+func drain(resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	resp.Body.Close()
 }
 
 // buildURL appends the endpoint's fixed suffix to the 渠道 base_url, which stores

@@ -218,6 +218,12 @@ func (g *Gateway) RawLog() string {
 // Options overrides the startup configuration for the few tests that need it.
 type Options struct {
 	LogBodies bool
+	// Retry 覆盖重试策略，零值即**关闭**重试——刻意不跟随 config.Default()。
+	// M0 的一大批用例断言的是「上游回 429/500，网关原样透一次」，默认开着重试会
+	// 让它们变成打三次、慢一秒，测的就不是原来那件事了；关掉才是 #13 要的那条
+	// 「配 0 时行为与 M0 完全一致」的回归护栏。要测重试的用例显式传策略，其中
+	// 至少有一个传 config.Default().Retry，保证出厂默认值本身也被跑到。
+	Retry config.Retry
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -247,6 +253,7 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	}
 	cfg := config.Default()
 	cfg.LogBodies = opts.LogBodies
+	cfg.Retry = opts.Retry
 	capture := &logCapture{}
 	log := slog.New(&captureHandler{c: capture, text: slog.NewTextHandler(capture, nil)})
 	srv := httptest.NewServer(server.New(cfg, db, log).Engine())

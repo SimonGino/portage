@@ -57,6 +57,10 @@ type callRecord struct {
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
 	outcome string
+	// retries 是这次调用向同一候选重打了几次。不含首次尝试，0 是常态所以不打进
+	// 日志——否则每一行都要背一个恒为 0 的字段。非 0 才说明发生过退避重试，
+	// 「这次怎么慢了三秒」有据可查。
+	retries int
 
 	summary     protocol.Summary
 	haveSummary bool
@@ -79,6 +83,9 @@ func (s *Server) logCall(rec *callRecord) {
 		attrs = append(attrs, "channel", rec.channel,
 			"channel_protocol", string(rec.channelProto),
 			"upstream_model", rec.upstreamModel)
+	}
+	if rec.retries > 0 {
+		attrs = append(attrs, "retries", rec.retries)
 	}
 	if !rec.firstByte.IsZero() {
 		attrs = append(attrs, "ttfb_ms", rec.firstByte.Sub(rec.start).Milliseconds())
