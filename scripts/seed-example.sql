@@ -50,8 +50,8 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (
 --   https://你的中转站           ← 填这个
 -- 判断方法：拿 https://你的中转站/v1/v1/models 试一下，返回 404 就说明多了一层。
 INSERT INTO channels (name, protocol, base_url) VALUES
-  ('openai-compatible-cc',   'openai_cc',        'https://sub.aiqqyc.com'),
-  ('openai-compatible-resp', 'openai_responses', 'https://sub.aiqqyc.com');
+  ('openai-compatible-cc',   'openai_cc',        'https://你的中转站'),
+  ('openai-compatible-resp', 'openai_responses', 'https://你的中转站');
 
 INSERT INTO channel_keys (channel_id, credential)
   SELECT id, 'sk-把这里换成真凭证' FROM channels
@@ -60,23 +60,23 @@ INSERT INTO channel_keys (channel_id, credential)
 -- 纳管模型名要填**上游认得**的那个。不确定就先拿凭证问上游要一份清单：
 --   curl -s https://你的中转站/v1/models -H 'Authorization: Bearer sk-…' | jq -r '.data[].id'
 INSERT INTO channel_models (channel_id, upstream_model)
-  SELECT id, 'gpt-5.6-luna' FROM channels
+  SELECT id, '把这里换成上游认得的模型名' FROM channels
    WHERE name IN ('openai-compatible-cc', 'openai-compatible-resp');
 
 -- 两个接入点对外名不同，客户端靠它选走哪条协议入口：
---   gpt-luna       → POST /v1/chat/completions
---   gpt-luna-resp  → POST /v1/responses
+--   compat-cc      → POST /v1/chat/completions
+--   compat-resp    → POST /v1/responses
 -- 打错入口会被临时闸挡下并回 501，不会静默发到上游。
-INSERT INTO access_points (model) VALUES ('gpt-luna'), ('gpt-luna-resp');
+INSERT INTO access_points (model) VALUES ('compat-cc'), ('compat-resp');
 
 INSERT INTO candidates (access_point_id, channel_model_id, weight)
   SELECT ap.id, cm.id, 100
     FROM access_points ap
     JOIN channels ch ON ch.name = CASE ap.model
-           WHEN 'gpt-luna'      THEN 'openai-compatible-cc'
-           WHEN 'gpt-luna-resp' THEN 'openai-compatible-resp' END
+           WHEN 'compat-cc'   THEN 'openai-compatible-cc'
+           WHEN 'compat-resp' THEN 'openai-compatible-resp' END
     JOIN channel_models cm ON cm.channel_id = ch.id
-   WHERE ap.model IN ('gpt-luna', 'gpt-luna-resp');
+   WHERE ap.model IN ('compat-cc', 'compat-resp');
 
 -- ---------------------------------------------------------------------------
 -- 临时闸（M0~M2）：每个接入点恰好一个 weight>0 的候选、每个渠道恰好一份启用凭证。
@@ -87,9 +87,9 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight)
 --   UPDATE channels      SET disabled = 1 WHERE name  = 'anthropic-official';
 --   UPDATE access_points SET disabled = 1 WHERE model = 'claude-sonnet-4-5';
 --
--- 两条都要，少停一条网关就不启动：只停渠道会留下「启用接入点的候选指向已停用渠道」
--- 这种半截状态，启动校验会点名接入点与渠道。这是刻意的——否则那个接入点仍挂在
--- /v1/models 上，请求打过去才回 503「没有可用候选」，错得太晚。
+-- 两条都要，少停一条网关就不启动：启用接入点的 weight>0 候选必须真的可达——它背后
+-- 的渠道、纳管模型、凭证任一停用，启动校验都会点名接入点与渠道。这是刻意的：否则
+-- 那个接入点仍挂在 /v1/models 上，请求打过去才回 503「没有可用候选」，错得太晚。
 -- ---------------------------------------------------------------------------
 
 -- 验证：

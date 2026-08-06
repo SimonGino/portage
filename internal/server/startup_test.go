@@ -116,12 +116,14 @@ func TestStartupGateRejectsCandidateOnDisabledChannel(t *testing.T) {
 
 	err := store.Validate(t.Context(), db)
 
-	assertRejects(t, err, "gw-sonnet", "anthropic-official", "该渠道已停用")
+	// needle 带上接入点名再接 "(id="，否则渠道那一处的 "(id=" 会把断言顶成空转。
+	assertRejects(t, err, `接入点 "gw-sonnet" (id=`, "anthropic-official", "该渠道已停用", "接入点要跟着停用")
 }
 
 // 渠道还开着但唯一那份凭证被停用，等价于没凭证：checkSingleCredential 数的是启用
 // 凭证，所以这一条已经被它挡住；这里钉的是**接入点也要被点名**，否则只知道渠道坏了，
-// 不知道哪个对外模型受影响。
+// 不知道哪个对外模型受影响。同时钉住补救建议——渠道还开着时正解是补凭证，
+// 不是「接入点跟着停用」。
 func TestStartupGateRejectsCandidateOnChannelWithDisabledCredential(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")
@@ -129,7 +131,22 @@ func TestStartupGateRejectsCandidateOnChannelWithDisabledCredential(t *testing.T
 
 	err := store.Validate(t.Context(), db)
 
-	assertRejects(t, err, "gw-sonnet", "该渠道没有启用凭证")
+	assertRejects(t, err, "gw-sonnet", "该渠道没有启用凭证", "补一份启用凭证")
+	if strings.Contains(err.Error(), "接入点要跟着停用") {
+		t.Errorf("渠道还开着，却建议停用接入点: %v", err)
+	}
+}
+
+// 只停纳管模型是「过校验、请求时 503」的第三种写法：Resolve 过滤 cm.disabled，
+// 启动校验也得过滤，否则同一类错三种写法拦两种，分界线讲不出道理。
+func TestStartupGateRejectsCandidateOnDisabledChannelModel(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")
+	mustExec(t, db, `UPDATE channel_models SET disabled = 1`)
+
+	err := store.Validate(t.Context(), db)
+
+	assertRejects(t, err, "gw-sonnet", "test-anthropic", "该纳管模型已停用")
 }
 
 // 渠道与接入点一起停用是干净状态，不该报错——否则「手头只有一边的 key」这个

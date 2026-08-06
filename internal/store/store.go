@@ -218,36 +218,41 @@ func checkDanglingCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
 		})
 }
 
-// checkCandidateReachable catches the half-finished state left by disabling a
-// channel and forgetting its access point: checkSingleCandidate only counts
-// candidates, so the access point still passes the gate, still shows up in
-// /v1/models, and only fails at request time with a 503.
+// checkCandidateReachable catches the half-finished states left by disabling
+// something and forgetting the access point in front of it: checkSingleCandidate
+// only counts candidates, so the access point still passes the gate, still shows
+// up in /v1/models, and only fails at request time with a 503.
 //
-// 停用渠道时接入点要跟着停——这条把「跟着停」从口头约定变成启动就报。
+// 判定条件与 Resolve 的 JOIN 逐条对齐——渠道、纳管模型、凭证三者任一停用，Resolve
+// 就取不到候选。少对齐一条，那一种写法就会漏到 503 才暴露。
 func checkCandidateReachable(ctx context.Context, db *sql.DB) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT ap.model, ch.id, ch.name, ch.disabled
+		SELECT ap.id, ap.model, ch.name, ch.id, cm.upstream_model, ch.disabled, cm.disabled
 		FROM candidates cd
 		JOIN access_points ap  ON ap.id = cd.access_point_id AND ap.disabled = 0
 		JOIN channel_models cm ON cm.id = cd.channel_model_id
 		JOIN channels ch       ON ch.id = cm.channel_id
 		WHERE cd.weight > 0
-		  AND (ch.disabled <> 0
+		  AND (ch.disabled <> 0 OR cm.disabled <> 0
 		       OR NOT EXISTS (SELECT 1 FROM channel_keys ck
 		                       WHERE ck.channel_id = ch.id AND ck.disabled = 0))`,
 		func(rows *sql.Rows) (string, error) {
-			var chID int64
-			var apModel, chName string
-			var chDisabled bool
-			if err := rows.Scan(&apModel, &chID, &chName, &chDisabled); err != nil {
+			var apID, chID int64
+			var apModel, chName, upstreamModel string
+			var chDisabled, cmDisabled bool
+			if err := rows.Scan(&apID, &apModel, &chName, &chID, &upstreamModel, &chDisabled, &cmDisabled); err != nil {
 				return "", err
 			}
-			reason := "该渠道没有启用凭证"
-			if chDisabled {
-				reason = "该渠道已停用"
+			// 补救建议随原因走：渠道还开着时正解是补凭证，不是把接入点也停掉。
+			reason, remedy := "该渠道没有启用凭证", "补一份启用凭证，或把渠道与接入点一起停用"
+			switch {
+			case chDisabled:
+				reason, remedy = "该渠道已停用", "接入点要跟着停用"
+			case cmDisabled:
+				reason, remedy = "该纳管模型已停用", "接入点要跟着停用"
 			}
-			return fmt.Sprintf("接入点 %q 的候选指向渠道 %q (id=%d)，但%s；接入点要跟着停用",
-				apModel, chName, chID, reason), nil
+			return fmt.Sprintf("接入点 %q (id=%d) 的候选指向渠道 %q (id=%d) 的纳管模型 %q，但%s；%s",
+				apModel, apID, chName, chID, upstreamModel, reason, remedy), nil
 		})
 }
 
