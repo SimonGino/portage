@@ -1,0 +1,16 @@
+{
+  "protocol": "openai_cc",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 56,
+    "OutputTokens": 18,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "StopReason": "tool_calls",
+    "Degraded": false
+  },
+  "verified": true
+}
