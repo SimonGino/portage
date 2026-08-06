@@ -290,7 +290,7 @@ func TestRetryStopsWhenClientLeavesDuringBackoff(t *testing.T) {
 		t.Fatal("请求应当因客户端取消而失败")
 	}
 
-	line := waitForCall(t, gw)
+	line := gw.LastCall(t)
 	if got := hits.Load(); got != 1 {
 		t.Errorf("上游被打了 %d 次, 期望 1——客户端都走了还替他花钱", got)
 	}
@@ -298,20 +298,6 @@ func TestRetryStopsWhenClientLeavesDuringBackoff(t *testing.T) {
 		t.Errorf("outcome = %q, 期望 upstream_error；取消发生在退避途中，那份 429 的 body "+
 			"已经被读空，不能当结果交出去", line.Str("outcome"))
 	}
-}
-
-// waitForCall 等调用日志落下来：客户端取消之后网关侧的收尾是异步的。
-func waitForCall(t *testing.T, gw *gatewaytest.Gateway) gatewaytest.LogLine {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if lines := gw.Lines("call"); len(lines) > 0 {
-			return lines[len(lines)-1]
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("3s 内没有落下调用日志；已落的日志: %s", gw.RawLog())
-	return gatewaytest.LogLine{}
 }
 
 // 调用日志要能看出这次重试了几次。

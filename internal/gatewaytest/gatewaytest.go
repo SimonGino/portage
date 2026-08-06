@@ -199,13 +199,24 @@ func (g *Gateway) Lines(msg string) []LogLine {
 }
 
 // LastCall returns the调用日志 line of the most recent relayed call.
+//
+// 要等，不能直接读：调用日志是 handler 的 defer 落的（server.go），而客户端的
+// Post 在响应头一到就返回了——那时 handler 还没走完。本机上日志总是先落一步，
+// CI 的慢机器上就不一定，TestCallLogRecordsRetryCount 在 GitHub Actions 上正是
+// 这么红的。
 func (g *Gateway) LastCall(t *testing.T) LogLine {
 	t.Helper()
-	lines := g.Lines("call")
-	if len(lines) == 0 {
-		t.Fatalf("没有落任何调用日志；已落的日志: %s", g.RawLog())
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if lines := g.Lines("call"); len(lines) > 0 {
+			return lines[len(lines)-1]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("3s 内没有落下调用日志；已落的日志: %s", g.RawLog())
+			return LogLine{}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return lines[len(lines)-1]
 }
 
 // RawLog returns every log line as rendered text.
