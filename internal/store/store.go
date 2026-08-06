@@ -273,23 +273,41 @@ func checkChannelFields(ctx context.Context, db *sql.DB) ([]string, error) {
 				return fmt.Sprintf("渠道 %q (id=%d) 的 protocol=%q 不是 anthropic/openai_cc/openai_responses 之一", name, id, proto), nil
 			case credType != "api_key":
 				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q，M0 只支持 api_key", name, id, credType), nil
-			case !usableBaseURL(baseURL):
-				return fmt.Sprintf("渠道 %q (id=%d) 的 base_url=%q 不是带 host 的绝对 http/https 地址；填到「协议子路径之前」，例如 https://api.anthropic.com", name, id, baseURL), nil
+			}
+			// 只报「哪里不对」，不回显 base_url 本身——它可能带 userinfo，
+			// 那就是把上游密码打进 stderr（CLAUDE.md：错误回显严禁泄露 base_url）。
+			if why := badBaseURL(baseURL); why != "" {
+				return fmt.Sprintf("渠道 %q (id=%d) 的 base_url %s；它要填到「协议子路径之前」，"+
+					"例如 https://api.anthropic.com。按不泄露上游地址的约定这里不回显实际值，"+
+					"请查 channels 表核对", name, id, why), nil
 			}
 			return "", nil
 		})
 }
 
-// usableBaseURL 判断 base_url 能不能真的拼出一个上游地址。
+// badBaseURL 说明 base_url 为什么拼不出一个能用的上游地址；能用则返回空串。
 //
 // schema 只要求非 NULL，而配置是手写 SQL 灌进来的：空串、漏了 scheme 的
 // api.anthropic.com、ftp:// 全都存得进去。这类配置过得了校验、接入点照常挂在
 // /v1/models 上，每次请求才在 http.Client.Do 里失败回 502——正是口径层 v0.18
-// 判过的「配置能过校验但请求时才炸」，同一类缺陷换个写法，一样要启动即报。
-func usableBaseURL(raw string) bool {
+// 判过的「配置能过校验但请求时才炸」，v0.21 已把它升为通则。
+//
+// 查询串与 fragment 单独拦：buildURL 是字符串拼接，`https://h/p?x=1` 接上
+// /v1/messages 之后 Go 解出来是 path=/p、query=x=1/v1/messages——协议子路径被
+// 整个吞进查询串，请求永远打到 /p 上，而且启动、日志、响应全都看不出异常。
+func badBaseURL(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil {
-		return false
+	switch {
+	case err != nil:
+		return "无法解析为 URL"
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "的 scheme 必须是 http 或 https"
+	case u.Host == "":
+		return "缺少 host"
+	case u.RawQuery != "" || u.ForceQuery:
+		return "不能带查询串——协议子路径会被拼到 ? 之后，被整个吞进查询串"
+	case u.Fragment != "":
+		return "不能带 fragment——协议子路径会被拼到 # 之后，不会进入请求路径"
 	}
-	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	return ""
 }

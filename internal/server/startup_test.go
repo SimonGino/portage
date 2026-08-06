@@ -206,6 +206,11 @@ func TestStartupGateRejectsUnusableBaseURL(t *testing.T) {
 		{"只有路径", "/v1"},
 		{"scheme 不是 http(s)", "ftp://api.anthropic.com"},
 		{"有 scheme 无 host", "https://"},
+		// buildURL 是字符串拼接：带查询串或 fragment 时，协议子路径会被拼到
+		// ? / # 之后，Go 解出来的 path 仍是前缀那一段，请求永远打错地方。
+		{"带查询串", "https://api.anthropic.com/prefix?x=1"},
+		{"带空查询串", "https://api.anthropic.com/prefix?"},
+		{"带 fragment", "https://api.anthropic.com/prefix#frag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := gatewaytest.NewDB(t)
@@ -218,6 +223,34 @@ func TestStartupGateRejectsUnusableBaseURL(t *testing.T) {
 
 			assertRejects(t, err, "bad-url", "base_url")
 		})
+	}
+}
+
+// base_url 可能带 userinfo，把它回显进错误信息就是把上游密码打进 stderr——
+// cmd/gateway 会把 Validate 的错误直接落日志。CLAUDE.md：错误回显严禁泄露 base_url。
+func TestStartupGateDoesNotEchoBaseURL(t *testing.T) {
+	const secret = "https://alice:hunter2@internal.example.invalid/private?x=1"
+	db := gatewaytest.NewDB(t)
+	channelID := gatewaytest.SeedChannel(t, db, "leaky", "anthropic", secret, "sk-a")
+	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
+	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
+	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+
+	err := store.Validate(t.Context(), db)
+	if err == nil {
+		t.Fatal("带查询串的 base_url 该被拒")
+	}
+
+	for _, leak := range []string{"hunter2", "alice", "internal.example.invalid", "/private", secret} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("错误信息泄露了 %q：%v", leak, err)
+		}
+	}
+	// 不回显值不等于不可诊断：仍要点名是哪条渠道、哪里不对。
+	for _, want := range []string{"leaky", "base_url", "查询串"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误信息缺少 %q，无法定位：%v", want, err)
+		}
 	}
 }
 
