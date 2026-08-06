@@ -107,14 +107,35 @@ func frameBoundary(b []byte) (int, int) {
 	return start, end
 }
 
+// sseLines 按 SSE 规范的三种行尾切行：\r\n、\n、裸 \r。
+//
+// 必须与 frameBoundary 认的分隔保持一致。此前这里按 \n 切、再削掉行尾的 \r，
+// 裸 \r 的上游整帧会被当成一行：event 值粘着后面全部内容、data 根本取不到，
+// 而 Tap 又不会置 Degraded——它不是解析失败，是压根没找到 data 字段。静默丢
+// 失是本项目最不想要的降级形态（约定是降级必须可见），故两处认同一套行尾。
+func sseLines(frame []byte) [][]byte {
+	var lines [][]byte
+	for len(frame) > 0 {
+		i := bytes.IndexAny(frame, "\r\n")
+		if i < 0 {
+			return append(lines, frame)
+		}
+		lines = append(lines, frame[:i])
+		if frame[i] == '\r' && i+1 < len(frame) && frame[i+1] == '\n' {
+			i++
+		}
+		frame = frame[i+1:]
+	}
+	return lines
+}
+
 // SSEFields 从一帧里取出 event 名与拼好的 data 负载。
 //
 // 按 SSE 规范：多条 data 行以 \n 连接，冒号后的一个空格属于分隔符要去掉，以 :
 // 开头的是注释（心跳）直接丢。
 func SSEFields(frame []byte) (event string, data []byte) {
 	seenData := false
-	for _, line := range bytes.Split(frame, []byte("\n")) {
-		line = bytes.TrimSuffix(line, []byte("\r"))
+	for _, line := range sseLines(frame) {
 		if len(line) == 0 || line[0] == ':' {
 			continue
 		}

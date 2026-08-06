@@ -34,9 +34,17 @@ func TestClientSetsLayeredTimeouts(t *testing.T) {
 		{"TLSHandshakeTimeout", tr.TLSHandshakeTimeout},
 		{"ResponseHeaderTimeout", tr.ResponseHeaderTimeout},
 		{"IdleConnTimeout", tr.IdleConnTimeout},
+		{"DialContext 的 net.Dialer.Timeout", newDialer().Timeout},
 	} {
 		if tc.got <= 0 {
 			t.Errorf("%s = %v, 未设置", tc.name, tc.got)
 		}
+	}
+
+	// 上面那条只证明 dialer 本身有上限，还得证明 transport 真的用了它——零值
+	// transport 会退回无超时的 net.Dial，而那正是这条约束要拦的情况。
+	if tr.DialContext == nil {
+		t.Error("Transport.DialContext = nil，零值 transport 用的是无超时的 net.Dialer；" +
+			"上面两个超时都在 TCP 连上之后才起算，地址被黑洞时请求会挂到操作系统放弃")
 	}
 }

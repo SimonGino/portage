@@ -193,6 +193,83 @@ func TestStartupGateRejectsUnknownProtocol(t *testing.T) {
 	assertRejects(t, err, "typo-channel", "anthropic_messages")
 }
 
+// base_url 是手写 SQL 灌进来的，schema 只要求非 NULL。校验不看它的话，空串、漏了
+// scheme 的裸域名、ftp:// 全都能过启动，接入点照常挂在 /v1/models 上，每次请求才在
+// http.Client.Do 里失败回 502——正是口径层 v0.18 判过的「配置能过校验但请求时才炸」。
+func TestStartupGateRejectsUnusableBaseURL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		baseURL string
+	}{
+		{"空串", ""},
+		{"漏了 scheme 的裸域名", "api.anthropic.com"},
+		{"只有路径", "/v1"},
+		{"scheme 不是 http(s)", "ftp://api.anthropic.com"},
+		{"有 scheme 无 host", "https://"},
+		// buildURL 是字符串拼接：带查询串或 fragment 时，协议子路径会被拼到
+		// ? / # 之后，Go 解出来的 path 仍是前缀那一段，请求永远打错地方。
+		{"带查询串", "https://api.anthropic.com/prefix?x=1"},
+		{"带空查询串", "https://api.anthropic.com/prefix?"},
+		{"带 fragment", "https://api.anthropic.com/prefix#frag"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := gatewaytest.NewDB(t)
+			channelID := gatewaytest.SeedChannel(t, db, "bad-url", "anthropic", tc.baseURL, "sk-a")
+			modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
+			apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
+			gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+
+			err := store.Validate(t.Context(), db)
+
+			assertRejects(t, err, "bad-url", "base_url")
+		})
+	}
+}
+
+// base_url 可能带 userinfo，把它回显进错误信息就是把上游密码打进 stderr——
+// cmd/gateway 会把 Validate 的错误直接落日志。CLAUDE.md：错误回显严禁泄露 base_url。
+func TestStartupGateDoesNotEchoBaseURL(t *testing.T) {
+	const secret = "https://alice:hunter2@internal.example.invalid/private?x=1"
+	db := gatewaytest.NewDB(t)
+	channelID := gatewaytest.SeedChannel(t, db, "leaky", "anthropic", secret, "sk-a")
+	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
+	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
+	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+
+	err := store.Validate(t.Context(), db)
+	if err == nil {
+		t.Fatal("带查询串的 base_url 该被拒")
+	}
+
+	for _, leak := range []string{"hunter2", "alice", "internal.example.invalid", "/private", secret} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("错误信息泄露了 %q：%v", leak, err)
+		}
+	}
+	// 不回显值不等于不可诊断：仍要点名是哪条渠道、哪里不对。
+	for _, want := range []string{"leaky", "base_url", "查询串"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("错误信息缺少 %q，无法定位：%v", want, err)
+		}
+	}
+}
+
+// 停用渠道不参与该校验——与既有几条 checkChannelFields 的语义一致，否则「手头没有
+// 这家的 key，先把渠道连同接入点一起停掉」这条示例 SQL 里写明的做法就走不通了。
+func TestStartupGateIgnoresBaseURLOfDisabledChannel(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	channelID := gatewaytest.SeedChannel(t, db, "bad-url", "anthropic", "", "sk-a")
+	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
+	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
+	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+	mustExec(t, db, `UPDATE channels SET disabled = 1 WHERE id = ?`, channelID)
+	mustExec(t, db, `UPDATE access_points SET disabled = 1 WHERE id = ?`, apID)
+
+	if err := store.Validate(t.Context(), db); err != nil {
+		t.Fatalf("停用渠道的 base_url 不该参与校验: %v", err)
+	}
+}
+
 func TestStartupGateAcceptsSingleCandidateSingleCredential(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	gatewaytest.SeedPassthrough(t, db, "gw-sonnet", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "sk-a")

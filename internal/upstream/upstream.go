@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,6 +28,7 @@ func NewClient() *Client {
 	return &Client{http: &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           newDialer().DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 120 * time.Second,
 			IdleConnTimeout:       90 * time.Second,
@@ -34,6 +36,15 @@ func NewClient() *Client {
 			MaxIdleConnsPerHost:   16,
 		},
 	}}
+}
+
+// newDialer 给 TCP 拨号本身加上限。
+//
+// 零值 transport 用的是无超时的 net.Dialer，而 TLSHandshakeTimeout 与
+// ResponseHeaderTimeout 都在 TCP 连上之后才起算。渠道地址被黑洞（丢包不回 RST）
+// 时，少了这一层请求会一直挂到操作系统放弃（75s 量级），而不是及时回 502。
+func newDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 }
 
 // Do 把 body 原样透传给候选所在渠道，返回实时响应。调用方负责 Close resp.Body。
