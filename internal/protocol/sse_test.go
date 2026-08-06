@@ -142,6 +142,38 @@ func TestSSEFieldsJoinsMultipleDataLines(t *testing.T) {
 	}
 }
 
+// frameBoundary 认三种行尾（\r\n\r\n、\n\n、\r\r），SSEFields 就必须认同一套。
+// 曾经它只按 \n 切行、再削掉行尾的 \r：裸 \r 的上游整帧被当成一行，event 值粘着
+// 后面全部内容、data 根本取不到，而 Tap 还不置 Degraded——它不是解析失败，是压根
+// 没找到 data 字段。静默丢失比报错更糟，因为日志看上去是好的。
+func TestSSEFieldsHandlesEveryLineEndingStyle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		eol  string
+	}{
+		{"LF", "\n"},
+		{"CRLF", "\r\n"},
+		{"裸 CR", "\r"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := "event: message_delta" + tc.eol +
+				": 心跳" + tc.eol +
+				"data: {\"a\":1," + tc.eol +
+				"data: \"b\":2}" + tc.eol +
+				"id: 7"
+
+			event, data := SSEFields([]byte(frame))
+
+			if event != "message_delta" {
+				t.Errorf("event = %q, 期望 %q", event, "message_delta")
+			}
+			if want := "{\"a\":1,\n\"b\":2}"; string(data) != want {
+				t.Errorf("data = %q, 期望 %q", data, want)
+			}
+		})
+	}
+}
+
 func TestSSEFieldsKeepsExtraSpacesAfterTheFirst(t *testing.T) {
 	// 只有紧跟冒号的**一个**空格属于分隔符；再多的是负载的一部分。透传路径不碰
 	// 字节，但 Tap 若把空格吃多了，解出来的 JSON 就不是上游那份。

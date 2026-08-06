@@ -260,12 +260,12 @@ func checkCandidateReachable(ctx context.Context, db *sql.DB) ([]string, error) 
 // are maintained until the admin UI lands in M3.
 func checkChannelFields(ctx context.Context, db *sql.DB) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT id, name, protocol, credential_type
+		SELECT id, name, protocol, credential_type, base_url
 		FROM channels WHERE disabled = 0`,
 		func(rows *sql.Rows) (string, error) {
 			var id int64
-			var name, proto, credType string
-			if err := rows.Scan(&id, &name, &proto, &credType); err != nil {
+			var name, proto, credType, baseURL string
+			if err := rows.Scan(&id, &name, &proto, &credType, &baseURL); err != nil {
 				return "", err
 			}
 			switch {
@@ -273,7 +273,23 @@ func checkChannelFields(ctx context.Context, db *sql.DB) ([]string, error) {
 				return fmt.Sprintf("渠道 %q (id=%d) 的 protocol=%q 不是 anthropic/openai_cc/openai_responses 之一", name, id, proto), nil
 			case credType != "api_key":
 				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q，M0 只支持 api_key", name, id, credType), nil
+			case !usableBaseURL(baseURL):
+				return fmt.Sprintf("渠道 %q (id=%d) 的 base_url=%q 不是带 host 的绝对 http/https 地址；填到「协议子路径之前」，例如 https://api.anthropic.com", name, id, baseURL), nil
 			}
 			return "", nil
 		})
+}
+
+// usableBaseURL 判断 base_url 能不能真的拼出一个上游地址。
+//
+// schema 只要求非 NULL，而配置是手写 SQL 灌进来的：空串、漏了 scheme 的
+// api.anthropic.com、ftp:// 全都存得进去。这类配置过得了校验、接入点照常挂在
+// /v1/models 上，每次请求才在 http.Client.Do 里失败回 502——正是口径层 v0.18
+// 判过的「配置能过校验但请求时才炸」，同一类缺陷换个写法，一样要启动即报。
+func usableBaseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
