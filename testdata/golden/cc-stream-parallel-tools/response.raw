@@ -1,0 +1,20 @@
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_vnDqw2JAqkGwoZsFSrLJjM0A","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"{\"city\":\"北京\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_YtvVCPTMf0J2sdYGGsDYqwLY","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"name":"","arguments":"{\"city\":\"上海\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":2,"id":"call_Q01p0zmcFQMmyymCg9tgzRLG","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":2,"function":{"name":"","arguments":"{\"city\":\"广州\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}]}
+
+data: {"id":"resp_089ea5e672ec236e016a73efad6c04819b95e24b6c6d502480","object":"chat.completion.chunk","created":1785982893,"model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":69,"completion_tokens":74,"total_tokens":143,"completion_tokens_details":{"reasoning_tokens":10}}}
+
+data: [DONE]
+

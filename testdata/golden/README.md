@@ -49,6 +49,23 @@ testdata/golden/<样本名>/
 
 Responses 样本与上游异常样本（§9 的 8、9）留到 M1。
 
+### 已入库（2026-08-06）
+
+`cc-*` 六个全部采自真实 OpenAI 兼容上游。`expect` 由一个独立写的解析器从
+`response.raw` 重算核对过——不复用 Go 侧任何代码，否则又是实现给自己判卷。
+
+两点要知道：
+
+- **`cc-text` / `cc-stream-text` 刻意带缓存命中**（`CacheReadTokens: 3840`）。
+  第一版样本六个的 cache 全是 0，`cached_tokens` 那条解析路径没有任何样本走到，
+  把它读错也没人发现；重录时用超长固定前缀打两遍取第二遍，缺口才补上。
+- **`cc-stream-parallel-tools` 没能体现 §9 要的「index 交错」**。这个上游三次
+  工具调用固定按序成块吐（`[0,0,1,1,2,2]`），换长参数提示重试也一样。不挡 M0
+  ——Tap 只提 usage / model / stop_reason，不重组工具调用；index 交错是 P1
+  codec 的事，届时要么换个会交错的上游采，要么承认 §9 这条脱离实际。
+
+`anthropic-*` 六个仍缺，卡在没有 Anthropic 上游（见验收票 #6）。
+
 ## 顺带核对
 
 采集时留意 harness 实际发了什么，用来验证 §6.1 里那些**从参考仓库推断**的假设：
