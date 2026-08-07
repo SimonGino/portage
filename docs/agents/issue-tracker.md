@@ -13,6 +13,15 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
+## GitHub Projects：只读视图，非事实源
+
+[Project #1 `ai-gateway`](https://github.com/users/SimonGino/projects/1)（private，Table 视图按 milestone 分组，auto-add workflow 自动收 open issue）**只是给人看的视图**。
+
+票的状态事实源始终是 issue 本身：阶段 = milestone，可领性 = triage 标签（见 `triage-labels.md`），在做 = assignee，阻塞 = native issue dependencies。
+
+- Agent 不读、不写 Project；所有判断走 `gh issue` / `gh api`。
+- **不要建 Status 字段**（board 布局的列只能按 single-select/iteration 分组，一建 Status 就等于把「在做」同时存在 assignee 和 Project 两处，而后者 agent 默认无权限读）。
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
