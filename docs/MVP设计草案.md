@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.24
+> 状态：草案 v0.25
+> v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
 > v0.23 变更（M2-1 入站样本实采回写 #10，2026-08-07）：两条实测观察落档，均为实现层，口径不变。①§6.1 白名单段补**反例**——某些中转站的 Anthropic 端点靠 `user-agent` + `x-app` 判定客户端，白名单转发一律 503。结论仍是**白名单不放宽**（为迎合一家中转站撤掉「不泄露本机指纹」这条口径，代价与收益不对等），绕法在配置层：Anthropic 配一条不设该闸的独立上游。顺带说明 goldenrec「转发照抄、落盘白名单」为何不算双标——防指纹外泄的对象是 git 仓库不是上游。②§9 补 `log_bodies` 的实测量级——Claude Code 2.x 单轮请求体 **185 KB**（42 个 tool 定义占大头），Codex CLI 0.144.1 是 47~50 KB，即 64 KiB 上限对前者是**几乎必截断**而非偶尔越过。不改 `bodyCaptureLimit`（排障日志该有这个上限），改的是读日志时的预期：`truncated` 在真实 harness 下是常态不是故障信号。
 > v0.22 变更（M2-1 入站样本采集 #10，2026-08-06）：§9 补「入站样本」这一类——golden 库自此分 `direction: upstream | inbound` 两类，`cmd/goldenrec` 随之加 inbound 模式。新决策一条：**没有对应协议的真实上游时，用手写 stub 应答驱动 harness 走完多轮**（PO 裁定 jinpenga）。依据 = `A→CC` 最难啃的输入是第二轮那个带 `tool_result` 的请求体，而 harness 只有先收到过一个合法 tool 调用响应才会发出它；手上没有 Anthropic / OpenAI 官方 key（#7 仍挂着），纯录制回 501 只能采到第一轮。stub 是道具不是样本：不保真、不进转录库，入库的只有 harness 发出来的真实请求字节。
@@ -110,62 +111,154 @@ internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRU
 
 ## 4. 内部事件模型（canonical events）
 
-> **P0 定稿、P1 实现。** P0 透传路径不经过本模型（由 Tap 旁路解析），本节用于锁定 P1 的语义底座。
+> **v0.25 定稿（#10 M2-1）。** P0 透传路径不经过本模型（由 Tap 旁路解析），本节锁定 M2 转换的语义底座。
+>
+> 原 v0.2 草案照协议文档拍，本次拿 9 份**真实 harness 入站样本**（Claude Code 2.x 五份、Codex CLI 0.144 四份）逐字段核过，草案被证伪四处，见 §4.3。
+>
+> 代码：`internal/protocol/request.go`、`internal/protocol/event.go`。逐键路径的归宿清单在 `internal/protocol/canonical_coverage_test.go` 的 `coverage` 表，**它是穷举的事实源，本节只讲为什么**——路径清单不在文档里抄第二份，两份必然漂移。该测试双向红：样本冒出表上没有的路径红，表上留了样本已无的路径也红。
 
-三个协议的流统一归一到以下事件序列；非流式响应当作「完整事件序列一次性回放」，上下游代码不分流式两套：
+贯穿全模型的一条原则：**装得下 ≠ 转得过去**。canonical 层的职责是让 `DecodeRequest` 成为**全函数**——任何该协议的合法入站字节都有地方放；跨协议丢什么，是 encode 侧按口径做的决策。「记为丢弃」和「无处存放」是两件事，前者是决策，后者是缺陷。
 
-```go
-type EventType int
-const (
-    EvMessageStart EventType = iota // {ID, Model}
-    EvTextDelta                     // {Text}
-    EvToolCallStart                 // {Index, ID, Name}
-    EvToolArgsDelta                 // {Index, JSONFragment}
-    EvToolCallEnd                   // {Index}
-    EvThinkingDelta                 // {Text, Signature?} 跨协议时由转换层丢弃
-    EvUsage                         // {InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}
-    EvDone                          // {StopReason: "stop"|"tool_calls"|"length"|...}
-    EvError                         // {Status, Message} 上游错误的流内表达
-)
+四类归宿，`coverage` 表逐路径标注：
 
-type Event struct {
-    Type EventType
-    // 按 Type 取用对应字段；用 struct 内嵌或 union 风格均可，实现时定
-}
-```
+| 归宿 | 含义 |
+|---|---|
+| `field` | 有对应的 canonical 结构体字段，跨协议能转 |
+| `extras` | 进 `Extras`，同协议原样取回，跨协议由 encode 侧按口径决定丢不丢 |
+| `opaque` | 整棵子树按原始字节保留（JSON Schema、lark 文法、工具入参），不解开也不下钻——键序与数值精度都可能影响上游行为 |
+| `dropped` | 显式丢弃，且本节 §4.4 写明后果 |
 
-请求侧同样有 canonical 模型：
+### 4.1 请求侧
 
 ```go
 type Request struct {
-    Model        string
-    System       string            // 归一为独立字段，各出口自行落位
-    Messages     []Message         // role: user/assistant/tool; content blocks: text/image(P1)/tool_result
-    Tools        []Tool            // name/description/parameters(JSON schema)
-    ToolChoice   string            // auto/none/required/单工具，做能力对齐降级
-    MaxTokens    int               // Anthropic 必填：OpenAI 来源缺省时按配置 default_max_tokens 填充
-    Temperature  *float64          // 出口侧 clamp
-    Stop         []string
-    Extras       map[string]any    // 协议特有字段（cache_control、reasoning_effort…），同协议透传时取出
+    Model       string
+    System      []Block      // 块序列，不是字符串——块上带 cache_control 断点
+    Messages    []Message
+    Tools       []Tool
+    ToolChoice  ToolChoice   // Mode: ""|auto|none|required|tool
+    MaxTokens   int          // Anthropic 必填；OpenAI 来源零值时由 default_max_tokens 补
+    Temperature *float64
+    Stop        []string
+    Stream      bool
+    Extras      map[string]any
+}
+
+type Message struct {
+    Role    Role      // system / user / assistant / tool
+    Content []Block   // 纯字符串 content 退化为单个 text 块
+    Extras  map[string]any
+}
+
+type Block struct {
+    Kind       BlockKind    // text / thinking / tool_use / tool_result / image(M2 未实现)
+    Text       string
+    ToolCall   *ToolCall    // Kind==tool_use
+    ToolResult *ToolResult  // Kind==tool_result
+    Extras     map[string]any  // cache_control / signature / encrypted_content
+}
+
+type ToolCall struct {
+    ID, Name   string
+    Args       string       // 原样载荷，不预设是 JSON
+    ArgsIsJSON bool
+    Extras     map[string]any
+}
+
+type ToolResult struct {
+    ToolCallID string        // A tool_use_id / CC tool_call_id / R call_id，原样携带不重编号
+    Content    []Block       // 字符串 content 退化为单块
+    IsError    bool
+}
+
+type Tool struct {
+    Kind        ToolKind        // function / custom / server
+    Name        string
+    Description string
+    Schema      json.RawMessage // 仅 function
+    Extras      map[string]any  // format(lark) / strict / type / model
 }
 ```
 
-设计要点：tool call 的 id 与 index 语义在 canonical 层固定（Index 为序，ID 为稳定标识），三个 codec 各自负责映射到本协议的增量格式。
+角色映射，三协议对照：
+
+| canonical | Anthropic | CC | Responses |
+|---|---|---|---|
+| `system` | `messages[].role=="system"`（会话中段，见 §4.3）与顶层 `system` 块 | `role=="system"` | `role=="developer"` |
+| `user` | `user` | `user` | `user` |
+| `assistant` | `assistant` | `assistant` | 输出侧的 `message` 项 |
+| `tool` | 无——工具结果是 user 消息里的 `tool_result` 块 | `role=="tool"` 独立消息 | 无——`custom_tool_call_output` / `function_call_output` 独立 input 项 |
+
+`developer` 是**归一，不是丢弃**（PO 确认 jinpenga，2026-08-07）：decode 收敛成 `RoleSystem`，原字符串不留；R 出口方向收到 `RoleSystem` 一律按 Responses 惯例发 `developer`。这条不对称成立是因为同协议路径根本不进 codec，没有任何链路会把 `developer` 原样转回去。两个方向在 sub2api 上都能对上（收敛 `apicompat/chatcompletions_responses_bridge.go:518`，展开 `apicompat/anthropic_to_responses.go:133`）。
+
+`ToolChoice.Mode` 的 `required` 对应 Anthropic 的 `tool_choice.type=="any"`。本仓 5 份 Anthropic 样本**都不带 `tool_choice`**，这一格取自参考仓库而非实采。
+
+`Temperature` 与 `Stop` 在 9 份样本里**一次都没出现过**（两个 harness 都不发），它们进模型的依据是参考仓库里的标准字段映射（`litellm/llms/*/chat/`、sub2api `apicompat/`），不是实采。`coverage` 表因此不列它们——那张表校的是「样本里的字段有没有被漏掉」，把没采到的字段塞进去只会让它恒红。
+
+### 4.2 事件侧
+
+三个协议的流统一归一到以下事件序列；非流式响应当作「完整事件序列一次性回放」，上下游代码不分流式两套。
+
+```go
+const (
+    EvMessageStart  // {ID, Model}
+    EvTextDelta     // {Text}
+    EvThinkingDelta // {Text, Channel}  Channel: ""(正文) / summary / signature
+    EvToolCallStart // {Index, ToolID, ToolName, ArgsIsJSON}
+    EvToolArgsDelta // {Index, Text}    ——不叫 JSONFragment 了，见 §4.3
+    EvToolCallEnd   // {Index}
+    EvUsage         // {Usage}          累计快照，后来者非零字段覆盖先前值
+    EvDone          // {StopReason}     stop / tool_calls / length / content_filter，未知一律 stop
+    EvError         // {Status, Message}
+)
+```
+
+- `Index` 为序、`ToolID` 为稳定标识。并行调用下 CC 的参数分片按 index **交错**到达，必须按 `Index` 缓存再按序输出。Anthropic 用 content block index，Responses 用 output_index，语义对齐。
+- `EvUsage` 一条流里可出现多次：Anthropic 在 `message_start` 给 `input_tokens`、在 `message_delta` 给 `output_tokens`。语义是累计快照，消费方**不做加法**。
+- `Usage` 与 `Tap.Summary` 一致，**保留各协议原始语义不归一**（Anthropic 的 `input_tokens` 不含缓存命中，OpenAI 的 `prompt_tokens` 含）。
+- `ThinkingChannel` 要显式判别式而非塞 `Extras`：Responses 同时有 `response.reasoning_text.delta` 与 `response.reasoning_summary_text.delta` 两条流，语义不同（推理正文 vs 面向展示的摘要），codec 必须分支。藏进 map 等于每个 codec 各写一次魔法键查找。
+
+事实来源：Anthropic 侧取自 `testdata/golden/raw/anthropic-*` 五份真实上游 SSE 转录；CC 侧取自 M0 语料 `testdata/golden/cc-stream-*`；**Responses 侧没有真实上游转录**（入站采集走的是 stub，stub 是道具不是样本），事件名以 `sub2api backend/internal/pkg/apicompat/` 为准，M2 拿到真实上游流后须复核。
+
+### 4.3 样本逼出来的修正（v0.2 草案的四处证伪）
+
+| 草案原文 | 被谁证伪 | 改成 |
+|---|---|---|
+| `System string` | 5 份 Anthropic 样本的 `system` 都是**数组**，块上带 `cache_control` 断点 | `System []Block`。字符串拼接会抹平断点位置，而断点位置正是要被测的东西——脱敏口径专门保住了它 |
+| `Messages []Message // role: user/assistant/tool` | `in-anthropic-tool-turn2`：序列是 `user → system → assistant → user`，一条 `role=system` 的消息在 messages **中段**（Anthropic mid-conversation-system beta），content 是纯字符串 | `Role` 增 `RoleSystem`；`Message.Content` 统一块序列，纯字符串退化为单个 text 块 |
+| `Tools []Tool // name/description/parameters(JSON schema)` | 两处：`in-responses-tool-turn2` 的 `exec` 是 **custom 工具**，没有 schema，只有一份 lark 文法的 `format`；Claude Code 声明的 `advisor_20260301` 自带 `type` 与 `model`，是上游服务端工具 | `Tool` 加 `Kind`（function/custom/server）与 `Extras` |
+| `EvToolArgsDelta // {Index, JSONFragment}` | 同上——Codex code-mode 的 `exec` 入参是 **JavaScript 源码**，分片拼起来也不是 JSON | 字段改 `Text`；是不是 JSON 由 `EvToolCallStart.ArgsIsJSON` 说了算。编码到 CC 的后果见 §5 坑清单 |
+
+### 4.4 显式丢弃清单
+
+以下三项**能装下但选择不留**，代价已知（PO 确认 jinpenga，2026-08-07）：
+
+| 丢什么 | 为什么 | 代价 |
+|---|---|---|
+| 正文块边界（`content_block_start/stop`） | canonical 只留拼接后的增量流。要保边界就得在事件流里加一对纯结构事件，而三协议里只有 Anthropic 用得上 | 回编码到 Anthropic 时多块合成单块。对客户端渲染等价 |
+| `additional_tools` 的容器位置 | Responses 把工具声明包在一个 `role=developer` 的 input 项里；decode 时提升到 `Request.Tools` | 「它原本是第几条 input 项」丢失。回编 Responses 按首项重建即可；转 CC/Anthropic 时本就没有对应容器 |
+| `developer` 角色原字符串 | 归一为 `RoleSystem`，理由见 §4.1 | 无——没有链路需要把它原样转回去 |
+
+不在此列、但**跨协议必然作废**的是 `signature` 与 `reasoning.encrypted_content`：它们在 canonical 层有地方放（`Block.Extras`），只是转到别的协议时无处安放。见 §5 坑清单。
 
 ## 5. 转换器（codec）接口
 
-> **P0 定稿、P1 实现。** 接口与坑清单用于约束架构 seam 与 P1 验收标准。
+> **v0.25 接口定稿、骨架已落（#10 M2-1）。** 代码在 `internal/protocol/codec.go`，三个协议骨架在各自子包，实现见 #11 / #12。
 
 ```go
 type Codec interface {
-    DecodeRequest(body []byte, stream bool) (*protocol.Request, error)   // 入口请求 → canonical
-    EncodeRequest(req *protocol.Request, stream bool) ([]byte, error)    // canonical → 出口请求
-    DecodeStream(r io.Reader) (<-chan protocol.Event, error)             // 上游 SSE → 事件流
-    EncodeStream(w io.Writer, events <-chan protocol.Event) error        // 事件流 → 下行 SSE（含 flush）
-    EncodeFullBody(events []protocol.Event) ([]byte, error)              // 非流式响应聚合
-    EncodeError(w io.Writer, status int, err error)                      // 协议原生错误格式
+    DecodeRequest(body []byte, stream bool) (*Request, error)   // 入口请求 → canonical，必须是全函数
+    EncodeRequest(req *Request, stream bool) ([]byte, error)    // canonical → 出口请求
+    DecodeStream(r io.Reader) (<-chan Event, error)             // 上游 SSE → 事件流，实现负责关 channel
+    EncodeStream(w io.Writer, events <-chan Event) error        // 事件流 → 下行 SSE（含分帧与 flush）
+    EncodeFullBody(events []Event) ([]byte, error)              // 非流式响应聚合
+    EncodeError(w http.ResponseWriter, status int, msg string)  // 协议原生错误格式
 }
 ```
+
+- 骨架统一返回 `protocol.ErrNotImplemented` 而**不 panic**：转换闸门一放开这些方法就会被真实请求打到，panic 带走整个进程，而一个能被 relay 转成 5xx 的错误只坏这一条请求。骨架期的正确行为是「明确地不支持」，不是「崩给你看」。`EncodeError` 例外——它直接委托 M0 就已落地的 `Protocol.WriteError`，错误格式不是转换逻辑。
+- `EncodeError` 收 `http.ResponseWriter` 而非 `io.Writer`（草案原文如此）：它要设 Content-Type 与状态码，且这条路径只在**首字节写出之前**走得通。流一旦开头，错误就只能以 `EvError` 的形态走在流里，那是 `EncodeStream` 的活。msg 由调用方保证已脱敏——上游 key 与 base_url 严禁出现在错误回显里。
+- 「协议 → Codec」的表在 `internal/protocol/codecs`，与 `internal/protocol/taps` 同构同理由：`protocol` 不能反向导入自己的三个子包。转换路径要**两个** Codec（入口协议解出 canonical、渠道协议编回去）；两者相等时不该走这条路——同协议透传不做 decode→encode 转码。
 
 - 每个协议一个包实现 `Codec`；「A→B 转换」= CodecA 解码 + CodecB 编码，**不存在两两互转的转换器**。实证依据：网桥式（逐对状态机）并非不可行——sub2api `apicompat/` 在三协议六方向上做成了生产级；但其 CC→A 流式路径是 `CC→Responses + R→Anthropic` 链式二次转换，恰说明无统一中枢时方向组合退化为拼凑链。枢纽式对新增协议保持 O(n) 扩展，本设计取枢纽。
 - `EncodeStream` 内部管理：SSE 分帧、index 追踪（OpenAI 工具调用按 index 分片需按出现顺序重建）、`[DONE]` 终止符、Anthropic 的 `message_start/stop` 包裹。
@@ -178,6 +271,8 @@ type Codec interface {
 | `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
+| 工具入参不保证是 JSON | Codex CLI 0.144 code-mode 只声明一个 `custom` 工具 `exec`，入参是 **JavaScript 源码**（`in-responses-tool-turn2` 实测），`ToolCall.ArgsIsJSON` 为 false。编码到 CC 时 `function.arguments` 按契约必须是 JSON 字符串，encode 侧只能自行合成包装对象——**合成规则须与解包侧对称**，否则工具结果对不回去 |
+| 并行只在 code-mode 内部 | 同一实测：Codex 的并行工具调用发生在那段 JS 的 `Promise.all` 里，线上永远只有一个 `custom_tool_call`，`parallel_tool_calls` 恒 false。别拿 Codex 样本去验证「多路 tool_call 交错重组」——那条路径要用 CC 语料（`testdata/golden/cc-stream-parallel-tools`）验 |
 | 厂商私有推理字段 | DeepSeek 系 `reasoning_content` 等非标字段不建模，走 `Request.Extras` 透传 |
 | Responses reasoning 的 `encrypted_content`（M0 实测） | Codex CLI 的 `/v1/responses` 请求会在 `input` 里回带上一轮的 reasoning item，其 `encrypted_content` 是**上游侧不透明密文**，只有原上游解得开。P0 透传无影响；**P1 一旦跨协议转换就必然作废**——转成 CC/Anthropic 时它无处安放，转回来也已换了上游。落到口径上：这就是「thinking 跨协议丢弃」的具体形态之一，转换路径不得伪造或复用该字段，只能丢，且丢了会让 Codex 失去上一轮的推理上下文（表现为质量下降而非报错）。M2 做 R→CC / R→A 时须有专门用例钉住「带 `encrypted_content` 的 input 不使转换报错」 |
 | Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
