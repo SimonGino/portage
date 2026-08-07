@@ -1,0 +1,24 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_stub_tool_final","object":"response","model":"goldenrec-stub","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"msg_stub_tool_final","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":2,"item_id":"msg_stub_tool_final","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_stub_tool_final","output_index":0,"content_index":0,"delta":"跑完了，这一轮到此为止。"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":4,"item_id":"msg_stub_tool_final","output_index":0,"content_index":0,"text":"跑完了，这一轮到此为止。"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":5,"item_id":"msg_stub_tool_final","output_index":0,"content_index":0,"part":{"type":"output_text","text":"跑完了，这一轮到此为止。","annotations":[],"logprobs":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"type":"message","id":"msg_stub_tool_final","status":"completed","role":"assistant","content":[{"type":"output_text","text":"跑完了，这一轮到此为止。","annotations":[],"logprobs":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_stub_tool_final","object":"response","model":"goldenrec-stub","status":"completed","output":[{"type":"message","id":"msg_stub_tool_final","status":"completed","role":"assistant","content":[{"type":"output_text","text":"跑完了，这一轮到此为止。","annotations":[],"logprobs":[]}]}],"usage":{"input_tokens":48,"output_tokens":12,"total_tokens":60}}}
+

@@ -247,7 +247,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		resp, retries, err := s.up.Do(c.Request.Context(), cand, ep, forward, c.Request.Header, head.Stream)
+		resp, retries, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
 		rec.retries = retries
 		if err != nil {
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。

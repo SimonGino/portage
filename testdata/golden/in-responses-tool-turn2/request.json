@@ -1,0 +1,214 @@
+{
+  "model": "gpt-5.6-luna",
+  "input": [
+    {
+      "type": "additional_tools",
+      "role": "developer",
+      "tools": [
+        {
+          "type": "custom",
+          "name": "exec",
+          "description": "[redacted tool-desc len=10407]",
+          "format": {
+            "type": "grammar",
+            "syntax": "lark",
+            "definition": "\nstart: pragma_source | plain_source\npragma_source: PRAGMA_LINE NEWLINE SOURCE\nplain_source: SOURCE\n\nPRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/\nNEWLINE: /\\r?\\n/\nSOURCE: /[\\s\\S]+/\n"
+          }
+        },
+        {
+          "type": "function",
+          "name": "wait",
+          "description": "[redacted tool-desc len=769]",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "cell_id": {
+                "type": "string",
+                "description": "Identifier of the running exec cell."
+              },
+              "max_tokens": {
+                "type": "number",
+                "description": "Output token budget for this wait call. Defaults to 10000 tokens."
+              },
+              "terminate": {
+                "type": "boolean",
+                "description": "True stops the running exec cell; false or omitted waits for output."
+              },
+              "yield_time_ms": {
+                "type": "number",
+                "description": "Wait before yielding more output. Defaults to 10000 ms."
+              }
+            },
+            "required": [
+              "cell_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        {
+          "type": "function",
+          "name": "request_user_input",
+          "description": "[redacted tool-desc len=350]",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "autoResolutionMs": {
+                "type": "number",
+                "description": "Optional auto-resolution window in milliseconds, from 60000 to 240000. Include this only when the question is useful but non-blocking and continuing with best judgment is acceptable if the user does not answer; omit it when explicit user input is required before continuing. Use 60000 for lightly helpful context and up to 240000 when the answer would materially unblock better work."
+              },
+              "questions": {
+                "type": "array",
+                "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "header": {
+                      "type": "string",
+                      "description": "Short header label shown in the UI (12 or fewer chars)."
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Stable identifier for mapping answers (snake_case)."
+                    },
+                    "options": {
+                      "type": "array",
+                      "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "description": {
+                            "type": "string",
+                            "description": "One short sentence explaining impact/tradeoff if selected."
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "User-facing label (1-5 words)."
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "question": {
+                      "type": "string",
+                      "description": "Single-sentence prompt shown to the user."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "header",
+                    "question",
+                    "options"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "questions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=16270]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=341]"
+        },
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=13729]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted environment-context len=606]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Run the shell command: cat /tmp/goldenrec-a.txt   Then reply with only its first line."
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "gAAAAABqdUpV0h_DR5O9PcE8xJRpLimVNoIpQ5-jzcwP_0mcAefpmyNabxyb58Yoyjib3nLpLF3yu0e_IVMPiu3-0gvI-zeNHZqiKySZQdOALdDap36sXfHUqKIP9GDQC5nwZpFy8PBUIQ5olxnA-G1JocQe4hKc2S3zggnj-B9Hai0_56oe8GlgdgFZ5OS5sV3WIeS8Suey6HxAgBa1Wp3pJ0FyqTOQTKY23mFJ5BavHQ8Bxz2_Uf9dKTvGFz_6PMOLCGJr9VHoWrqFevsDjl5Nlbe4p1Q5lhkmLIKXF65bc77xFogvFrCtv4fyVS2LyE9XT0gDEhnkgBQvG8gp-5p5pUWFNulBKtL3s85S8RnvxyVTO7gNrXijGYw0uSo1UjLaGr61kGeL4rGPNt1gtfovZYDA-WUC0omds4B-MsqcXKULy6dZ_W0FyqdQ3QCS6IAZO7Eu4z9ZjvGPc90GpM__4q6G9M-yvZU2cd_DXPNPuA4ewhLSBarfaiFz2gplIB6wzZ9WZ4mf4u5bQe-GmrJsoTjj706_cUOpRaTQvL7u225EICCnLXwF0DvkAILlYZX23U8Vz1O4cxqY1TiinbCnKf_iHNr5ls6WaCYQMbp8W4PqX5ffILfgMrX0Ri80ZMlZuEwl1x1Xcoo6LQDR_Y8PkEWr12ou9CnN20xua0yRORB0dt6LfPOD0WF9DG0TLyDH358I7rIOAdk9aY3uSOVmGf2IJtDYe6Knoy4SGnT3MyDoQK7cMka--ztv_VHp7Fdd_Aax-lZgmQnT4c7sdomG4AS7R736Pow_xt4EOohNUSLA6_sVGUgH4mt_KdsmsWEW75bGSSsMayY2OxTD3Q_NdV5MPyw9ZUWdzoj_3d7z-pfUAxHhzKTvitxTsYU9djnM-iOEKvsLu19zbnQNNGRI4nLLkCF_4TRI81VjkB9_9U5uPijxL8oDzOqbvAXeSq_DTFhnsIkppGpQnM5URSOlgDPM1aSNjHbLxPB1QeRK3VgGAOHBLuzYfPsv5aOM4HhZOYrkgKBtwNdgTktFZHgGacHA_U_VPlpZ3SOXoq5AmH-HFE8tXaSSrCPpIKkhQo2I5WF8eBdN-my5Pbg9nNDOvH959w_CEleOU7MAZZdDpokJ1uAyyclyNwcHJm3sPVVhWUGtFgWAb2kDGQRR6ImgBvV0VTr1rv-6SdnQt8F_vD-bMZ-cSW9PiD_oVEOCVNi7ACHUd1EYdLSpzspZ7mv6U1IrkVvXO9VVgCs4eZfgb6o8ho8gn0eC7szULh3OEOSt9sUb3OQLbYDB1F90RGt8FaFhldgXpq_Aee3XWo-7Iu4-pMhRTkEPJo09JiypxQK7uDe1jfqQzJ2db7aWL9zZiPK9v0L2gsvq2079MVe03QBFuBezZWS7G-1Y0jyJfFMdlxYG7AQgoJvjQ1Sh6lpaLqlqBNfBYiic6ZX2iW2VN9od5f7wSgLloHHwu5-76qCcjkx-Uy-uEu1Ur5G5YhYSRIsNAmZNR8h84dhkPZMsfnNXUlVEkN6vs24eT9RtspRlE9kQsqr_IVeDxfcHxpeJGlVpirdHMtzNKnljhmVPxPTqI4dETzNze3sxvnZUP_O13ySbjBPjRP2Cy959qVmXgi47Lh5qwGkhDyr56sq4BuD-gub-_p6CigNwV7lDhtiTGkeXAsCUAl_CqO_YZtRzdxVVBbxOekSgURH2Ri5twI6Vn2miVBA="
+    },
+    {
+      "type": "custom_tool_call",
+      "status": "completed",
+      "call_id": "call_Q2Sk9ply6LncFR2MoxtfphIz",
+      "name": "exec",
+      "input": "const r = await tools.exec_command({cmd:\"head -n 1 /tmp/goldenrec-a.txt\",workdir:\"/tmp/goldenrec-work\",yield_time_ms:10000,max_output_tokens:1000}); text(r.output)\n"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "call_id": "call_Q2Sk9ply6LncFR2MoxtfphIz",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Script completed\nWall time 0.9 seconds\nOutput:\n"
+        },
+        {
+          "type": "input_text",
+          "text": "alpha-one\n"
+        }
+      ]
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "high",
+    "context": "all_turns"
+  },
+  "store": false,
+  "stream": true,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "prompt_cache_key": "00000000-0000-0000-0000-000000000000",
+  "text": {
+    "verbosity": "low"
+  },
+  "client_metadata": {
+    "x-codex-window-id": "00000000-0000-0000-0000-000000000000:0",
+    "x-codex-installation-id": "00000000-0000-0000-0000-000000000000",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"thread_id\":\"00000000-0000-0000-0000-000000000000\",\"turn_id\":\"00000000-0000-0000-0000-000000000000\",\"window_id\":\"00000000-0000-0000-0000-000000000000:0\",\"request_kind\":\"turn\",\"thread_source\":\"user\",\"sandbox\":\"seatbelt\",\"turn_started_at_unix_ms\":1786071633575}",
+    "turn_id": "00000000-0000-0000-0000-000000000000",
+    "thread_id": "00000000-0000-0000-0000-000000000000"
+  }
+}

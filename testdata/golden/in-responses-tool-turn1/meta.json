@@ -1,0 +1,10 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "verified": true
+}

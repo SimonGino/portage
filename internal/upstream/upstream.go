@@ -60,9 +60,11 @@ func newDialer() *net.Dialer {
 // 429 逐字节透传，不能因为加了重试而失效。
 //
 // retries 在 err != nil 时同样有效——重试若干次仍拨不通，日志得看得出来。
-func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, body []byte, clientHdr http.Header, stream bool) (resp *http.Response, retries int, err error) {
+//
+// rawQuery 是客户端 URL 上的查询串，整串照抄给上游（见 buildURL）。
+func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (resp *http.Response, retries int, err error) {
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep), bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep, rawQuery), bytes.NewReader(body))
 		if err != nil {
 			return nil, attempt, err
 		}
@@ -105,8 +107,22 @@ func drain(resp *http.Response) {
 // buildURL appends the endpoint's fixed suffix to the 渠道 base_url, which stores
 // everything *before* the protocol sub-path. 百炼这类自带路径前缀的兼容端点因此要
 // 填到 .../compatible-mode 为止。
-func buildURL(baseURL string, ep protocol.Endpoint) string {
-	return strings.TrimRight(baseURL, "/") + ep.Path
+//
+// 客户端的查询串**整串照抄**接在后面，不过滤（#20，PO 裁定 jinpenga）。实测
+// Claude Code 发的是 `POST /v1/messages?beta=true`，丢掉之后上游收到的是另一个
+// 请求，而丢没丢不看日志根本发现不了。不做白名单是因为这里没有可枚举的对象——
+// 各家 harness 的私有参数不可穷举，而查询参数不像请求头那样天然带客户端指纹。
+//
+// 顺序只能是 base + path + "?" + query：store 的启动校验已拦掉带查询串的
+// base_url（internal/store/store.go:295），所以这里不会拼出两个 "?"。
+// rawQuery 为空时不产生裸 "?"——`/v1/messages?` 与 `/v1/messages` 语义相同，
+// 凭空多一个问号只会让日志与样本对不上。
+func buildURL(baseURL string, ep protocol.Endpoint, rawQuery string) string {
+	u := strings.TrimRight(baseURL, "/") + ep.Path
+	if rawQuery != "" {
+		u += "?" + rawQuery
+	}
+	return u
 }
 
 // Redact strips the request URL out of a transport error so the 渠道 base_url does

@@ -195,6 +195,56 @@ func TestRelayNormalisesBaseURLTrailingSlash(t *testing.T) {
 	}
 }
 
+// 客户端的查询串整串照抄给上游（#20）。实测 Claude Code 发的是
+// `POST /v1/messages?beta=true`——原来 buildURL 只拼固定后缀，那个参数被静默丢掉，
+// 而丢没丢不看日志根本发现不了。
+func TestRelayForwardsClientQueryStringVerbatim(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"Claude Code 实发的形态", "/v1/messages?beta=true", "beta=true"},
+		{"多个参数保序、不重排", "/v1/messages?z=1&a=2&z=3", "z=1&a=2&z=3"},
+		{"值里的编码不解码再编码", "/v1/messages?q=a%2Bb%20c", "q=a%2Bb%20c"},
+		{"没有查询串时不产生裸问号", "/v1/messages", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw, up := newAnthropicGateway(t)
+
+			gw.Post(t, tc.path, anthropicRequest, nil)
+
+			got := up.Last(t)
+			if got.RawQuery != tc.want {
+				t.Errorf("上游收到的查询串 = %q, 期望 %q", got.RawQuery, tc.want)
+			}
+			if got.Path != "/v1/messages" {
+				t.Errorf("上游 path = %q, 期望 /v1/messages（查询串不该混进 path）", got.Path)
+			}
+		})
+	}
+}
+
+// base_url 自带路径前缀（百炼那类兼容端点）时，查询串仍接在协议子路径之后而不是
+// 前缀之后——拼错的话请求会打到 .../compatible-mode?beta=true/v1/messages。
+func TestRelayAppendsQueryAfterPrefixedBaseURL(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic",
+		up.URL+"/compatible-mode", upstreamModel, anthropicCredential)
+	gw := gatewaytest.Start(t, db)
+
+	gw.Post(t, "/v1/messages?beta=true", anthropicRequest, nil)
+
+	got := up.Last(t)
+	if got.Path != "/compatible-mode/v1/messages" {
+		t.Errorf("上游 path = %q, 期望 /compatible-mode/v1/messages", got.Path)
+	}
+	if got.RawQuery != "beta=true" {
+		t.Errorf("上游查询串 = %q, 期望 beta=true", got.RawQuery)
+	}
+}
+
 func TestRelayRejectsBadRequests(t *testing.T) {
 	cases := []struct {
 		name       string
