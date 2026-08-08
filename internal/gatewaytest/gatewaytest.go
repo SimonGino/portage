@@ -8,6 +8,7 @@ package gatewaytest
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SimonGino/ai-gateway/internal/auth"
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/server"
 	"github.com/SimonGino/ai-gateway/internal/store"
@@ -221,6 +223,68 @@ func (g *Gateway) LastCall(t *testing.T) LogLine {
 	}
 }
 
+// CallRow is one call_logs row, with the nullable columns kept nullable —
+// 「没有」和「是 0」要能断言得出区别。
+type CallRow struct {
+	APIKeyName       string
+	ClientProtocol   string
+	UpstreamProtocol string
+	ModelRequested   string
+	ModelUpstream    string
+	ChannelName      string
+	Status           int
+	RetryCount       int
+	TTFTMs           sql.NullInt64
+	TotalMs          int64
+	InputTokens      sql.NullInt64
+	OutputTokens     sql.NullInt64
+	CacheReadTokens  sql.NullInt64
+	CacheWriteTokens sql.NullInt64
+	Error            sql.NullString
+}
+
+// LastCallRow returns the most recent call_logs row, waiting for it to land.
+//
+// 要等，理由同 LastCall：落库发生在 handler 的 defer 里，而客户端的 Post 在响应头
+// 一到就返回了。而且落库排在 slog 之后——只等日志再直接读表，慢机器上必然偶发红。
+func (g *Gateway) LastCallRow(t *testing.T) CallRow {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var r CallRow
+		err := g.DB.QueryRow(`
+			SELECT api_key_name, client_protocol, upstream_protocol,
+			       model_requested, model_upstream, channel_name,
+			       status, retry_count, ttft_ms, total_ms,
+			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
+			FROM call_logs ORDER BY id DESC LIMIT 1`).
+			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
+				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName,
+				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs,
+				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error)
+		if err == nil {
+			return r
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("读 call_logs 失败: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("3s 内 call_logs 没有落下任何行；已落的日志: %s", g.RawLog())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// CountCallRows returns how many rows call_logs holds.
+func (g *Gateway) CountCallRows(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := g.DB.QueryRow(`SELECT COUNT(*) FROM call_logs`).Scan(&n); err != nil {
+		t.Fatalf("数 call_logs 失败: %v", err)
+	}
+	return n
+}
+
 // RawLog returns every log line as rendered text.
 func (g *Gateway) RawLog() string {
 	g.log.mu.Lock()
@@ -258,9 +322,17 @@ func Start(t *testing.T, db *sql.DB) *Gateway {
 	return StartWith(t, db, Options{})
 }
 
+// DefaultKey 是 Start 自动种下、Post/Get 自动附带的网关 key。
+//
+// 有了它，M1 鉴权接进来之后既有用例一行都不用改，而且走的是**真实**鉴权路径而非
+// 绕过——比给测试开后门强。要测「不带 key」「带错 key」的用例显式传头覆盖，传空串
+// 即「不出示」。
+const DefaultKey = "sk-aig-test-default"
+
 // StartWith is Start with configuration overrides.
 func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	t.Helper()
+	SeedAPIKey(t, db, "test-default", DefaultKey)
 	if err := store.Validate(t.Context(), db); err != nil {
 		t.Fatalf("启动校验未通过: %v", err)
 	}
@@ -283,6 +355,16 @@ func SeedPassthrough(t *testing.T, db *sql.DB, accessPointModel, proto, baseURL,
 	modelID := SeedChannelModel(t, db, channelID, upstreamModel)
 	apID := SeedAccessPoint(t, db, accessPointModel)
 	SeedCandidate(t, db, apID, modelID, 100)
+}
+
+// SeedAPIKey 种一把网关 key。重复种同一把不算错——Start 每次都会种 DefaultKey，
+// 而同一个库可能被起两次。
+func SeedAPIKey(t *testing.T, db *sql.DB, name, plain string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT OR IGNORE INTO api_keys (name, key_hash) VALUES (?, ?)`, name, auth.Hash(plain)); err != nil {
+		t.Fatalf("种网关 key 失败: %v", err)
+	}
 }
 
 func SeedChannel(t *testing.T, db *sql.DB, name, proto, baseURL, credential string) int64 {
@@ -355,6 +437,7 @@ func (g *Gateway) PostCtx(t *testing.T, ctx context.Context, path, body string, 
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
+	attachDefaultKey(req, header)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("请求网关失败（响应头迟迟不来通常意味着网关缓冲了首帧）: %v", err)
@@ -363,13 +446,36 @@ func (g *Gateway) PostCtx(t *testing.T, ctx context.Context, path, body string, 
 	return resp
 }
 
+// attachDefaultKey 补上 DefaultKey，除非调用方自己出示了凭证头。
+//
+// 判断看的是**键在不在** header 里，不是值非不非空：传空串正是「不出示任何凭证」
+// 这个用例的写法，此时补一把有效 key 就把它测没了。
+func attachDefaultKey(req *http.Request, header map[string]string) {
+	for k := range header {
+		if strings.EqualFold(k, "x-api-key") || strings.EqualFold(k, "Authorization") {
+			return
+		}
+	}
+	req.Header.Set("x-api-key", DefaultKey)
+}
+
 // Get sends a GET to the gateway. The caller owns closing the body.
 func (g *Gateway) Get(t *testing.T, path string) *http.Response {
+	t.Helper()
+	return g.GetWith(t, path, nil)
+}
+
+// GetWith is Get with caller-supplied headers, for the rejection cases.
+func (g *Gateway) GetWith(t *testing.T, path string, header map[string]string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.URL+path, nil)
 	if err != nil {
 		t.Fatalf("构造请求失败: %v", err)
 	}
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+	attachDefaultKey(req, header)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("请求网关失败（响应头迟迟不来通常意味着网关缓冲了首帧）: %v", err)

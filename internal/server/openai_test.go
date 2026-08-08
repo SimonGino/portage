@@ -124,9 +124,10 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 	gw, up := newOpenAIGateway(t, "gw-cc", "openai_cc", "qwen3-max")
 
 	// 客户端这三个头都得真发出来，否则「上游收不到」的断言恒真、抓不住任何回归。
+	// 凭证头填真实有效的网关 key：无效的话请求停在 401，压根到不了上游。
 	gw.Post(t, "/v1/chat/completions", ccRequest, map[string]string{
-		"Authorization":     "Bearer sk-aig-client-gateway-key",
-		"x-api-key":         "sk-aig-client-gateway-key",
+		"Authorization":     "Bearer " + gatewaytest.DefaultKey,
+		"x-api-key":         gatewaytest.DefaultKey,
 		"anthropic-version": "2023-06-01",
 	})
 

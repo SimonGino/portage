@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.26
+> 状态：草案 v0.27
+> v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
 > v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
@@ -468,11 +469,12 @@ CREATE TABLE candidates (          -- 候选 =（渠道纳管模型，权重）�
 CREATE TABLE api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  key_hash TEXT NOT NULL UNIQUE,
-  allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *
+  key_hash TEXT NOT NULL UNIQUE,             -- SHA-256(明文) 的小写十六进制，不加盐，见下
+  allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *；M1 只建列不校验，一律当 *
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 无 expires_at：v1 不做过期（口径层 v0.27 收敛 C6），停用走 disabled。
 
 CREATE TABLE call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -495,6 +497,16 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 ```
 
 注：若未来改 MySQL，表须显式 `CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`（与团队 DDL 规范一致）。
+
+### 7.1 key 鉴权的三条实现口径（M1，PO 拍板 jinpenga 2026-08-08）
+
+**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-aig-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
+
+**`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
+
+**不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
+
+其余 M1 细则（取 key 的两个头、401 走 `protocol.WriteError`、鉴权失败也落 `call_logs`、落库失败不得影响请求）见 Issue [#22](https://github.com/SimonGino/ai-gateway/issues/22)。
 
 ## 8. 最小管理接口
 

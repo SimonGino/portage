@@ -101,15 +101,18 @@ func (s *Server) Engine() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(s.recovery())
+	// /healthz 不鉴权：它是给反代与容器编排探活用的，那些探针没地方放 key，
+	// 而它只回一个「库还连得上吗」，不泄露任何配置。
 	r.GET("/healthz", s.healthz)
-	r.GET("/v1/models", s.models)
+	r.GET("/v1/models", s.authModels(), s.models)
 	for _, ep := range []protocol.Endpoint{
 		protocol.EndpointMessages,
 		protocol.EndpointCountTokens,
 		protocol.EndpointChatCompletions,
 		protocol.EndpointResponses,
 	} {
-		r.POST(ep.Path, s.relay(ep))
+		// 顺序即语义：日志层最外，鉴权失败也落得下那一行。
+		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.relay(ep))
 	}
 	return r
 }
@@ -182,18 +185,9 @@ type requestHead struct {
 
 func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rec := &callRecord{
-			start:        time.Now(),
-			endpoint:     ep.Path,
-			inboundProto: ep.Proto,
-			outcome:      "rejected",
-		}
-		// 一次调用一行日志，无论走到哪个分支收场——包括首字节后断流那条
-		// panic 路径（defer 在 panic 展开时照常执行）。
-		defer func() {
-			rec.status = c.Writer.Status()
-			s.logCall(rec)
-		}()
+		// 记录由 callLog 中间件建、也由它落——鉴权失败时 relay 压根不执行，
+		// 日志逻辑留在这里就等于 401 不落库（#22）。
+		rec := callRecordFrom(c)
 
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
