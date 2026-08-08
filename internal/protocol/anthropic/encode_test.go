@@ -404,3 +404,92 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// ── 响应 id（口径层 v0.31）────────────────────────────────────────────────────
+
+// startID 取 message_start 帧里的 message.id。
+func startID(t *testing.T, frames []frame) string {
+	t.Helper()
+	if frames[0].event != "message_start" {
+		t.Fatalf("首帧是 %q，不是 message_start", frames[0].event)
+	}
+	id, _ := frames[0].data["message"].(map[string]any)["id"].(string)
+	return id
+}
+
+// fullBodyID 走非流式路径取同一个字段。
+func fullBodyID(t *testing.T, events []protocol.Event) string {
+	t.Helper()
+	body, err := anthropic.NewCodec().EncodeFullBody(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := out["id"].(string)
+	return id
+}
+
+// 上游 id 原样透传，**不**规范化成 Anthropic 那种 msg_ 形态。
+// 这条锁的是口径层 v0.31 的裁决：id 不回传（Anthropic 请求体的 messages 只有
+// role/content），所以格式不构成约束；而 call_logs 没有存上游响应 id 这一列，
+// 这个字段是出问题时跟上游对账的唯一关联句柄，改写它等于把线索擦掉。
+func TestEncodeKeepsUpstreamResponseID(t *testing.T) {
+	events := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-Bx7q2Kd", Model: "gpt-5.6-luna"},
+		{Type: protocol.EvTextDelta, Text: "hi"},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	}
+	frames, _ := encodeStream(t, events)
+	if got := startID(t, frames); got != "chatcmpl-Bx7q2Kd" {
+		t.Errorf("流式 id = %q，期望原样透传 chatcmpl-Bx7q2Kd", got)
+	}
+	if got := fullBodyID(t, events); got != "chatcmpl-Bx7q2Kd" {
+		t.Errorf("非流式 id = %q，期望原样透传 chatcmpl-Bx7q2Kd", got)
+	}
+}
+
+// 上游不发 id 时补一个。不补的话线上就是 `"id": ""`，而 id 在 Anthropic 响应里
+// 是必填字段。补的值带 msg_ 前缀，与透传来的 chatcmpl- 一眼可分。
+func TestEncodeFillsMissingResponseID(t *testing.T) {
+	// 上游发了 model 没发 id——CC 解码侧的 message_start 门槛是两者有一个非空，
+	// 所以这条流是真能走到编码侧的，不是造出来的边界。
+	withModel := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "", Model: "gpt-5.6-luna"},
+		{Type: protocol.EvTextDelta, Text: "hi"},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	}
+	// 连 message_start 都没有：ensureStarted 由第一条正文触发，同样得有 id。
+	noStart := []protocol.Event{
+		{Type: protocol.EvTextDelta, Text: "hi"},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	}
+	for name, events := range map[string][]protocol.Event{"有model无id": withModel, "无message_start": noStart} {
+		t.Run(name, func(t *testing.T) {
+			frames, _ := encodeStream(t, events)
+			if got := startID(t, frames); !strings.HasPrefix(got, "msg_") || len(got) <= len("msg_") {
+				t.Errorf("流式补的 id = %q，期望 msg_ 前缀且非空", got)
+			}
+			if got := fullBodyID(t, events); !strings.HasPrefix(got, "msg_") || len(got) <= len("msg_") {
+				t.Errorf("非流式补的 id = %q，期望 msg_ 前缀且非空", got)
+			}
+		})
+	}
+}
+
+// 补出来的 id 每次不同。写死一个常量也能过上面那条，但那样同一时间窗里所有
+// 「上游没给 id」的响应会共用一个 id，日志关联直接失效。
+func TestEncodeFilledResponseIDIsUnique(t *testing.T) {
+	events := []protocol.Event{{Type: protocol.EvTextDelta, Text: "hi"}, {Type: protocol.EvDone}}
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		frames, _ := encodeStream(t, events)
+		id := startID(t, frames)
+		if seen[id] {
+			t.Fatalf("补出来的 id 重复了: %q", id)
+		}
+		seen[id] = true
+	}
+}

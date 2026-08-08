@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -217,6 +218,9 @@ func (e *streamEncoder) ensureStarted() error {
 		return nil
 	}
 	e.started = true
+	if e.id == "" {
+		e.id = fallbackMessageID()
+	}
 	// message_start 的 usage 只能给零：CC 的 usage 要到流末才来（哪怕带了
 	// stream_options.include_usage），而 Anthropic 的 input_tokens 按线格式在开头。
 	// 补零而不是等——等就得把整条流缓冲起来，首字延迟直接归零收益。真实数字在
@@ -372,6 +376,9 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 	if content == nil {
 		content = []any{}
 	}
+	if id == "" {
+		id = fallbackMessageID()
+	}
 
 	return marshal(map[string]any{
 		"id":            id,
@@ -384,6 +391,20 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		"usage":         usageBody(usage),
 	})
 }
+
+// fallbackMessageID 在上游一个 id 都没给时补一个。
+//
+// 触发条件是「上游发了 model 但没发 id」：CC 解码侧的 message_start 门槛是两者有一个
+// 非空（openaicc/decode.go），而不发 id 的第三方中转是存在的。不补就会输出 `"id": ""`，
+// 而 id 在 Anthropic 响应里是必填字段。
+//
+// 前缀用 Anthropic 原生的 `msg_` 而不是照抄上游的 `chatcmpl-`：有上游 id 时一律原样
+// 透传（口径层 v0.31），所以 `chatcmpl-` 出现即代表「上游给的」、`msg_` 出现即代表
+// 「上游没给、网关补的」，排障时一眼能分。
+//
+// 用 crypto/rand 不是为了安全——这个 id 不承担任何鉴权语义——是因为它不需要处理
+// 错误（Go 1.24 起 rand.Text 失败即 panic 在库内，调用侧没有失败分支要写）。
+func fallbackMessageID() string { return "msg_" + rand.Text() }
 
 // decodeToolInput 把拼好的入参解成对象。
 //

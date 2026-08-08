@@ -548,6 +548,21 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - **非流式不加**。无差别盖上去就成了「透传路径永远多一个上游没发的头」，与保真的张力比换来的好处大。
 - 对不认它的反代与直连客户端是一个无害的多余头。
 
+### 7.4 响应 id 的透传与兜底（M2，PO 裁决 jinpenga 2026-08-08，口径层 v0.31）
+
+跨协议转换时，上游响应 id 原样透传，不改写成目标协议的形态。A→CC 路径上客户端拿到的就是 `"id": "chatcmpl-…"`。
+
+裁决依据见口径层 v0.31，此处只记实现形态：
+
+- **透传是「什么都不做」**：`openaicc/decode.go` 把 chunk 的 `id` 收进 canonical `Event.ID`，`anthropic/encode.go` 原样写出。没有转换代码，所以真正要防的是以后有人「顺手规范化一下」——`TestEncodeKeepsUpstreamResponseID` 是那道锁。
+- **空 id 兜底在编码侧**（`fallbackMessageID`），不在解码侧。`msg_` 是 Anthropic 线格式的知识，归写这个格式的人管；将来 R 编码器要补自己的前缀，各管各的。
+- 触发条件是**上游发了 model 但没发 id**：CC 解码侧 `message_start` 的门槛是两者有一个非空，所以这条流真能走到编码侧，不是造出来的边界。此前会输出 `"id": ""`，而 id 在 Anthropic 响应里是必填字段。
+- 两个调用点：流式的 `ensureStarted`（覆盖「连 `EvMessageStart` 都没有、由首条正文触发」的情形）与 `EncodeFullBody`。
+- 兜底值 `msg_` + `crypto/rand.Text()`。用 crypto/rand 不为安全——这个 id 不承担鉴权语义——是因为它没有失败分支要写。前缀选 `msg_` 而非照抄 `chatcmpl-`：正好与透传形成对照，`chatcmpl-` 即「上游给的」、`msg_` 即「网关补的」，排障省一次翻日志。
+- 兜底值每次不同，有测试盯着（写死常量能过前缀断言，但会让同一时间窗内所有缺 id 的响应共用一个 id）。
+
+**没做**：给 `call_logs` 加上游响应 id 列。它会让这条决策的第二条依据失效（「响应体是唯一关联句柄」），但那是另一个范围的事，真需要时再单独提。
+
 ## 8. 最小管理接口
 
 - `GET /healthz`
