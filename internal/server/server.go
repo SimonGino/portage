@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SimonGino/ai-gateway/internal/admin"
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
@@ -114,6 +115,9 @@ func (s *Server) Engine() *gin.Engine {
 		// 顺序即语义：日志层最外，鉴权失败也落得下那一行。
 		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.relay(ep))
 	}
+	// 管理面自己挂自己的路由与鉴权（cookie 会话），与上面这套 key 鉴权互不相干。
+	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
+	admin.New(s.db, s.log).Mount(r)
 	return r
 }
 
@@ -209,6 +213,16 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 		rec.accessPoint, rec.stream = head.Model, head.Stream
+
+		// 白名单校验放在这儿而不是鉴权中间件：那一层跑的时候请求体还没读，
+		// 不知道要判哪个接入点。403 而不是 404——这把 key 不能用它，不是它不存在，
+		// 说成 404 会把人引去查配置。
+		if key := apiKeyFrom(c); !key.Allows(head.Model) {
+			rec.outcome = "model_not_allowed"
+			ep.Proto.WriteError(c.Writer, http.StatusForbidden,
+				"当前 key 不允许访问接入点 "+head.Model)
+			return
+		}
 
 		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model)
 		switch {

@@ -25,11 +25,29 @@ import (
 var ErrUnauthorized = errors.New("unauthorized")
 
 // Key is one row of api_keys, reduced to what the relay path needs.
-//
-// 没有 AllowedModels：M1 只建列不校验，一律当 `*`（口径层 v0.27）。取出来不用的字段
-// 会让人以为校验已经在做了。
 type Key struct {
 	Name string
+	// AllowedModels 是接入点白名单，逗号分隔，`*` 表示不限。M1 时这一列只建不校验，
+	// M3 管理端能配了之后同期启用校验（PO 于 M3 裁定，兑现 v0.27 的「能配了再启用」）。
+	AllowedModels string
+}
+
+// Allows 判断这把 key 能不能用某个接入点。
+//
+// 校验的是**接入点名**（客户端请求里的 model），不是纳管模型名：纳管模型是渠道的
+// 内部事实，配 key 的人看不到也不该看到。`*` 与空串都表示不限——空串出现在手写 SQL
+// 漏填的行上，那种情况按「没设限制」处理，而不是把这把 key 锁死。
+func (k Key) Allows(accessPoint string) bool {
+	list := strings.TrimSpace(k.AllowedModels)
+	if list == "" || list == "*" {
+		return true
+	}
+	for _, item := range strings.Split(list, ",") {
+		if item := strings.TrimSpace(item); item == "*" || item == accessPoint {
+			return true
+		}
+	}
+	return false
 }
 
 // Hash 是 key_hash 的算法：SHA-256 裸哈希，小写十六进制，不加盐。
@@ -80,7 +98,8 @@ func Resolve(ctx context.Context, db *sql.DB, h http.Header) (Key, error) {
 	for _, plain := range Presented(h) {
 		var k Key
 		err := db.QueryRowContext(ctx,
-			`SELECT name FROM api_keys WHERE key_hash = ? AND disabled = 0`, Hash(plain)).Scan(&k.Name)
+			`SELECT name, allowed_models FROM api_keys WHERE key_hash = ? AND disabled = 0`,
+			Hash(plain)).Scan(&k.Name, &k.AllowedModels)
 		switch {
 		case err == nil:
 			return k, nil

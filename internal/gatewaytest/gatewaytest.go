@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SimonGino/ai-gateway/internal/admin"
 	"github.com/SimonGino/ai-gateway/internal/auth"
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/server"
@@ -339,6 +340,12 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	cfg := config.Default()
 	cfg.LogBodies = opts.LogBodies
 	cfg.Retry = opts.Retry
+	cfg.AdminPassword = AdminPassword
+	// 走真正的 Bootstrap，不直接往 settings 里塞哈希：管理端测试要覆盖的正是
+	// 「配置里的明文只用来初始化」这条口径，绕过它就等于没测。
+	if _, err := admin.Bootstrap(t.Context(), db, cfg.AdminPassword); err != nil {
+		t.Fatalf("初始化管理端密码失败: %v", err)
+	}
 	capture := &logCapture{}
 	log := slog.New(&captureHandler{c: capture, text: slog.NewTextHandler(capture, nil)})
 	srv := httptest.NewServer(server.New(cfg, db, log).Engine())

@@ -52,3 +52,26 @@ func TestPresented(t *testing.T) {
 		})
 	}
 }
+
+func TestAllowedModels(t *testing.T) {
+	// 空串与 * 都是「不限」：空串出现在手写 SQL 漏填的行上，把它当成「一个都不许」
+	// 会让那把 key 突然全线 403，而人看表以为自己什么都没限制。
+	for _, tc := range []struct {
+		list, model string
+		want        bool
+	}{
+		{"", "anything", true},
+		{"*", "anything", true},
+		{"claude-via-cc", "claude-via-cc", true},
+		{"claude-via-cc", "gpt-via-cc", false},
+		{"a, claude-via-cc ,b", "claude-via-cc", true}, // 逗号两侧的空格要能容忍
+		{"a,b", "claude-via-cc", false},
+		{"a,*", "claude-via-cc", true},
+		{"claude", "claude-via-cc", false}, // 精确匹配，不是前缀
+	} {
+		k := Key{AllowedModels: tc.list}
+		if got := k.Allows(tc.model); got != tc.want {
+			t.Errorf("allowed_models=%q 判 %q：得到 %v，想要 %v", tc.list, tc.model, got, tc.want)
+		}
+	}
+}

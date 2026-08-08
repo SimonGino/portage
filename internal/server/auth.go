@@ -11,8 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ctxCallRecord 是调用日志记录在 gin 上下文里的键。
-const ctxCallRecord = "aig.call_record"
+const (
+	// ctxCallRecord 是调用日志记录在 gin 上下文里的键。
+	ctxCallRecord = "aig.call_record"
+	// ctxAPIKey 是本次请求认出来的网关 key。
+	//
+	// 只放 auth.Key（名字 + 白名单），不放明文也不放 hash：上下文里的东西迟早会被
+	// 顺手打进日志。
+	ctxAPIKey = "aig.api_key"
+)
 
 // callLog 建这次调用的日志记录并保证它**恰好**落一行，无论后面在哪个中间件收场。
 //
@@ -75,8 +82,25 @@ func (s *Server) authRelay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 		callRecordFrom(c).apiKeyName = key.Name
+		// allowed_models 的校验**不在这里**：这一层还没读请求体，不知道客户端要哪个
+		// 接入点。把 key 传下去，由 relay 在解析出 head.Model 之后判（M3）。
+		c.Set(ctxAPIKey, key)
 		c.Next()
 	}
+}
+
+// apiKeyFrom 取出本次请求认出来的网关 key。
+//
+// 取不到时回零值 auth.Key——它的 AllowedModels 是空串，Allows 一律放行。这是刻意的：
+// 唯一能走到「没有 key 却进了 relay」的路径是路由被改坏（authRelay 没挂上），那时
+// 请求根本没鉴权过，白名单再严也没意义，不该在这里假装还有一道防线。
+func apiKeyFrom(c *gin.Context) auth.Key {
+	if v, ok := c.Get(ctxAPIKey); ok {
+		if k, ok := v.(auth.Key); ok {
+			return k
+		}
+	}
+	return auth.Key{}
 }
 
 // authModels 是 /v1/models 的鉴权。
