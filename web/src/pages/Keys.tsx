@@ -29,7 +29,9 @@ export default function Keys() {
 
   return (
     <>
-      <ErrorBar message={keys.error} />
+      {/* 接入点那一路的报错也要露出来：白名单的可选项全靠它，
+          悄悄空掉的话看起来像「一个接入点都没建」。 */}
+      <ErrorBar message={keys.error || aps.error} />
       <Card
         title="网关 key"
         action={
