@@ -7,20 +7,23 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
 
-// Codec 是 Anthropic Messages 协议的转换器骨架。#10 只定架构 seam，实现见 #11。
+// Codec 是 Anthropic Messages 协议的转换器。
 //
-// 编译期断言钉住接口一致性：三个骨架里任一个漏实现方法，`go build` 当场红，
-// 而不是等 codecs 表在运行时组装才发现。
+// #11 落地的是 Anthropic 作**入口**要用的三个方法：DecodeRequest（decode.go）、
+// EncodeStream / EncodeFullBody（encode.go）。作**出口**的那两个（EncodeRequest、
+// DecodeStream / DecodeFullBody）属于 ② R→A、③ CC→A，仍是骨架——而且要等 #7 拿到
+// 官方凭证才验得了。
+//
+// 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
+// 在运行时组装才发现。
 var _ protocol.Codec = (*Codec)(nil)
 
 type Codec struct{}
 
 func NewCodec() *Codec { return &Codec{} }
 
-func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, error) {
-	return nil, protocol.ErrNotImplemented
-}
-
+// EncodeRequest 仍是骨架：Anthropic 作**出口**（CC→A / R→A）是 M2 后续批次，且
+// 要等 #7 拿到官方凭证才验得了。
 func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error) {
 	return nil, protocol.ErrNotImplemented
 }
@@ -29,11 +32,10 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 	return nil, protocol.ErrNotImplemented
 }
 
-func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
-	return protocol.ErrNotImplemented
-}
-
-func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
+// DecodeFullBody 仍是骨架：本包的解码侧只在 Anthropic 作**上游**时才用得到，而那
+// 条路径（CC→A / R→A）要等 #7 拿到官方凭证才验得了。#11 走的是 Anthropic 入口，
+// 用不到它。
+func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 	return nil, protocol.ErrNotImplemented
 }
 

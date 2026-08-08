@@ -232,10 +232,14 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		rec.channel, rec.channelProto, rec.upstreamModel = cand.ChannelName, cand.Protocol, cand.UpstreamModel
 
-		// 临时闸：转换路径未实现前，入口协议必须等于命中候选所在渠道的协议。
+		// 临时闸：逐格放开（#9）。已放开的走转换路径，其余仍报「尚未实现」。
 		if cand.Protocol != ep.Proto {
-			ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,
-				"该转换路径尚未实现："+string(ep.Proto)+" → "+string(cand.Protocol))
+			if !conversionOpen(ep, cand.Protocol) {
+				ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,
+					"该转换路径尚未实现："+string(ep.Proto)+" → "+string(cand.Protocol))
+				return
+			}
+			s.relayConverted(c, rec, ep, cand, body, head.Stream)
 			return
 		}
 

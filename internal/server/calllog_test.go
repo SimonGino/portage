@@ -141,7 +141,8 @@ func TestCallLogCoversRejectedAndFailedCalls(t *testing.T) {
 	t.Run("临时闸拒绝", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
-		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", openaiCredential)
+		// openai_responses：还没放开的那一格。openai_cc 已经在 #11 放开了。
+		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-5.6", openaiCredential)
 		gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
 		gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
@@ -151,7 +152,7 @@ func TestCallLogCoversRejectedAndFailedCalls(t *testing.T) {
 			t.Errorf("status/outcome = %d/%q, 期望 501/rejected", line.Int64("status"), line.Str("outcome"))
 		}
 		// 命中了哪个渠道要记下来——不然「为什么被挡」得靠猜。
-		if line.Str("channel_protocol") != "openai_cc" {
+		if line.Str("channel_protocol") != "openai_responses" {
 			t.Errorf("channel_protocol = %q", line.Str("channel_protocol"))
 		}
 		if _, ok := line.Attrs["input_tokens"]; ok {

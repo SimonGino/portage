@@ -7,25 +7,22 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
 
-// Codec 是 OpenAI Chat Completions 协议的转换器骨架。#10 只定架构 seam，实现见 #12。
+// Codec 是 OpenAI Chat Completions 协议的转换器。
 //
-// 编译期断言钉住接口一致性：三个骨架里任一个漏实现方法，`go build` 当场红，
-// 而不是等 codecs 表在运行时组装才发现。
+// #11 落地的是 CC 作**出口**要用的三个方法：EncodeRequest（encode.go）、
+// DecodeStream / DecodeFullBody（decode.go）。CC 作**入口**的那两个（DecodeRequest、
+// EncodeStream / EncodeFullBody）属于 ③ CC→A、CC→R，仍是骨架。
+//
+// 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
+// 在运行时组装才发现。
 var _ protocol.Codec = (*Codec)(nil)
+var _ protocol.RequestEncodeReporter = (*Codec)(nil)
 
 type Codec struct{}
 
 func NewCodec() *Codec { return &Codec{} }
 
 func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, error) {
-	return nil, protocol.ErrNotImplemented
-}
-
-func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error) {
-	return nil, protocol.ErrNotImplemented
-}
-
-func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 	return nil, protocol.ErrNotImplemented
 }
 

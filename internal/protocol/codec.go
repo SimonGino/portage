@@ -29,6 +29,14 @@ type Codec interface {
 	DecodeStream(r io.Reader) (<-chan Event, error)
 	// EncodeStream 把事件流编成下行 SSE，含分帧、index 追踪与 flush。
 	EncodeStream(w io.Writer, events <-chan Event) error
+
+	// DecodeFullBody 把上游非流式响应体解成完整事件序列。
+	//
+	// v0.26 补进接口（PO 裁定 jinpenga，2026-08-08）：v0.25 定稿只有 EncodeFullBody，
+	// 非流式转换路径的解码侧因此无处落脚。备选是「非流式也向上游发流式再聚合」，
+	// 被否——上游看到的请求与客户端发的不是一回事（计费与限流口径可能不同），且流
+	// 中途断连时手里只剩半截事件序列，而客户端等的是一个完整 JSON，无法收场。
+	DecodeFullBody(body []byte) ([]Event, error)
 	// EncodeFullBody 把完整事件序列聚合成非流式响应体。
 	EncodeFullBody(events []Event) ([]byte, error)
 	// EncodeError 按协议原生格式写出错误。
@@ -39,4 +47,16 @@ type Codec interface {
 	//
 	// msg 由调用方保证已脱敏：上游 key 与 base_url 严禁出现在错误回显里。
 	EncodeError(w http.ResponseWriter, status int, msg string)
+}
+
+// RequestEncodeReporter 是 Codec 的可选扩展：编码时顺带交出**这次实际丢了什么**。
+//
+// 口径层 §2.6 要求跨协议丢弃「+ 日志警告」，而 codec 刻意不持有 logger——它是纯
+// 函数，测试里不该冒日志。于是分工是：codec 登记，调用方打日志。
+//
+// 不并进 Codec 接口，是因为六条转换路径里只有出口侧用得上它；并进去等于让每个
+// 入口侧实现都背一个恒空的返回值。调用方按需类型断言，断言不中就没警告可打。
+type RequestEncodeReporter interface {
+	// dropped 是丢弃项的稳定标识（各 codec 包的 DropXxx 常量），没丢就是 nil。
+	EncodeRequestReport(req *Request, stream bool) ([]byte, []string, error)
 }
