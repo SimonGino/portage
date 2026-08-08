@@ -320,19 +320,23 @@ func TestResponsesGateOpensOnlyResponsesToCC(t *testing.T) {
 }
 
 // 上一条钉的是「开的这格是 R→CC 不是别的」，这条钉的是「只开了一格，不是开了
-// 一整行」：同一个 /v1/responses 端点挂到 anthropic 渠道仍须 501。R→A 是优先级
-// ②，openairesponses 的出口半边还没有，放过去只会拿 ErrNotImplemented 炸在半路。
-func TestResponsesGateStaysClosedForNonCCChannel(t *testing.T) {
+// 一整行」。
+//
+// 原先指的是 /v1/responses × anthropic——那一格 #25 已经放开了，于是改指一个还关着
+// 的：/v1/messages × openai_responses（③ CC→R 的邻居，openaicc 的入口半边一个都
+// 还没有）。这条断言本身比它指向哪一格更重要，所以是改指不是删除。
+func TestGateStaysClosedForUnimplementedPath(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, "claude-x", openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-x", openaiCredential)
 	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
-	resp := gw.Post(t, "/v1/responses", convertResponsesRequest, nil)
+	resp := gw.Post(t, "/v1/messages",
+		`{"model":"`+accessPointModel+`","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`, nil)
 	body := gatewaytest.ReadBody(t, resp)
 
 	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("responses → anthropic 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+		t.Errorf("messages → openai_responses 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
 	}
 	if up.Count() != 0 {
 		t.Errorf("闸没开就不该碰上游，却收到 %d 次", up.Count())

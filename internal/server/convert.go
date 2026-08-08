@@ -32,6 +32,8 @@ func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 		return true // A→CC（#11，口径层 §2.1 优先级①上半）
 	case ep == protocol.EndpointResponses && channel == protocol.OpenAICC:
 		return true // R→CC（#12，优先级①下半）
+	case ep == protocol.EndpointResponses && channel == protocol.Anthropic:
+		return true // R→A（#25，优先级②：Codex 挂 Claude）
 	}
 	return false
 }
