@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.25
+> 状态：草案 v0.26
+> v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
 > v0.23 变更（M2-1 入站样本实采回写 #10，2026-08-07）：两条实测观察落档，均为实现层，口径不变。①§6.1 白名单段补**反例**——某些中转站的 Anthropic 端点靠 `user-agent` + `x-app` 判定客户端，白名单转发一律 503。结论仍是**白名单不放宽**（为迎合一家中转站撤掉「不泄露本机指纹」这条口径，代价与收益不对等），绕法在配置层：Anthropic 配一条不设该闸的独立上游。顺带说明 goldenrec「转发照抄、落盘白名单」为何不算双标——防指纹外泄的对象是 git 仓库不是上游。②§9 补 `log_bodies` 的实测量级——Claude Code 2.x 单轮请求体 **185 KB**（42 个 tool 定义占大头），Codex CLI 0.144.1 是 47~50 KB，即 64 KiB 上限对前者是**几乎必截断**而非偶尔越过。不改 `bodyCaptureLimit`（排障日志该有这个上限），改的是读日志时的预期：`truncated` 在真实 harness 下是常态不是故障信号。
@@ -241,20 +242,38 @@ const (
 
 不在此列、但**跨协议必然作废**的是 `signature` 与 `reasoning.encrypted_content`：它们在 canonical 层有地方放（`Block.Extras`），只是转到别的协议时无处安放。见 §5 坑清单。
 
+### 4.5 A→CC 出口的丢弃与代价（#11 实测）
+
+上一节是 canonical 层「装得下但不留」；这一节是 **encode 到 CC 时装不下**的。常量定义在 `internal/protocol/openaicc/encode.go`，`EncodeRequestReport` 把本次实际丢掉的项回给 relay，relay 按 `跨协议转换丢弃字段` 打 warning——**丢弃一律有日志，不静默、不假装映射**（口径层 §2.6）。
+
+| 常量 | 丢什么 | 代价 |
+|---|---|---|
+| `metadata` | Anthropic 请求体的 `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」。走本条转换路径的上游是第三方 CC 兼容服务，本就不做该判定，故实际代价为零；但**该字段无法在 CC 协议里保留是事实**，日后若出现认此字段的 CC 上游，只能另开口子。P0 同协议透传不受影响 |
+| `cache_control` | system 块与消息块上的缓存断点 | CC 协议没有对应概念。后果是**上游按全量 prompt 计费**，长会话成本高于直连 Anthropic。这是选第三方廉价上游本身的代价，不是转换缺陷；断点位置在 canonical 层留着（`Block.Extras`），换回 Anthropic 出口就恢复 |
+| `thinking` | thinking 块正文与 `signature` | CC 的 assistant 消息没有推理块位置。回带上一轮 thinking 的客户端（Claude Code 开 extended thinking 时）会让上游丢失该轮推理上下文，表现为**质量下降而非报错** |
+| `server_tool` | `Tool.Kind` 非空的服务端工具声明 | Claude Code 会声明 `advisor_*` 一类由 Anthropic 服务端执行的工具，第三方 CC 上游既不认也执行不了。声明整条剔除，客户端表现为该工具不可用 |
+| `vendor_request` | 入口协议独有的顶层字段（`Request.Extras` 里除已知项外的其余） | 逐项枚举会随上游 beta 漂移，故按「不认识就丢并记名」处理。日志里带得出字段名，出问题时能定位 |
+
+`tool_choice` 的两种非法组合（引用未声明的工具、有 `tool_choice` 无 `tools`）不算丢弃而算**规整**：严格中转的第三方上游会直接拒请求，encode 侧当场消掉。见 §5 坑清单「严格中转的请求校验」。
+
 ## 5. 转换器（codec）接口
 
-> **v0.25 接口定稿、骨架已落（#10 M2-1）。** 代码在 `internal/protocol/codec.go`，三个协议骨架在各自子包，实现见 #11 / #12。
+> **v0.26 修订（#11 M2-2 A→CC 实现）。** 代码在 `internal/protocol/codec.go`。`anthropic` 与 `openaicc` 已实现，`openairesponses` 仍是骨架（#12）。
 
 ```go
 type Codec interface {
     DecodeRequest(body []byte, stream bool) (*Request, error)   // 入口请求 → canonical，必须是全函数
     EncodeRequest(req *Request, stream bool) ([]byte, error)    // canonical → 出口请求
     DecodeStream(r io.Reader) (<-chan Event, error)             // 上游 SSE → 事件流，实现负责关 channel
+    DecodeFullBody(body []byte) ([]Event, error)                // 上游非流式响应体 → 完整事件序列（v0.26 补）
     EncodeStream(w io.Writer, events <-chan Event) error        // 事件流 → 下行 SSE（含分帧与 flush）
     EncodeFullBody(events []Event) ([]byte, error)              // 非流式响应聚合
     EncodeError(w http.ResponseWriter, status int, msg string)  // 协议原生错误格式
 }
 ```
+
+- **`DecodeFullBody` 是 v0.26 补进来的**（PO 裁定 jinpenga，2026-08-08）：v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的**解码侧因此无处落脚**。备选方案是「非流式也向上游发流式请求再自行聚合」，被否——上游看到的请求与客户端发的不是一回事（计费与限流口径可能不同），且流中途断连时手里只剩半截事件序列，而客户端等的是一个完整 JSON，无法收场。实现上两侧共用同一台状态机（`openaicc` 的 `message` 与 `delta` 结构同形），解析逻辑只存在一处。
+- 可选接口 `RequestEncodeReporter`（`EncodeRequestReport` 额外回一串丢弃字段名）不进主接口：只有转换路径需要它，同协议透传路径拿不到也用不上。丢弃项由 relay 侧写 warning 日志，见 §4.5。
 
 - 骨架统一返回 `protocol.ErrNotImplemented` 而**不 panic**：转换闸门一放开这些方法就会被真实请求打到，panic 带走整个进程，而一个能被 relay 转成 5xx 的错误只坏这一条请求。骨架期的正确行为是「明确地不支持」，不是「崩给你看」。`EncodeError` 例外——它直接委托 M0 就已落地的 `Protocol.WriteError`，错误格式不是转换逻辑。
 - `EncodeError` 收 `http.ResponseWriter` 而非 `io.Writer`（草案原文如此）：它要设 Content-Type 与状态码，且这条路径只在**首字节写出之前**走得通。流一旦开头，错误就只能以 `EvError` 的形态走在流里，那是 `EncodeStream` 的活。msg 由调用方保证已脱敏——上游 key 与 base_url 严禁出现在错误回显里。
@@ -267,7 +286,10 @@ type Codec interface {
 
 | 坑 | 说明 |
 |---|---|
-| tool call 增量重组 | OpenAI 按 index 分发参数分片；Anthropic `input_json_delta`；并行调用下 index 交错出现，必须按 Index 缓存再按序输出 |
+| tool call 增量重组 | OpenAI 按 index 分发参数分片；Anthropic `input_json_delta`；并行调用下 index 交错出现，必须按 Index 缓存再按序输出。**输出顺序按「首次出现」而非 index 数值排**（#11 实现）：index 不保证从 0 起、不保证连续，按数值排会在上游从 1 起编号时错位 |
+| CC 工具调用无逐条终止符 | CC 流里没有「这一路 tool_call 说完了」的信号，只有整流的 `finish_reason`。故工具分片只能**攒到流末尾一次性冲出**；而 Anthropic 侧同一时刻只允许开一个 content block，encode 侧要把每路缓存成 start/delta*/stop 一个整体再写。正文 delta 不受影响，仍逐字下发 |
+| 响应 id 形态 | 上游 CC 的 `chatcmpl-…` **原样**当作 Anthropic `message.id` 下发，不重编 `msg_…`（#11 决策）：网关日志、上游账单、客户端看到的是同一个 id，排障能对上；Anthropic 客户端不校验 id 形态，也不需要把它回带给下一轮 |
+| 转换路径不转发原始 query | 客户端打过来的 `?beta=true` 是 Anthropic 方言，原样贴到 CC 上游 URL 上会被严格上游拒。#20 定的「query 整串照抄」只管**同协议透传**；转换路径发空 query |
 | `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |

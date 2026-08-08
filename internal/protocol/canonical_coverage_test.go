@@ -164,6 +164,21 @@ func TestCanonicalModelCoversInboundSamples(t *testing.T) {
 	seen := map[string][]string{} // path → 出现在哪些样本
 	for _, dir := range dirs {
 		name := filepath.Base(dir)
+		// verified 关卡：入站样本经脱敏改过字节，没人核过就不该被当成事实源。
+		// 这里跟 golden_test.go 同一道闸，理由见 cmd/goldenrec/main.go 注释。
+		metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var meta struct {
+			Verified bool `json:"verified"`
+		}
+		if err := json.Unmarshal(metaRaw, &meta); err != nil {
+			t.Fatalf("%s meta.json: %v", name, err)
+		}
+		if !meta.Verified {
+			t.Fatalf("%s 的 meta.json 仍是 verified:false——脱敏并核对后再置 true", name)
+		}
 		raw, err := os.ReadFile(filepath.Join(dir, "request.json"))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
