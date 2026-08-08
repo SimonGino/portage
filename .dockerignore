@@ -1,0 +1,29 @@
+# 构建上下文越小越快，也免得把本地库和真凭证塞进构建缓存。
+.git
+.github
+
+# 数据与密钥：这两类进了构建上下文就等于进了镜像层历史，删不干净。
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+config.yaml
+.env
+
+# 构建产物
+/bin
+/dist
+/gateway
+
+# golden 原始转录（未脱敏的那份，本来就不进 git）
+/testdata/golden/raw
+
+# 前端依赖与产物：镜像里要的是构建好的 embed，不是 node_modules
+node_modules
+web/node_modules
+web/dist
+
+.DS_Store
+.idea
+.vscode

@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.27
+> 状态：草案 v0.28
+> v0.28 变更（M1 落地 + 容器打包，2026-08-08）：实现层，口径不变。①新增 §11.1 容器打包——容器只是单二进制的一种分发方式，不改口径层 §2.8 的部署形态；记下三个实测坑（scratch 缺根证书 → 全 502、命名卷属主照搬镜像 → 启动即 `unable to open database file (14)`、容器内 `listen` 必须 `0.0.0.0`）。②M1 实现中两处判断落档：`ttft_ms` 只记流式（非流式填了约等于总耗时，混合流量下「平均首字延迟」失去意义，非流式的首字节耗时仍在 slog）；`error` 列写网关自己的固定词表而非上游原文（上游文案里可能带 base_url），上游自己回 4xx/5xx 的**透传成功**行不算网关侧错误、该列留空。修改人 jinpenga。
 > v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
 > v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
@@ -581,6 +582,18 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
 | M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制；公网部署（Caddy TLS + 全局限流） | 待估 |
 | M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
+
+### 11.1 容器打包（2026-08-08）
+
+口径层 §2.8 的部署形态是「构建产物 embed 进单二进制」，容器只是**这个二进制的一种分发方式**，不改口径：镜像里就是那一个二进制加一份配置，没有另起一套运行时。加它的动机是把网关搬到另一台机器上试跑，不必在那台机器上装 Go 工具链。
+
+- `Dockerfile`：多阶段，`CGO_ENABLED=0` 静态编译 → `scratch`。**能用 scratch 的前提是 SQLite 走 `modernc.org/sqlite`（纯 Go）**，换成 `mattn/go-sqlite3` 就得改成 alpine + libc。镜像 18 MB。
+- 三个实测踩到的坑，都写进了各自文件的注释：
+  - **根证书**：`scratch` 里没有，上游全是 HTTPS，缺了的症状是每个请求 502，看不出是证书问题。从 build 阶段拷 `ca-certificates.crt`。
+  - **`/data` 属主**：Docker 建命名卷时照搬镜像里同路径的属主。镜像里不预建 `/data`，卷就归 root，而进程以 65532 跑，启动即 `apply schema: unable to open database file (14)`——看着像 SQLite 坏了，其实是权限。解法是在镜像里预建一个属主正确的空 `/data`。
+  - **`listen` 必须是 `0.0.0.0`**：宿主上的默认 `127.0.0.1` 在容器里只有容器自己看得见，端口映射永远连不上。边界因此从「进程绑哪个地址」挪到「端口发布给谁」——compose 里默认 `127.0.0.1:8317:8317`，改成 `8317:8317` 就是整个局域网，那时只有 key 鉴权挡着，TLS 与全局限流都还在 M3。
+- 灌配置在**宿主侧**做：scratch 里既没有 shell 也没有 sqlite3。`deploy/docker-compose.yml` 顶部写了对着卷跑 sqlite3 容器的命令，`--user 65532:65532` 不能省——身份不对只能只读，报的是 `attempt to write a readonly database`。
+- 健康检查刻意留空：为探活往镜像里塞一个 shell 或 curl，等于为一件外部就能做的事把攻击面加回来。
 
 ## 12. 参考对照
 
