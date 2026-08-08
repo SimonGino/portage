@@ -26,10 +26,13 @@ type Config struct {
 	// 可以用环境变量 AIG_ADMIN_PASSWORD 覆盖，见 Load。
 	AdminPassword string `yaml:"admin_password"`
 
-	// 以下字段 M0 接受但不使用，留给后续里程碑。
+	// RateLimitQPS / RateLimitBurst 是全局令牌桶（口径层 §2.7，v0.15 定 10/20）。
+	// **配 0 即关闭限流**；只配了 qps 时 burst 由 newLimiter 兜底。
+	RateLimitQPS   int `yaml:"rate_limit_qps"`
+	RateLimitBurst int `yaml:"rate_limit_burst"`
+
+	// M0 接受但不使用，留给后续里程碑。
 	DefaultMaxTokens int `yaml:"default_max_tokens"`
-	RateLimitQPS     int `yaml:"rate_limit_qps"`
-	RateLimitBurst   int `yaml:"rate_limit_burst"`
 }
 
 // Retry 的默认值见 Default()。MaxRetries 是**重试**次数，不含首次尝试。
@@ -77,6 +80,9 @@ func Load(path string) (Config, error) {
 	if cfg.DBPath == "" {
 		cfg.DBPath = Default().DBPath
 	}
+	// rate_limit_qps 与 max_retries 同理，不在这里兜底：整块缺席 → 保持默认 10；
+	// 显式写 0 → 就是要关掉限流。补零值会让「写了 0」被悄悄改回 10，关不掉。
+	//
 	// max_retries 这里不兜底，靠 Unmarshal 覆盖在 Default() 之上的语义区分两种情况：
 	// 整个 retry 块缺席 → 保持默认 2；显式写 max_retries: 0 → 就是要关掉重试。
 	// 若在这里补零值，「写了 0」会被悄悄改回 2，关不掉。

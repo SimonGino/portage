@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/gin-gonic/gin v1.12.0
 	golang.org/x/crypto v0.48.0
+	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.56.0
 )

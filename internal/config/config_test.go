@@ -125,3 +125,33 @@ func TestAdminPasswordFromEnv(t *testing.T) {
 		t.Errorf("配置文件缺席时 admin_password = %q, 期望 only-env", cfg.AdminPassword)
 	}
 }
+
+// rate_limit_qps 写 0 就是要关掉限流。它与 max_retries 同一个陷阱：在 Load 里
+// 「顺手补个零值」会让 0 被悄悄改回默认 10，配置项形同虚设。
+func TestRateLimitZeroIsHonoured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		yaml  string
+		qps   int
+		burst int
+	}{
+		{"整块缺席保持默认", "listen: \":1\"\n", 10, 20},
+		{"显式写 0 即关闭", "rate_limit_qps: 0\n", 0, 20},
+		{"只改 qps", "rate_limit_qps: 3\n", 3, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("加载失败: %v", err)
+			}
+			if cfg.RateLimitQPS != tc.qps || cfg.RateLimitBurst != tc.burst {
+				t.Errorf("qps/burst = %d/%d, 期望 %d/%d",
+					cfg.RateLimitQPS, cfg.RateLimitBurst, tc.qps, tc.burst)
+			}
+		})
+	}
+}

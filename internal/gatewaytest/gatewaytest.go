@@ -302,6 +302,11 @@ type Options struct {
 	// 「配 0 时行为与 M0 完全一致」的回归护栏。要测重试的用例显式传策略，其中
 	// 至少有一个传 config.Default().Retry，保证出厂默认值本身也被跑到。
 	Retry config.Retry
+	// RateLimitQPS / RateLimitBurst 覆盖全局限流，零值即**关闭**——同样刻意不跟随
+	// config.Default()。默认的 10 QPS / 突发 20 会让任何连打二十几个请求的用例莫名
+	// 变红，而且是间歇性的（跑得慢的机器上令牌来得及回）。要测限流的用例显式传值。
+	RateLimitQPS   int
+	RateLimitBurst int
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -340,6 +345,8 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	cfg := config.Default()
 	cfg.LogBodies = opts.LogBodies
 	cfg.Retry = opts.Retry
+	cfg.RateLimitQPS = opts.RateLimitQPS
+	cfg.RateLimitBurst = opts.RateLimitBurst
 	cfg.AdminPassword = AdminPassword
 	// 走真正的 Bootstrap，不直接往 settings 里塞哈希：管理端测试要覆盖的正是
 	// 「配置里的明文只用来初始化」这条口径，绕过它就等于没测。

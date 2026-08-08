@@ -174,6 +174,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
+	setNoBuffering(h)
 	c.Writer.WriteHeader(http.StatusOK)
 	rec.outcome = "ok"
 

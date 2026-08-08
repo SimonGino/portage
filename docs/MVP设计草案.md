@@ -400,8 +400,8 @@ db_path: "./gateway.db"
 admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 AIG_ADMIN_PASSWORD 覆盖）
 default_max_tokens: 8192
 log_bodies: false                  # 排障开关；默认不记请求体
-rate_limit_qps: 10                 # 全局令牌桶（v0.15）；超限 429 + Retry-After
-rate_limit_burst: 20
+rate_limit_qps: 10                 # 全局令牌桶（v0.15，M3 落地）；写 0 即关闭
+rate_limit_burst: 20               # 只写 qps 时兜底 20；超限回 429 + Retry-After: 1
 retry:                             # 同候选退避重试（v0.19 口径，v0.21 定稿）
   max_retries: 2                   # **重试**次数，不含首次尝试
   base_delay: 500ms
@@ -523,6 +523,31 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 其余 M1 细则（取 key 的两个头、401 走 `protocol.WriteError`、鉴权失败也落 `call_logs`、落库失败不得影响请求）见 Issue [#22](https://github.com/SimonGino/ai-gateway/issues/22)。
 
+### 7.2 全局限流的实现口径（M3，兑现口径层 v0.15）
+
+`internal/server/ratelimit.go`，`golang.org/x/time/rate` 的令牌桶。口径层只裁了语义（单桶、10 QPS / 突发 20、429 带 Retry-After、不分维度），以下是实现侧的决定：
+
+- **一只桶，在 `New()` 里造、四条转发路由共用**。写成在 `rateLimit(ep)` 闭包里 new 的话，每个端点各得一只，全局 10 QPS 悄悄变成 40——而且从代码上看不出来。`TestRateLimitBucketIsSharedAcrossEndpoints` 是这条的哨兵。
+- **挂在鉴权之后**（`callLog → authRelay → rateLimit → relay`）。限流的目的是「钳制上游账单损失」，而没过鉴权的请求根本到不了上游；放在鉴权之前，被扫时扫描流量会把令牌吃光，把合法请求一起饿死——那是把防账单的闸变成了一个 DoS 放大器。代价是被扫时网关自己仍要为每个请求查一次 key，那是 SQLite 的一次索引命中，不是一个量级。副作用是好的：429 那行流水带得上 `api_key_name`，排查泄露时看得见是哪把 key 在刷。
+- **只挂转发面那四个 POST**。`/healthz` 被限会让监控在最忙的时候先报警；`/v1/models` 不打上游；`/admin` 走另一套凭证，把自己限出管理端毫无意义。
+- **`Retry-After: 1` 固定值**。这个头的单位是整秒，而 10 QPS 下一个令牌 100ms 就回来，算出来的真值一律不足 1 秒、只能向上取整成 1。用 `Reserve()` 拿精确延迟还得记得 `Cancel()` 把令牌还回去（漏了等于每次被拒再扣一个），为一个恒等于 1 的结果不值当，所以用 `Allow()`。
+- **`rate_limit_qps: 0` 即关闭**，与 `retry.max_retries` 同一个陷阱：在 `config.Load` 里顺手补零值会让「写了 0」被悄悄改回 10，配置项形同虚设。`burst <= 0` 反过来必须兜底成 20——桶容量 0 时 `Allow` 恒假，整个转发面直接瘫掉。
+- **测试里默认关闭**（`gatewaytest.Options` 的零值），否则任何连打二十几个请求的用例会莫名变红，而且是间歇性的。要测限流的用例显式传 `qps=1`。
+
+### 7.3 `X-Accel-Buffering: no`（M3，PO 裁决 jinpenga 2026-08-08，口径层 v0.30）
+
+SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本次响应关掉 `proxy_buffering`。
+
+**为什么值得**：§11.3 的实测里，「关掉缓冲」单独就足以让被攒住的 SSE 恢复逐条下发。网关多半跑在一份不由我们维护的 nginx 后面（公司机器上那份、别人写的那份），这个头等于把那一下做进网关自己，不必指望前面的配置写对了。
+
+**为什么要 PO 拍板而不是实现侧自决**：它是透传路径上唯一一处「上游没发、我们加上」的响应头，与「透传保真优先」有张力。
+
+实现细节：
+
+- 两条路径都设。转换路径在 `convert.go` 跟其余 SSE 头一起写；透传路径在 `CopyResponseHeaders` **之后**按上游 `Content-Type` 前缀判 `text/event-stream` 再补——放在之后是有意的，上游若自己发了这个头（见过发 `yes` 的中转），以我们的为准。
+- **非流式不加**。无差别盖上去就成了「透传路径永远多一个上游没发的头」，与保真的张力比换来的好处大。
+- 对不认它的反代与直连客户端是一个无害的多余头。
+
 ## 8. 最小管理接口
 
 - `GET /healthz`
@@ -618,7 +643,7 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 | M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
-| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。**全局限流尚未做；反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。全局限流已落地（§7.2）。**反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
 | M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
 
 ### 11.1 容器打包（2026-08-08）
@@ -678,7 +703,9 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 **只放行 `/v1`（+ 可选 `/healthz`）**，兑现口径层 §2.7「反代只放行转发面」：`/admin` 认的是 cookie 会话，公网上多一个可爆破的登录页没必要，要用走内网直连或 SSH 端口转发。样例末尾的 `location / { return 404; }` 是兜底，防以后加 location 时漏掉。
 
-**全局限流不在这一层**：口径层 §2.3 已裁定单个全局令牌桶（10 QPS / 突发 20）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。**该功能尚未实现**，见 §11 M3 行。
+**全局限流不在这一层**：口径层 §2.7 已裁定单个全局令牌桶（10 QPS / 突发 20）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。实现见 §7.2。
+
+**网关自己会发 `X-Accel-Buffering: no`**（口径层 v0.30，见 §7.3）：样例里的 `proxy_buffering off` 因此是双保险，真正的用处是覆盖那些不由我们维护的 nginx。
 
 ## 12. 参考对照
 
