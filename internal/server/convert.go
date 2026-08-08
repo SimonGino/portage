@@ -27,7 +27,13 @@ import (
 //
 // 每落地一条路径在这里加一格，没落地的仍报「该转换路径尚未实现」。
 func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
-	return ep == protocol.EndpointMessages && channel == protocol.OpenAICC
+	switch {
+	case ep == protocol.EndpointMessages && channel == protocol.OpenAICC:
+		return true // A→CC（#11，口径层 §2.1 优先级①上半）
+	case ep == protocol.EndpointResponses && channel == protocol.OpenAICC:
+		return true // R→CC（#12，优先级①下半）
+	}
+	return false
 }
 
 // relayConverted 跑一条转换路径：入口 codec 解成 canonical，渠道 codec 编出去，
@@ -37,6 +43,10 @@ func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 // 只能断连）、Tap 挂在**上游原始字节**上（usage 出自上游自己说的数，不是我们编出来
 // 的响应）、错误回显不带上游 key 与 base_url。
 func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, body []byte, stream bool) {
+	// 这两个实例要一路带到响应侧，**不能在编码时另 New 一个**：codec 允许携带每请求
+	// 状态，而入口 codec 的 DecodeRequest 与 EncodeStream/EncodeFullBody 服务的是同
+	// 一次请求。openairesponses 就靠这条把「客户端声明了哪些 custom 工具」从解码侧
+	// 传到编码侧（见该包 Codec 的注释）。
 	inCodec, outCodec := codecs.New(ep.Proto), codecs.New(cand.Protocol)
 	if inCodec == nil || outCodec == nil {
 		s.log.Error("转换路径缺 codec", "inbound", ep.Proto, "channel", cand.Protocol)
@@ -109,10 +119,10 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	}
 
 	if stream {
-		s.streamConverted(c, rec, ep, cand, outCodec, src)
+		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, src)
 		return
 	}
-	s.bufferConverted(c, rec, ep, cand, outCodec, src)
+	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, src)
 }
 
 // encodeRequest 走 RequestEncodeReporter 拿丢弃清单，拿不到就退回普通编码。
@@ -159,7 +169,7 @@ func upstreamErrorMessage(raw []byte) string {
 }
 
 // streamConverted 跑流式转换：上游 SSE → canonical 事件 → 入口协议 SSE。
-func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, outCodec protocol.Codec, src io.Reader) {
+func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	events, err := outCodec.DecodeStream(src)
 	if err != nil {
 		rec.outcome = "upstream_error"
@@ -187,7 +197,6 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 		panic(http.ErrAbortHandler)
 	}
 
-	inCodec := codecs.New(ep.Proto)
 	if err := inCodec.EncodeStream(w, events); err != nil {
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 		rec.outcome = "stream_aborted"
@@ -208,7 +217,7 @@ func drainEvents(events <-chan protocol.Event) {
 }
 
 // bufferConverted 跑非流式转换：上游完整响应体 → canonical 事件 → 入口协议响应体。
-func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, outCodec protocol.Codec, src io.Reader) {
+func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
 		rec.outcome = "upstream_error"
@@ -223,7 +232,7 @@ func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.En
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法解析")
 		return
 	}
-	out, err := codecs.New(ep.Proto).EncodeFullBody(events)
+	out, err := inCodec.EncodeFullBody(events)
 	if err != nil {
 		rec.outcome = "upstream_error"
 		s.log.Error("响应编码失败", "inbound", ep.Proto, "err", err)

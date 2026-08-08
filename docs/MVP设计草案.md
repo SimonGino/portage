@@ -64,13 +64,17 @@
 
 | 入口 ↓ / 出口 → | Anthropic | Chat Completions | Responses |
 |---|---|---|---|
-| Anthropic Messages | **P0 透传** | P1-① 转换 | P1-④ 转换 |
+| Anthropic Messages | **P0 透传** | P1-① 转换 ✅#11 | P1-④ 转换 |
 | Chat Completions | P1-③ 转换 | **P0 透传** | P1-③ 转换 |
-| Responses | P1-② 转换 | P1-① 转换 | **P0 透传** |
+| Responses | P1-② 转换 | P1-① 转换 ✅#12 | **P0 透传** |
+
+✅ = 已落地并放开临时闸（`server/convert.go` 的 `conversionOpen`）。其余格仍回 501。
+
+各格所需的 codec 半边（每个 codec 分「入口半边」`DecodeRequest`+`EncodeStream`+`EncodeFullBody` 与「出口半边」`EncodeRequest`+`DecodeStream`+`DecodeFullBody`）：已实现的是 anthropic 入口半边、openaicc 出口半边、openairesponses 入口半边。所以下一刀最便宜的两条是 **R→A**（②，只差 anthropic 出口半边）与 **A→R**（④，只差 openairesponses 出口半边）；CC 入口那两条（③）各差两个半边。
 
 - 分批号 ①~④ 即口径层 §2.1 实现优先级：**①** A→CC、R→CC（主诉求：harness 挂第三方便宜模型）；**②** R→A（Codex 用 Claude）；**③** CC→A、CC→R；**④** A→R（允许滑到最后）。
 - 首批特性集 = 纯文本 + tool calls（含并行调用）+ system prompt + 停止原因 + usage；图片、count_tokens 估算、thinking 精细策略等横切增强随 ③④ 批排期。
-- Responses 无状态化（`previous_response_id` 处理）随 ① 的 R→CC 一并落地。
+- Responses 无状态化（`previous_response_id` 处理）随 ① 的 R→CC 一并落地。**（#12 已落地）** 实现是最简形态：`DecodeRequest` 直接丢掉 `previous_response_id`，连 `Extras` 都不进——留着它等于把一个**上一个上游**才认得的句柄带在身上，任何编码侧顺手带出去，上游要么报找不到、要么接到别人的会话上。上下文靠 harness 全量携带的 `input` 重建，与 sub2api 的 `RemovePreviousResponseIDFromBody` 同路子。
 
 **「设计态考虑」落为三条硬约束：**
 1. **管线 seam 现在就定型**（§6）：同协议走原始字节透传，异协议走 canonical 编解码；P1 只是填充后一路，seam 位置不变。
@@ -286,6 +290,16 @@ type Codec interface {
 - 每个协议一个包实现 `Codec`；「A→B 转换」= CodecA 解码 + CodecB 编码，**不存在两两互转的转换器**。实证依据：网桥式（逐对状态机）并非不可行——sub2api `apicompat/` 在三协议六方向上做成了生产级；但其 CC→A 流式路径是 `CC→Responses + R→Anthropic` 链式二次转换，恰说明无统一中枢时方向组合退化为拼凑链。枢纽式对新增协议保持 O(n) 扩展，本设计取枢纽。
 - `EncodeStream` 内部管理：SSE 分帧、index 追踪（OpenAI 工具调用按 index 分片需按出现顺序重建）、`[DONE]` 终止符、Anthropic 的 `message_start/stop` 包裹。
 
+#### Codec 实例的生命周期：每请求一个，Decode 与 Encode 共用同一个（v0.32 定，#12 R→CC 实现）
+
+`codecs.New` 返回的实例**每请求一个，不可缓存、不可跨请求复用、不可并发共享**；调用方（`internal/server/convert.go`）拿到入口 codec 之后必须一路用到响应编码，不许在编码时另 `New` 一个。这不是接口变更，是把「实例可以带每请求状态」这条隐含许可写成明文约束。
+
+被逼出来的原因是 R 出口方向的一处非局部依赖：**Responses 的响应形态取决于请求里怎么声明的工具**。同一个上游 function-call 回来，声明成 `custom` 的要发 `custom_tool_call` + 自由文本入参，声明成 `function` 的要发 `function_call` + JSON 入参；而 `EncodeStream(w, events)` 只看得见事件流，事件是 CC 上游解出来的，那边根本不知道客户端当初声明了什么。这份知识只有 `DecodeRequest` 见过。
+
+三个备选都排除了：① 把 kind 塞进 `Event`——CC 解码侧无从得知，它看到的 `arguments` 一律是 JSON；② 按形状猜（能拆出 `{"input":"…"}` 就当是包装）——一个真的只收 `input` 字符串参数的 JSON 工具会被误拆，形状不足以区分意图；③ 给 `Codec` 接口多传一个 `*Request`——六条路径里只有 R 出口用得上，等于让另外两个 codec 各背一个恒为 nil 的参数。sub2api 遇到的是同一个问题、解法同构（`ResponsesClientToolMapping.CustomTools` 从请求抽出来显式传给响应侧），差别只在我们的接口固定，状态改挂实例上。
+
+代价记在明处：`openairesponses.Codec` 是三个 codec 里唯一有状态的，另外两个仍是纯函数。
+
 ### 转换坑清单（codec 实现时的验收关注点）
 
 | 坑 | 说明 |
@@ -297,11 +311,13 @@ type Codec interface {
 | `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
-| 工具入参不保证是 JSON | Codex CLI 0.144 code-mode 只声明一个 `custom` 工具 `exec`，入参是 **JavaScript 源码**（`in-responses-tool-turn2` 实测），`ToolCall.ArgsIsJSON` 为 false。编码到 CC 时 `function.arguments` 按契约必须是 JSON 字符串，encode 侧只能自行合成包装对象——**合成规则须与解包侧对称**，否则工具结果对不回去 |
+| 工具入参不保证是 JSON | Codex CLI 0.144 code-mode 只声明一个 `custom` 工具 `exec`，入参是 **JavaScript 源码**（`in-responses-tool-turn2` 实测），`ToolCall.ArgsIsJSON` 为 false。编码到 CC 时 `function.arguments` 按契约必须是 JSON 字符串，encode 侧只能自行合成包装对象——**合成规则须与解包侧对称**，否则工具结果对不回去。**（#12 已落地）** 包装键是 `input`（`openaicc.argsWrapKey`），对称解包在 `openairesponses.unwrapCustomToolArgs`，两侧与 sub2api 的 `extractCustomToolCallInput` 同规则。解包**只对请求里声明为 custom 的工具做**——按形状猜会把一个真的只收 `input` 字符串参数的 JSON 工具误拆；这份「谁是 custom」的知识由 codec 实例从 Decode 带到 Encode（见上文实例生命周期）。拆不动就原样返回，不报错：第三方中转会重写 arguments，模型也可能换结构 |
+| custom 工具的入参没法逐片下发 | JSON 字符串的转义没法按分片增量解，所以要**攒满整串再拆包**，上游的分片节奏在这里必然丢。这条路上本来也没有节奏可丢：CC 流没有逐条工具终止符，解码侧早已把分片攒到流末尾一次性冲出（见上一条「CC 工具调用无逐条终止符」）|
 | 并行只在 code-mode 内部 | 同一实测：Codex 的并行工具调用发生在那段 JS 的 `Promise.all` 里，线上永远只有一个 `custom_tool_call`，`parallel_tool_calls` 恒 false。别拿 Codex 样本去验证「多路 tool_call 交错重组」——那条路径要用 CC 语料（`testdata/golden/cc-stream-parallel-tools`）验 |
 | 厂商私有推理字段 | DeepSeek 系 `reasoning_content` 等非标字段不建模，走 `Request.Extras` 透传 |
 | Responses reasoning 的 `encrypted_content`（M0 实测） | Codex CLI 的 `/v1/responses` 请求会在 `input` 里回带上一轮的 reasoning item，其 `encrypted_content` 是**上游侧不透明密文**，只有原上游解得开。P0 透传无影响；**P1 一旦跨协议转换就必然作废**——转成 CC/Anthropic 时它无处安放，转回来也已换了上游。落到口径上：这就是「thinking 跨协议丢弃」的具体形态之一，转换路径不得伪造或复用该字段，只能丢，且丢了会让 Codex 失去上一轮的推理上下文（表现为质量下降而非报错）。M2 做 R→CC / R→A 时须有专门用例钉住「带 `encrypted_content` 的 input 不使转换报错」 |
 | Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
+| Responses SSE 线格式（#12 拿真实上游转录复核） | 事件名与 sub2api 一致，无出入。三条实测细节：① 正文 item 比工具 item **多一层 `content_part`**（`output_item.added → content_part.added → output_text.delta* → output_text.done → content_part.done → output_item.done`），工具 item 没有；② 每帧 data 里都带 `sequence_number`，**从 0 起全流连号**（102 帧无一例外），客户端拿它判丢帧；③ 流**不发 `data: [DONE]`**——那是 Chat Completions 的收尾，Responses 以 `response.completed` 为终点。截断另发 `response.incomplete`（`status: incomplete` + `incomplete_details.reason`），流内错误发 `response.failed`。转录在 `testdata/golden/raw/resp-{text,tool,parallel}`（未脱敏，未纳入 git；用例照它定形状后把期望写死在测试里，不回放文件——`raw/` 在 .gitignore 里，回放式用例在 CI 上会集体 skip 成假绿）|
 | Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
 | 角色交替约束 | Anthropic 要求 user/assistant 交替；OpenAI 允许多条连续同角色；转 Anthropic 前需合并相邻同角色消息 |
 | assistant 空 content | 纯 tool_calls 的 assistant 消息 content 可能为 null，转 Anthropic 时空块要剔除 |
@@ -636,6 +652,24 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 > 三条实现口径：脚本按文件名顺序一请求消耗一个，**发完报 503 不循环重放**（静默重放会让 harness 原地打转）；`count_tokens` 就地估算**不消耗脚本**（Claude Code 每轮都打它，吃掉一格会把后面全串位）；未预料的端点回 404 且不消耗脚本。脚本与调参见 `testdata/goldenstub/README.md`。
 
 **测试方法**：样本 → DecodeStream → 内存事件序列 → （跨协议用例再过 EncodeStream+对方 DecodeStream）→ 语义比对（忽略空白与顺序无关差异，比对文本全文、工具调用 name/参数解析后相等、usage、stop reason）。字节级 diff 只用于透传回归。
+
+### 9.1 R→CC 的用例分工与已知缺口（#12，2026-08-08）
+
+三层，各管各的，不重叠：
+
+| 层 | 位置 | 输入 | 钉什么 |
+|---|---|---|---|
+| 解码 | `openairesponses/decode_test.go` | 4 份真实入站样本 `in-responses-*` | 全函数、工具 kind 分类、连续同侧 item 并成一条消息、密文不进 Text、顶层独有字段进 Extras |
+| 编码 | `openairesponses/encode_test.go` | 手写事件序列 | 线格式（帧序 / `sequence_number` / 无 `[DONE]`）、对称拆包、item 类型随请求声明而变 |
+| 整链 | `server/convert_responses_test.go` | Codex 形态请求 + 假 CC 上游 | 出站请求是合法 CC（含 JS 入参被包成 JSON）、下行流是 Responses 且拆了包、非流式聚合、密文丢弃不报错、闸门只开这一格 |
+
+编码层**不回放** `raw/resp-*` 转录：`raw/` 在 `.gitignore` 里，CI 上那些文件根本不存在，回放式用例会集体 skip 成一片假绿。转录的作用是定形状，定完把期望写死在测试里。要让 CI 真的跑转录，得先把它们过一遍脱敏 + `verified: true` 的人工关卡再提升出 `raw/`——那是**上游侧** Responses（③下半 CC→R、④ A→R）才真正需要的事，留到那一刀。
+
+**已知缺口，不装作没有**：
+
+- 四份入站样本**全是 `stream: true`**（Codex CLI 就没有非流式模式）。非流式 R→CC 与字符串形态的 `input` 只有手写用例，没有真实样本背书。
+- `parallel_tool_calls` 在 Codex 侧恒 false（并行发生在那段 JS 的 `Promise.all` 里，线上永远只有一个 `custom_tool_call`），所以「多路 tool_call 交错重组」这条在 R 入口方向**验不到**，只能靠 CC 语料在 A→CC 那边验。
+- `response.reasoning_summary_text.delta` 没实现：CC 解码侧根本不产 `EvThinkingDelta`，而手上三份 Responses 转录里的 reasoning item 只有 `encrypted_content`、一条 delta 都没有。等 A→R（优先级④）拿到真实转录再补，现在写等于照文档猜。
 
 ## 10. harness 验收清单
 

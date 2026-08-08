@@ -15,6 +15,11 @@ import (
 //
 // 转换路径要**两个** Codec：入口协议的解出 canonical，渠道协议的编回去。
 // 两者相等时不该走这条路——同协议透传不做 decode→encode 转码（口径层硬约束）。
+//
+// **返回的实例是每请求一个，不可缓存、不可跨请求复用、不可并发共享。** Codec 允许
+// 携带每请求状态（openairesponses 就带，理由见该包 Codec 的注释），所以这里每次都
+// 真的 new 一个；而调用方拿到之后必须把同一个实例用到底，解码时 New 一个、编码时
+// 再 New 一个，状态就断在中间了（internal/server/convert.go）。
 func New(p protocol.Protocol) protocol.Codec {
 	switch p {
 	case protocol.Anthropic:
