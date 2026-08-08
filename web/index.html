@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 空 data URI 明说「没有图标」。不写的话浏览器会去要 /favicon.ico，
+         那个路径不在 /admin 下，网关照规矩回 404，控制台里就多一条红字。 -->
+    <link rel="icon" href="data:," />
+    <title>ai-gateway 管理端</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

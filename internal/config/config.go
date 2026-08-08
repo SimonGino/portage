@@ -22,11 +22,14 @@ type Config struct {
 	// Retry 是同候选退避重试（口径层 v0.19）。max_retries 配 0 即关闭，行为回到 M0。
 	Retry Retry `yaml:"retry"`
 
+	// AdminPassword 只用来**初始化**管理端密码（口径层 §2.7：登录后可改，改后配置项失效）。
+	// 可以用环境变量 AIG_ADMIN_PASSWORD 覆盖，见 Load。
+	AdminPassword string `yaml:"admin_password"`
+
 	// 以下字段 M0 接受但不使用，留给后续里程碑。
-	AdminPassword    string `yaml:"admin_password"`
-	DefaultMaxTokens int    `yaml:"default_max_tokens"`
-	RateLimitQPS     int    `yaml:"rate_limit_qps"`
-	RateLimitBurst   int    `yaml:"rate_limit_burst"`
+	DefaultMaxTokens int `yaml:"default_max_tokens"`
+	RateLimitQPS     int `yaml:"rate_limit_qps"`
+	RateLimitBurst   int `yaml:"rate_limit_burst"`
 }
 
 // Retry 的默认值见 Default()。MaxRetries 是**重试**次数，不含首次尝试。
@@ -57,6 +60,9 @@ func Load(path string) (Config, error) {
 	cfg := Default()
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		// 这条早退也要过 applyEnv：`docker run` 不挂配置文件是常态，
+		// 那时 env 是设密码的唯一途径。
+		applyEnv(&cfg)
 		return cfg, nil
 	}
 	if err != nil {
@@ -81,5 +87,22 @@ func Load(path string) (Config, error) {
 	if cfg.Retry.MaxDelay <= 0 {
 		cfg.Retry.MaxDelay = Default().Retry.MaxDelay
 	}
+	applyEnv(&cfg)
 	return cfg, nil
+}
+
+// applyEnv 目前只有管理端密码这一项走环境变量。
+//
+// 加它是为了容器：config.docker.yaml 是**烤进镜像**的，把密码写在里面等于写进
+// 镜像层历史；而为了设一个密码去挂一份配置文件，是在最常见的路径上要求最麻烦的
+// 操作。密码属于凭证，凭证走 env 是容器里的常规做法。
+//
+// 优先级 env > 文件：env 是部署时才知道的，文件是仓库里带着的。
+// 空串不算设置——`AIG_ADMIN_PASSWORD=` 与没写它是一回事，不该把文件里的值清掉。
+//
+// 注意这仍然只是**初始化**：库里已经有密码了，这里给什么都不生效（见 admin.Bootstrap）。
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("AIG_ADMIN_PASSWORD"); v != "" {
+		cfg.AdminPassword = v
+	}
 }

@@ -90,3 +90,38 @@ func TestLoadRejectsMalformedYAML(t *testing.T) {
 		t.Error("非法 YAML 未报错")
 	}
 }
+
+// TestAdminPasswordFromEnv：容器里设密码走 env，不用为一个密码去挂配置文件。
+//
+// 顺带钉死「空串不算设置」——`AIG_ADMIN_PASSWORD=` 与压根没写是一回事，
+// 不该把配置文件里已经写好的值清掉。
+func TestAdminPasswordFromEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("admin_password: from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ env, want string }{
+		{"", "from-file"},
+		{"from-env", "from-env"},
+	} {
+		t.Setenv("AIG_ADMIN_PASSWORD", tc.env)
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Fatalf("加载失败: %v", err)
+		}
+		if cfg.AdminPassword != tc.want {
+			t.Errorf("AIG_ADMIN_PASSWORD=%q 时 admin_password = %q, 期望 %q", tc.env, cfg.AdminPassword, tc.want)
+		}
+	}
+
+	// 没有配置文件时 env 一样管用：镜像里那份 config.docker.yaml 就没写密码。
+	t.Setenv("AIG_ADMIN_PASSWORD", "only-env")
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.AdminPassword != "only-env" {
+		t.Errorf("配置文件缺席时 admin_password = %q, 期望 only-env", cfg.AdminPassword)
+	}
+}

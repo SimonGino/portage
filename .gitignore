@@ -22,10 +22,15 @@ channels.yaml
 
 # frontend
 node_modules/
-web/dist/
+# Vite 的 outDir 就在这儿（见 web/vite.config.ts）：Go 用 //go:embed 读它，
+# 而 embed 只能读自己包目录下的文件，所以产物不能待在 web/ 里。
+internal/webui/dist/
 
 # tooling
 .DS_Store
 .idea/
 .vscode/
 /testdata/golden/raw/
+
+# tsc -b 的增量缓存，机器本地状态
+web/tsconfig.tsbuildinfo

@@ -1,10 +1,20 @@
 # 用法（在仓库根目录）：
-#   docker compose -f deploy/docker-compose.yml up -d --build
 #
-# 起来之后库是空的（日志里会有一条 `api_keys 表是空的，所有转发请求都会回 401`），
-# 得先灌配置——渠道、纳管模型、接入点、候选、网关 key。
+#   AIG_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
 #
-# scratch 镜像里既没有 shell 也没有 sqlite3，所以对着卷里的库另起一个容器灌：
+# 起来之后开 http://127.0.0.1:8317/admin ，用那个密码登录，在页面上配渠道、
+# 纳管模型、接入点、网关 key。库是空的很正常（日志里会有一条
+# `api_keys 表是空的，所有转发请求都会回 401`），配完就没了。
+#
+# 密码走环境变量而不是配置文件：config.docker.yaml 是**烤进镜像**的，写在里面
+# 等于写进镜像层历史；而为了设一个密码去挂一份配置文件，是在最常见的路径上
+# 要求最麻烦的操作。它只用来**初始化**——库里已经有密码了（包括在页面上改过的），
+# 这个变量给什么都不生效。忘了密码就删卷重来，或者直接改 settings 表。
+#
+# 不设密码也能起，只是管理端登不进去（登录页会明说），转发功能不受影响。
+#
+# 命令行灌配置的老路子仍然可用。scratch 镜像里既没有 shell 也没有 sqlite3，
+# 所以对着卷里的库另起一个容器：
 #
 #   docker run --rm --user 65532:65532 \
 #     -v ai-gateway-data:/data -v "$PWD/scripts:/s:ro" keinos/sqlite3 \
@@ -14,11 +24,6 @@
 # 报的是 `attempt to write a readonly database`，看不出是权限问题。
 #
 # 灌完不用重启——渠道、key 都是每次请求现查的。只有配置文件改了才要重启。
-#
-# 看用量同理：
-#   docker run --rm --user 65532:65532 -v ai-gateway-data:/data keinos/sqlite3 \
-#     sqlite3 -header /data/gateway.db \
-#     'SELECT created_at, api_key_name, model_requested, status FROM call_logs ORDER BY id DESC LIMIT 20;'
 
 services:
   gateway:
@@ -27,14 +32,19 @@ services:
       dockerfile: Dockerfile
     image: ai-gateway:local
     restart: unless-stopped
+    environment:
+      # 只用来初始化管理密码。宿主上没设这个变量时它是空串，等于没设。
+      AIG_ADMIN_PASSWORD: ${AIG_ADMIN_PASSWORD:-}
     ports:
       # 只发布给本机。要让局域网里另一台机器连过来，改成 "8317:8317"——
-      # 那一刻网关就暴露在整个网段上，只有 key 鉴权挡着，没有 TLS 也没有限流
-      # （口径层 §2.7 把这两样列为公网暴露的必做项，都在 M3）。
+      # 那一刻网关就暴露在整个网段上，只有 key 鉴权和管理端密码挡着，
+      # 没有 TLS 也没有限流（口径层 §2.7 把这两样列为公网暴露的必做项）。
+      # 注意管理端会话 cookie 在明文 HTTP 下不带 Secure，同网段能被嗅到。
       - "127.0.0.1:8317:8317"
     volumes:
       - ai-gateway-data:/data
       # 要改配置就把这行放开，改宿主上的 deploy/config.docker.yaml。
+      # 密码不必走这条路，用上面的环境变量。
       # - ./config.docker.yaml:/etc/ai-gateway/config.yaml:ro
     healthcheck:
       # scratch 里没有 curl/wget，只能让网关自己探自己——gateway 二进制不带

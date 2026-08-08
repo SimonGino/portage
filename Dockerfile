@@ -3,6 +3,19 @@
 # 能用 scratch 是因为 SQLite 走的是 modernc.org/sqlite（纯 Go 实现），CGO_ENABLED=0
 # 编出来的二进制没有任何动态链接依赖。换成 mattn/go-sqlite3 这一层就得改成
 # alpine + libc，别顺手换驱动。
+
+# 前端单独一层。放在最前面而不是塞进 Go 那层：web/ 不动的时候整层走缓存，
+# 改 Go 代码不会连带重跑一次 npm ci。
+FROM node:22-slim AS webbuild
+WORKDIR /web
+# 同样先只拷依赖清单。用 npm ci 而不是 install：锁文件说了算，构建才可复现。
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+# Vite 的 outDir 是 ../internal/webui/dist（见 web/vite.config.ts），
+# 所以产物落在 /internal/webui/dist，不在 /web 底下。
+RUN npm run build
+
 FROM golang:1.26 AS build
 
 WORKDIR /src
@@ -13,12 +26,18 @@ RUN go mod download
 
 COPY . .
 
+# 前端产物必须在 COPY . . **之后**进来，否则会被整包覆盖掉。
+# 位置是 internal/webui/dist，因为 //go:embed 只能读自己包目录下的文件。
+COPY --from=webbuild /internal/webui/dist ./internal/webui/dist
+
 # -trimpath 去掉构建机的绝对路径；-s -w 去符号表与调试信息，镜像小一半。
 # 目标平台由 buildx 通过 TARGETOS/TARGETARCH 注入，交叉编译不需要额外工具链。
+# -tags webui 才会真的把上面那份 dist embed 进去；不带这个 tag 编出来的二进制
+# 转发照常，但 /admin 只回一页「管理端未编译进此二进制」的说明。
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags='-s -w' -o /out/gateway ./cmd/gateway
+    go build -tags webui -trimpath -ldflags='-s -w' -o /out/gateway ./cmd/gateway
 
 # 空的 /data 也得在镜像里先存在且属主正确：Docker 建命名卷时会照搬镜像里同路径的
 # 属主，镜像里没有这个目录，卷就归 root，而我们以 65532 跑——症状是启动即

@@ -19,10 +19,13 @@ config.yaml
 # golden 原始转录（未脱敏的那份，本来就不进 git）
 /testdata/golden/raw
 
-# 前端依赖与产物：镜像里要的是构建好的 embed，不是 node_modules
+# 前端依赖与产物：镜像里要的是自己那一层构建出来的 dist，不是宿主上那份。
+# internal/webui/dist 必须排掉——不排的话，宿主上一份过期的构建会跟着上下文进去，
+# 而 Dockerfile 里 `COPY . .` 在 `COPY --from=webbuild` 之前，看起来是覆盖了，
+# 一旦哪次改了 COPY 顺序就会静默用上旧前端。
 node_modules
 web/node_modules
-web/dist
+internal/webui/dist
 
 .DS_Store
 .idea

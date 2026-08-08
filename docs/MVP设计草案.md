@@ -96,8 +96,10 @@ internal/protocol/         # canonical 事件模型（P0 定稿，§4）；codec
 internal/convert/          # canonical 之间的请求级归一（其实是 codec 内部实现细节）
 internal/upstream/         # HTTP client、SSE 读取、failover 驱动
 internal/logging/          # 调用日志写库、查询
-internal/store/            # SQLite：channels、access_points、candidates、api_keys、call_logs
-internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRUD、用量查询，M3 扩全）、React 静态资源 embed
+internal/store/            # SQLite：channels、access_points、candidates、api_keys、call_logs、settings
+internal/admin/            # 管理面：session 鉴权、渠道/接入点/key CRUD、用量查询、SPA 分发
+internal/webui/            # 前端 embed，build tag 二选一（embed.go / stub.go）
+web/                       # Vite + React 源码；产物落 internal/webui/dist（不进 git）
 ```
 
 关键模块职责：
@@ -110,7 +112,7 @@ internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRU
 
 > **实现偏离待裁（v0.11）**：M0-1 把接入点解析（`Resolve`，返回命中候选 + 其渠道连通信息）实现在 `internal/store` 而非本节列出的 `internal/router/`。理由：临时闸下解析就是一条 SQL，单开一个只做转调的包是空壳。代价：`store` 同时管 schema、启动校验与解析，职责在发散。M4 上多候选加权分流时解析会长出真正的逻辑，届时要么拆出 `internal/router/`、要么本节按实际改写——请 PO 在 M4 排期时一并裁定。
 >
-> **实现偏离待裁（v0.12）**：M0-3 把 `GET /v1/models` 实现在 `internal/server` 而非本节列出的 `internal/admin/`。理由：它是 harness 走网关 key 打的**业务**端点（Claude Code / Codex CLI 启动时拉模型列表），与管理端 CRUD 不是一类东西——放 `admin` 会让「业务面 vs 管理面」的边界糊掉。M3 上管理端时请 PO 确认：`admin` 只收管理面（`/healthz` 亦然待定），业务面的模型列表留在 `server`。
+> ~~**实现偏离待裁（v0.12）**~~ **已裁（口径层 v0.28，2026-08-08）**：`internal/admin` **只收管理面**；`GET /v1/models` 与 `/healthz` 是业务面，留在 `internal/server`。理由即当初提请裁定的那条——`/v1/models` 是 harness 走网关 key 打的业务端点，放 `admin` 会让「业务面 vs 管理面」的边界糊掉，而这条边界正是两套凭证彻底分离的依据。本节模块表已按裁决改写。
 
 ## 4. 内部事件模型（canonical events）
 
@@ -395,7 +397,7 @@ logging：无论成败异步落 call_logs
 ```yaml
 listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 Caddy/限流
 db_path: "./gateway.db"
-admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效
+admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 AIG_ADMIN_PASSWORD 覆盖）
 default_max_tokens: 8192
 log_bodies: false                  # 排障开关；默认不记请求体
 rate_limit_qps: 10                 # 全局令牌桶（v0.15）；超限 429 + Retry-After
@@ -405,6 +407,8 @@ retry:                             # 同候选退避重试（v0.19 口径，v0.2
   base_delay: 500ms
   max_delay: 10s
 ```
+
+> **唯一的环境变量是 `AIG_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
 
 > **`retry` 块缺席 = 用默认（重试 2 次），显式写 `max_retries: 0` = 关闭**。两者在 YAML 里都解出 0，靠「先填默认值再 Unmarshal 覆盖」区分：加载后不许再给 `max_retries` 补零值，否则「写了 0」被悄悄改回 2，重试就关不掉了。两个退避间隔反过来必须兜底——只写 `max_retries` 时不补就退了个寂寞。
 
@@ -495,7 +499,15 @@ CREATE TABLE call_logs (
   error TEXT                           -- 截断后的错误摘要
 );
 CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
+
+CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一行 admin_password_hash
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 ```
+
+> **为什么密码不回写 `config.yaml`**：口径层 §2.7 要求「登录后可改，改后配置项失效」，改到哪儿就得存到哪儿；而配置文件在容器里是只读挂载的，回写根本写不进去。单开一张 kv 表比为一个字段建一张专表更省——管理端往后要存的零碎状态都归这里。
 
 注：若未来改 MySQL，表须显式 `CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`（与团队 DDL 规范一致）。
 
@@ -504,6 +516,8 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 **`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-aig-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
 
 **`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
+
+> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个接入点。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的接入点。
 
 **不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
 
@@ -515,9 +529,33 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 - `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
 
 > **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
-- `GET /admin/logs?limit=50&model=...`：近期调用日志（管理员 session 鉴权，细则见口径层 §2.7）
-- 管理端 CRUD API（渠道/接入点/key）随 M3 扩全，届时另列；上表为 M0~M2 最小集
 - Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501
+
+**以上是业务面，全在 `internal/server`**（口径层 v0.28：`/healthz` 与 `/v1/models` 不归 `admin`）。
+
+### 8.1 管理端 API（M3，`internal/admin`）
+
+全部挂在 `/admin/api` 下，认 cookie 会话；`/admin` 下的其余路径发 SPA。错误统一 `{"error":"…"}`，写成功回 204 或一个小 JSON。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/admin/api/login` | 验密码发会话；未设密码回 503 并说明补救动作（跟「密码错」分开说） |
+| POST | `/admin/api/logout` | |
+| GET | `/admin/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
+| POST | `/admin/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
+| GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证 |
+| PUT | `/admin/api/channels/:id/credential` | 凭证唯一入口，**只写不读，没有对应的 GET** |
+| POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除 |
+| GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
+| GET POST | `/admin/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
+| GET | `/admin/api/logs?limit=&offset=` | 近期流水，limit 上限 500 |
+| GET | `/admin/api/usage?days=` | 按接入点汇总 |
+
+三条实现口径：
+
+- **能保存下去的配置，一定是能启动的配置**：每个写接口都在**同一个事务里**跑一遍 `store.Validate`，不过就回滚并把校验原文原样回给前端（400）。这要求 `Validate` 及其全部子检查收 `store.Queryer`（`*sql.DB` 与 `*sql.Tx` 的公共只读面）而不是 `*sql.DB`——连接池是 1，事务开着时再拿 `*sql.DB` 查会等一条永远回不来的连接，**自锁不报错**，表现是保存请求直接挂住。
+- **接入点与它的候选一起建**：分两个接口意味着中间必然存在一个「零候选」的瞬间，而那个瞬间会被上面的校验判为非法，于是第一步永远保存不了。
+- **凭证先删后插**，不用 UPDATE：临时闸要求「恰好 1 份启用凭证」，UPDATE 在有 0 份或 2 份时都会悄悄走偏。已停用的旧凭证留着不动——那是 key 熔断的现场。
 
 ## 9. Golden 测试方案
 
@@ -580,7 +618,7 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
-| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制；公网部署（Caddy TLS + 全局限流） | 待估 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（Caddy TLS + 全局限流）。**TLS 与全局限流尚未做** | 待估 |
 | M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
 
 ### 11.1 容器打包（2026-08-08）
@@ -594,6 +632,17 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
   - **`listen` 必须是 `0.0.0.0`**：宿主上的默认 `127.0.0.1` 在容器里只有容器自己看得见，端口映射永远连不上。边界因此从「进程绑哪个地址」挪到「端口发布给谁」——compose 里默认 `127.0.0.1:8317:8317`，改成 `8317:8317` 就是整个局域网，那时只有 key 鉴权挡着，TLS 与全局限流都还在 M3。
 - 灌配置在**宿主侧**做：scratch 里既没有 shell 也没有 sqlite3。`deploy/docker-compose.yml` 顶部写了对着卷跑 sqlite3 容器的命令，`--user 65532:65532` 不能省——身份不对只能只读，报的是 `attempt to write a readonly database`。
 - 健康检查刻意留空：为探活往镜像里塞一个 shell 或 curl，等于为一件外部就能做的事把攻击面加回来。
+
+**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/admin` 配（命令行那条路留着没删）。管理密码走 `AIG_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
+
+### 11.2 前端 embed 策略（M3）
+
+- **build tag 二选一**：`internal/webui/embed.go`（`//go:build webui` + `//go:embed all:dist`）与 `stub.go`（`//go:build !webui`，返回「没有」）。不带 tag 的构建照样能过 `go build ./...`——CI 没有 Node，本地首次 clone 也没跑过 `npm build`，而 embed 失败的报错是「pattern dist: no matching files」，看不出跟前端有关。不带前端的二进制访问 `/admin` 会看到一页说明，转发不受影响。
+- **产物落 `internal/webui/dist`，不落 `web/dist`**：`//go:embed` 只能读自己包目录下的文件。选 `internal/webui/` 而不是把 Go 文件挪进 `web/`，是为了让 Go 工具链永远不用走 `node_modules`。`all:` 前缀不能省，否则 Vite 的点开头目录会被静默跳过。
+- **`base: '/admin/'`（vite.config.ts）+ `basename="/admin"`（Router）**：默认 base 会让 index.html 去请求 `/assets/…`，而静态文件只在 `/admin` 下发——**这个故障只在 embed 后出现，`npm run dev` 一切正常**。`internal/server/webui_test.go`（`//go:build webui`）就是这条的哨兵：断言 index.html 引用的资源全在 `/admin/` 下且能取到、`.js` 的 Content-Type 是 `text/javascript`。
+- **SPA 走 `r.NoRoute` 而不是 `r.Static`**：深链接（`/admin/keys` 直接刷新）必须回同一份 index.html，而 gin 不允许 `/admin/*filepath` 与已注册的 `/admin/api/…` 并存——**注册时就 panic**，不是运行期 404。NoRoute 里三路分流：非 `/admin` → 普通 404；`/admin/api/…` 未知 → JSON 404（回 HTML 会让前端在 `JSON.parse` 上炸，报的错跟真正原因毫无关系）；其余 → SPA。
+- **Content-Type 自己判，不用 `mime.TypeByExtension`**：后者读 `/etc/mime.types`，同一份二进制在两台机器上可能给出不同结果，`.js` 被判成 `text/plain` 时浏览器直接拒绝执行模块。`http.ServeContent` 只在头里没有 Content-Type 时才去猜，所以要先写好再调它。
+- index.html 发 `no-cache`，带 hash 的资源发 `immutable`：反过来的话，改完前端浏览器还拿着旧 index 去引用已经不存在的文件名，白屏。
 
 ## 12. 参考对照
 

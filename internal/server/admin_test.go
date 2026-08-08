@@ -244,9 +244,6 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	var ch struct {
-		ID int64 `json:"id"`
-	}
 	// 建一个没有凭证的渠道：临时闸要求启用渠道恰好一份凭证，这一步就该被挡。
 	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
 		`{"name":"no-credential","protocol":"anthropic","base_url":"https://api.anthropic.com"}`)
@@ -262,7 +259,6 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	if len(channels) != 0 {
 		t.Errorf("被挡下的写操作没有回滚：%+v", channels)
 	}
-	_ = ch
 
 	// base_url 缺 scheme 同样过不了——这类配置能存进去、能过启动，只在请求时炸。
 	// 用一个不会跟校验文案里的示例撞上的主机名，否则「回显了没有」根本断言不出来。

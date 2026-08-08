@@ -38,7 +38,9 @@ func (h *Handler) mountUI(r *gin.Engine) {
 
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if !strings.HasPrefix(p, "/admin") {
+		// 分开判 `/admin` 与 `/admin/` 前缀，而不是一句 HasPrefix(p, "/admin")：
+		// 后者连 /administrator 这种毫不相干的路径也会吞掉，回一页管理端 HTML。
+		if p != "/admin" && !strings.HasPrefix(p, "/admin/") {
 			// 不是管理端的路径就照常 404。NoRoute 是全局的，这里必须放行，
 			// 否则 /v1/ 上的笔误会拿到一个管理端页面。
 			c.Status(http.StatusNotFound)
