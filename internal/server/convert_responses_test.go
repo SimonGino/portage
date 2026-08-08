@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -297,5 +298,25 @@ func TestResponsesGateOpensOnlyResponsesToCC(t *testing.T) {
 	// 透传路径不重编码：上游收到的应当是客户端原样发的字节（只有 model 被 splice）。
 	if body := string(up.Last(t).Body); !strings.Contains(body, `"messages"`) || strings.Contains(body, `"input"`) {
 		t.Errorf("同协议请求走了转换分支: %s", body)
+	}
+}
+
+// 上一条钉的是「开的这格是 R→CC 不是别的」，这条钉的是「只开了一格，不是开了
+// 一整行」：同一个 /v1/responses 端点挂到 anthropic 渠道仍须 501。R→A 是优先级
+// ②，openairesponses 的出口半边还没有，放过去只会拿 ErrNotImplemented 炸在半路。
+func TestResponsesGateStaysClosedForNonCCChannel(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, "claude-x", openaiCredential)
+	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
+
+	resp := gw.Post(t, "/v1/responses", convertResponsesRequest, nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("responses → anthropic 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+	}
+	if up.Count() != 0 {
+		t.Errorf("闸没开就不该碰上游，却收到 %d 次", up.Count())
 	}
 }

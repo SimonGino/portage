@@ -157,7 +157,9 @@ func decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			// 提升到 Request.Tools 之后「它站在消息序列第几位」这个信息就丢了——
 			// 无所谓：回编 Responses 时按首项重建语义等价，转 CC/Anthropic 时那边
 			// 本来就没有对应容器。
-			flush()
+			//
+			// 不 flush：这个 item 不带内容，收口只会把它前后两条同侧 item 劈成两条
+			// 消息，正是下面攒消息要避免的那件事。
 			if raw, ok := item["tools"]; ok {
 				tools, err := decodeTools(raw)
 				if err != nil {
@@ -209,7 +211,9 @@ func decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			// 不给它找个 Extras 角落存着，是因为存了也没用——同协议路径根本不进
 			// codec（透传保真优先），所以一个未知 item 在这里的唯一去向就是被跨协议
 			// 编码侧丢掉，存在哪儿都一样丢。留个假容器只会让人以为它还在。
-			flush()
+			//
+			// 也不 flush：跳过的东西不该在消息序列上留下疤。收口会把它前后两条同侧
+			// item 劈成两条同 role 消息，而严格的 CC 上游正是拒这个。
 		}
 	}
 	flush()

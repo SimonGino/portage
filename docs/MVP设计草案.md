@@ -318,6 +318,7 @@ type Codec interface {
 | Responses reasoning 的 `encrypted_content`（M0 实测） | Codex CLI 的 `/v1/responses` 请求会在 `input` 里回带上一轮的 reasoning item，其 `encrypted_content` 是**上游侧不透明密文**，只有原上游解得开。P0 透传无影响；**P1 一旦跨协议转换就必然作废**——转成 CC/Anthropic 时它无处安放，转回来也已换了上游。落到口径上：这就是「thinking 跨协议丢弃」的具体形态之一，转换路径不得伪造或复用该字段，只能丢，且丢了会让 Codex 失去上一轮的推理上下文（表现为质量下降而非报错）。M2 做 R→CC / R→A 时须有专门用例钉住「带 `encrypted_content` 的 input 不使转换报错」 |
 | Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
 | Responses SSE 线格式（#12 拿真实上游转录复核） | 事件名与 sub2api 一致，无出入。三条实测细节：① 正文 item 比工具 item **多一层 `content_part`**（`output_item.added → content_part.added → output_text.delta* → output_text.done → content_part.done → output_item.done`），工具 item 没有；② 每帧 data 里都带 `sequence_number`，**从 0 起全流连号**（102 帧无一例外），客户端拿它判丢帧；③ 流**不发 `data: [DONE]`**——那是 Chat Completions 的收尾，Responses 以 `response.completed` 为终点。截断另发 `response.incomplete`（`status: incomplete` + `incomplete_details.reason`），流内错误发 `response.failed`。转录在 `testdata/golden/raw/resp-{text,tool,parallel}`（未脱敏，未纳入 git；用例照它定形状后把期望写死在测试里，不回放文件——`raw/` 在 .gitignore 里，回放式用例在 CI 上会集体 skip 成假绿）|
+| 解码侧的丢弃没有告警通道（#12 记账，待 PO 裁决） | 口径层 §2.6 要求跨协议丢弃须有日志警告，但现有的 `RequestEncodeReporter` 只挂在**编码**侧。`openairesponses.decodeInput` 遇到认不得的 input item 类型（如 `web_search_call`）是静默跳过：不报错、不进 Extras、不留日志。跳过本身是对的（decode 必须是全函数；同协议路径不进 codec，未知 item 在转换路径上的唯一去向就是被丢），缺的是那条日志。**建议先保持静默**——decode 层刻意不持有 logger，而对称补一个 `RequestDecodeReporter` 属于只有一个消费方的机械。跳过时不 flush 攒消息缓冲，否则未知 item 会把前后两条同侧 item 劈成两条同 role 消息，撞上严格 CC 上游的连发限制（用例：`TestDecodeRequestSkipsUnknownItemWithoutSplittingMessages`）|
 | Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
 | 角色交替约束 | Anthropic 要求 user/assistant 交替；OpenAI 允许多条连续同角色；转 Anthropic 前需合并相邻同角色消息 |
 | assistant 空 content | 纯 tool_calls 的 assistant 消息 content 可能为 null，转 Anthropic 时空块要剔除 |
@@ -670,6 +671,8 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - 四份入站样本**全是 `stream: true`**（Codex CLI 就没有非流式模式）。非流式 R→CC 与字符串形态的 `input` 只有手写用例，没有真实样本背书。
 - `parallel_tool_calls` 在 Codex 侧恒 false（并行发生在那段 JS 的 `Promise.all` 里，线上永远只有一个 `custom_tool_call`），所以「多路 tool_call 交错重组」这条在 R 入口方向**验不到**，只能靠 CC 语料在 A→CC 那边验。
 - `response.reasoning_summary_text.delta` 没实现：CC 解码侧根本不产 `EvThinkingDelta`，而手上三份 Responses 转录里的 reasoning item 只有 `encrypted_content`、一条 delta 都没有。等 A→R（优先级④）拿到真实转录再补，现在写等于照文档猜。
+- 解码侧丢弃未知 item 时没有日志（口径层 §2.6 要日志警告）。见 §5 坑清单同名条目，待 PO 裁决。
+- 全链只对着**假** CC 上游跑过。真机验收（Codex CLI → 网关 → 第三方 CC 上游整轮工具调用）是 #12 上的 PO 手动清单，与 #11 同性质，不作为合并闸。
 
 ## 10. harness 验收清单
 

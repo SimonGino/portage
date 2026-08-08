@@ -238,6 +238,30 @@ func TestDecodeRequestDropsPreviousResponseID(t *testing.T) {
 }
 
 // 样本没覆盖但协议允许的形态，一个都不许解不动——decode 是全函数。
+// 跳过一个认不得的 item，不该把它前后两条同侧 item 劈成两条消息——严格的 CC
+// 上游拒连发同 role。这条钉的是「跳过」而非「收口再跳过」。
+func TestDecodeRequestSkipsUnknownItemWithoutSplittingMessages(t *testing.T) {
+	body := `{"model":"m","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"前"}]},
+		{"type":"web_search_call","id":"ws_1","status":"completed"},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"后"}]}
+	]}`
+	req, err := NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 1 {
+		var roles []protocol.Role
+		for _, m := range req.Messages {
+			roles = append(roles, m.Role)
+		}
+		t.Fatalf("解出 %d 条消息 %v, 期望 1 条（未知 item 不该断开攒消息）", len(req.Messages), roles)
+	}
+	if n := len(req.Messages[0].Content); n != 2 {
+		t.Fatalf("消息里有 %d 块, 期望 2（前 + 后）", n)
+	}
+}
+
 func TestDecodeRequestToleratesUnsampledShapes(t *testing.T) {
 	cases := map[string]string{
 		"顶层 tools":       `{"model":"m","tools":[{"type":"function","name":"f","parameters":{"type":"object"}}]}`,
