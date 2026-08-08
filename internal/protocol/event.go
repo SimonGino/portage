@@ -5,9 +5,13 @@ package protocol
 // 非流式响应当作「完整事件序列一次性回放」，上下游代码不分流式两套。
 //
 // 事实来源：Anthropic 侧取自本仓 testdata/golden/raw/anthropic-* 的五份真实上游
-// SSE 转录；CC 侧取自 M0 语料 testdata/golden/cc-stream-*；**Responses 侧没有真实
-// 上游转录**（入站样本走的是 stub，stub 是道具不是样本），事件名以
-// sub2api backend/internal/pkg/apicompat/ 为准，M2 拿到真实上游流后须复核。
+// SSE 转录；CC 侧取自 M0 语料 testdata/golden/cc-stream-*；Responses 侧取自
+// testdata/golden/raw/resp-{text,tool,parallel} 三份真实上游转录。
+//
+// Responses 那三份是 M2-3 补的，销掉了这里原先记的一笔待办（「没有真实上游转录，
+// 事件名以 sub2api 为准，拿到真实上游流后须复核」）。复核结论：**事件名与 sub2api
+// 一致，无出入**；线格式上的三条实测细节记在 openairesponses/encode.go 头部
+// （帧序、全流连号的 sequence_number、不发 [DONE]）。
 
 // EventType 是事件判别式。
 type EventType int
