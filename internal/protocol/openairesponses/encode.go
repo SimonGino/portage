@@ -188,7 +188,7 @@ func (e *streamEncoder) flushTool(index int) error {
 	itemID, itemType, argsField := "fc_"+rand.Text(), "function_call", "arguments"
 	deltaEvent, doneEvent := "response.function_call_arguments.delta", "response.function_call_arguments.done"
 	if custom {
-		args = unwrapCustomToolArgs(args)
+		args = protocol.UnwrapCustomToolArgs(args)
 		itemID, itemType, argsField = "ctc_"+rand.Text(), "custom_tool_call", "input"
 		deltaEvent, doneEvent = "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done"
 	} else if args == "" {
@@ -441,39 +441,6 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		status = "incomplete"
 	}
 	return marshal(enc.responseBody(status, enc.done, true))
-}
-
-// unwrapCustomToolArgs 把 CC 出口合成的包装对象拆回自由文本。
-//
-// 对称的另一半是 openaicc/encode.go 的 argsWrapKey：canonical 的 ToolCall.Args 不
-// 保证是 JSON（Codex 的 exec 收 JavaScript 源码），而 CC 契约要求 function.arguments
-// 必须是 JSON 字符串，于是出口侧把它包成 `{"input":"<原文>"}`。这里不拆，Codex 拿到的
-// 就是一段包着 JS 的 JSON，`exec` 直接语法错。
-//
-// 拆不动就原样返回，而不是报错：上游未必真按我们发过去的形状回话——第三方中转会
-// 重写 arguments，模型也可能自作主张换个结构。原样给出去，客户端至少还有得看。
-// 同一套判定见 sub2api 的 extractCustomToolCallInput。
-func unwrapCustomToolArgs(args string) string {
-	trimmed := strings.TrimSpace(args)
-	if trimmed == "" {
-		return ""
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal([]byte(trimmed), &obj) != nil {
-		// 根本不是 JSON 对象：上游把自由文本原样回来了，正是我们想要的形态。
-		return trimmed
-	}
-	raw, ok := obj["input"]
-	if !ok {
-		return trimmed
-	}
-	var s string
-	if json.Unmarshal(raw, &s) != nil {
-		// 有 input 键但不是字符串，说明这是个**真的**带 input 参数的 JSON 工具，
-		// 不是我们包出来的。别拆。
-		return trimmed
-	}
-	return s
 }
 
 // usageBody 按 Responses 的 usage 形状写计数。

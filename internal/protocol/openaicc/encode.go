@@ -25,6 +25,7 @@ const (
 	DropThinking      = "thinking"       // thinking 块正文与 signature
 	DropServerTool    = "server_tool"    // 上游服务端工具声明（advisor_20260301 一类）
 	DropVendorRequest = "vendor_request" // 其余入口协议独有的顶层字段
+	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
 )
 
 // EncodeRequest 把 canonical 编成 Chat Completions 请求体。
@@ -212,25 +213,19 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 	return out
 }
 
-// argsWrapKey 是非 JSON 入参被包进 CC function.arguments 时用的键。
-//
-// CC 契约要求 arguments 是一个 JSON 字符串（上游会拿去解析），而 canonical 的
-// ToolCall.Args 不保证是 JSON——Codex code-mode 的 exec 入参是 JS 源码（§5 坑清单）。
-// 合成规则必须与解包侧对称，否则工具结果对不回去。A 入口的 input 恒是 JSON 对象，
-// 走不到这条分支；对称解包由 #12（R→CC）落地。
-const argsWrapKey = "input"
-
 func encodeToolCall(call *protocol.ToolCall) (map[string]any, error) {
+	// CC 契约要求 arguments 是 JSON 字符串，而 canonical 的 Args 不保证是——包装与
+	// 拆包、以及告诉模型该回什么形状的那份声明，三者住在 protocol/customtool.go。
 	args := call.Args
 	switch {
 	case args == "":
 		args = "{}"
 	case !call.ArgsIsJSON:
-		wrapped, err := json.Marshal(map[string]string{argsWrapKey: call.Args})
+		wrapped, err := protocol.WrapCustomToolArgs(call.Args)
 		if err != nil {
-			return nil, fmt.Errorf("openaicc: 包装非 JSON 工具入参: %w", err)
+			return nil, fmt.Errorf("openaicc: %w", err)
 		}
-		args = string(wrapped)
+		args = wrapped
 	}
 	return map[string]any{
 		"id":   call.ID,
@@ -258,8 +253,16 @@ func encodeTools(tools []protocol.Tool, drop func(string)) ([]map[string]any, ma
 		if t.Description != "" {
 			fn["description"] = t.Description
 		}
-		if len(t.Schema) > 0 {
+		switch {
+		case len(t.Schema) > 0:
 			fn["parameters"] = json.RawMessage(t.Schema)
+		case t.Kind == protocol.ToolCustom:
+			// custom 工具没有 parameters（Responses 用 format 里的 lark 文法描述
+			// 入参），照抄就是抄了个空。必须替它合成一份声明，否则**没有任何东西
+			// 告诉模型该回 {"input": …}**，回程拆包就拆了个寂寞。文法约束本身带不
+			// 过去，由 joinTools 之外的 drop 登记（CC 没有对应能力）。
+			fn["parameters"] = protocol.CustomToolSchema()
+			drop(DropToolGrammar)
 		}
 		out = append(out, map[string]any{"type": "function", "function": fn})
 		declared[t.Name] = true

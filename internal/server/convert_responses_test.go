@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
 
 // 本文件测的是 R→CC 转换路径（#12，口径层 §2.1 优先级①下半）：Codex CLI 挂第三方
@@ -101,7 +102,10 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 		Tools []struct {
 			Type     string `json:"type"`
 			Function struct {
-				Name string `json:"name"`
+				Name       string `json:"name"`
+				Parameters struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"parameters"`
 			} `json:"function"`
 		} `json:"tools"`
 	}
@@ -120,6 +124,20 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "exec,wait" {
 		t.Errorf("上游收到的工具 = %v, 期望 exec,wait", names)
+	}
+
+	// 而且 exec 必须**带一份合成的 parameters**，声明它收一个叫 input 的字符串。
+	// 原先这里是空的：工具是发过去了，但没有任何东西告诉模型该回 {"input": …}，
+	// 模型自由发挥回个 {"cmd": …}，回程拆包拆不动只好原样给出去，Codex 拿到一段
+	// JSON 当 JS 跑。发出去的声明和回来的拆包必须是同一套约定。
+	for _, tool := range sent.Tools {
+		if tool.Function.Name != "exec" {
+			continue
+		}
+		if _, ok := tool.Function.Parameters.Properties[protocol.CustomToolArgsKey]; !ok {
+			t.Errorf("custom 工具 exec 的 parameters 没声明 %q: %s",
+				protocol.CustomToolArgsKey, req.Body)
+		}
 	}
 
 	// 历史里的 custom_tool_call：arguments 必须是**合法 JSON**（包装过的），
