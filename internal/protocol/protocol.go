@@ -47,6 +47,26 @@ var (
 	EndpointResponses = Endpoint{"/v1/responses", OpenAIResponses}
 )
 
+// UpstreamEndpoint 给出「向这个协议的渠道发请求时打哪个子路径」。
+//
+// 转换路径必须用**出口**协议的端点，不能沿用入口的：Anthropic 入口进来的请求转成
+// CC 之后要打 /v1/chat/completions，照抄 /v1/messages 会打到一个不存在的路径。
+// 同协议透传不经过这里——那条路上入口即出口。
+//
+// count_tokens 没有对应物，故不出现在这张表里：它是 Anthropic 独有端点，命中非
+// anthropic 渠道时按口径回 501（估算属 M2 后续批次）。
+func UpstreamEndpoint(p Protocol) (Endpoint, bool) {
+	switch p {
+	case Anthropic:
+		return EndpointMessages, true
+	case OpenAICC:
+		return EndpointChatCompletions, true
+	case OpenAIResponses:
+		return EndpointResponses, true
+	}
+	return Endpoint{}, false
+}
+
 // WriteError renders msg in the protocol's own error shape so a harness can
 // parse it. Callers must never pass upstream credentials or base_url in msg.
 func (p Protocol) WriteError(w http.ResponseWriter, status int, msg string) {

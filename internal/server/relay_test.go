@@ -131,9 +131,12 @@ func TestRelayPassesUpstreamErrorsThrough(t *testing.T) {
 func TestRelayRebuildsHeadersFromWhitelist(t *testing.T) {
 	gw, up := newAnthropicGateway(t)
 
+	// 两个凭证头填的是**真实有效**的网关 key（M1 起鉴权就认它），这样断言才有力：
+	// 它能过鉴权、却一个字节都不该到上游。填一把无效 key 的话请求会停在 401，
+	// 「没转发」变成恒真，白名单回归就抓不住了。
 	gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{
-		"Authorization":       "Bearer sk-aig-client-gateway-key",
-		"x-api-key":           "sk-aig-client-gateway-key",
+		"Authorization":       "Bearer " + gatewaytest.DefaultKey,
+		"x-api-key":           gatewaytest.DefaultKey,
 		"Cookie":              "session=leak-me",
 		"X-Forwarded-For":     "192.168.1.7",
 		"anthropic-beta":      "context-1m-2025-08-07",

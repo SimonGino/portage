@@ -120,13 +120,24 @@ func ListAccessPoints(ctx context.Context, db *sql.DB) ([]AccessPoint, error) {
 	return out, rows.Err()
 }
 
+// Queryer 是 *sql.DB 与 *sql.Tx 的公共只读面。
+//
+// Validate 收它而不是 *sql.DB，是为了能在**尚未提交的事务里**跑：管理端每次写完
+// 都要先自校验再决定提交还是回滚（M3）。而 Open 把连接池设成了 1，事务开着的时候
+// 拿 *sql.DB 再查一次会等一条永远回不来的连接——自锁，不是报错，表现是管理端
+// 保存请求直接挂住。
+type Queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Validate is the startup gate. It reports every violation it finds, naming the
 // offending record, so a hand-written SQL row can be fixed in one pass.
 //
 // 临时闸（M0~M2）：单候选、单凭证。多候选分流与凭证池聚合在 M4。
-func Validate(ctx context.Context, db *sql.DB) error {
+func Validate(ctx context.Context, db Queryer) error {
 	var problems []string
-	for _, check := range []func(context.Context, *sql.DB) ([]string, error){
+	for _, check := range []func(context.Context, Queryer) ([]string, error){
 		checkSingleCandidate,
 		checkSingleCredential,
 		checkDanglingCandidate,
@@ -145,7 +156,7 @@ func Validate(ctx context.Context, db *sql.DB) error {
 	return fmt.Errorf("配置校验未通过：\n  - %s", strings.Join(problems, "\n  - "))
 }
 
-func collect(ctx context.Context, db *sql.DB, query string, format func(*sql.Rows) (string, error)) ([]string, error) {
+func collect(ctx context.Context, db Queryer, query string, format func(*sql.Rows) (string, error)) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -164,7 +175,7 @@ func collect(ctx context.Context, db *sql.DB, query string, format func(*sql.Row
 	return out, rows.Err()
 }
 
-func checkSingleCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
+func checkSingleCandidate(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT ap.id, ap.model, COUNT(cd.id)
 		FROM access_points ap
@@ -182,7 +193,7 @@ func checkSingleCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
 		})
 }
 
-func checkSingleCredential(ctx context.Context, db *sql.DB) ([]string, error) {
+func checkSingleCredential(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT ch.id, ch.name, COUNT(ck.id)
 		FROM channels ch
@@ -200,7 +211,7 @@ func checkSingleCredential(ctx context.Context, db *sql.DB) ([]string, error) {
 		})
 }
 
-func checkDanglingCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
+func checkDanglingCandidate(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT cd.id, ap.model
 		FROM candidates cd
@@ -225,7 +236,7 @@ func checkDanglingCandidate(ctx context.Context, db *sql.DB) ([]string, error) {
 //
 // 判定条件与 Resolve 的 JOIN 逐条对齐——渠道、纳管模型、凭证三者任一停用，Resolve
 // 就取不到候选。少对齐一条，那一种写法就会漏到 503 才暴露。
-func checkCandidateReachable(ctx context.Context, db *sql.DB) ([]string, error) {
+func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT ap.id, ap.model, ch.name, ch.id, cm.upstream_model, ch.disabled, cm.disabled
 		FROM candidates cd
@@ -258,7 +269,7 @@ func checkCandidateReachable(ctx context.Context, db *sql.DB) ([]string, error) 
 
 // checkChannelFields catches typos in hand-written SQL, which is how channels
 // are maintained until the admin UI lands in M3.
-func checkChannelFields(ctx context.Context, db *sql.DB) ([]string, error) {
+func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT id, name, protocol, credential_type, base_url
 		FROM channels WHERE disabled = 0`,

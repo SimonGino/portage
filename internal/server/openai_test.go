@@ -124,9 +124,10 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 	gw, up := newOpenAIGateway(t, "gw-cc", "openai_cc", "qwen3-max")
 
 	// 客户端这三个头都得真发出来，否则「上游收不到」的断言恒真、抓不住任何回归。
+	// 凭证头填真实有效的网关 key：无效的话请求停在 401，压根到不了上游。
 	gw.Post(t, "/v1/chat/completions", ccRequest, map[string]string{
-		"Authorization":     "Bearer sk-aig-client-gateway-key",
-		"x-api-key":         "sk-aig-client-gateway-key",
+		"Authorization":     "Bearer " + gatewaytest.DefaultKey,
+		"x-api-key":         gatewaytest.DefaultKey,
 		"anthropic-version": "2023-06-01",
 	})
 
@@ -144,8 +145,10 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 
 // 临时闸两个方向都要按**入口**协议的原生格式回错——客户端只认得它自己那套。
 func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
-	t.Run("Anthropic 入口打到 openai_cc 渠道", func(t *testing.T) {
-		gw, up := newOpenAIGateway(t, "gw-sonnet", "openai_cc", "qwen3-max")
+	// openai_responses 而非 openai_cc：A→CC 那一格 #11 已放开，用它当反例等于在测
+	// 一条不再存在的行为。
+	t.Run("Anthropic 入口打到 openai_responses 渠道", func(t *testing.T) {
+		gw, up := newOpenAIGateway(t, "gw-sonnet", "openai_responses", "gpt-5.6")
 
 		resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
 		body := gatewaytest.ReadBody(t, resp)

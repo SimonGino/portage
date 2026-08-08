@@ -90,3 +90,68 @@ func TestLoadRejectsMalformedYAML(t *testing.T) {
 		t.Error("非法 YAML 未报错")
 	}
 }
+
+// TestAdminPasswordFromEnv：容器里设密码走 env，不用为一个密码去挂配置文件。
+//
+// 顺带钉死「空串不算设置」——`AIG_ADMIN_PASSWORD=` 与压根没写是一回事，
+// 不该把配置文件里已经写好的值清掉。
+func TestAdminPasswordFromEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("admin_password: from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ env, want string }{
+		{"", "from-file"},
+		{"from-env", "from-env"},
+	} {
+		t.Setenv("AIG_ADMIN_PASSWORD", tc.env)
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Fatalf("加载失败: %v", err)
+		}
+		if cfg.AdminPassword != tc.want {
+			t.Errorf("AIG_ADMIN_PASSWORD=%q 时 admin_password = %q, 期望 %q", tc.env, cfg.AdminPassword, tc.want)
+		}
+	}
+
+	// 没有配置文件时 env 一样管用：镜像里那份 config.docker.yaml 就没写密码。
+	t.Setenv("AIG_ADMIN_PASSWORD", "only-env")
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.AdminPassword != "only-env" {
+		t.Errorf("配置文件缺席时 admin_password = %q, 期望 only-env", cfg.AdminPassword)
+	}
+}
+
+// rate_limit_qps 写 0 就是要关掉限流。它与 max_retries 同一个陷阱：在 Load 里
+// 「顺手补个零值」会让 0 被悄悄改回默认 10，配置项形同虚设。
+func TestRateLimitZeroIsHonoured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		yaml  string
+		qps   int
+		burst int
+	}{
+		{"整块缺席保持默认", "listen: \":1\"\n", 10, 20},
+		{"显式写 0 即关闭", "rate_limit_qps: 0\n", 0, 20},
+		{"只改 qps", "rate_limit_qps: 3\n", 3, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("加载失败: %v", err)
+			}
+			if cfg.RateLimitQPS != tc.qps || cfg.RateLimitBurst != tc.burst {
+				t.Errorf("qps/burst = %d/%d, 期望 %d/%d",
+					cfg.RateLimitQPS, cfg.RateLimitBurst, tc.qps, tc.burst)
+			}
+		})
+	}
+}

@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/SimonGino/ai-gateway/internal/admin"
 	"github.com/SimonGino/ai-gateway/internal/config"
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
@@ -18,6 +20,7 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/upstream"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -69,6 +72,25 @@ func relayBody(w gin.ResponseWriter, body io.Reader, onFirstByte func()) error {
 	}
 }
 
+// setNoBuffering 给 SSE 响应盖上 X-Accel-Buffering: no（口径层 v0.30 裁定）。
+//
+// nginx 认这个头，见到它就对本次响应关掉 proxy_buffering。加它是因为网关多半跑在
+// 一份**不由我们维护**的 nginx 后面：实测（展开层 §11.3）里「关掉缓冲」单独就足以
+// 让攒住的 SSE 恢复逐条下发，这个头等于把那一下做进网关自己，不必指望前面那份配置
+// 写对了。对不认它的反代与直连客户端是一个无害的多余头。
+//
+// 它是透传路径上唯一一处「上游没发、我们加上」的响应头——与「透传保真优先」有张力，
+// 故走 PO 裁决而非实现侧自决。
+func setNoBuffering(h http.Header) {
+	h.Set("X-Accel-Buffering", "no")
+}
+
+// isEventStream 判 Content-Type 是不是 SSE。用前缀而不是等值：真实上游发的是
+// `text/event-stream; charset=utf-8` 这类带参数的形式。
+func isEventStream(contentType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/event-stream")
+}
+
 // advanceWriteDeadline 把「这一次写出」的截止时间往后推。ErrNotSupported 说明底层
 // writer 不支持 deadline（本项目的 gin ResponseWriter 支持），不该因此中断透传。
 func advanceWriteDeadline(rc *http.ResponseController) error {
@@ -83,6 +105,8 @@ type Server struct {
 	db  *sql.DB
 	up  *upstream.Client
 	log *slog.Logger
+	// lim 是全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
+	lim *rate.Limiter
 }
 
 func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
@@ -94,23 +118,35 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 		BaseDelay:  cfg.Retry.BaseDelay,
 		MaxDelay:   cfg.Retry.MaxDelay,
 	}
-	return &Server{cfg: cfg, db: db, up: upstream.NewClient(retry), log: log}
+	// 限流桶在这里造一次、四条转发路由共用。若改成在 rateLimit(ep) 里 new，
+	// 每个端点各得一只桶，全局 10 QPS 会变成 40 QPS——而且看不出来。
+	return &Server{
+		cfg: cfg, db: db, up: upstream.NewClient(retry), log: log,
+		lim: newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
+	}
 }
 
 func (s *Server) Engine() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(s.recovery())
+	// /healthz 不鉴权：它是给反代与容器编排探活用的，那些探针没地方放 key，
+	// 而它只回一个「库还连得上吗」，不泄露任何配置。
 	r.GET("/healthz", s.healthz)
-	r.GET("/v1/models", s.models)
+	r.GET("/v1/models", s.authModels(), s.models)
 	for _, ep := range []protocol.Endpoint{
 		protocol.EndpointMessages,
 		protocol.EndpointCountTokens,
 		protocol.EndpointChatCompletions,
 		protocol.EndpointResponses,
 	} {
-		r.POST(ep.Path, s.relay(ep))
+		// 顺序即语义：日志层最外，鉴权失败也落得下那一行；限流在鉴权之后，
+		// 理由见 rateLimit 的注释。
+		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.rateLimit(ep), s.relay(ep))
 	}
+	// 管理面自己挂自己的路由与鉴权（cookie 会话），与上面这套 key 鉴权互不相干。
+	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
+	admin.New(s.db, s.log).Mount(r)
 	return r
 }
 
@@ -182,18 +218,9 @@ type requestHead struct {
 
 func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rec := &callRecord{
-			start:        time.Now(),
-			endpoint:     ep.Path,
-			inboundProto: ep.Proto,
-			outcome:      "rejected",
-		}
-		// 一次调用一行日志，无论走到哪个分支收场——包括首字节后断流那条
-		// panic 路径（defer 在 panic 展开时照常执行）。
-		defer func() {
-			rec.status = c.Writer.Status()
-			s.logCall(rec)
-		}()
+		// 记录由 callLog 中间件建、也由它落——鉴权失败时 relay 压根不执行，
+		// 日志逻辑留在这里就等于 401 不落库（#22）。
+		rec := callRecordFrom(c)
 
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -216,6 +243,16 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 		rec.accessPoint, rec.stream = head.Model, head.Stream
 
+		// 白名单校验放在这儿而不是鉴权中间件：那一层跑的时候请求体还没读，
+		// 不知道要判哪个接入点。403 而不是 404——这把 key 不能用它，不是它不存在，
+		// 说成 404 会把人引去查配置。
+		if key := apiKeyFrom(c); !key.Allows(head.Model) {
+			rec.outcome = "model_not_allowed"
+			ep.Proto.WriteError(c.Writer, http.StatusForbidden,
+				"当前 key 不允许访问接入点 "+head.Model)
+			return
+		}
+
 		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model)
 		switch {
 		case errors.Is(err, store.ErrAccessPointNotFound):
@@ -232,10 +269,14 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		rec.channel, rec.channelProto, rec.upstreamModel = cand.ChannelName, cand.Protocol, cand.UpstreamModel
 
-		// 临时闸：转换路径未实现前，入口协议必须等于命中候选所在渠道的协议。
+		// 临时闸：逐格放开（#9）。已放开的走转换路径，其余仍报「尚未实现」。
 		if cand.Protocol != ep.Proto {
-			ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,
-				"该转换路径尚未实现："+string(ep.Proto)+" → "+string(cand.Protocol))
+			if !conversionOpen(ep, cand.Protocol) {
+				ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,
+					"该转换路径尚未实现："+string(ep.Proto)+" → "+string(cand.Protocol))
+				return
+			}
+			s.relayConverted(c, rec, ep, cand, body, head.Stream)
 			return
 		}
 
@@ -277,6 +318,11 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 
 		upstream.CopyResponseHeaders(c.Writer.Header(), resp.Header)
+		// 只在这一处偏离「原样透传上游响应头」：SSE 时补 X-Accel-Buffering: no。
+		// 补在 CopyResponseHeaders 之后是有意的——上游若自己发了这个头，以我们的为准。
+		if isEventStream(c.Writer.Header().Get("Content-Type")) {
+			setNoBuffering(c.Writer.Header())
+		}
 		c.Writer.WriteHeader(resp.StatusCode)
 		rec.outcome = "ok"
 		if err := relayBody(c.Writer, src, func() { rec.firstByte = time.Now() }); err != nil {

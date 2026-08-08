@@ -33,6 +33,10 @@ func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
 	return protocol.ErrNotImplemented
 }
 
+func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
+	return nil, protocol.ErrNotImplemented
+}
+
 func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 	return nil, protocol.ErrNotImplemented
 }

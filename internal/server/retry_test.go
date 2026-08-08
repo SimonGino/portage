@@ -286,6 +286,8 @@ func TestRetryStopsWhenClientLeavesDuringBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// 这个用例自己造请求（要一个可取消的 ctx），走不到 Post 自动补 key 那条路。
+	req.Header.Set("x-api-key", gatewaytest.DefaultKey)
 	if _, err := http.DefaultClient.Do(req); err == nil {
 		t.Fatal("请求应当因客户端取消而失败")
 	}

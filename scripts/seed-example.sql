@@ -119,12 +119,41 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight)
 -- 那个接入点仍挂在 /v1/models 上，请求打过去才回 503「没有可用候选」，错得太晚。
 -- ---------------------------------------------------------------------------
 
+-- ---------------------------------------------------------------------------
+-- 网关 key（M1 起转发端必须带，不带一律 401）。这一节不能省：干净库起来后
+-- api_keys 是空表，所有请求都是 401。
+--
+-- 表里存的是 hash，不是明文——明文只有你自己留着。生成一把：
+--   KEY="sk-aig-$(openssl rand -hex 16)"; echo "$KEY"
+--   printf %s "$KEY" | shasum -a 256      # 这串填 key_hash
+-- printf 而不是 echo：echo 会多一个换行，算出来的 hash 对不上，表现是永远 401。
+--
+-- 算法是 SHA-256 裸哈希、小写十六进制、不加盐（展开层 §7.1）：key 是高熵随机串
+-- 不是人选密码，而鉴权每请求都要走一遍、要吃 key_hash 上的唯一索引。
+--
+-- allowed_models 这列 M1 只建不校验，一律当 `*`，填了也不生效（口径层 v0.27）。
+-- 没有 expires_at：v1 不做过期，停用走 disabled = 1。
+-- ---------------------------------------------------------------------------
+INSERT INTO api_keys (name, key_hash) VALUES
+  ('laptop', '把上面算出来的 64 位十六进制填这里');
+
 -- 验证：
 --   curl -s http://127.0.0.1:8317/v1/messages \
 --     -H 'content-type: application/json' \
+--     -H "x-api-key: $KEY" \
 --     -d '{"model":"claude-sonnet-5","max_tokens":64,
 --          "messages":[{"role":"user","content":"ping"}]}'
 -- 对外名与纳管模型名这里恰好同名，所以看不出改写；换成 gpt-5.6-luna-resp 打
 -- /v1/responses，网关会把 model 改写成 gpt-5.6-luna 再发给上游。
--- M0 还没有网关 key 鉴权（M1 才有），所以不带 Authorization 也能打通；
--- 也正因如此 listen 默认绑 127.0.0.1，别改成 0.0.0.0。
+--
+-- 两个凭证头都认：Anthropic 系客户端发 x-api-key，OpenAI 系发
+-- `Authorization: Bearer $KEY`，随便哪个对上就放行。/v1/models 同样要带；
+-- 只有 /healthz 不鉴权（探活没地方放 key）。
+--
+-- 每条请求会在 call_logs 落一行（含 401 的），看用量直接查：
+--   sqlite3 gateway.db 'SELECT created_at, api_key_name, model_requested, status,
+--                              input_tokens, output_tokens FROM call_logs
+--                        ORDER BY id DESC LIMIT 20;'
+--
+-- listen 仍默认绑 127.0.0.1。有了 key 鉴权也别顺手改成 0.0.0.0：公网暴露还差
+-- TLS 与全局限流（口径层 §2.7，M3）。

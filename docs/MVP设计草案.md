@@ -1,6 +1,9 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.25
+> 状态：草案 v0.28
+> v0.28 变更（M1 落地 + 容器打包，2026-08-08）：实现层，口径不变。①新增 §11.1 容器打包——容器只是单二进制的一种分发方式，不改口径层 §2.8 的部署形态；记下三个实测坑（scratch 缺根证书 → 全 502、命名卷属主照搬镜像 → 启动即 `unable to open database file (14)`、容器内 `listen` 必须 `0.0.0.0`）。②M1 实现中两处判断落档：`ttft_ms` 只记流式（非流式填了约等于总耗时，混合流量下「平均首字延迟」失去意义，非流式的首字节耗时仍在 slog）；`error` 列写网关自己的固定词表而非上游原文（上游文案里可能带 base_url），上游自己回 4xx/5xx 的**透传成功**行不算网关侧错误、该列留空。修改人 jinpenga。
+> v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
+> v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
 > v0.23 变更（M2-1 入站样本实采回写 #10，2026-08-07）：两条实测观察落档，均为实现层，口径不变。①§6.1 白名单段补**反例**——某些中转站的 Anthropic 端点靠 `user-agent` + `x-app` 判定客户端，白名单转发一律 503。结论仍是**白名单不放宽**（为迎合一家中转站撤掉「不泄露本机指纹」这条口径，代价与收益不对等），绕法在配置层：Anthropic 配一条不设该闸的独立上游。顺带说明 goldenrec「转发照抄、落盘白名单」为何不算双标——防指纹外泄的对象是 git 仓库不是上游。②§9 补 `log_bodies` 的实测量级——Claude Code 2.x 单轮请求体 **185 KB**（42 个 tool 定义占大头），Codex CLI 0.144.1 是 47~50 KB，即 64 KiB 上限对前者是**几乎必截断**而非偶尔越过。不改 `bodyCaptureLimit`（排障日志该有这个上限），改的是读日志时的预期：`truncated` 在真实 harness 下是常态不是故障信号。
@@ -93,8 +96,10 @@ internal/protocol/         # canonical 事件模型（P0 定稿，§4）；codec
 internal/convert/          # canonical 之间的请求级归一（其实是 codec 内部实现细节）
 internal/upstream/         # HTTP client、SSE 读取、failover 驱动
 internal/logging/          # 调用日志写库、查询
-internal/store/            # SQLite：channels、access_points、candidates、api_keys、call_logs
-internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRUD、用量查询，M3 扩全）、React 静态资源 embed
+internal/store/            # SQLite：channels、access_points、candidates、api_keys、call_logs、settings
+internal/admin/            # 管理面：session 鉴权、渠道/接入点/key CRUD、用量查询、SPA 分发
+internal/webui/            # 前端 embed，build tag 二选一（embed.go / stub.go）
+web/                       # Vite + React 源码；产物落 internal/webui/dist（不进 git）
 ```
 
 关键模块职责：
@@ -107,7 +112,7 @@ internal/admin/            # /healthz、管理端 API（渠道/接入点/key CRU
 
 > **实现偏离待裁（v0.11）**：M0-1 把接入点解析（`Resolve`，返回命中候选 + 其渠道连通信息）实现在 `internal/store` 而非本节列出的 `internal/router/`。理由：临时闸下解析就是一条 SQL，单开一个只做转调的包是空壳。代价：`store` 同时管 schema、启动校验与解析，职责在发散。M4 上多候选加权分流时解析会长出真正的逻辑，届时要么拆出 `internal/router/`、要么本节按实际改写——请 PO 在 M4 排期时一并裁定。
 >
-> **实现偏离待裁（v0.12）**：M0-3 把 `GET /v1/models` 实现在 `internal/server` 而非本节列出的 `internal/admin/`。理由：它是 harness 走网关 key 打的**业务**端点（Claude Code / Codex CLI 启动时拉模型列表），与管理端 CRUD 不是一类东西——放 `admin` 会让「业务面 vs 管理面」的边界糊掉。M3 上管理端时请 PO 确认：`admin` 只收管理面（`/healthz` 亦然待定），业务面的模型列表留在 `server`。
+> ~~**实现偏离待裁（v0.12）**~~ **已裁（口径层 v0.28，2026-08-08）**：`internal/admin` **只收管理面**；`GET /v1/models` 与 `/healthz` 是业务面，留在 `internal/server`。理由即当初提请裁定的那条——`/v1/models` 是 harness 走网关 key 打的业务端点，放 `admin` 会让「业务面 vs 管理面」的边界糊掉，而这条边界正是两套凭证彻底分离的依据。本节模块表已按裁决改写。
 
 ## 4. 内部事件模型（canonical events）
 
@@ -241,20 +246,38 @@ const (
 
 不在此列、但**跨协议必然作废**的是 `signature` 与 `reasoning.encrypted_content`：它们在 canonical 层有地方放（`Block.Extras`），只是转到别的协议时无处安放。见 §5 坑清单。
 
+### 4.5 A→CC 出口的丢弃与代价（#11 实测）
+
+上一节是 canonical 层「装得下但不留」；这一节是 **encode 到 CC 时装不下**的。常量定义在 `internal/protocol/openaicc/encode.go`，`EncodeRequestReport` 把本次实际丢掉的项回给 relay，relay 按 `跨协议转换丢弃字段` 打 warning——**丢弃一律有日志，不静默、不假装映射**（口径层 §2.6）。
+
+| 常量 | 丢什么 | 代价 |
+|---|---|---|
+| `metadata` | Anthropic 请求体的 `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」。走本条转换路径的上游是第三方 CC 兼容服务，本就不做该判定，故实际代价为零；但**该字段无法在 CC 协议里保留是事实**，日后若出现认此字段的 CC 上游，只能另开口子。P0 同协议透传不受影响 |
+| `cache_control` | system 块与消息块上的缓存断点 | CC 协议没有对应概念。后果是**上游按全量 prompt 计费**，长会话成本高于直连 Anthropic。这是选第三方廉价上游本身的代价，不是转换缺陷；断点位置在 canonical 层留着（`Block.Extras`），换回 Anthropic 出口就恢复 |
+| `thinking` | thinking 块正文与 `signature` | CC 的 assistant 消息没有推理块位置。回带上一轮 thinking 的客户端（Claude Code 开 extended thinking 时）会让上游丢失该轮推理上下文，表现为**质量下降而非报错** |
+| `server_tool` | `Tool.Kind` 非空的服务端工具声明 | Claude Code 会声明 `advisor_*` 一类由 Anthropic 服务端执行的工具，第三方 CC 上游既不认也执行不了。声明整条剔除，客户端表现为该工具不可用 |
+| `vendor_request` | 入口协议独有的顶层字段（`Request.Extras` 里除已知项外的其余） | 逐项枚举会随上游 beta 漂移，故按「不认识就丢并记名」处理。日志里带得出字段名，出问题时能定位 |
+
+`tool_choice` 的两种非法组合（引用未声明的工具、有 `tool_choice` 无 `tools`）不算丢弃而算**规整**：严格中转的第三方上游会直接拒请求，encode 侧当场消掉。见 §5 坑清单「严格中转的请求校验」。
+
 ## 5. 转换器（codec）接口
 
-> **v0.25 接口定稿、骨架已落（#10 M2-1）。** 代码在 `internal/protocol/codec.go`，三个协议骨架在各自子包，实现见 #11 / #12。
+> **v0.26 修订（#11 M2-2 A→CC 实现）。** 代码在 `internal/protocol/codec.go`。`anthropic` 与 `openaicc` 已实现，`openairesponses` 仍是骨架（#12）。
 
 ```go
 type Codec interface {
     DecodeRequest(body []byte, stream bool) (*Request, error)   // 入口请求 → canonical，必须是全函数
     EncodeRequest(req *Request, stream bool) ([]byte, error)    // canonical → 出口请求
     DecodeStream(r io.Reader) (<-chan Event, error)             // 上游 SSE → 事件流，实现负责关 channel
+    DecodeFullBody(body []byte) ([]Event, error)                // 上游非流式响应体 → 完整事件序列（v0.26 补）
     EncodeStream(w io.Writer, events <-chan Event) error        // 事件流 → 下行 SSE（含分帧与 flush）
     EncodeFullBody(events []Event) ([]byte, error)              // 非流式响应聚合
     EncodeError(w http.ResponseWriter, status int, msg string)  // 协议原生错误格式
 }
 ```
+
+- **`DecodeFullBody` 是 v0.26 补进来的**（PO 裁定 jinpenga，2026-08-08）：v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的**解码侧因此无处落脚**。备选方案是「非流式也向上游发流式请求再自行聚合」，被否——上游看到的请求与客户端发的不是一回事（计费与限流口径可能不同），且流中途断连时手里只剩半截事件序列，而客户端等的是一个完整 JSON，无法收场。实现上两侧共用同一台状态机（`openaicc` 的 `message` 与 `delta` 结构同形），解析逻辑只存在一处。
+- 可选接口 `RequestEncodeReporter`（`EncodeRequestReport` 额外回一串丢弃字段名）不进主接口：只有转换路径需要它，同协议透传路径拿不到也用不上。丢弃项由 relay 侧写 warning 日志，见 §4.5。
 
 - 骨架统一返回 `protocol.ErrNotImplemented` 而**不 panic**：转换闸门一放开这些方法就会被真实请求打到，panic 带走整个进程，而一个能被 relay 转成 5xx 的错误只坏这一条请求。骨架期的正确行为是「明确地不支持」，不是「崩给你看」。`EncodeError` 例外——它直接委托 M0 就已落地的 `Protocol.WriteError`，错误格式不是转换逻辑。
 - `EncodeError` 收 `http.ResponseWriter` 而非 `io.Writer`（草案原文如此）：它要设 Content-Type 与状态码，且这条路径只在**首字节写出之前**走得通。流一旦开头，错误就只能以 `EvError` 的形态走在流里，那是 `EncodeStream` 的活。msg 由调用方保证已脱敏——上游 key 与 base_url 严禁出现在错误回显里。
@@ -267,7 +290,10 @@ type Codec interface {
 
 | 坑 | 说明 |
 |---|---|
-| tool call 增量重组 | OpenAI 按 index 分发参数分片；Anthropic `input_json_delta`；并行调用下 index 交错出现，必须按 Index 缓存再按序输出 |
+| tool call 增量重组 | OpenAI 按 index 分发参数分片；Anthropic `input_json_delta`；并行调用下 index 交错出现，必须按 Index 缓存再按序输出。**输出顺序按「首次出现」而非 index 数值排**（#11 实现）：index 不保证从 0 起、不保证连续，按数值排会在上游从 1 起编号时错位 |
+| CC 工具调用无逐条终止符 | CC 流里没有「这一路 tool_call 说完了」的信号，只有整流的 `finish_reason`。故工具分片只能**攒到流末尾一次性冲出**；而 Anthropic 侧同一时刻只允许开一个 content block，encode 侧要把每路缓存成 start/delta*/stop 一个整体再写。正文 delta 不受影响，仍逐字下发 |
+| 响应 id 形态 | 上游 CC 的 `chatcmpl-…` **原样**当作 Anthropic `message.id` 下发，不重编 `msg_…`（#11 决策）：网关日志、上游账单、客户端看到的是同一个 id，排障能对上；Anthropic 客户端不校验 id 形态，也不需要把它回带给下一轮 |
+| 转换路径不转发原始 query | 客户端打过来的 `?beta=true` 是 Anthropic 方言，原样贴到 CC 上游 URL 上会被严格上游拒。#20 定的「query 整串照抄」只管**同协议透传**；转换路径发空 query |
 | `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
@@ -369,18 +395,20 @@ logging：无论成败异步落 call_logs
 ### 启动配置（config.yaml，最小）
 
 ```yaml
-listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 Caddy/限流
+listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 nginx 反代/限流（§11.3）
 db_path: "./gateway.db"
-admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效
+admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 AIG_ADMIN_PASSWORD 覆盖）
 default_max_tokens: 8192
 log_bodies: false                  # 排障开关；默认不记请求体
-rate_limit_qps: 10                 # 全局令牌桶（v0.15）；超限 429 + Retry-After
-rate_limit_burst: 20
+rate_limit_qps: 10                 # 全局令牌桶（v0.15，M3 落地）；写 0 即关闭
+rate_limit_burst: 20               # 只写 qps 时兜底 20；超限回 429 + Retry-After: 1
 retry:                             # 同候选退避重试（v0.19 口径，v0.21 定稿）
   max_retries: 2                   # **重试**次数，不含首次尝试
   base_delay: 500ms
   max_delay: 10s
 ```
+
+> **唯一的环境变量是 `AIG_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
 
 > **`retry` 块缺席 = 用默认（重试 2 次），显式写 `max_retries: 0` = 关闭**。两者在 YAML 里都解出 0，靠「先填默认值再 Unmarshal 覆盖」区分：加载后不许再给 `max_retries` 补零值，否则「写了 0」被悄悄改回 2，重试就关不掉了。两个退避间隔反过来必须兜底——只写 `max_retries` 时不补就退了个寂寞。
 
@@ -446,11 +474,12 @@ CREATE TABLE candidates (          -- 候选 =（渠道纳管模型，权重）�
 CREATE TABLE api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  key_hash TEXT NOT NULL UNIQUE,
-  allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *
+  key_hash TEXT NOT NULL UNIQUE,             -- SHA-256(明文) 的小写十六进制，不加盐，见下
+  allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *；M1 只建列不校验，一律当 *
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 无 expires_at：v1 不做过期（口径层 v0.27 收敛 C6），停用走 disabled。
 
 CREATE TABLE call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -470,9 +499,69 @@ CREATE TABLE call_logs (
   error TEXT                           -- 截断后的错误摘要
 );
 CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
+
+CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一行 admin_password_hash
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
+> **为什么密码不回写 `config.yaml`**：口径层 §2.7 要求「登录后可改，改后配置项失效」，改到哪儿就得存到哪儿；而配置文件在容器里是只读挂载的，回写根本写不进去。单开一张 kv 表比为一个字段建一张专表更省——管理端往后要存的零碎状态都归这里。
+
 注：若未来改 MySQL，表须显式 `CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`（与团队 DDL 规范一致）。
+
+### 7.1 key 鉴权的三条实现口径（M1，PO 拍板 jinpenga 2026-08-08）
+
+**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-aig-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
+
+**`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
+
+> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个接入点。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的接入点。
+
+**不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
+
+其余 M1 细则（取 key 的两个头、401 走 `protocol.WriteError`、鉴权失败也落 `call_logs`、落库失败不得影响请求）见 Issue [#22](https://github.com/SimonGino/ai-gateway/issues/22)。
+
+### 7.2 全局限流的实现口径（M3，兑现口径层 v0.15）
+
+`internal/server/ratelimit.go`，`golang.org/x/time/rate` 的令牌桶。口径层只裁了语义（单桶、10 QPS / 突发 20、429 带 Retry-After、不分维度），以下是实现侧的决定：
+
+- **一只桶，在 `New()` 里造、四条转发路由共用**。写成在 `rateLimit(ep)` 闭包里 new 的话，每个端点各得一只，全局 10 QPS 悄悄变成 40——而且从代码上看不出来。`TestRateLimitBucketIsSharedAcrossEndpoints` 是这条的哨兵。
+- **挂在鉴权之后**（`callLog → authRelay → rateLimit → relay`）。限流的目的是「钳制上游账单损失」，而没过鉴权的请求根本到不了上游；放在鉴权之前，被扫时扫描流量会把令牌吃光，把合法请求一起饿死——那是把防账单的闸变成了一个 DoS 放大器。代价是被扫时网关自己仍要为每个请求查一次 key，那是 SQLite 的一次索引命中，不是一个量级。副作用是好的：429 那行流水带得上 `api_key_name`，排查泄露时看得见是哪把 key 在刷。
+- **只挂转发面那四个 POST**。`/healthz` 被限会让监控在最忙的时候先报警；`/v1/models` 不打上游；`/admin` 走另一套凭证，把自己限出管理端毫无意义。
+- **`Retry-After: 1` 固定值**。这个头的单位是整秒，而 10 QPS 下一个令牌 100ms 就回来，算出来的真值一律不足 1 秒、只能向上取整成 1。用 `Reserve()` 拿精确延迟还得记得 `Cancel()` 把令牌还回去（漏了等于每次被拒再扣一个），为一个恒等于 1 的结果不值当，所以用 `Allow()`。
+- **`rate_limit_qps: 0` 即关闭**，与 `retry.max_retries` 同一个陷阱：在 `config.Load` 里顺手补零值会让「写了 0」被悄悄改回 10，配置项形同虚设。`burst <= 0` 反过来必须兜底成 20——桶容量 0 时 `Allow` 恒假，整个转发面直接瘫掉。
+- **测试里默认关闭**（`gatewaytest.Options` 的零值），否则任何连打二十几个请求的用例会莫名变红，而且是间歇性的。要测限流的用例显式传 `qps=1`。
+
+### 7.3 `X-Accel-Buffering: no`（M3，PO 裁决 jinpenga 2026-08-08，口径层 v0.30）
+
+SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本次响应关掉 `proxy_buffering`。
+
+**为什么值得**：§11.3 的实测里，「关掉缓冲」单独就足以让被攒住的 SSE 恢复逐条下发。网关多半跑在一份不由我们维护的 nginx 后面（公司机器上那份、别人写的那份），这个头等于把那一下做进网关自己，不必指望前面的配置写对了。
+
+**为什么要 PO 拍板而不是实现侧自决**：它是透传路径上唯一一处「上游没发、我们加上」的响应头，与「透传保真优先」有张力。
+
+实现细节：
+
+- 两条路径都设。转换路径在 `convert.go` 跟其余 SSE 头一起写；透传路径在 `CopyResponseHeaders` **之后**按上游 `Content-Type` 前缀判 `text/event-stream` 再补——放在之后是有意的，上游若自己发了这个头（见过发 `yes` 的中转），以我们的为准。
+- **非流式不加**。无差别盖上去就成了「透传路径永远多一个上游没发的头」，与保真的张力比换来的好处大。
+- 对不认它的反代与直连客户端是一个无害的多余头。
+
+### 7.4 响应 id 的透传与兜底（M2，PO 裁决 jinpenga 2026-08-08，口径层 v0.31）
+
+跨协议转换时，上游响应 id 原样透传，不改写成目标协议的形态。A→CC 路径上客户端拿到的就是 `"id": "chatcmpl-…"`。
+
+裁决依据见口径层 v0.31，此处只记实现形态：
+
+- **透传是「什么都不做」**：`openaicc/decode.go` 把 chunk 的 `id` 收进 canonical `Event.ID`，`anthropic/encode.go` 原样写出。没有转换代码，所以真正要防的是以后有人「顺手规范化一下」——`TestEncodeKeepsUpstreamResponseID` 是那道锁。
+- **空 id 兜底在编码侧**（`fallbackMessageID`），不在解码侧。`msg_` 是 Anthropic 线格式的知识，归写这个格式的人管；将来 R 编码器要补自己的前缀，各管各的。
+- 触发条件是**上游发了 model 但没发 id**：CC 解码侧 `message_start` 的门槛是两者有一个非空，所以这条流真能走到编码侧，不是造出来的边界。此前会输出 `"id": ""`，而 id 在 Anthropic 响应里是必填字段。
+- 两个调用点：流式的 `ensureStarted`（覆盖「连 `EvMessageStart` 都没有、由首条正文触发」的情形）与 `EncodeFullBody`。
+- 兜底值 `msg_` + `crypto/rand.Text()`。用 crypto/rand 不为安全——这个 id 不承担鉴权语义——是因为它没有失败分支要写。前缀选 `msg_` 而非照抄 `chatcmpl-`：正好与透传形成对照，`chatcmpl-` 即「上游给的」、`msg_` 即「网关补的」，排障省一次翻日志。
+- 兜底值每次不同，有测试盯着（写死常量能过前缀断言，但会让同一时间窗内所有缺 id 的响应共用一个 id）。
+
+**没做**：给 `call_logs` 加上游响应 id 列。它会让这条决策的第二条依据失效（「响应体是唯一关联句柄」），但那是另一个范围的事，真需要时再单独提。
 
 ## 8. 最小管理接口
 
@@ -480,9 +569,33 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 - `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
 
 > **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
-- `GET /admin/logs?limit=50&model=...`：近期调用日志（管理员 session 鉴权，细则见口径层 §2.7）
-- 管理端 CRUD API（渠道/接入点/key）随 M3 扩全，届时另列；上表为 M0~M2 最小集
 - Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501
+
+**以上是业务面，全在 `internal/server`**（口径层 v0.28：`/healthz` 与 `/v1/models` 不归 `admin`）。
+
+### 8.1 管理端 API（M3，`internal/admin`）
+
+全部挂在 `/admin/api` 下，认 cookie 会话；`/admin` 下的其余路径发 SPA。错误统一 `{"error":"…"}`，写成功回 204 或一个小 JSON。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/admin/api/login` | 验密码发会话；未设密码回 503 并说明补救动作（跟「密码错」分开说） |
+| POST | `/admin/api/logout` | |
+| GET | `/admin/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
+| POST | `/admin/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
+| GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证 |
+| PUT | `/admin/api/channels/:id/credential` | 凭证唯一入口，**只写不读，没有对应的 GET** |
+| POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除 |
+| GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
+| GET POST | `/admin/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
+| GET | `/admin/api/logs?limit=&offset=` | 近期流水，limit 上限 500 |
+| GET | `/admin/api/usage?days=` | 按接入点汇总 |
+
+三条实现口径：
+
+- **能保存下去的配置，一定是能启动的配置**：每个写接口都在**同一个事务里**跑一遍 `store.Validate`，不过就回滚并把校验原文原样回给前端（400）。这要求 `Validate` 及其全部子检查收 `store.Queryer`（`*sql.DB` 与 `*sql.Tx` 的公共只读面）而不是 `*sql.DB`——连接池是 1，事务开着时再拿 `*sql.DB` 查会等一条永远回不来的连接，**自锁不报错**，表现是保存请求直接挂住。
+- **接入点与它的候选一起建**：分两个接口意味着中间必然存在一个「零候选」的瞬间，而那个瞬间会被上面的校验判为非法，于是第一步永远保存不了。
+- **凭证先删后插**，不用 UPDATE：临时闸要求「恰好 1 份启用凭证」，UPDATE 在有 0 份或 2 份时都会悄悄走偏。已停用的旧凭证留着不动——那是 key 熔断的现场。
 
 ## 9. Golden 测试方案
 
@@ -545,8 +658,69 @@ CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 | M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
-| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制；公网部署（Caddy TLS + 全局限流） | 待估 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。全局限流已落地（§7.2）。**反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
 | M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
+
+### 11.1 容器打包（2026-08-08）
+
+口径层 §2.8 的部署形态是「构建产物 embed 进单二进制」，容器只是**这个二进制的一种分发方式**，不改口径：镜像里就是那一个二进制加一份配置，没有另起一套运行时。加它的动机是把网关搬到另一台机器上试跑，不必在那台机器上装 Go 工具链。
+
+- `Dockerfile`：多阶段，`CGO_ENABLED=0` 静态编译 → `scratch`。**能用 scratch 的前提是 SQLite 走 `modernc.org/sqlite`（纯 Go）**，换成 `mattn/go-sqlite3` 就得改成 alpine + libc。镜像 18 MB。
+- 三个实测踩到的坑，都写进了各自文件的注释：
+  - **根证书**：`scratch` 里没有，上游全是 HTTPS，缺了的症状是每个请求 502，看不出是证书问题。从 build 阶段拷 `ca-certificates.crt`。
+  - **`/data` 属主**：Docker 建命名卷时照搬镜像里同路径的属主。镜像里不预建 `/data`，卷就归 root，而进程以 65532 跑，启动即 `apply schema: unable to open database file (14)`——看着像 SQLite 坏了，其实是权限。解法是在镜像里预建一个属主正确的空 `/data`。
+  - **`listen` 必须是 `0.0.0.0`**：宿主上的默认 `127.0.0.1` 在容器里只有容器自己看得见，端口映射永远连不上。边界因此从「进程绑哪个地址」挪到「端口发布给谁」——compose 里默认 `127.0.0.1:8317:8317`，改成 `8317:8317` 就是整个局域网，那时只有 key 鉴权挡着，TLS 与全局限流都还在 M3。
+- 灌配置在**宿主侧**做：scratch 里既没有 shell 也没有 sqlite3。`deploy/docker-compose.yml` 顶部写了对着卷跑 sqlite3 容器的命令，`--user 65532:65532` 不能省——身份不对只能只读，报的是 `attempt to write a readonly database`。
+- 健康检查刻意留空：为探活往镜像里塞一个 shell 或 curl，等于为一件外部就能做的事把攻击面加回来。
+
+**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/admin` 配（命令行那条路留着没删）。管理密码走 `AIG_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
+
+### 11.2 前端 embed 策略（M3）
+
+- **build tag 二选一**：`internal/webui/embed.go`（`//go:build webui` + `//go:embed all:dist`）与 `stub.go`（`//go:build !webui`，返回「没有」）。不带 tag 的构建照样能过 `go build ./...`——CI 没有 Node，本地首次 clone 也没跑过 `npm build`，而 embed 失败的报错是「pattern dist: no matching files」，看不出跟前端有关。不带前端的二进制访问 `/admin` 会看到一页说明，转发不受影响。
+- **产物落 `internal/webui/dist`，不落 `web/dist`**：`//go:embed` 只能读自己包目录下的文件。选 `internal/webui/` 而不是把 Go 文件挪进 `web/`，是为了让 Go 工具链永远不用走 `node_modules`。`all:` 前缀不能省，否则 Vite 的点开头目录会被静默跳过。
+- **`base: '/admin/'`（vite.config.ts）+ `basename="/admin"`（Router）**：默认 base 会让 index.html 去请求 `/assets/…`，而静态文件只在 `/admin` 下发——**这个故障只在 embed 后出现，`npm run dev` 一切正常**。`internal/server/webui_test.go`（`//go:build webui`）就是这条的哨兵：断言 index.html 引用的资源全在 `/admin/` 下且能取到、`.js` 的 Content-Type 是 `text/javascript`。
+- **SPA 走 `r.NoRoute` 而不是 `r.Static`**：深链接（`/admin/keys` 直接刷新）必须回同一份 index.html，而 gin 不允许 `/admin/*filepath` 与已注册的 `/admin/api/…` 并存——**注册时就 panic**，不是运行期 404。NoRoute 里三路分流：非 `/admin` → 普通 404；`/admin/api/…` 未知 → JSON 404（回 HTML 会让前端在 `JSON.parse` 上炸，报的错跟真正原因毫无关系）；其余 → SPA。
+- **Content-Type 自己判，不用 `mime.TypeByExtension`**：后者读 `/etc/mime.types`，同一份二进制在两台机器上可能给出不同结果，`.js` 被判成 `text/plain` 时浏览器直接拒绝执行模块。`http.ServeContent` 只在头里没有 Content-Type 时才去猜，所以要先写好再调它。
+- index.html 发 `no-cache`，带 hash 的资源发 `immutable`：反过来的话，改完前端浏览器还拿着旧 index 去引用已经不存在的文件名，白屏。
+
+### 11.3 反向代理（口径层 v0.29 定 nginx 为主、Caddy 备用）
+
+样例：`deploy/nginx.conf.example`，逐条注释写的是「漏了会看到什么现象」。
+
+**选型的技术账**（口径层裁的是运维现实——机器上已有 nginx、443 只能有一个主人、公司 Higress 同套配置习惯——不是技术优势；这里如实记下代价，免得以后重新去翻文档）：
+
+| | Caddy | nginx |
+|---|---|---|
+| SSE 缓冲 | `Content-Type: text/event-stream` 或 `Content-Length` 未知时**自动立即 flush**，`flush_interval` 被忽略 | 默认 `proxy_buffering on`；单独不致命，但一旦父配置开了 gzip 就整条流攒住（实测见下） |
+| 长流空档 | 无对应默认掐断 | 默认 `proxy_read_timeout 60s` |
+| 证书 | 内建 ACME，自动续期 | certbot 另配，多一条要维护的续期链路 |
+
+**实测记录（nginx 1.31.3 容器 + 桩上游，2026-08-08）**。桩每秒推一条 SSE、共 5 条；同一份桩，只换 nginx 的配置：
+
+| 配置 | 首字节 | 结论 |
+|---|---|---|
+| 默认（`proxy_buffering on`）+ `gzip_proxied any` | **5.02s** | 攒到整条流结束才吐第一个字节 |
+| 只关 `proxy_buffering`，gzip 仍开 | 0.002s | 恢复逐条 |
+| 只关 `gzip`，buffering 仍默认 on | 0.003s | 恢复逐条 |
+| 纯 `proxy_pass`，没有 gzip | 0.003s | 逐条 |
+| 样例这份（两个都关） | 0.035s | 逐条 |
+
+**结论修正了一条常见说法**：`proxy_buffering on` 单独并不会攒住 SSE——小事件逐条转发，nginx 收一块发一块。真正攒住的是 **buffering 与 gzip 同时开**，任意关掉一个都恢复。样例里两个都关是冗余的，冗余的理由是那行 gzip 常常写在父配置里、不在这份文件里，改不改得动不由你说了算。（严格说父配置还得让 `gzip_types` 覆盖 `text/event-stream` 才压得到——默认只有 `text/html`。但这属于「别人怎么配」，不是能依赖的保护。上表 C 组已证 location 级 `gzip off` 压得住父配置。）
+
+**读超时那条则完全成立**：桩把两条事件的间隔拉到 70s，默认 `proxy_read_timeout 60s` 的 nginx **在第 60 秒把流掐了**，客户端只拿到第一条、然后流「正常结束」——没有错误码、没有异常断连。样例的 600s 拿到了第二条。这是四条里最难查的一种：模型思考或工具调用的空档超过 60s 就会踩到，而现象是「回答说了一半就没了」。
+
+`client_max_body_size` 同样实测确认：2MB 的 POST，默认 1m 的 nginx 回 **413**，样例的 64m 回 200。**请求根本到不了网关**，日志里查不到任何痕迹。
+
+其余一条不是坑而是版本兼容：`proxy_http_version 1.1` + `proxy_set_header Connection ""`——nginx 1.29.7 起前者默认已是 1.1，老版本默认 1.0，那种版本下 chunked 会被降级处理。另外独立的 `http2 on;` 指令要 1.25.1+，老版本得写 `listen 443 ssl http2;`。
+
+**这次验证的边界**：证的是这份 nginx 配置对 SSE 的行为，用的是桩上游，没有接真网关、没有跑 harness。真机上线仍要按 §10 的 harness 清单再走一遍。
+
+**只放行 `/v1`（+ 可选 `/healthz`）**，兑现口径层 §2.7「反代只放行转发面」：`/admin` 认的是 cookie 会话，公网上多一个可爆破的登录页没必要，要用走内网直连或 SSH 端口转发。样例末尾的 `location / { return 404; }` 是兜底，防以后加 location 时漏掉。
+
+**全局限流不在这一层**：口径层 §2.7 已裁定单个全局令牌桶（10 QPS / 突发 20）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。实现见 §7.2。
+
+**网关自己会发 `X-Accel-Buffering: no`**（口径层 v0.30，见 §7.3）：样例里的 `proxy_buffering off` 因此是双保险，真正的用处是覆盖那些不由我们维护的 nginx。
 
 ## 12. 参考对照
 
