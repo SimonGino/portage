@@ -40,6 +40,10 @@ services:
       # 那一刻网关就暴露在整个网段上，只有 key 鉴权和管理端密码挡着，
       # 没有 TLS 也没有限流（口径层 §2.7 把这两样列为公网暴露的必做项）。
       # 注意管理端会话 cookie 在明文 HTTP 下不带 Secure，同网段能被嗅到。
+      #
+      # 公网暴露不要改这一行：让它继续只发布给本机，前面挂 nginx 收 TLS 并
+      # 只放行 /v1。样例见 deploy/nginx.conf.example，nginx 对 SSE 的几条
+      # 默认值必须显式改，漏了不报错、只表现为卡住或断流（展开层 §11.3）。
       - "127.0.0.1:8317:8317"
     volumes:
       - ai-gateway-data:/data

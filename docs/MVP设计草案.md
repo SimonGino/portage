@@ -395,7 +395,7 @@ logging：无论成败异步落 call_logs
 ### 启动配置（config.yaml，最小）
 
 ```yaml
-listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 Caddy/限流
+listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 nginx 反代/限流（§11.3）
 db_path: "./gateway.db"
 admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 AIG_ADMIN_PASSWORD 覆盖）
 default_max_tokens: 8192
@@ -618,7 +618,7 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 | M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
-| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（Caddy TLS + 全局限流）。**TLS 与全局限流尚未做** | 待估 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。**全局限流尚未做；反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
 | M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
 
 ### 11.1 容器打包（2026-08-08）
@@ -643,6 +643,42 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 - **SPA 走 `r.NoRoute` 而不是 `r.Static`**：深链接（`/admin/keys` 直接刷新）必须回同一份 index.html，而 gin 不允许 `/admin/*filepath` 与已注册的 `/admin/api/…` 并存——**注册时就 panic**，不是运行期 404。NoRoute 里三路分流：非 `/admin` → 普通 404；`/admin/api/…` 未知 → JSON 404（回 HTML 会让前端在 `JSON.parse` 上炸，报的错跟真正原因毫无关系）；其余 → SPA。
 - **Content-Type 自己判，不用 `mime.TypeByExtension`**：后者读 `/etc/mime.types`，同一份二进制在两台机器上可能给出不同结果，`.js` 被判成 `text/plain` 时浏览器直接拒绝执行模块。`http.ServeContent` 只在头里没有 Content-Type 时才去猜，所以要先写好再调它。
 - index.html 发 `no-cache`，带 hash 的资源发 `immutable`：反过来的话，改完前端浏览器还拿着旧 index 去引用已经不存在的文件名，白屏。
+
+### 11.3 反向代理（口径层 v0.29 定 nginx 为主、Caddy 备用）
+
+样例：`deploy/nginx.conf.example`，逐条注释写的是「漏了会看到什么现象」。
+
+**选型的技术账**（口径层裁的是运维现实——机器上已有 nginx、443 只能有一个主人、公司 Higress 同套配置习惯——不是技术优势；这里如实记下代价，免得以后重新去翻文档）：
+
+| | Caddy | nginx |
+|---|---|---|
+| SSE 缓冲 | `Content-Type: text/event-stream` 或 `Content-Length` 未知时**自动立即 flush**，`flush_interval` 被忽略 | 默认 `proxy_buffering on`；单独不致命，但一旦父配置开了 gzip 就整条流攒住（实测见下） |
+| 长流空档 | 无对应默认掐断 | 默认 `proxy_read_timeout 60s` |
+| 证书 | 内建 ACME，自动续期 | certbot 另配，多一条要维护的续期链路 |
+
+**实测记录（nginx 1.31.3 容器 + 桩上游，2026-08-08）**。桩每秒推一条 SSE、共 5 条；同一份桩，只换 nginx 的配置：
+
+| 配置 | 首字节 | 结论 |
+|---|---|---|
+| 默认（`proxy_buffering on`）+ `gzip_proxied any` | **5.02s** | 攒到整条流结束才吐第一个字节 |
+| 只关 `proxy_buffering`，gzip 仍开 | 0.002s | 恢复逐条 |
+| 只关 `gzip`，buffering 仍默认 on | 0.003s | 恢复逐条 |
+| 纯 `proxy_pass`，没有 gzip | 0.003s | 逐条 |
+| 样例这份（两个都关） | 0.035s | 逐条 |
+
+**结论修正了一条常见说法**：`proxy_buffering on` 单独并不会攒住 SSE——小事件逐条转发，nginx 收一块发一块。真正攒住的是 **buffering 与 gzip 同时开**，任意关掉一个都恢复。样例里两个都关是冗余的，冗余的理由是 `gzip_proxied any` 常常写在父配置里、不在这份文件里，改不改得动不由你说了算。
+
+**读超时那条则完全成立**：桩把两条事件的间隔拉到 70s，默认 `proxy_read_timeout 60s` 的 nginx **在第 60 秒把流掐了**，客户端只拿到第一条、然后流「正常结束」——没有错误码、没有异常断连。样例的 600s 拿到了第二条。这是四条里最难查的一种：模型思考或工具调用的空档超过 60s 就会踩到，而现象是「回答说了一半就没了」。
+
+`client_max_body_size` 同样实测确认：2MB 的 POST，默认 1m 的 nginx 回 **413**，样例的 64m 回 200。**请求根本到不了网关**，日志里查不到任何痕迹。
+
+其余一条不是坑而是版本兼容：`proxy_http_version 1.1` + `proxy_set_header Connection ""`——nginx 1.29.7 起前者默认已是 1.1，老版本默认 1.0，那种版本下 chunked 会被降级处理。另外独立的 `http2 on;` 指令要 1.25.1+，老版本得写 `listen 443 ssl http2;`。
+
+**这次验证的边界**：证的是这份 nginx 配置对 SSE 的行为，用的是桩上游，没有接真网关、没有跑 harness。真机上线仍要按 §10 的 harness 清单再走一遍。
+
+**只放行 `/v1`（+ 可选 `/healthz`）**，兑现口径层 §2.7「反代只放行转发面」：`/admin` 认的是 cookie 会话，公网上多一个可爆破的登录页没必要，要用走内网直连或 SSH 端口转发。样例末尾的 `location / { return 404; }` 是兜底，防以后加 location 时漏掉。
+
+**全局限流不在这一层**：口径层 §2.3 已裁定单个全局令牌桶（10 QPS / 突发 20）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。**该功能尚未实现**，见 §11 M3 行。
 
 ## 12. 参考对照
 
