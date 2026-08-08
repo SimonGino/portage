@@ -138,9 +138,9 @@ func TestOneRequestWritesExactlyOneRow(t *testing.T) {
 	for range 3 {
 		gw.Post(t, "/v1/messages", anthropicRequest, nil)
 	}
-	gw.LastCallRow(t)
 
-	if got := gw.CountCallRows(t); got != 3 {
+	// 要等：落库在响应之后，Post 返回时最后一行可能还没进库（见 WaitCallRows）。
+	if got := gw.WaitCallRows(t, 3); got != 3 {
 		t.Errorf("call_logs 有 %d 行, 期望 3", got)
 	}
 }

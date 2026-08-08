@@ -286,6 +286,25 @@ func (g *Gateway) CountCallRows(t *testing.T) int {
 	return n
 }
 
+// WaitCallRows 等 call_logs 攒够 want 行，再回最终行数。
+//
+// 为什么不能直接数：落库在 callLog 的 defer 里，也就是**响应已经发给客户端之后**
+// （internal/server/auth.go）。这是有意的——不该为了写一行日志给每个请求加延迟。
+// 代价是 Post 返回不代表那一行已经进库，直接数会间歇性少一行（CI 上实见，本地
+// `-count=60` 也能复现）。LastCallRow 挡不住这个：它只等「有任意一行」。
+//
+// 数够之后还静置一下再回，是为了不放过「一次请求写两行」——只等「≥ want」的话，
+// 前一个请求重复落库、后一个还没落时会凑巧数出 want，而那正是调用方要防的 bug。
+func (g *Gateway) WaitCallRows(t *testing.T, want int) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for g.CountCallRows(t) < want && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	return g.CountCallRows(t)
+}
+
 // RawLog returns every log line as rendered text.
 func (g *Gateway) RawLog() string {
 	g.log.mu.Lock()
