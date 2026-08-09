@@ -97,7 +97,7 @@ function ChannelCard({
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
       <div className="channel-head">
-        <div>
+        <div className="channel-title">
           <strong>{ch.name}</strong>
           <span className="tag">{PROTOCOL_LABEL[ch.protocol] ?? ch.protocol}</span>
           {ch.disabled && <span className="tag tag-off">已停用</span>}
@@ -112,32 +112,39 @@ function ChannelCard({
           <button className="btn btn-quiet" onClick={onEdit}>
             编辑
           </button>
-          <Confirm onConfirm={() => void mutate(() => api.del(`/channels/${ch.id}`))} />
+          <Confirm ghost onConfirm={() => void mutate(() => api.del(`/channels/${ch.id}`))} />
         </div>
       </div>
 
       <div className="channel-url">{ch.base_url}</div>
 
       <div className="models">
-        <div className="models-title">纳管模型</div>
+        <div className="models-title">纳管模型{models.length > 0 && ` · ${models.length}`}</div>
         {models.length === 0 ? (
           <div className="muted">还没有纳管模型。填上游那边真实的模型名，比如 gpt-4o、deepseek-chat。</div>
         ) : (
-          <ul className="model-list">
+          <div className="model-grid">
             {models.map((m) => (
-              <li key={m.id}>
-                <code>{m.upstream_model}</code>
-                <span className="spacer" />
-                <Toggle
-                  on={!m.disabled}
-                  onChange={(on) =>
-                    void mutate(() => api.put(`/channel-models/${m.id}`, { disabled: !on }))
-                  }
-                />
-                <Confirm onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))} />
-              </li>
+              <div key={m.id} className={'model' + (m.disabled ? ' is-off' : '')}>
+                {/* title 补全名：网格单元里长名字是截断的，鼠标停一下能看全 */}
+                <code className="model-name" title={m.upstream_model}>
+                  {m.upstream_model}
+                </code>
+                <div className="model-actions">
+                  <Toggle
+                    on={!m.disabled}
+                    onChange={(on) =>
+                      void mutate(() => api.put(`/channel-models/${m.id}`, { disabled: !on }))
+                    }
+                  />
+                  <Confirm
+                    ghost
+                    onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))}
+                  />
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
         <form
           className="inline-form"
@@ -279,7 +286,7 @@ function CredentialForm({
         }}
       >
         <div className="bar bar-warn">
-          上游凭证只写不回读，服务端不会把它发回来。这里填的会**替换**当前那把。
+          上游凭证只写不回读，服务端不会把它发回来。这里填的会<strong>替换</strong>当前那把。
         </div>
         <Field label="上游 API key">
           <input

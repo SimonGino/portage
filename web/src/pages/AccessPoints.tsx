@@ -37,7 +37,7 @@ export default function AccessPoints() {
         }
       >
         <p className="muted">
-          接入点是**客户端填的模型名**。客户端只看得到这一层，它背后指向哪个渠道的哪个模型是网关的内部事实。
+          接入点是<strong>客户端填的模型名</strong>。客户端只看得到这一层，它背后指向哪个渠道的哪个模型是网关的内部事实。
         </p>
         {list.length === 0 ? (
           <Empty>
@@ -52,7 +52,7 @@ export default function AccessPoints() {
                 <th>接入点</th>
                 <th>候选</th>
                 <th>状态</th>
-                <th />
+                <th className="col-actions" />
               </tr>
             </thead>
             <tbody>
@@ -79,7 +79,7 @@ export default function AccessPoints() {
                     <td>{ap.disabled ? <span className="tag tag-off">已停用</span> : '启用'}</td>
                     {/* 按钮包一层 div：直接把 display:flex 挂在 td 上，这一格就脱离了
                         表格的列模型，渲染出来会跑到卡片外面去。 */}
-                    <td>
+                    <td className="col-actions">
                       <div className="row-actions">
                         <button className="btn btn-quiet" onClick={() => setEditing(ap)}>
                           编辑

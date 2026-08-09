@@ -114,7 +114,17 @@ export function Dialog({
  * 不用 window.confirm——它是浏览器模态框，会把整个页面的事件循环挡住，
  * 而这个项目的调试指引明确要避开原生对话框。
  */
-export function Confirm({ label = '删除', onConfirm }: { label?: string; onConfirm: () => void }) {
+export function Confirm({
+  label = '删除',
+  ghost,
+  onConfirm,
+}: {
+  label?: string
+  /** ghost：未举起时不画边框，悬停才显形。列表里每行都挂一个删除按钮时用它——
+   *  一排同等分量的描边按钮会盖过行首的正主。举起后仍是实心红，不受影响。 */
+  ghost?: boolean
+  onConfirm: () => void
+}) {
   const [armed, setArmed] = useState(false)
 
   useEffect(() => {
@@ -127,7 +137,7 @@ export function Confirm({ label = '删除', onConfirm }: { label?: string; onCon
 
   if (!armed) {
     return (
-      <button className="btn btn-quiet" onClick={() => setArmed(true)}>
+      <button className={'btn ' + (ghost ? 'btn-ghost' : 'btn-quiet')} onClick={() => setArmed(true)}>
         {label}
       </button>
     )
@@ -160,12 +170,21 @@ export function fmtInt(n: number | null | undefined) {
   return n.toLocaleString('en-US')
 }
 
-/** fmtTime 把后端的 SQLite 时间戳（UTC，形如 `2026-08-07 03:12:44`）显示成本地时间。 */
+/**
+ * fmtTime 把后端的 SQLite 时间戳（UTC，形如 `2026-08-07 03:12:44`）显示成本地时间。
+ *
+ * 不用 `toLocaleString()` 的默认形态：它在中文环境下吐出 `2026/8/9 13:50:30`、
+ * 英文环境下是 `8/9/2026, 1:50:30 PM`，前者月日不补零、后者带 AM/PM——两种都
+ * 不等宽，一列时间戳看上去参差不齐，而这一列的用处正是竖着扫。年份省掉：
+ * 流水表只回最近一百条，年份是恒定噪音。
+ */
 export function fmtTime(s: string) {
   if (!s) return '—'
   // SQLite 的 CURRENT_TIMESTAMP 不带时区后缀，直接 new Date() 在浏览器里会被
   // 当成本地时间，于是显示出来比真实时间早了 8 小时。补个 Z 说明它是 UTC。
   const iso = s.includes('T') ? s : s.replace(' ', 'T') + 'Z'
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? s : d.toLocaleString()
+  if (Number.isNaN(d.getTime())) return s
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
