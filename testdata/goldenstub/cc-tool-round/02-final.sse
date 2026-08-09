@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl-stub-final","object":"chat.completion.chunk","created":1785982900,"model":"stub-model","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stub-final","object":"chat.completion.chunk","created":1785982900,"model":"stub-model","choices":[{"index":0,"delta":{"content":"长轮询每轮都要重建连接，SSE 一条连接一直开着单向推。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stub-final","object":"chat.completion.chunk","created":1785982900,"model":"stub-model","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-stub-final","object":"chat.completion.chunk","created":1785982900,"model":"stub-model","choices":[],"usage":{"prompt_tokens":312,"completion_tokens":24,"total_tokens":336}}
+
+data: [DONE]
+
