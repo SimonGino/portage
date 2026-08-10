@@ -43,6 +43,8 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8318 claude     # Anthropic 入站
 OPENAI_BASE_URL=http://127.0.0.1:8318 codex          # Responses 入站
 ```
 
+CC 入站得多做两件事，见下面「CC 入站怎么采」。
+
 样本落在 `testdata/golden/raw/in-*`，那是暂存区、不进 git。人工脱敏核对后按
 `testdata/golden/README.md` 的规矩移进转录库。
 
@@ -56,6 +58,9 @@ OPENAI_BASE_URL=http://127.0.0.1:8318 codex          # Responses 入站
 | `responses-text/` | openai_responses | 纯文本单轮 |
 | `responses-tool-round/` | openai_responses | 单工具调用整轮（两轮请求） |
 | `responses-parallel-custom-tools/` | openai_responses | **并行** `custom_tool_call` 整轮（两轮请求） |
+| `cc-text/` | openai_cc | 纯文本单轮 |
+| `cc-tool-round/` | openai_cc | 单工具调用整轮（两轮请求） |
+| `cc-parallel-tools/` | openai_cc | 并行工具调用整轮（两轮请求） |
 
 `responses-parallel-custom-tools/` 是「有真实上游也得用 stub」的那种例外，值得单独说：
 
@@ -93,3 +98,49 @@ Codex CLI 0.144 走的是 **code-mode 工具**——它只声明一个叫 `exec`
 Codex 侧另外要留意：它对 Responses 事件的字段完备性很严
 （`sequence_number` / `output_index` / `content_index` / `call_id` 缺一不可，即便值是 0
 或空串），删字段会被判为非法事件。这几个脚本已按此写全，改的时候别顺手删。
+
+## CC 入站怎么采（#27）
+
+**别拿 Codex CLI 试。** 0.144.1 已经不支持 `wire_api = "chat"`——二进制里写死了
+``​`wire_api = "chat"` is no longer supported.``，并提示改用 `responses`。
+
+用 opencode（1.18.4 实测可用）：它走 `@ai-sdk/openai-compatible`，直接 POST
+`/v1/chat/completions`，`opencode run` 还能非交互跑。
+
+```bash
+# 1) 起 goldenrec，注意多一个 SIDECALL 开关
+GOLDENREC_MODE=inbound GOLDENREC_PROTOCOL=openai_cc \
+GOLDENREC_SIDECALL=notools \
+GOLDENREC_STUBS=./testdata/goldenstub/cc-tool-round \
+GOLDENREC_OUT=/tmp/rec go run ./cmd/goldenrec
+
+# 2) 另开一个终端，在一个**干净 HOME** 下跑 harness
+FAKE=/tmp/aig-fakehome
+mkdir -p $FAKE/.config/opencode && cat > $FAKE/.config/opencode/opencode.json <<'JSON'
+{
+  "provider": { "goldenrec": {
+    "npm": "@ai-sdk/openai-compatible", "name": "goldenrec",
+    "options": { "baseURL": "http://127.0.0.1:8318/v1", "apiKey": "stub" },
+    "models": { "stub-model": { "name": "stub-model" } } } },
+  "model": "goldenrec/stub-model", "autoupdate": false
+}
+JSON
+cd /private/tmp/某个采样目录 && HOME=$FAKE XDG_CONFIG_HOME=$FAKE/.config \
+  XDG_DATA_HOME=$FAKE/.data XDG_STATE_HOME=$FAKE/.state \
+  opencode run "读一下 notes.md，然后用一句话总结"
+```
+
+三个坑，都实际踩过：
+
+1. **`HOME` 必须换，只换 `XDG_CONFIG_HOME` 不够。** opencode 会把 `~/.agents/skills/`
+   下的个人 skill 清单（名称 + 描述 + 本机路径）塞进 system prompt。只隔离 XDG 时采到的
+   样本里有 52 处本机用户名、system prompt 27.8 KB；换掉 HOME 后 9.5 KB，只剩自带内容。
+   更一般的那条：**harness 的 system prompt 是本机环境的函数，不是常量**。
+
+2. **`GOLDENREC_SIDECALL=notools` 得开。** opencode 每开一个会话先发一条「给这段对话
+   起个标题」的旁路请求，打的是同一个端点。不豁免它就会吃掉脚本里的一格，后面全串位。
+   默认关闭的理由见 `cmd/goldenrec/inbound.go` 的 `isSideCall`。
+
+3. **stub 里的文件路径要用解析后的真路径。** macOS 上 `/tmp` 是指向 `/private/tmp` 的
+   软链，stub 里写 `/tmp/x/notes.md` 会被 opencode 判成项目外目录并自动拒绝权限，
+   症状是工具调用回一句 rejected、采不到成功路径的第二轮。写 `/private/tmp/x/notes.md`。

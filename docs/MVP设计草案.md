@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.29
+> 状态：草案 v0.30
+> v0.30 变更（#27 M2-6 入站 CC 样本采集，2026-08-09）：均为实现层，口径不变。本条**叠在 #26（v0.29）之上**（合并时两条记录并存，见上一行）。①§9 入站样本段补第三套语料 `in-cc-*` 六份（opencode 1.18.4 实采），并记下 harness 选型的**事实**：Codex CLI 0.144.1 已不支持 `wire_api = "chat"`（二进制内写死，提示改用 `responses`），CC 入站样本采不到；转而用 opencode，它走 `@ai-sdk/openai-compatible` 直接 POST `/v1/chat/completions`。②采集中发现两条转换约束，均已进 canonical 覆盖表：**CC 的工具结果是每个调用一条独立 `tool` 消息，Anthropic 是全部挤进同一条 user 消息**，CC→A 编码侧要做合并而非逐条平移；**`stream_options.include_usage` 不能丢**，入口半边的 EncodeStream 要靠它决定回程补不补 usage 帧。③§9 stub 应答段补第四条实现口径：`GOLDENREC_SIDECALL=notools` 旁路豁免，**默认关闭**。④脱敏工序补一条**教训**：只隔离 `XDG_CONFIG_HOME` 不够，opencode 会把 `~/.agents/skills/` 下的个人 skill 清单塞进 system prompt，须连 `HOME` 一起换。修改人 jinpenga。
 > v0.29 变更（#25 M2-5 R→A 转换落地，2026-08-08）：均为实现层，口径不变。①§2 路径矩阵 R→A 打勾，并重算各格所差的 codec 半边——按**边际成本** ④（A→R，只差 openairesponses 出口半边）比 ③（CC→A / CC→R，各差 openaicc 入口半边，而它一个方法都没有）便宜，与口径层 §2.1 的排序相反，是否调序待 PO 裁决。②修一处 #12 遗留的**缺陷**：custom 工具的包装规则有三个必须逐字对称的面（声明 / 出站包装 / 回程拆包），#12 只做了后两个——发给上游的工具声明是空的，没有任何东西告诉模型该回 `{"input": …}`，模型回个别的形状，回程拆不动只好原样给出去，Codex 拿到一段 JSON 当 JS 跑。三件事收进 `protocol/customtool.go`，往返对称由用例钉住（§5 坑清单同条目）。③§5 新增「第二个住户」：`anthropic.Codec` 的 `DefaultMaxTokens` 走 `codecs.New` 的必填 Options 注入，**不在 `convert.go` 对 canonical 无条件填**——那会让已上线的 R→CC 在客户端没给上限时开始悄悄截断。④订正 §5 一处悬空引用：那条实例生命周期原写「v0.32 定」，而口径层的版本记录只到 v0.31，v0.32 从来不存在——它是实现层决定，本就不该按口径层编号，改为按 issue 引用，两条一并标注「待 PO 追认」。⑤新增 §9.2 记 R→A 的用例分工与五条已知缺口，其中「上游 thinking 必然丢弃、Codex 看不到 Claude 的推理过程」是**用户可感知的退化**，单独点名。修改人 jinpenga。
 > v0.28 变更（M1 落地 + 容器打包，2026-08-08）：实现层，口径不变。①新增 §11.1 容器打包——容器只是单二进制的一种分发方式，不改口径层 §2.8 的部署形态；记下三个实测坑（scratch 缺根证书 → 全 502、命名卷属主照搬镜像 → 启动即 `unable to open database file (14)`、容器内 `listen` 必须 `0.0.0.0`）。②M1 实现中两处判断落档：`ttft_ms` 只记流式（非流式填了约等于总耗时，混合流量下「平均首字延迟」失去意义，非流式的首字节耗时仍在 slog）；`error` 列写网关自己的固定词表而非上游原文（上游文案里可能带 base_url），上游自己回 4xx/5xx 的**透传成功**行不算网关侧错误、该列留空。修改人 jinpenga。
 > v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
@@ -658,7 +659,31 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 >
 > 边界要划清：**stub 是道具，不是样本**。它手写、不保真、不进 `testdata/golden/`——一旦混进转录库就是往事实里掺伪造。入库的只有 harness 发出来的 `request.json`，仍是 100% 真实字节。有真实上游时一律走 proxy 模式，那边顺带把出站样本也采了。
 >
-> 三条实现口径：脚本按文件名顺序一请求消耗一个，**发完报 503 不循环重放**（静默重放会让 harness 原地打转）；`count_tokens` 就地估算**不消耗脚本**（Claude Code 每轮都打它，吃掉一格会把后面全串位）；未预料的端点回 404 且不消耗脚本。脚本与调参见 `testdata/goldenstub/README.md`。
+> 四条实现口径：脚本按文件名顺序一请求消耗一个，**发完报 503 不循环重放**（静默重放会让 harness 原地打转）；`count_tokens` 就地估算**不消耗脚本**（Claude Code 每轮都打它，吃掉一格会把后面全串位）；未预料的端点回 404 且不消耗脚本；**`GOLDENREC_SIDECALL=notools`（v0.30，默认关闭）** 把「没声明 tools 的请求」当旁路调用——照录、给个最短的合法应答、不消耗脚本。脚本与调参见 `testdata/goldenstub/README.md`。
+>
+> 第四条为什么是开关而不是默认行为：它冲着 opencode 每开一个会话先发的那条「给这段对话起个标题」去——那是同一个端点上的旁路请求，`count_tokens` 那种「换个端点」的办法在 CC 上不成立，只能靠请求体判别。而「没声明 tools」是 **harness 的癖性，不是协议事实**：一个不带工具的纯对话 harness，它的 agent 轮本来就没有 tools，默认吞掉就等于采不到那种样本。判错的方向也不对称——误判成旁路，症状是 harness 收到一句废话且脚本一格没走，日志里看得见；漏判才是灾难，串位之后 harness 收到的是形状对而内容驴唇不对马嘴的回复，不报错。
+
+**入站 CC 语料（v0.30，#27）**：`in-cc-*` 六份，opencode 1.18.4 实采。
+
+harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api = "chat"`**（二进制里写死了这句话，并提示改用 `responses`），拿它采不到 CC 入站字节。手上原生说 CC 且带原生工具调用的是 opencode——走 `@ai-sdk/openai-compatible`，直接 POST `/v1/chat/completions`，还有 `opencode run` 非交互模式可脚本化。**这件事本身是 ③/④ 排序的需求侧证据**：PO 日常用的两个 harness（Claude Code、Codex CLI）没有一个说 CC。
+
+| 样本 | 形状 | 钉住什么 |
+|---|---|---|
+| `in-cc-text` | system + user + 10 tools | agent 轮即便被要求「别调工具」也照发全套声明 |
+| `in-cc-tool-turn1` | 同上 | 触发工具调用的那一轮 |
+| `in-cc-tool-turn2` | + assistant(tool_calls) + tool | **主目标**：`tool_calls` ↔ `tool_call_id` 的对应 |
+| `in-cc-parallel-turn1` | 同 turn1 | |
+| `in-cc-parallel-turn2` | + assistant(2 个 tool_calls) + **两条** tool 消息 | 见下 |
+| `in-cc-consecutive-user` | system + user + user | 相邻同 role，且不声明 tools |
+
+采集中撞出两条转换约束，逐键归宿见 `canonical_coverage_test.go`（文档不抄第二份）：
+
+- **工具结果的容器形状两边相反。** CC 是每个调用一条独立 `tool` 消息（实采 `in-cc-parallel-turn2` 两条），Anthropic 要求所有 `tool_result` 挤进**同一条** user 消息。CC→A 的编码侧要做合并，不是逐条平移。
+- **`stream_options.include_usage` 不能丢。** CC 独有的开关，不给就不该发那个 usage chunk。入口半边的 `EncodeStream` 要靠它决定回程补不补 usage 帧——丢了只能猜，两个方向各错一半。它进 Extras 而非 canonical 字段，因为 Anthropic / Responses 没有对应开关（usage 恒发）。
+
+> **脱敏工序补一条教训（v0.30）**：采集环境要连 `HOME` 一起换，只隔离 `XDG_CONFIG_HOME` 不够。第一轮只换 XDG 时，opencode 把 `~/.agents/skills/` 下的**个人 skill 清单（名称 + 描述 + 本机路径）**塞进了 system prompt——52 处本机用户名，system prompt 27.8 KB。换掉 HOME 后降到 9.5 KB，只剩 harness 自带内容。
+>
+> 一般化的那条：**harness 的 system prompt 是本机环境的函数**，不是常量。它会把插件、skill、项目配置、git 状态卷进去，而这些正是「个人内容」最容易漏网的地方——凭证有形状好 grep，个人配置没有。采集前先拿一份看看它到底装了什么，比事后 grep 可靠。
 
 **测试方法**：样本 → DecodeStream → 内存事件序列 → （跨协议用例再过 EncodeStream+对方 DecodeStream）→ 语义比对（忽略空白与顺序无关差异，比对文本全文、工具调用 name/参数解析后相等、usage、stop reason）。字节级 diff 只用于透传回归。
 

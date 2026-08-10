@@ -353,6 +353,12 @@ func TestShippedStubScripts(t *testing.T) {
 						t.Errorf("%s 有一帧没有 data 行: %q", s.name, frame)
 						continue
 					}
+					// [DONE] 是 Chat Completions 流的收尾哨兵，按协议就不是 JSON
+					// （真实转录 testdata/golden/cc-stream-* 也这么结尾）。放它过，
+					// 而不是把整条断言放宽——别的帧仍然必须是合法 JSON。
+					if string(data) == "[DONE]" {
+						continue
+					}
 					var any map[string]any
 					if err := json.Unmarshal(data, &any); err != nil {
 						t.Errorf("%s 的一帧 data 不是合法 JSON: %v", s.name, err)
@@ -360,5 +366,45 @@ func TestShippedStubScripts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSideCallDoesNotConsumeStub 副业请求照录、照答，但不占脚本里的一格——串位是这个
+// 模式最难查的失败：harness 会收到一个形状对而内容驴唇不对马嘴的回复，不报错。
+func TestSideCallDoesNotConsumeStub(t *testing.T) {
+	agentStub := stub{name: "01-final.sse", body: []byte("data: {\"choices\":[]}\n\n")}
+	rec, dir := newTestRecorder(t, protocol.OpenAICC, agentStub)
+	rec.skipToolless = true
+
+	// 先来一条没声明 tools 的（标题生成那种）。
+	side := post(t, rec, protocol.EndpointChatCompletions.Path, []byte(`{"model":"m","stream":true}`), nil)
+	if side.Code != http.StatusOK {
+		t.Errorf("副业请求 status = %d, 期望 200", side.Code)
+	}
+	if body := side.Body.String(); !strings.Contains(body, "[DONE]") {
+		t.Errorf("副业请求的回复不是一条完整的 CC 流: %q", body)
+	}
+
+	// 再来 agent 轮：它必须还能拿到那一格，否则就是被上面吃掉了。
+	agent := post(t, rec, protocol.EndpointChatCompletions.Path,
+		[]byte(`{"model":"m","stream":true,"tools":[{"type":"function","function":{"name":"bash"}}]}`), nil)
+	if !bytes.Equal(agent.Body.Bytes(), agentStub.body) {
+		t.Errorf("agent 轮拿到 %q, 期望脚本原文 %q——那一格被副业请求吃了", agent.Body.Bytes(), agentStub.body)
+	}
+
+	// 两条都得落盘：副业请求也是 harness 发出来的真实入站字节。
+	if got := readSamples(t, dir); len(got) != 2 {
+		t.Errorf("落了 %d 个样本, 期望 2（副业 + agent 轮）", len(got))
+	}
+}
+
+// TestSideCallOffByDefault 开关不开时，没 tools 的请求仍是正常的 agent 轮。
+func TestSideCallOffByDefault(t *testing.T) {
+	s := stub{name: "01-final.sse", body: []byte("data: {\"choices\":[]}\n\n")}
+	rec, _ := newTestRecorder(t, protocol.OpenAICC, s)
+
+	w := post(t, rec, protocol.EndpointChatCompletions.Path, []byte(`{"model":"m","stream":true}`), nil)
+	if !bytes.Equal(w.Body.Bytes(), s.body) {
+		t.Errorf("默认配置下没 tools 的请求拿到 %q, 期望脚本原文——默认不该做副业判定", w.Body.Bytes())
 	}
 }

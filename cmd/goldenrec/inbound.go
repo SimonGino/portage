@@ -94,6 +94,8 @@ type inboundRecorder struct {
 	out    *sink
 	script *stubScript
 	entry  string
+	// skipToolless 打开后，没声明 tools 的请求算副业请求，照录但不消耗 stub。见 isSideCall。
+	skipToolless bool
 }
 
 func newInboundRecorder(proto protocol.Protocol, out *sink) *inboundRecorder {
@@ -110,7 +112,15 @@ func newInboundRecorder(proto protocol.Protocol, out *sink) *inboundRecorder {
 		names = append(names, s.name)
 	}
 	log.Printf("应答脚本 %s：%s", dir, strings.Join(names, " → "))
-	return &inboundRecorder{proto: proto, out: out, script: script, entry: entryPath(proto)}
+
+	skipToolless := os.Getenv("GOLDENREC_SIDECALL") == "notools"
+	if skipToolless {
+		log.Printf("GOLDENREC_SIDECALL=notools：没声明 tools 的请求当副业请求处理，照录但不消耗 stub")
+	}
+	return &inboundRecorder{
+		proto: proto, out: out, script: script,
+		entry: entryPath(proto), skipToolless: skipToolless,
+	}
 }
 
 func (r *inboundRecorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -145,6 +155,17 @@ func (r *inboundRecorder) serveRelay(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	stream := streamFlag(body)
+
+	// 旁路调用不吃脚本里的一格。理由与 serveCountTokens 同一条：harness 除了 agent
+	// 轮还会自己发几个副业请求（opencode 每开一个会话先发一条「给这段对话起个标题」），
+	// 让它消耗一个 stub 会把后面几轮全串位——而串位的症状是 harness 收到一个形状对
+	// 但内容驴唇不对马嘴的回复，比直接报错难查得多。
+	if r.isSideCall(body) {
+		r.record("in-"+string(r.proto)+"-sidecall", req, body, stream, "")
+		r.writeSideCallReply(w, stream)
+		return
+	}
+
 	next, hasStub := r.script.take()
 
 	// 先落盘再应答：请求字节才是这个模式要的东西，脚本发完了也不能把它丢了。
@@ -164,6 +185,64 @@ func (r *inboundRecorder) serveRelay(w http.ResponseWriter, req *http.Request) {
 			stream, next.name, next.stream)
 	}
 	r.writeStub(w, next)
+}
+
+// isSideCall 判断这是不是 harness 的副业请求（起标题、做摘要之类），而非 agent 轮。
+//
+// **默认关闭，由 GOLDENREC_SIDECALL=notools 打开。** 这是某个 harness 的癖性，不是协议
+// 事实，所以不能变成所有人的默认行为——「没声明工具」的 CC 请求完全可以是一个正当的
+// agent 轮（比如一个不带工具的纯对话 harness），默认吞掉它就等于采不到那种样本。
+//
+// 判据本身：agent 轮总要把自己那套工具发过来——opencode 即便被要求「别调工具」也照发
+// 十个（`bash`/`read`/`grep`…）；而它的标题生成那条连 `tools` 带 `tool_choice` 一起没有。
+//
+// 判错的方向是安全的那侧：把 agent 轮误判成副业，症状是 harness 收到一句无意义的回复、
+// 脚本一格没走，日志里那行一眼看得见；反过来漏判才是灾难——串位之后 harness 收到的是
+// 形状对而内容驴唇不对马嘴的回复，比直接报错难查得多。
+func (r *inboundRecorder) isSideCall(body []byte) bool {
+	if !r.skipToolless {
+		return false
+	}
+	var head struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &head); err != nil || len(head.Tools) > 0 {
+		return false
+	}
+	log.Printf("判为副业请求（没声明 tools）：照录，但不消耗 stub")
+	return true
+}
+
+// writeSideCallReply 回一句最短的合法响应。内容不重要：副业请求的回答只影响 harness
+// 自己的显示（会话标题之类），与要采的 agent 轮字节无关。
+func (r *inboundRecorder) writeSideCallReply(w http.ResponseWriter, stream bool) {
+	const text = "goldenrec"
+	if !stream {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl-goldenrec-sidecall", "object": "chat.completion", "model": "goldenrec",
+			"choices": []any{map[string]any{
+				"index":         0,
+				"message":       map[string]string{"role": "assistant", "content": text},
+				"finish_reason": "stop",
+			}},
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	chunk := func(delta map[string]any, finish any) {
+		payload, _ := json.Marshal(map[string]any{
+			"id": "chatcmpl-goldenrec-sidecall", "object": "chat.completion.chunk", "model": "goldenrec",
+			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}},
+		})
+		_ = flushWrite(w, append(append([]byte("data: "), payload...), '\n', '\n'))
+	}
+	chunk(map[string]any{"role": "assistant", "content": text}, nil)
+	chunk(map[string]any{}, "stop")
+	_ = flushWrite(w, []byte("data: [DONE]\n\n"))
 }
 
 // serveCountTokens 就地估算，不消耗 stub。
