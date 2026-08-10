@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
@@ -34,6 +35,58 @@ type InvalidInput struct{ Reason string }
 
 func (e InvalidInput) Error() string        { return e.Reason }
 func (e InvalidInput) Is(target error) bool { return target == ErrInvalidInput }
+
+// ErrInUse means the row is still referenced by a candidate, so deleting it
+// would break an access point instead of just removing an upstream.
+//
+// 单独一类而不是让外键自己报错：外键错误只说「约束冲突」，管理端把它翻成
+// 「引用了不存在的渠道/模型」——那句话对建/改是对的，对删正好说反了（不是它
+// 引用了别人，是别人在引用它）。
+var ErrInUse = errors.New("in use")
+
+// InUse 跟 InvalidInput 一样，Error() 就是显示给用户的那句话。
+type InUse struct{ Reason string }
+
+func (e InUse) Error() string        { return e.Reason }
+func (e InUse) Is(target error) bool { return target == ErrInUse }
+
+// referencingAccessPoints 返回哪些接入点的候选指着这批纳管模型。
+//
+// where 是加在 channel_models 上的过滤条件，调用方给「整个渠道的」或「这一个
+// 模型的」。只回接入点名（也就是对外模型名），不带 base_url。
+func referencingAccessPoints(ctx context.Context, db Queryer, where string, arg int64) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT ap.model
+		FROM access_points ap
+		JOIN candidates cd ON cd.access_point_id = ap.id
+		JOIN channel_models cm ON cm.id = cd.channel_model_id
+		WHERE `+where+`
+		ORDER BY ap.model`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// inUse 把接入点名单拼成给人看的那句话，没人引用时返回 nil。
+func inUse(what string, aps []string) error {
+	if len(aps) == 0 {
+		return nil
+	}
+	return InUse{Reason: fmt.Sprintf(
+		"%s还被接入点 %s 引用。先在这些接入点里把候选改指到别的模型，或者把接入点删掉，再回来删——"+
+			"删渠道不顺手带走候选是故意的：接入点空着候选，下次启动闸就过不去。",
+		what, strings.Join(aps, "、"))}
+}
 
 // ChannelModel 是渠道下的一个纳管模型。
 type ChannelModel struct {
@@ -199,8 +252,16 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 
 // DeleteChannel 删渠道。凭证与纳管模型靠 schema 的 ON DELETE CASCADE 跟着走；
 // 指向它的候选不会级联（candidates 引用的是 channel_models 且没有 CASCADE），
-// 因此调用方必须在同一事务里跑 Validate——悬空候选正是 checkDanglingCandidate 逮的。
+// 所以先自己查一遍谁在引用——不查的话外键会在 DELETE 那一步报「约束冲突」，
+// 而那条消息说不出「是哪个接入点拦着」，人只能挨个点开看。
 func DeleteChannel(ctx context.Context, db Conn, id int64) error {
+	aps, err := referencingAccessPoints(ctx, db, `cm.channel_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if err := inUse("这个渠道的纳管模型", aps); err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `DELETE FROM channels WHERE id = ?`, id)
 	return affectedOne(res, err)
 }
@@ -237,8 +298,15 @@ func SetChannelModelDisabled(ctx context.Context, db Conn, id int64, disabled bo
 	return affectedOne(res, err)
 }
 
-// DeleteChannelModel 删一个纳管模型。指向它的候选同样不级联，靠 Validate 兜。
+// DeleteChannelModel 删一个纳管模型。指向它的候选同样不级联，同样先点名。
 func DeleteChannelModel(ctx context.Context, db Conn, id int64) error {
+	aps, err := referencingAccessPoints(ctx, db, `cm.id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if err := inUse("这个纳管模型", aps); err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `DELETE FROM channel_models WHERE id = ?`, id)
 	return affectedOne(res, err)
 }

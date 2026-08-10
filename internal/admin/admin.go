@@ -197,6 +197,9 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 		// 表单本身填错了，原样告诉前端哪里错——这类错误的文案是 store 写给人看的，
 		// 不含上游凭证与 base_url。
 		fail(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrInUse):
+		// 删不掉是因为还有接入点指着它。这句话点了名，比外键那条通用文案有用。
+		fail(c, http.StatusConflict, err.Error())
 	case isConstraint(err):
 		// UNIQUE / FOREIGN KEY。名字重复是最常见的一种，前端要能提示「换个名字」，
 		// 不能笼统报 500。
