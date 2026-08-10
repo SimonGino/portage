@@ -13,6 +13,7 @@
   --err-bg: #fdecec;
   --err-line: #e79b9b;
   --err-text: #b42318;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   color-scheme: light dark;
 }
@@ -46,7 +47,7 @@ body {
 }
 
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.92em;
 }
 
@@ -237,7 +238,7 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   margin-top: 2px;
 }
