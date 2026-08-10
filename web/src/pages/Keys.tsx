@@ -54,7 +54,7 @@ export default function Keys() {
                 <th>可访问接入点</th>
                 <th>创建时间</th>
                 <th>启用</th>
-                <th />
+                <th className="col-actions" />
               </tr>
             </thead>
             <tbody>
@@ -89,7 +89,7 @@ export default function Keys() {
                   </td>
                   {/* 按钮包一层 div：直接把 display:flex 挂在 td 上，这一格就脱离了
                       表格的列模型，渲染出来会跑到卡片外面去。 */}
-                  <td>
+                  <td className="col-actions">
                     <div className="row-actions">
                       <button className="btn btn-quiet" onClick={() => setEditing(k)}>
                         编辑
@@ -144,7 +144,7 @@ function FreshKey({ value, onClose }: { value: string; onClose: () => void }) {
     <Dialog title="新 key 已生成" onClose={onClose}>
       <div className="form">
         <div className="bar bar-warn">
-          现在就复制走。服务端只存哈希，关掉这个框之后**再也看不到**，忘了只能删掉重发一把。
+          现在就复制走。服务端只存哈希，关掉这个框之后<strong>再也看不到</strong>，忘了只能删掉重发一把。
         </div>
         <code className="keybox">{value}</code>
         <div className="form-actions">

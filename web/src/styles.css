@@ -2,34 +2,56 @@
    跟随系统深浅色——这东西多半开在一堆终端旁边。 */
 
 :root {
-  --bg: #f6f7f9;
+  --bg: #f4f5f7;
   --panel: #ffffff;
-  --line: #e2e5ea;
-  --text: #1c2024;
-  --muted: #6b7280;
+  /* 两档分隔线：line 画边框，line-soft 画表格内的行间线。表格里每行都用实边框
+     会织成一张网，把眼睛的横向扫描打断。 */
+  --line: #dfe3e8;
+  --line-soft: #eceef1;
+  --text: #14181d;
+  --muted: #667085;
+  /* faint 比 muted 再淡一档，给表头、单位、时间戳这类「在场但不该抢眼」的东西。 */
+  --faint: #98a2b3;
   --accent: #2563eb;
-  --warn-bg: #fff7e6;
-  --warn-line: #f0c36d;
+  --accent-soft: #eff4ff;
+  --hover: #f7f8fa;
+  --warn-bg: #fff8e8;
+  --warn-line: #ecc46a;
+  --warn-text: #7a5300;
   --err-bg: #fdecec;
   --err-line: #e79b9b;
   --err-text: #b42318;
+  --ok-text: #067647;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181c;
-    --panel: #1e2126;
-    --line: #2f343b;
+    --bg: #131519;
+    --panel: #1b1e23;
+    --line: #2d323a;
+    --line-soft: #23272d;
     --text: #e6e8eb;
-    --muted: #9aa1ab;
+    --muted: #98a1ac;
+    --faint: #6d7681;
     --accent: #5b8cf7;
-    --warn-bg: #302607;
+    --accent-soft: #1c2740;
+    --hover: #21252b;
+    --warn-bg: #2e2408;
     --warn-line: #6b5314;
+    --warn-text: #e8c778;
     --err-bg: #3a1a1a;
     --err-line: #7a3030;
     --err-text: #f5a3a3;
+    --ok-text: #6cc79b;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -43,16 +65,17 @@ body {
   color: var(--text);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.92em;
 }
 
 .boot,
 .empty {
-  padding: 32px;
+  padding: 40px 24px;
   color: var(--muted);
   text-align: center;
 }
@@ -62,9 +85,9 @@ code {
 .nav {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 16px;
-  height: 48px;
+  gap: 2px;
+  padding: 0 20px;
+  height: 52px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   position: sticky;
@@ -73,24 +96,27 @@ code {
 }
 
 .brand {
-  font-weight: 600;
-  margin-right: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-right: 20px;
 }
 
 .nav a {
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   text-decoration: none;
+  transition: background 0.1s, color 0.1s;
 }
 
 .nav a:hover {
-  background: var(--bg);
+  background: var(--hover);
+  color: var(--text);
 }
 
 .nav a.active {
-  color: var(--text);
-  background: var(--bg);
+  color: var(--accent);
+  background: var(--accent-soft);
   font-weight: 500;
 }
 
@@ -99,12 +125,12 @@ code {
 }
 
 .main {
-  max-width: 1120px;
+  max-width: 1160px;
   margin: 0 auto;
-  padding: 20px 16px 64px;
+  padding: 24px 20px 80px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 /* ── 卡片与表格 ────────────────────────────────────────────────────── */
@@ -112,7 +138,8 @@ code {
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
@@ -120,17 +147,23 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
 
 .card-head h2 {
   margin: 0;
   font-size: 15px;
+  letter-spacing: -0.01em;
 }
 
+/* 卡片顶部的说明句。放在表头之上、与表格之间留白，不然它会被误读成第一行数据。 */
 .card > p.muted {
-  margin: 12px 16px 0;
+  margin: 0;
+  padding: 12px 18px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .muted {
@@ -144,17 +177,23 @@ code {
 
 .table th,
 .table td {
-  padding: 9px 16px;
+  padding: 11px 18px;
   text-align: left;
-  border-top: 1px solid var(--line);
-  vertical-align: top;
+  border-top: 1px solid var(--line-soft);
+  vertical-align: middle;
 }
 
 .table th {
   font-weight: 500;
-  color: var(--muted);
+  color: var(--faint);
   font-size: 12px;
+  letter-spacing: 0.02em;
   border-top: none;
+  white-space: nowrap;
+}
+
+.table tbody tr:hover td {
+  background: var(--hover);
 }
 
 .table .num {
@@ -170,31 +209,40 @@ code {
   opacity: 0.5;
 }
 
-/* 操作列贴右并且只占自己需要的宽度：width:1% 是让浏览器把它压到内容宽度的老办法，
-   剩下的宽度全留给前面几列。 */
-.table td:last-child,
-.table th:last-child {
+/* 操作列贴右并且只占自己需要的宽度。
+   **用显式的类而不是 :last-child** ——流水表的最后一列是「错误」，那是一段
+   要读的文字。按 :last-child 压到 width:1% 的后果是它被挤成一列一个字，行高
+   涨到两百多像素，整张表没法看。位置不该决定语义。 */
+.table td.col-actions,
+.table th.col-actions {
   width: 1%;
   text-align: right;
-}
-
-.table td .row-actions {
-  justify-content: flex-end;
+  white-space: nowrap;
 }
 
 .is-bad {
   color: var(--err-text);
 }
 
+.is-ok {
+  color: var(--ok-text);
+}
+
 .err {
   color: var(--err-text);
-  max-width: 280px;
+  min-width: 15em;
   word-break: break-word;
 }
 
-/* 流水表列多，窄屏上让它自己横向滚，而不是把整页撑出横向滚动条 */
+/* 流水表列多，窄屏上让它自己横向滚，而不是把整页撑出横向滚动条。
+   `min-width` 是这件事的**关键**：不给的话表格会压缩到容器宽度，
+   overflow 永远不触发，看起来就是「滚动条没生效」而实际是没东西可滚。 */
 .scroll-x {
   overflow-x: auto;
+}
+
+.scroll-x .table {
+  min-width: 1020px;
 }
 
 /* ── 渠道卡 ────────────────────────────────────────────────────────── */
@@ -205,51 +253,100 @@ code {
 }
 
 .channel {
-  padding: 14px 16px;
-  border-top: 1px solid var(--line);
+  padding: 16px 18px 18px;
+  border-top: 1px solid var(--line-soft);
 }
 
 .channel.is-off {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .channel-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-.channel-url {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  margin-top: 2px;
+.channel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
+.channel-title strong {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.channel-url {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 3px;
+  word-break: break-all;
+}
+
+/* 纳管模型：网格而不是整行。
+   整行铺开时模型名在最左、开关和删除在最右，中间隔着一整个卡片宽度，眼睛没法
+   把它们连起来——「这个开关是哪个模型的」要横扫一千多像素才能确认。压成
+   auto-fill 网格之后，名字与它的控件永远相邻，且渠道挂十几个模型时不再是十几
+   个空旷的长条。 */
 .models {
-  margin-top: 10px;
-  padding-left: 12px;
-  border-left: 2px solid var(--line);
+  margin-top: 14px;
 }
 
 .models-title {
   font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 4px;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
 }
 
-.model-list {
-  list-style: none;
-  margin: 0 0 6px;
-  padding: 0;
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
-.model-list li {
+.model {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 10px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.model:hover {
+  border-color: var(--line);
+}
+
+.model.is-off {
+  opacity: 0.55;
+}
+
+/* 模型名可能很长（claude-sonnet-4-5-20250929），截断而不是换行：网格单元一旦
+   因为某一格换行而变高，同一行其它格会跟着拉高，整片网格参差。完整名字给
+   title，鼠标停一下就有。 */
+.model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .cand {
@@ -260,13 +357,14 @@ code {
 
 .tag {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
   font-size: 11px;
+  line-height: 1.5;
   background: var(--bg);
   border: 1px solid var(--line);
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .tag-off {
@@ -276,31 +374,36 @@ code {
 .tag-warn {
   background: var(--warn-bg);
   border-color: var(--warn-line);
-  color: var(--text);
+  color: var(--warn-text);
 }
 
 .chip {
   display: inline-block;
-  margin: 1px 4px 1px 0;
-  padding: 1px 6px;
+  margin: 2px 4px 2px 0;
+  padding: 2px 7px;
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
 }
 
 /* ── 按钮与表单 ────────────────────────────────────────────────────── */
 
 .btn {
   padding: 5px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text);
   font-size: 13px;
+  line-height: 1.5;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s;
 }
 
 .btn:hover:not(:disabled) {
+  background: var(--hover);
   border-color: var(--muted);
 }
 
@@ -313,6 +416,13 @@ code {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  filter: brightness(1.08);
 }
 
 .btn-danger {
@@ -321,9 +431,26 @@ code {
   color: var(--err-text);
 }
 
+/* btn-ghost 是「在场但不吆喝」的那一档：无边框，悬停才显形。
+   一行里三个同等分量的描边按钮会把行首的正主压下去，而删除这类动作本就
+   不该跟主操作抢视线。 */
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--line);
+  color: var(--text);
+}
+
 .btn-quiet.is-on {
-  background: var(--bg);
-  border-color: var(--muted);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .icon {
@@ -333,6 +460,12 @@ code {
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+}
+
+.icon:hover {
+  color: var(--text);
 }
 
 .row-actions {
@@ -345,12 +478,16 @@ code {
 input,
 select {
   width: 100%;
-  padding: 6px 9px;
+  padding: 7px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--panel);
   color: var(--text);
   font: inherit;
+}
+
+input::placeholder {
+  color: var(--faint);
 }
 
 input:focus,
@@ -362,58 +499,62 @@ select:focus {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: 14px;
+  padding: 18px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .field-label {
   font-size: 12px;
   color: var(--muted);
+  font-weight: 500;
 }
 
 .field-hint {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--faint);
 }
 
 .check {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: 13px;
+  cursor: pointer;
 }
 
 .check input {
   width: auto;
+  cursor: pointer;
 }
 
 .checks {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   max-height: 200px;
   overflow-y: auto;
-  padding: 6px 9px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .form-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 2px;
 }
 
 .inline-form {
   display: flex;
   gap: 6px;
-  max-width: 380px;
+  max-width: 330px;
 }
 
 /* input 上有 width:100%，不压住它的话「添加」两个字会被挤成竖排 */
@@ -424,14 +565,13 @@ select:focus {
 
 .inline-form .btn {
   flex-shrink: 0;
-  white-space: nowrap;
 }
 
 /* ── 提示条 ────────────────────────────────────────────────────────── */
 
 .bar {
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
   border: 1px solid;
   font-size: 13px;
 }
@@ -445,6 +585,7 @@ select:focus {
 .bar-warn {
   background: var(--warn-bg);
   border-color: var(--warn-line);
+  color: var(--warn-text);
 }
 
 /* ── 模态框 ────────────────────────────────────────────────────────── */
@@ -452,7 +593,7 @@ select:focus {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(9, 12, 16, 0.5);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -464,16 +605,18 @@ select:focus {
 .dialog {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
   width: 100%;
-  max-width: 460px;
+  max-width: 470px;
 }
 
 .dialog-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -484,10 +627,10 @@ select:focus {
 
 .keybox {
   display: block;
-  padding: 10px;
+  padding: 12px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   word-break: break-all;
   user-select: all;
 }
@@ -521,6 +664,7 @@ select:focus {
   height: 14px;
   border-radius: 50%;
   background: var(--panel);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.2);
   transition: transform 0.12s;
 }
 
@@ -544,18 +688,20 @@ select:focus {
 
 .login {
   width: 100%;
-  max-width: 320px;
+  max-width: 330px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 24px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
 }
 
 .login h1 {
   margin: 0 0 4px;
   font-size: 18px;
   text-align: center;
+  letter-spacing: -0.01em;
 }

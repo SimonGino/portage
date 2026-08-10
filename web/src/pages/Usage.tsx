@@ -100,11 +100,11 @@ export default function Usage() {
                 {list.map((l) => (
                   <tr key={l.id}>
                     <td className="nowrap muted">{fmtTime(l.created_at)}</td>
-                    <td>{l.api_key_name || <span className="muted">—</span>}</td>
-                    <td>
+                    <td className="nowrap">{l.api_key_name || <span className="muted">—</span>}</td>
+                    <td className="nowrap">
                       <code>{l.model_requested}</code>
                     </td>
-                    <td className="muted">
+                    <td className="muted nowrap">
                       {l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'}
                     </td>
                     {/* 客户端协议 → 上游协议：一眼看出这一次走没走转换 */}
