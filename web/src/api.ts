@@ -71,6 +71,28 @@ export const PROTOCOL_LABEL: Record<Protocol, string> = {
   openai_responses: 'OpenAI Responses',
 }
 
+/** 卡片上一行放三个全称太挤，列表处用短名。 */
+export const PROTOCOL_SHORT: Record<Protocol, string> = {
+  anthropic: 'Anthropic',
+  openai_cc: 'CC',
+  openai_responses: 'Responses',
+}
+
+/** 上游子路径，写在协议勾选框旁边——填 base_url 时最容易搞错的就是它。 */
+export const PROTOCOL_PATH: Record<Protocol, string> = {
+  anthropic: '/v1/messages',
+  openai_cc: '/v1/chat/completions',
+  openai_responses: '/v1/responses',
+}
+
+/** 一次协议可达性探测的结果。只提示，不落库、不参与路由（口径层 v0.33）。 */
+export interface ProbeResult {
+  protocol: Protocol
+  reachable: boolean
+  status: number
+  detail: string
+}
+
 export interface ChannelModel {
   id: number
   upstream_model: string
@@ -80,7 +102,11 @@ export interface ChannelModel {
 export interface Channel {
   id: number
   name: string
-  protocol: Protocol
+  /**
+   * 这个渠道能说的上游协议集（口径层 v0.33）。选哪个由入站端点定——能透传就透传，
+   * 所以协议不出现在对外模型名里。
+   */
+  protocols: Protocol[]
   base_url: string
   key_mode: string
   disabled: boolean

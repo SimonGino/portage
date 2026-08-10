@@ -400,10 +400,12 @@ func SeedAPIKey(t *testing.T, db *sql.DB, name, plain string) {
 	}
 }
 
-func SeedChannel(t *testing.T, db *sql.DB, name, proto, baseURL, credential string) int64 {
+// SeedChannel 种一个渠道。protocols 是支持协议集（口径层 v0.33），逗号分隔——
+// 传单个协议名就是一元集合，绝大多数用例都这么用。
+func SeedChannel(t *testing.T, db *sql.DB, name, protocols, baseURL, credential string) int64 {
 	t.Helper()
 	res, err := db.Exec(
-		`INSERT INTO channels (name, protocol, base_url) VALUES (?, ?, ?)`, name, proto, baseURL)
+		`INSERT INTO channels (name, protocols, base_url) VALUES (?, ?, ?)`, name, protocols, baseURL)
 	if err != nil {
 		t.Fatalf("种渠道失败: %v", err)
 	}

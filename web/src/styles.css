@@ -714,6 +714,62 @@ select:focus {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
 }
 
+/* 多选版横向铺开：三个选项各带一条子路径，挤在 inline-flex 里会被压成两行。 */
+.segmented-multi {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+}
+
+.segmented-multi .segment {
+  justify-content: flex-start;
+  padding: 7px 9px;
+}
+
+/* 定宽占位，选没选中都占同一格——不然勾上的那一行会把文字往右顶。 */
+.segment-check {
+  display: inline-block;
+  width: 12px;
+  color: var(--accent, currentColor);
+  font-size: 11px;
+}
+
+.segment-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* ── 协议探测结果 ──────────────────────────────────────────────────── */
+/* 只提示，所以是卡片内的一条便签，不是错误条：它不表示保存失败。 */
+
+.probe {
+  margin: 0 14px 12px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.probe-bad {
+  border-color: var(--warn-line, var(--line));
+  color: var(--text);
+}
+
+.probe ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.probe code {
+  font-family: var(--mono);
+}
+
 /* ── Picker ────────────────────────────────────────────────────────── */
 
 .picker {

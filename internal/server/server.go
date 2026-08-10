@@ -263,7 +263,10 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model)
+		// 入站协议参与解析：渠道声明的是一个支持协议集，选哪个由「能透传就透传」
+		// 决定（口径层 v0.33）。同一个渠道、同一个模型，`/v1/responses` 进来走上游
+		// Responses，`/v1/chat/completions` 进来走上游 CC，客户端不用在模型名里标。
+		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model, ep.Proto)
 		switch {
 		case errors.Is(err, store.ErrAccessPointNotFound):
 			// 这里说「模型」而不是「接入点」：客户端填的可能是限定名，报成

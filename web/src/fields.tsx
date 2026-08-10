@@ -51,6 +51,60 @@ export function Segmented<T extends string>({
 }
 
 /**
+ * SegmentedMulti 是 Segmented 的多选版：选项固定且少，可以同时选中几个。
+ *
+ * 渠道的支持协议集用它。不用 Chips——那个是给「值不可枚举、要自己敲」的场景准备的
+ * （key 白名单），而这里就三个固定选项，摆出来点一下比敲名字快，也不可能拼错。
+ *
+ * 至少留一个：清空之后渠道选不出出站协议，那是启动闸会拦的配置，不如在这儿就点不掉。
+ */
+export function SegmentedMulti<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T[]
+  options: Option<T>[]
+  onChange: (v: T[]) => void
+}) {
+  function toggle(v: T) {
+    if (!value.includes(v)) {
+      // 按 options 的顺序插入，不按点击顺序追加：这个集合会原样存进库、原样显示，
+      // 「点的顺序不同就存成不同的串」只会让人以为改了什么。
+      onChange(options.map((o) => o.value).filter((x) => x === v || value.includes(x)))
+      return
+    }
+    if (value.length === 1) return
+    onChange(value.filter((x) => x !== v))
+  }
+
+  return (
+    <div className="segmented segmented-multi" role="group">
+      {options.map((o) => {
+        const on = value.includes(o.value)
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="checkbox"
+            aria-checked={on}
+            className={'segment' + (on ? ' is-on' : '')}
+            title={on && value.length === 1 ? '至少要留一个协议' : undefined}
+            onClick={() => toggle(o.value)}
+          >
+            <span className="segment-check" aria-hidden>
+              {on ? '✓' : ''}
+            </span>
+            <span>{o.label}</span>
+            {o.hint && <span className="segment-hint">{o.hint}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
  * Picker 是选项多、需要分组和搜索时的选择器。
  *
  * 展开时才渲染列表：渠道页可能有几十个纳管模型，全部常驻 DOM 只是给每次重渲染加负担。

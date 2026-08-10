@@ -42,7 +42,38 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+// migrate 补 `CREATE TABLE IF NOT EXISTS` 覆盖不到的形状变化。
+//
+// schema.sql 对已存在的表是空操作，所以列的增删改一律得在这儿补一手。目前只有一条，
+// 故不建版本表：迁移是不是已经跑过，直接问库里的列长什么样就知道，比维护一个会和
+// 实际形状漂移的 schema_version 更可信。
+func migrate(db *sql.DB) error {
+	// v0.33：单值 protocol → 支持协议集 protocols。只改列名，值不用动——`openai_cc`
+	// 在新语义下就是一元集合，含义一字不变。
+	has := func(col string) (bool, error) {
+		var n int
+		err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = ?`, col).Scan(&n)
+		return n > 0, err
+	}
+	old, err := has("protocol")
+	if err != nil {
+		return fmt.Errorf("检查 channels.protocol: %w", err)
+	}
+	if !old {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE channels RENAME COLUMN protocol TO protocols`); err != nil {
+		return fmt.Errorf("迁移 channels.protocol → protocols: %w", err)
+	}
+	return nil
 }
 
 // Candidate is the 候选 a request's model name resolved to, carrying the
@@ -56,9 +87,12 @@ type Candidate struct {
 	Direct        bool
 	UpstreamModel string
 	ChannelName   string
-	Protocol      protocol.Protocol
-	BaseURL       string
-	Credential    string
+	// Protocol 是**这次请求**选定的上游协议，不是渠道的全部能力——渠道支持协议集
+	// （口径层 v0.33）在解析时就按入站协议收成了一个（见 pickProtocol）。下游拿它
+	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
+	Protocol   protocol.Protocol
+	BaseURL    string
+	Credential string
 }
 
 // QualifiedName 是纳管模型对外的限定名：`渠道名/纳管模型名`。
@@ -74,20 +108,39 @@ func QualifiedName(channel, upstreamModel string) string {
 //
 // 接入点优先：限定名带 `/`，而接入点名理论上也可以带，撞上时以接入点为准——接入点
 // 是显式配出来的对外契约，纳管模型的限定名是自动派生的。
-func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
-	c, err := resolveAccessPoint(ctx, db, model)
+//
+// inbound 是入站端点的协议，用来在渠道的支持协议集里选出这次走哪个（口径层 v0.33）。
+func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
+	c, err := resolveAccessPoint(ctx, db, model, inbound)
 	// 只有「没有这个接入点」才继续试直连。接入点存在但候选不可用是另一回事，
 	// 那时降级去试直连会把「候选停用了」报成「模型不存在」，把人引去查错地方。
 	if !errors.Is(err, ErrAccessPointNotFound) {
 		return c, err
 	}
-	return resolveDirect(ctx, db, model)
+	return resolveDirect(ctx, db, model, inbound)
+}
+
+// pickProtocol 把库里那一列收成本次请求的出站协议。
+//
+// 解析失败在运行期不该发生——启动闸的 checkChannelFields 扫的是全部未停用渠道，
+// 这一列有问题的话进程根本起不来。真走到这儿说明渠道是在运行中被手写 SQL 改坏的，
+// 报错让它回 500，别猜一个协议继续往上游发。
+func pickProtocol(raw string, inbound protocol.Protocol) (protocol.Protocol, error) {
+	set, err := protocol.ParseSet(raw)
+	if err != nil {
+		return "", fmt.Errorf("渠道的 protocols 列不合法: %w", err)
+	}
+	p, ok := set.Choose(inbound)
+	if !ok {
+		return "", fmt.Errorf("渠道的 protocols 列选不出协议: %q", raw)
+	}
+	return p, nil
 }
 
 // resolveAccessPoint 走接入点路径。
 //
 // M0~M2 的临时闸保证每个接入点只有一个候选，因此这里不做加权抽取；多候选分流在 M4。
-func resolveAccessPoint(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
+func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	var apID int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM access_points WHERE model = ? AND disabled = 0`, model).Scan(&apID)
@@ -99,20 +152,24 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string) (Candidat
 	}
 
 	c := Candidate{RequestedModel: model}
+	var protocols string
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.name, ch.protocol, ch.base_url, ck.credential
+		SELECT cm.upstream_model, ch.name, ch.protocols, ch.base_url, ck.credential
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
 		JOIN channel_keys ck   ON ck.channel_id = ch.id       AND ck.disabled = 0
 		WHERE cd.access_point_id = ? AND cd.weight > 0
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelName, &c.Protocol, &c.BaseURL, &c.Credential)
+		Scan(&c.UpstreamModel, &c.ChannelName, &protocols, &c.BaseURL, &c.Credential)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
 		return Candidate{}, err
+	}
+	if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
+		return Candidate{}, fmt.Errorf("接入点 %q: %w", model, err)
 	}
 	return c, nil
 }
@@ -122,18 +179,22 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string) (Candidat
 // 拼接放在 SQL 里比在 Go 里按 `/` 切开更稳：渠道名和纳管模型名本身都可能含 `/`
 // （`anthropic/claude-3` 这种 OpenRouter 风格的模型名很常见），切在哪一刀上没有
 // 通用答案，而拼起来比对根本不用切。
-func resolveDirect(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
+func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
+	var protocols string
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.name, ch.protocol, ch.base_url, ck.credential
+		SELECT cm.upstream_model, ch.name, ch.protocols, ch.base_url, ck.credential
 		FROM channel_models cm
 		JOIN channels ch     ON ch.id = cm.channel_id
 		JOIN channel_keys ck ON ck.channel_id = ch.id AND ck.disabled = 0
 		WHERE ch.name || '/' || cm.upstream_model = ?
 		  AND cm.disabled = 0 AND ch.disabled = 0
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelName, &c.Protocol, &c.BaseURL, &c.Credential)
+		Scan(&c.UpstreamModel, &c.ChannelName, &protocols, &c.BaseURL, &c.Credential)
 	if err == nil {
+		if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
+			return Candidate{}, fmt.Errorf("纳管模型 %q: %w", model, err)
+		}
 		return c, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -366,17 +427,21 @@ func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) 
 // are maintained until the admin UI lands in M3.
 func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT id, name, protocol, credential_type, base_url
+		SELECT id, name, protocols, credential_type, base_url
 		FROM channels WHERE disabled = 0`,
 		func(rows *sql.Rows) (string, error) {
 			var id int64
-			var name, proto, credType, baseURL string
-			if err := rows.Scan(&id, &name, &proto, &credType, &baseURL); err != nil {
+			var name, protocols, credType, baseURL string
+			if err := rows.Scan(&id, &name, &protocols, &credType, &baseURL); err != nil {
 				return "", err
 			}
+			// 支持协议集非空且逐项合法（v0.33）。这一列是逗号分隔的集合，不再是单值：
+			// 空集合的渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。
+			if _, err := protocol.ParseSet(protocols); err != nil {
+				return fmt.Sprintf("渠道 %q (id=%d) 的 protocols=%q 不合法：%v（逗号分隔，取值 anthropic/openai_cc/openai_responses）",
+					name, id, protocols, err), nil
+			}
 			switch {
-			case !protocol.Protocol(proto).Valid():
-				return fmt.Sprintf("渠道 %q (id=%d) 的 protocol=%q 不是 anthropic/openai_cc/openai_responses 之一", name, id, proto), nil
 			case credType != "api_key":
 				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q，M0 只支持 api_key", name, id, credType), nil
 			}

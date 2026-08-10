@@ -92,6 +92,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 	auth.PUT("/channels/:id", h.updateChannel)
 	auth.DELETE("/channels/:id", h.deleteChannel)
 	auth.PUT("/channels/:id/credential", h.setChannelCredential)
+	auth.POST("/channels/:id/probe", h.probeChannel)
 	auth.POST("/channels/:id/models", h.addChannelModel)
 	auth.PUT("/channel-models/:id", h.updateChannelModel)
 	auth.DELETE("/channel-models/:id", h.deleteChannelModel)
@@ -192,6 +193,10 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(c, http.StatusNotFound, "记录不存在")
+	case errors.Is(err, store.ErrInvalidInput):
+		// 表单本身填错了，原样告诉前端哪里错——这类错误的文案是 store 写给人看的，
+		// 不含上游凭证与 base_url。
+		fail(c, http.StatusBadRequest, err.Error())
 	case isConstraint(err):
 		// UNIQUE / FOREIGN KEY。名字重复是最常见的一种，前端要能提示「换个名字」，
 		// 不能笼统报 500。
