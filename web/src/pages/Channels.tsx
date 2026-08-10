@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { api, PROTOCOL_LABEL } from '../api'
 import type { Channel, Protocol } from '../api'
-import { Card, Confirm, Dialog, Empty, ErrorBar, Field, Toggle, useList } from '../ui'
+import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, Toggle, useList } from '../ui'
+import { Segmented } from '../fields'
+import { Avatar, ChannelIcon, ModelIcon, vendorForChannel, vendorForModel } from '../icons'
 
 export default function Channels() {
   const { data, error, loading, reload, setError } = useList(() =>
@@ -40,7 +42,7 @@ export default function Channels() {
         }
       >
         {channels.length === 0 ? (
-          <Empty>还没有渠道。先建一个上游，再给它加纳管模型，最后在「接入点」里对外暴露。</Empty>
+          <Empty>还没有渠道。先建一个上游，再给它加纳管模型——加完就能直接调了。</Empty>
         ) : (
           <div className="channels">
             {channels.map((ch) => (
@@ -91,19 +93,22 @@ function ChannelCard({
   onCredential: () => void
   mutate: (fn: () => Promise<unknown>) => Promise<void>
 }) {
-  const [newModel, setNewModel] = useState('')
   const models = ch.models ?? []
 
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
       <div className="channel-head">
-        <div>
-          <strong>{ch.name}</strong>
-          <span className="tag">{PROTOCOL_LABEL[ch.protocol] ?? ch.protocol}</span>
-          {ch.disabled && <span className="tag tag-off">已停用</span>}
-          {/* 没凭证的启用渠道会让整个网关启动闸不过（保存时也会被挡），
-              所以这条得显眼，不能只是个灰字。 */}
-          {!ch.has_credential && <span className="tag tag-warn">缺凭证</span>}
+        <ChannelIcon channel={ch} size={32} />
+        <div className="channel-id">
+          <div className="channel-name">
+            <strong>{ch.name}</strong>
+            <span className="tag">{PROTOCOL_LABEL[ch.protocol] ?? ch.protocol}</span>
+            {ch.disabled && <span className="tag tag-off">已停用</span>}
+            {/* 没凭证的启用渠道会让整个网关启动闸不过（保存时也会被挡），
+                所以这条得显眼，不能只是个灰字。 */}
+            {!ch.has_credential && <span className="tag tag-warn">缺凭证</span>}
+          </div>
+          <div className="channel-url">{ch.base_url}</div>
         </div>
         <div className="row-actions">
           <button className="btn btn-quiet" onClick={onCredential}>
@@ -116,17 +121,29 @@ function ChannelCard({
         </div>
       </div>
 
-      <div className="channel-url">{ch.base_url}</div>
-
       <div className="models">
-        <div className="models-title">纳管模型</div>
+        <div className="models-title">
+          纳管模型
+          <span className="muted">
+            {models.length > 0 && ` · ${models.length} 个`}
+          </span>
+        </div>
         {models.length === 0 ? (
           <div className="muted">还没有纳管模型。填上游那边真实的模型名，比如 gpt-4o、deepseek-chat。</div>
         ) : (
           <ul className="model-list">
             {models.map((m) => (
-              <li key={m.id}>
-                <code>{m.upstream_model}</code>
+              <li key={m.id} className={m.disabled ? 'is-off' : ''}>
+                <ModelIcon model={m.upstream_model} size={18} />
+                <code className="model-name">{m.upstream_model}</code>
+                {/* 限定名是客户端 `model` 字段真正要填的东西（口径层 v0.32），
+                    所以摆出来而且能一键复制——手抄一个带斜杠的长串很容易漏字符，
+                    漏了的表现是 404。停用的不给复制：抄走了也调不通。 */}
+                {m.disabled ? (
+                  <span className="tag tag-off">已停用</span>
+                ) : (
+                  <CopyCode value={`${ch.name}/${m.upstream_model}`} title="客户端 model 字段填这个" />
+                )}
                 <span className="spacer" />
                 <Toggle
                   on={!m.disabled}
@@ -139,27 +156,83 @@ function ChannelCard({
             ))}
           </ul>
         )}
-        <form
-          className="inline-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            const v = newModel.trim()
-            if (!v) return
-            setNewModel('')
-            void mutate(() => api.post(`/channels/${ch.id}/models`, { upstream_model: v }))
-          }}
-        >
-          <input
-            placeholder="上游模型名"
-            value={newModel}
-            onChange={(e) => setNewModel(e.target.value)}
-          />
-          <button className="btn btn-quiet" disabled={!newModel.trim()}>
-            添加
-          </button>
-        </form>
+        <AddModels channel={ch} mutate={mutate} />
       </div>
     </div>
+  )
+}
+
+/**
+ * AddModels 是往渠道里加纳管模型的那一行。
+ *
+ * 接受**一次粘一批**——逗号、空格、换行都算分隔。上游控制台的模型列表复制下来就是
+ * 这种形状，逐个敲进去要来回十几趟。已经纳管过的自动跳过而不是报错：粘一份完整清单
+ * 进来「把新的加上」是最常见的用法，为几个重复项整批失败没有道理。
+ */
+function AddModels({
+  channel,
+  mutate,
+}: {
+  channel: Channel
+  mutate: (fn: () => Promise<unknown>) => Promise<void>
+}) {
+  const [draft, setDraft] = useState('')
+  const existing = new Set((channel.models ?? []).map((m) => m.upstream_model))
+
+  const parsed = Array.from(
+    new Set(
+      draft
+        .split(/[\s,，、]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  )
+  const fresh = parsed.filter((m) => !existing.has(m))
+  const dupes = parsed.length - fresh.length
+
+  return (
+    <form
+      className="add-models"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (fresh.length === 0) return
+        setDraft('')
+        void mutate(async () => {
+          // 串行而不是 Promise.all：SQLite 那头连接池是 1，并发写只会排队，
+          // 而串行出错时能停在第一个失败上，不至于半成功一片。
+          for (const m of fresh) {
+            await api.post(`/channels/${channel.id}/models`, { upstream_model: m })
+          }
+        })
+      }}
+    >
+      <div className="add-models-row">
+        <Avatar
+          vendor={fresh.length === 1 ? vendorForModel(fresh[0]) : null}
+          fallback={fresh.length === 1 ? fresh[0] : '+'}
+          size={20}
+        />
+        <input
+          placeholder="上游模型名，可一次粘一批（逗号或换行分隔）"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button className="btn btn-quiet" disabled={fresh.length === 0}>
+          {fresh.length > 1 ? `添加 ${fresh.length} 个` : '添加'}
+        </button>
+      </div>
+      {fresh.length > 1 && (
+        <div className="add-models-preview">
+          {fresh.map((m) => (
+            <span key={m} className="chip">
+              <ModelIcon model={m} size={16} />
+              <code>{m}</code>
+            </span>
+          ))}
+        </div>
+      )}
+      {dupes > 0 && <div className="field-hint">其中 {dupes} 个已经纳管过，会跳过。</div>}
+    </form>
   )
 }
 
@@ -205,17 +278,26 @@ function ChannelForm({
   return (
     <Dialog title={channel ? `编辑渠道：${channel.name}` : '新建渠道'} onClose={onClose}>
       <form className="form" onSubmit={submit}>
-        <Field label="渠道名" hint="自己认的名字，会出现在调用流水里">
+        {/* 图标是从 base_url 的 host 猜出来的（渠道没有「供应商」这个字段）。
+            边填边显示，等于顺手校验了域名有没有填错——图标一直是首字母块，
+            多半是 base_url 还没填对。 */}
+        <div className="form-preview">
+          <Avatar vendor={vendorForChannel({ name, base_url: baseURL })} fallback={name || '?'} size={40} />
+          <div>
+            <div className="form-preview-name">{name || '未命名渠道'}</div>
+            <div className="muted">{baseURL || '还没填 base_url'}</div>
+          </div>
+        </div>
+
+        <Field label="渠道名" hint="会出现在调用流水里，也是限定名的前半截（如 bailian/qwen3-max）">
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="上游协议">
-          <select value={proto} onChange={(e) => setProto(e.target.value as Protocol)}>
-            {PROTOCOLS.map((p) => (
-              <option key={p} value={p}>
-                {PROTOCOL_LABEL[p]}
-              </option>
-            ))}
-          </select>
+        <Field label="上游协议" hint="决定网关跟这个上游怎么说话；与客户端用什么协议无关，对不上会走转换">
+          <Segmented
+            value={proto}
+            onChange={setProto}
+            options={PROTOCOLS.map((p) => ({ value: p, label: PROTOCOL_LABEL[p] }))}
+          />
         </Field>
         <Field label="Base URL" hint="到版本段为止，例如 https://api.example.com/v1">
           <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />

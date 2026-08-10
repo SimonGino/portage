@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { CallLog, UsageRow } from '../api'
 import { Card, Empty, ErrorBar, fmtInt, fmtTime, useList } from '../ui'
+import { ModelIcon } from '../icons'
 
 const DAY_OPTIONS = [1, 7, 30]
 
@@ -41,7 +42,7 @@ export default function Usage() {
           <table className="table">
             <thead>
               <tr>
-                <th>接入点</th>
+                <th>模型</th>
                 <th className="num">调用</th>
                 <th className="num">失败</th>
                 <th className="num">输入 token</th>
@@ -54,7 +55,10 @@ export default function Usage() {
               {rows.map((r) => (
                 <tr key={r.model_requested}>
                   <td>
-                    <code>{r.model_requested}</code>
+                    <span className="icon-row">
+                      <ModelIcon model={r.model_requested} size={16} />
+                      <code>{r.model_requested}</code>
+                    </span>
                   </td>
                   <td className="num">{fmtInt(r.calls)}</td>
                   <td className={'num' + (r.errors > 0 ? ' is-bad' : '')}>{fmtInt(r.errors)}</td>
@@ -86,7 +90,7 @@ export default function Usage() {
                 <tr>
                   <th>时间</th>
                   <th>key</th>
-                  <th>接入点</th>
+                  <th>模型</th>
                   <th>渠道 / 上游模型</th>
                   <th>链路</th>
                   <th className="num">状态</th>
@@ -102,7 +106,10 @@ export default function Usage() {
                     <td className="nowrap muted">{fmtTime(l.created_at)}</td>
                     <td>{l.api_key_name || <span className="muted">—</span>}</td>
                     <td>
-                      <code>{l.model_requested}</code>
+                      <span className="icon-row">
+                        <ModelIcon model={l.model_requested} size={16} />
+                        <code>{l.model_requested}</code>
+                      </span>
                     </td>
                     <td className="muted">
                       {l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'}
