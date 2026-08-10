@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.34
+> 状态：草案 v0.35
+> v0.35 变更（口径层 v0.38 落地：渠道凭证池从 M4 前移至 M3，2026-08-10）：口径见口径层 v0.38，这里只记实现层落点。①**临时闸只拆凭证那一半**——`store.checkSingleCredential` 由「恰好 1 份」改判「≥1 份」，`checkSingleCandidate` 一字不动；`Resolve` 返回的 `Candidate.Credential` 单值扩成凭证列表 + 选取游标，`store` 里那条 JOIN 的 `LIMIT 1` 语义随之改变，改动面止于 `upstream`。②`channel_keys` 加 `name` 与 `UNIQUE(channel_id, name)`，`call_logs` 加 `channel_key_name`（快照冗余，非 id——删凭证是常事，存 id 会把历史 join 空）；两条都进 `store.migrate`，老库的已有凭证补名 `凭证 1`，老流水该列留空串。③**摘除只认 401**（403 换而不摘、429 换而不冷却），落在 `upstream/retry.go` 判定处；摘除写 `disabled_reason`/`disabled_at`，恢复只有管理端那一个按钮，**不加任何定时任务**。④`retry` 配置加 `max_attempts`（默认 6），与 `max_retries` 是两层，零值陷阱同 `rate_limit_qps` 处理。⑤`SetChannelCredential` 的先删后插退役（§8.1 那条实现口径随之划掉），换成 `/admin/api/channels/:id/credentials` 逐条 CRUD + 追加式批量粘贴；GET 只回名字/状态/时间/停用原因，凭证值仍无任何读接口。⑥`ChannelProbeTarget` 由「取一把凭证」改为返回全部凭证（含已停用），`Probe` 结果按凭证分行；仍不落库、不进路由。⑦`ChannelSummary.HasCredential` 布尔改可用/停用计数；`UsageByModel` 旁加一个按 `channel_key_name` 聚合的查询，`/admin/api/usage` 加 `by` 参数。⑧Web：渠道卡凭证区改列表（名字 + 状态 + 停用原因），`key_mode` 用既有的 `Segmented` 单选（不是下拉），日志页加「上游凭证」列，用量页加维度切换。修改人 jinpenga。
 > v0.34 变更（PR #32 的自动 review 三条，2026-08-10）：均为实现层。①**CC 解码侧补 `developer` → `RoleSystem` 归一**。canonical 没有 `RoleDeveloper` 是已定口径（`protocol/request.go` 的 Role 注释，PO 确认），`openairesponses` 早就这么折，CC 入口漏了。后果实打实：Anthropic 出口只把 `RoleSystem` 上提到顶层 `system`，其余非 assistant 一律当 user，于是一条 developer 系统提示降格成用户内容、还跟紧随其后的 user 合并成一条。钉这条的用例走**全链路**而不是单测——归一在 CC 侧、上提在 Anthropic 侧，分开看两边都「对」，错的是中间那一环。②`cmd/goldenrec` **先 `Normalize` 再 `Valid`**。`Valid` 故意不收旧协议名，而 `GOLDENREC_PROTOCOL` 是手写的、不经过库迁移，`protocol.go` 的注释里本来就点名它是别名要兜的读侧入口，实现却漏了——已有的采集环境会当场被打死。③`anthropic.encodeBlocksFiltered` 的 `default` 分支**补登记 `DropVendorContent`**。认不得的块（CC 的 `image_url` / `input_audio`，由解码侧刻意留住以免带图请求当场 400）此前静默蒸发：客户端发了张图，上游收到一个被改成纯文本的请求，还照样 200 回来，日志一个字都没有。与 `BlockThinking` 那一格的区别单独用例钉住——thinking 是**口径**定的必然丢弃，每次都丢，登记等于每请求一条噪声；这一格是「我不认识这个东西」，恰恰需要看见。修改人 jinpenga。
 > v0.33 变更（口径层 v0.36 落地：协议取值改名，2026-08-10）：口径见口径层 v0.36，这里只记实现层的落点。①全仓 `openai_cc` → `openai`：Go 常量 `protocol.OpenAICC` 一并更名为 `protocol.OpenAI`（值与常量名脱节比多改一处更难读），golden `meta.json` 的 `protocol` 字段一并改——它记的是「哪个 codec 录的」，协议改了名记的还是同一件事，证据本身（`request.json` 与 SSE 转录）一字未动。**包名 `openaicc` 与 golden 目录名 `cc-*` 保持不变**：内部标识，跟着改只会搅动全部 import 而换不来任何对外收益。②`protocol.Normalize` 收旧名、`Valid` 不收：别名与枚举分开，混在一起的话某天 `Set.String()` 会把旧名重新写回库里。`ParseSet` 在校验前折一次，顺带解决 `openai,openai_cc` 这种折完重名的去重。③`store.migrate` 新增 `renameOpenAICC`，改 `channels.protocols` 与 `call_logs` 的两列。channels 那条用 `REPLACE` 而非等值比较（集合是逗号分隔的，旧名可能夹在中间），子串替换在这里安全——另两个取值都不含 `openai_cc`。**不设「跑过没有」的标记**：改完库里再没有旧名，第二次跑就是零行命中，幂等本身就是守卫；用例跑两遍钉这一点。原 v0.33 列改名那条迁移的用例种子改回**当时真实写进库**的 `openai_cc`，于是它现在一路串起两次迁移。④管理端：`PROTOCOL_LABEL` 改为 OpenAI / OpenAI-Responses / Anthropic（**Responses 是复数**，参照的截图写成单数是那个产品的笔误，OpenAI 官方端点就是 `/v1/responses`）；新增 `PROTOCOL_SOON` 与 `SegmentedMulti` 的 `soon` 占位项渲染 Gemini（置灰、点不动）。占位项与 `options` 分开传而不是给 `Option` 加 `disabled`：它们的 value 根本不在 `Protocol` 里，混进去就得把类型放宽成 `string`，真正的取值也跟着失去检查。修改人 jinpenga。
 > v0.32 变更（#9 M2-7 CC→A 转换落地，2026-08-10）：均为实现层，口径不变。①§2 路径矩阵 CC→A 打勾；`openaicc` 入口半边落地后，剩下的 A→R 与 CC→R 两格**所差的是同一个半边**（`openairesponses` 出口半边），它做完就是 9 格全开。②新增 §9.3 记 CC→A 的用例分工与已知缺口。③`openaicc.Codec` 成为**第二个带每请求状态的 codec**（§5 那条实例生命周期的第三个住户）：`includeUsage` 由 `DecodeRequest` 从 `stream_options.include_usage` 读出、交给 `EncodeStream` 决定发不发流末 usage 帧——事件流里没有这个信息，只能从请求侧传过来，与 `openairesponses.customTools` 同构。④修一处 **#25 遗留的缺陷**：`temperature` 的 clamp 早在 §2 有损转换策略里写死（Anthropic 0~1、OpenAI 0~2），但 R→A 的实现一直原样转发 OpenAI 域的值，客户端发 1.8 就是一个必被上游 400 的请求。clamp 落在 `anthropic/encode_request.go`（**截断不缩放**——缩放会悄悄改掉每个请求的采样行为），一处修好 R→A 与新开的 CC→A 两条路。⑤下行 CC 流的工具调用 `index` **重编成 0..n-1**：canonical 的 `Index` 原样携带上游序号，而 Anthropic 那边它是内容块下标（正文占 0，工具从 1 起），CC 客户端拿它当 `tool_calls` 数组下标用，直接透传会在数组里留一个空洞。⑥闸门反例换靶：`TestFallbackDoesNotOpenAnUnimplementedPath` 与 `openai_test.go` 里那条「CC 入口打到 anthropic 渠道」原本拿 CC→A 当「没落地」的例子，这一格开了之后它们测的是一条不再存在的行为，改指向仍关着的 CC→R。修改人 jinpenga。
@@ -360,15 +361,18 @@ router：接入点（对外模型名）→ 命中候选（渠道纳管模型；M
   选定协议 == 入口协议 ──► 原始字节透传，Tap 旁路提取 usage（P0）
   选定协议 != 入口协议 ──► codec 转换路径（P1；P0 期配置校验保证不命中，见 §7）
   ▼
-upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、不记忆、不摘除。**实现在 M4**；M0~M2 单候选单 key 退化：失败不切换，直接按入口协议原生格式回错）：
+upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、不记忆、不摘除。**候选间转移实现在 M4，key 层内环实现在 M3**；M0~M2 单候选单凭证退化：失败不切换，直接按入口协议原生格式回错）：
   候选集 = 该接入点 weight>0 的候选
   loop：对未试过的候选重新归一化权重，加权随机抽一个
-      渠道内按 key_mode 选启用 key（key 层内环，v0.11）：
+      渠道内按 key_mode 选启用凭证（key 层内环，v0.11，口径层 v0.38 修订，实现在 M3）：
           请求上游成功 ──► 透传 / 转换下行（写出首字节后不再切换）
-          429/5xx/网络错误（未写首字节）──► 同候选同 key 退避重试（最内环，v0.19，实现在 M2）
-          429/401/403（未写首字节，同候选重试耗尽后）──► 渠道内换未试过的启用 key 重试；401/403 同时摘除该 key（记原因，可恢复）
-          5xx/网络错误/连接超时（同上，重试耗尽后）──► 不换 key，跳出内环
-      渠道内 key 耗尽 或 5xx/网络错误/连接超时 ──► 剔除该候选，继续 loop
+          429/5xx/网络错误（未写首字节）──► 同候选同凭证退避重试（最内环，v0.19，实现在 M2）
+          429/401/403（未写首字节，同候选重试耗尽后）──► 渠道内换未试过的启用凭证重试；
+                                                    **只有 401 同时摘除该凭证**（记原因与时刻，只人工恢复）；
+                                                    403 换而不摘；429 换而不摘、也不冷却
+          5xx/网络错误/连接超时（同上，重试耗尽后）──► 不换凭证，跳出内环
+      全局尝试上限 `retry.max_attempts` 耗尽 ──► 立即停止，按入口协议原生格式回最后一次上游错误
+      渠道内凭证耗尽 或 5xx/网络错误/连接超时 ──► 剔除该候选，继续 loop
       其余 4xx ──► 不切换，也不重试，按入口协议原生错误格式直接返回
       候选耗尽 ──► 最后一次上游错误按入口协议原生格式返回
   同候选退避重试（v0.19，推翻 C4 的「无同候选重试」）：
@@ -438,12 +442,15 @@ log_bodies: false                  # 排障开关；默认不记请求体
 rate_limit_qps: 10                 # 全局令牌桶（v0.15，M3 落地）；写 0 即关闭
 rate_limit_burst: 20               # 只写 qps 时兜底 20；超限回 429 + Retry-After: 1
 retry:                             # 同候选退避重试（v0.19 口径，v0.21 定稿）
-  max_retries: 2                   # **重试**次数，不含首次尝试
+  max_retries: 2                   # **重试**次数，不含首次尝试；每份凭证各自一份
+  max_attempts: 6                  # 一次请求的全局上游尝试上限（口径层 v0.38），跨凭证累计；写 0 即不封顶
   base_delay: 500ms
   max_delay: 10s
 ```
 
 > **唯一的环境变量是 `AIG_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
+
+> **`max_attempts` 与 `max_retries` 是两层，不是一件事**（口径层 v0.38）：内层 `max_retries` 管同一份凭证上的抖动重试，外层 `max_attempts` 管一次请求最多打多少次上游、跨凭证累计。两层都要，因为只留内层时最坏耗时随凭证数线性增长（凭证是运营数据随时会加，配置里没有任何地方提示「加第 6 把会让超时翻倍」），而只留外层、跨凭证共享一份预算时会出现「换到第二份时预算耗尽、第三份根本没试过」——那份是好的却没被用上。`max_attempts` 与 `max_retries` 同一个零值陷阱，处理方式相同。
 
 > **`retry` 块缺席 = 用默认（重试 2 次），显式写 `max_retries: 0` = 关闭**。两者在 YAML 里都解出 0，靠「先填默认值再 Unmarshal 覆盖」区分：加载后不许再给 `max_retries` 补零值，否则「写了 0」被悄悄改回 2，重试就关不掉了。两个退避间隔反过来必须兜底——只写 `max_retries` 时不补就退了个寂寞。
 
@@ -476,11 +483,13 @@ CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职
 CREATE TABLE channel_keys (        -- 渠道凭证池（new-api 密钥聚合的建表版，不用 blob+JSON 状态 map）
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,              -- 人写的凭证名（v0.35/口径层 v0.38），日志与用量归因用；不填由管理端给 `凭证 N`
   credential TEXT NOT NULL,        -- 静态 key 或 SA JSON（按渠道 credential_type）；仅存服务端，错误回显严禁泄露
   disabled INTEGER NOT NULL DEFAULT 0,
-  disabled_reason TEXT,            -- 仅 401/403 确定性失效自动摘除；429/5xx 不摘；管理端可恢复
+  disabled_reason TEXT,            -- 仅 401 自动摘除（口径层 v0.38：403 换而不摘）；429/5xx 不摘；只人工恢复
   disabled_at DATETIME,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(channel_id, name)         -- 渠道内唯一：日志里两行都叫「主号」就废掉了归因本身
 );
 
 CREATE TABLE access_points (       -- 接入点：对外模型名（客户端 model 字段）
@@ -506,7 +515,8 @@ CREATE TABLE candidates (          -- 候选 =（渠道纳管模型，权重）�
   weight INTEGER NOT NULL DEFAULT 100,
   UNIQUE(access_point_id, channel_model_id)
 );
--- M0~M2 临时闸：配置校验强制每接入点单候选、每渠道单 key；多候选/多 key 的实现在 M4
+-- 临时闸：M0~M2 强制每接入点单候选 + 每渠道单凭证；**M3 起只剩单候选那一半**（口径层 v0.38），
+-- 凭证那半放开为「≥1 份启用凭证」，多候选分流与候选间转移仍在 M4
 
 CREATE TABLE api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -527,6 +537,9 @@ CREATE TABLE call_logs (
   model_requested TEXT NOT NULL,
   model_upstream TEXT NOT NULL,
   channel_name TEXT NOT NULL,
+  channel_key_name TEXT NOT NULL DEFAULT '',  -- 本次真正发请求的那份凭证名（换过则记最后一份，失败亦然）；
+                                              -- 快照冗余而非 channel_key_id：删凭证是常事，存 id 会把历史 join 空。
+                                              -- 没走到上游时为空串（迁移前的老行同）
   status INTEGER NOT NULL,             -- 最终对 client 的状态
   retry_count INTEGER NOT NULL DEFAULT 0,  -- 同候选重试次数；结构化日志里已有对应的 retries 字段（v0.21），落库时接过来
   ttft_ms INTEGER,                     -- 首字节耗时（流式）
@@ -627,18 +640,20 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 | GET | `/admin/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
 | POST | `/admin/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
 | GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证 |
-| PUT | `/admin/api/channels/:id/credential` | 凭证唯一入口，**只写不读，没有对应的 GET** |
+| ~~PUT~~ | ~~`/admin/api/channels/:id/credential`~~ | 整把替换，**v0.35 起作废**（口径层 v0.38 放开多凭证） |
+| GET POST | `/admin/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
+| PUT DELETE | `/admin/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |
 | POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除 |
 | GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
 | GET POST | `/admin/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
 | GET | `/admin/api/logs?limit=&offset=` | 近期流水，limit 上限 500 |
-| GET | `/admin/api/usage?days=` | 按接入点汇总 |
+| GET | `/admin/api/usage?days=&by=model\|credential` | 汇总，`by` 选维度：按接入点（默认）或按上游凭证（v0.35） |
 
 三条实现口径：
 
 - **能保存下去的配置，一定是能启动的配置**：每个写接口都在**同一个事务里**跑一遍 `store.Validate`，不过就回滚并把校验原文原样回给前端（400）。这要求 `Validate` 及其全部子检查收 `store.Queryer`（`*sql.DB` 与 `*sql.Tx` 的公共只读面）而不是 `*sql.DB`——连接池是 1，事务开着时再拿 `*sql.DB` 查会等一条永远回不来的连接，**自锁不报错**，表现是保存请求直接挂住。
 - **接入点与它的候选一起建**：分两个接口意味着中间必然存在一个「零候选」的瞬间，而那个瞬间会被上面的校验判为非法，于是第一步永远保存不了。
-- **凭证先删后插**，不用 UPDATE：临时闸要求「恰好 1 份启用凭证」，UPDATE 在有 0 份或 2 份时都会悄悄走偏。已停用的旧凭证留着不动——那是 key 熔断的现场。
+- ~~**凭证先删后插**，不用 UPDATE~~：立论是临时闸的「恰好 1 份启用凭证」，**该闸已于口径层 v0.38 放开，此条随之作废**。改为**逐条 CRUD**（加 / 删 / 停用 / 启用），另给一个语义为**追加**的批量粘贴入口。整把替换在多凭证下讲不清楚：凭证只写不回读 ⇒ 页面上无法把贴进来的这堆与库里已有的对齐；且覆盖会连带清掉已停用的凭证，而那是 401 摘除的现场。列表只回名字、状态、创建时间、停用原因与时刻，**不回凭证值**（v0.28 不破）。
 
 ## 9. Golden 测试方案
 
@@ -787,8 +802,8 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 | M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
-| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、key 池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。全局限流已落地（§7.2）。**反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
-| M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）+ 渠道 key 池聚合与 key 层内环（v0.11）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**同候选退避重试已于 v0.19 提前到 M2**，不在本里程碑 | 待估 |
+| M3 管理端 + 部署 | React 管理端：渠道（模型纳管、凭证池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；**另含凭证池聚合与 key 层内环**（口径层 v0.38 从 M4 前移：凭证逐条 CRUD、多凭证临时闸放开、401 摘除与人工恢复、按凭证归因的日志列与用量视图、逐把凭证探测）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。全局限流已落地（§7.2）。**反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
+| M4 分流与转移 | 多候选加权随机分流 + 候选间故障转移（C4）；语义均已决，纳管成熟后实现，管理端配权重实测验收。**渠道凭证池聚合与 key 层内环（v0.11）已于口径层 v0.38 提前到 M3**、**同候选退避重试已于 v0.19 提前到 M2**，均不在本里程碑 | 待估 |
 
 ### 11.1 容器打包（2026-08-08）
 
