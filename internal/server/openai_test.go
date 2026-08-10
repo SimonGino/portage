@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -228,18 +229,65 @@ func TestModelsListsEnabledAccessPoints(t *testing.T) {
 	if parsed.Object != "list" {
 		t.Errorf("object = %q, 期望 list", parsed.Object)
 	}
-	if len(parsed.Data) != 1 {
-		t.Fatalf("列出 %d 个接入点，期望只有未停用的那 1 个: %s", len(parsed.Data), body)
+	// 口径层 v0.32：接入点名与纳管模型限定名两者都列、都可路由。停用的接入点仍不列。
+	ids := make([]string, 0, len(parsed.Data))
+	for _, e := range parsed.Data {
+		ids = append(ids, e.ID)
+		if e.Object != "model" || e.OwnedBy == "" || e.Created == 0 {
+			t.Errorf("条目字段不完整: %+v", e)
+		}
 	}
-	entry := parsed.Data[0]
-	if entry.ID != "gw-visible" {
-		t.Errorf("id = %q, 期望接入点对外名", entry.ID)
+	want := []string{"gw-visible", "bailian/qwen3-max"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("列出 %v，期望 %v: %s", ids, want, body)
 	}
-	if entry.Object != "model" || entry.OwnedBy == "" || entry.Created == 0 {
-		t.Errorf("条目字段不完整: %+v", entry)
+	// 裸的纳管模型名不该单独出现——它没有路由入口，列出来就是给 harness 挖坑。
+	for _, e := range parsed.Data {
+		if e.ID == "qwen3-max" {
+			t.Errorf("列表出现了裸纳管模型名，直连只认限定名: %s", body)
+		}
 	}
-	if strings.Contains(body, "qwen3-max") {
-		t.Errorf("列表泄漏了纳管模型名，对外只该暴露接入点名: %s", body)
+}
+
+// 停用渠道 / 停用纳管模型 / 渠道没有启用凭证的，限定名一律不列——「列出来的都调得通」
+// 是这张表唯一的契约。接入点那半边由启动闸保证，直连这半边只能在这儿过滤。
+func TestModelsOmitsUnusableDirectModels(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+
+	okCh := gatewaytest.SeedChannel(t, db, "good", "openai_cc", up.URL, "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, okCh, "keep-me")
+
+	offModel := gatewaytest.SeedChannelModel(t, db, okCh, "model-off")
+	if _, err := db.Exec(`UPDATE channel_models SET disabled = 1 WHERE id = ?`, offModel); err != nil {
+		t.Fatal(err)
+	}
+
+	offCh := gatewaytest.SeedChannel(t, db, "channel-off", "openai_cc", up.URL, "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, offCh, "hidden-by-channel")
+	if _, err := db.Exec(`UPDATE channels SET disabled = 1 WHERE id = ?`, offCh); err != nil {
+		t.Fatal(err)
+	}
+
+	nokeyCh := gatewaytest.SeedChannel(t, db, "nokey", "openai_cc", up.URL, "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, nokeyCh, "hidden-by-credential")
+
+	gw := gatewaytest.Start(t, db)
+	// 凭证在**启动之后**才停：启动闸不允许「启用渠道零可用凭证」，这一格只有运行中
+	// 才构造得出来（手写 SQL 改库、或凭证被上游 401 打停）。而列表是每次请求现查的，
+	// 所以它必须自己过滤，不能指望启动闸兜底。
+	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1 WHERE channel_id = ?`, nokeyCh); err != nil {
+		t.Fatal(err)
+	}
+	body := gatewaytest.ReadBody(t, gw.Get(t, "/v1/models"))
+
+	if !strings.Contains(body, "good/keep-me") {
+		t.Errorf("可用的限定名没列出来: %s", body)
+	}
+	for _, gone := range []string{"model-off", "hidden-by-channel", "hidden-by-credential"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("列出了调不通的 %q: %s", gone, body)
+		}
 	}
 }
 

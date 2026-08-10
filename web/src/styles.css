@@ -349,7 +349,14 @@ code {
   flex-shrink: 0;
 }
 
+.model-list .model-name {
+  flex-shrink: 0;
+}
+
 .cand {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 1px 0;
 }
 
@@ -704,4 +711,486 @@ select:focus {
   font-size: 18px;
   text-align: center;
   letter-spacing: -0.01em;
+}
+
+/* ── 供应商图标 ────────────────────────────────────────────────────── */
+
+/* 图标本身是 120×120 带底色的品牌方块（少数是 24×24 透明描摹），统一裁成圆角方块。
+   inline-flex + shrink:0：它经常跟一段会被省略的长文本并排，不锁住就会被压扁。 */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 5px;
+  overflow: hidden;
+  vertical-align: middle;
+  /* 垫一层中性底：各家标记不是一个路数，有的自带底色铺满整块（Anthropic 那种），
+     有的是透明描摹只占中间一小块（OpenRouter 那种）。不垫的话后者在列表里像是掉了
+     图标。自带底色的会把这层完全盖住，看不出区别。 */
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.avatar svg,
+.avatar > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 深浅两版靠 CSS 显隐而不是 JS 选，跟随系统主题切换时没有「图标还是上一套」的窗口。
+   只有一份标记的（大多数带底色的方块）压根不带这两个类，两种主题下都显示。
+   选择器必须写成 `.avatar > .avatar-dark`：只写 `.avatar-dark` 的话特指度低于上面那条
+   `.avatar > span`，display:block 会赢，两版同时显示——而 .avatar 是定宽 flex，
+   两个 width:100% 的孩子各被压成一半，看起来就是「一枚图标裂成两个小的」。 */
+.avatar > .avatar-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .avatar > .avatar-light {
+    display: none;
+  }
+
+  .avatar > .avatar-dark {
+    display: block;
+  }
+}
+
+/* 没匹配到图标时的首字母块。色相由名字散出来，同一个名字永远同一个颜色——
+   一眼扫过去仍然能靠颜色区分行，只是认不出是哪家。 */
+.avatar-text {
+  background: hsl(var(--avatar-hue, 220) 45% 88%);
+  color: hsl(var(--avatar-hue, 220) 45% 28%);
+  font-size: 0.62em;
+  font-weight: 600;
+  line-height: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .avatar-text {
+    background: hsl(var(--avatar-hue, 220) 32% 26%);
+    color: hsl(var(--avatar-hue, 220) 45% 82%);
+  }
+}
+
+.icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.icon-row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 复制按钮 ──────────────────────────────────────────────────────── */
+
+/* 长得不像按钮：它出现在列表里，画成按钮的话每行都在喊。悬停才露出「复制」二字。 */
+.copycode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px;
+  border: 1px dashed transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.copycode:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.copycode-mark {
+  font-size: 11px;
+  opacity: 0;
+}
+
+.copycode:hover .copycode-mark,
+.copycode.is-copied .copycode-mark {
+  opacity: 1;
+}
+
+.copycode.is-copied {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Segmented ─────────────────────────────────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  color: var(--text);
+}
+
+.segment.is-on {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+/* 多选版横向铺开：三个选项各带一条子路径，挤在 inline-flex 里会被压成两行。 */
+.segmented-multi {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+}
+
+.segmented-multi .segment {
+  justify-content: flex-start;
+  padding: 7px 9px;
+}
+
+/* 定宽占位，选没选中都占同一格——不然勾上的那一行会把文字往右顶。 */
+.segment-check {
+  display: inline-block;
+  width: 12px;
+  color: var(--accent, currentColor);
+  font-size: 11px;
+}
+
+.segment-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* ── 协议探测结果 ──────────────────────────────────────────────────── */
+/* 只提示，所以是卡片内的一条便签，不是错误条：它不表示保存失败。 */
+
+.probe {
+  margin: 0 14px 12px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.probe-bad {
+  border-color: var(--warn-line, var(--line));
+  color: var(--text);
+}
+
+.probe ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.probe code {
+  font-family: var(--mono);
+}
+
+/* ── Picker ────────────────────────────────────────────────────────── */
+
+.picker {
+  position: relative;
+}
+
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.picker.is-open .picker-trigger {
+  border-color: var(--accent);
+}
+
+.picker-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.picker-placeholder {
+  flex: 1;
+  color: var(--muted);
+}
+
+.picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-hint {
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.picker-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 绝对定位而不是 portal：它只出现在 Dialog 里，而 Dialog 没有 overflow 裁剪，
+   用 portal 就得自己算位置、自己跟随滚动，为这一个控件不值当。 */
+.picker-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  overflow: hidden;
+}
+
+.picker-search {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.picker-search:focus {
+  outline-offset: -2px;
+}
+
+.picker-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.picker-empty {
+  padding: 14px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.picker-group + .picker-group {
+  margin-top: 2px;
+}
+
+.picker-group-name {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 高亮只跟 is-active 走（键盘和鼠标共用同一个状态），不用 :hover——
+   两套高亮同时亮着会让人不知道回车会选中哪一个。 */
+.picker-option.is-active {
+  background: var(--bg);
+}
+
+.picker-option.is-selected .picker-label {
+  font-weight: 600;
+}
+
+.picker-option.is-selected::after {
+  content: '✓';
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* ── Chips ─────────────────────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.chips-row:focus-within {
+  border-color: var(--accent);
+}
+
+/* 输入框在标签之间流动，所以不能吃满宽；给个能打下一个模型名的下限。 */
+.chips-input {
+  flex: 1;
+  min-width: 140px;
+  border: 0;
+  padding: 2px;
+  background: none;
+}
+
+.chips-input:focus {
+  outline: none;
+}
+
+.chip-x,
+.chip-plus {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0;
+}
+
+.chip-x:hover {
+  color: var(--err-text);
+}
+
+.chips-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.chip-add {
+  border-style: dashed;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chip-add:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ── 表单里的预览条 ────────────────────────────────────────────────── */
+
+/* 表单顶部那一条「填成什么样了」。图标是从 base_url / 模型名猜的，边填边变，
+   顺带就把域名有没有填错给验了。 */
+.form-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.form-preview-name {
+  font-weight: 600;
+}
+
+.form-preview .muted {
+  font-size: 12px;
+}
+
+/* ── 批量加模型 ────────────────────────────────────────────────────── */
+
+.add-models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-models-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 460px;
+}
+
+/* input 上有 width:100%，不压住它的话「添加」两个字会被挤成竖排 */
+.add-models-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-models-row .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.add-models-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* CopyCode 当作网格单元里的模型名用时要跟着截断，否则长名字把单元格撑破
+   （.copycode 默认是 inline-flex，不会自己收缩）。 */
+.model .copycode.model-name {
+  overflow: hidden;
+}
+
+.model .copycode.model-name code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model .copycode-mark {
+  flex-shrink: 0;
 }

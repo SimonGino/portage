@@ -53,14 +53,14 @@ type callRecord struct {
 	endpoint string
 	// apiKeyName 是网关 key 的**名字**，不是 key 本身，也不是它的 hash：
 	// 日志是最容易被复制粘贴出去的东西，凭证材料一概不进。
-	apiKeyName    string
-	inboundProto  protocol.Protocol
-	accessPoint   string
-	channel       string
-	channelProto  protocol.Protocol
-	upstreamModel string
-	stream        bool
-	status        int
+	apiKeyName     string
+	inboundProto   protocol.Protocol
+	requestedModel string
+	channel        string
+	channelProto   protocol.Protocol
+	upstreamModel  string
+	stream         bool
+	status         int
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
 	outcome string
@@ -81,7 +81,7 @@ func (s *Server) logCall(rec *callRecord) {
 		"endpoint", rec.endpoint,
 		"api_key", rec.apiKeyName,
 		"inbound_protocol", string(rec.inboundProto),
-		"access_point", rec.accessPoint,
+		"requested_model", rec.requestedModel,
 		"stream", rec.stream,
 		"status", rec.status,
 		"outcome", rec.outcome,
@@ -139,7 +139,7 @@ func (s *Server) persistCall(rec *callRecord) {
 		APIKeyName:       rec.apiKeyName,
 		ClientProtocol:   string(rec.inboundProto),
 		UpstreamProtocol: string(rec.channelProto),
-		ModelRequested:   rec.accessPoint,
+		ModelRequested:   rec.requestedModel,
 		ModelUpstream:    rec.upstreamModel,
 		ChannelName:      rec.channel,
 		Status:           rec.status,

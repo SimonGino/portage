@@ -155,6 +155,57 @@ export function Confirm({
   )
 }
 
+/**
+ * CopyCode 显示一段要被原样抄进客户端配置的字符串，点一下复制。
+ *
+ * 限定名（`渠道名/纳管模型名`）用得最多——它是客户端 `model` 字段要填的东西，手抄
+ * 一个带斜杠的长串很容易漏字符，而漏了的表现是 404。
+ */
+// label 让「显示的」与「复制的」分开：渠道页的网格单元里横向空间有限，摆的是裸模型名，
+// 但客户端 `model` 字段要填的是限定名（口径层 v0.32），复制走的是后者。
+export function CopyCode({
+  value,
+  title,
+  label,
+  className,
+}: {
+  value: string
+  title?: string
+  label?: string
+  className?: string
+}) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1200)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  return (
+    <button
+      type="button"
+      className={'copycode' + (copied ? ' is-copied' : '') + (className ? ' ' + className : '')}
+      title={title ?? '点击复制'}
+      onClick={async () => {
+        // clipboard API 在非 HTTPS 的非 localhost 页面上不可用（局域网访问就是这种
+        // 情况）。失败不报错，那段文字本来就是选中就能复制的。
+        try {
+          await navigator.clipboard.writeText(value)
+          setCopied(true)
+        } catch {
+          setCopied(false)
+        }
+      }}
+    >
+      <code>{label ?? value}</code>
+      <span className="copycode-mark" aria-hidden>
+        {copied ? '已复制' : '复制'}
+      </span>
+    </button>
+  )
+}
+
 export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="toggle">

@@ -1,12 +1,14 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.30
+> 状态：草案 v0.31
+> v0.31 变更（口径层 v0.33 + v0.34 落地，2026-08-10）：渠道单值协议 → 支持协议集。①`channels.protocol` 改名 `channels.protocols`，值是逗号分隔的集合；`store.migrate` 做这次改名（`ALTER TABLE … RENAME COLUMN`），值不动——单值在新语义下就是一元集合。**这是本项目第一条迁移，故不建版本表**：迁移跑没跑过直接问 `pragma_table_info` 就知道，比维护一个会和实际形状漂移的 `schema_version` 更可信。②新增 `protocol.Set`（有序切片，非 map——最多三个元素，且顺序要稳定地存回库、显示在管理端）与 `Set.Choose`：入站在集合里就用它，否则按 `fallbackOrder = [cc, responses, anthropic]` 取第一个。③`store.Resolve` 增一个 `inbound protocol.Protocol` 参数，`Candidate.Protocol` 的含义从「渠道的协议」变成「**本次选定的**协议」，下游（子路径拼接、codec 选取、tap 选取、call_logs）一律不用改。④新增 `upstream.Probe` 与 `POST /admin/api/channels/:id/probe`：发空 JSON 体、用 404/405 与其余状态区分子路径存不存在（判据不是 2xx——空体会被任何真实上游拿 400/401 回绝，而那恰恰证明路由存在；也因此不花钱）；结果不落库、不参与路由，前端只放在渠道卡上做提示，刷新即消失。⑤管理端新增 `store.InvalidInput`（携带中文原因的错误类型，映射 400）——协议集填空以前会走成一句「保存失败」的 500。⑥Web：`Segmented` → 新增的 `SegmentedMulti`（多选、至少留一个、按选项顺序而非点击顺序归一），渠道卡列出全部协议短名。顺带修一处早就错的表单提示：Base URL 原文写「到版本段为止，例如 https://api.example.com/v1」，与 §6.1 的「协议子路径之前」矛盾，照着填会拼出 `/v1/v1/chat/completions`。修改人 jinpenga。 ⑦跟随口径层 v0.34：渠道名禁含 `/`（`ChannelInput.normalized` 校验 + `checkChannelFields` 复查），否则限定名 `渠道名/纳管模型名` 有两种拆法而 `resolveDirect` 的 `LIMIT 1` 静默挑一个。⑧删渠道/纳管模型被候选引用时报 `ErrInUse` 并点名接入点，不走外键那条把因果说反的通用文案；不做级联（删渠道顺手抽走候选会让接入点空候选，`checkSingleCandidate` 下次启动即拒）。原编号 v0.30 与 #27 撞号，合并时顺延为 v0.31。
 > v0.30 变更（#27 M2-6 入站 CC 样本采集，2026-08-09）：均为实现层，口径不变。本条**叠在 #26（v0.29）之上**（合并时两条记录并存，见上一行）。①§9 入站样本段补第三套语料 `in-cc-*` 六份（opencode 1.18.4 实采），并记下 harness 选型的**事实**：Codex CLI 0.144.1 已不支持 `wire_api = "chat"`（二进制内写死，提示改用 `responses`），CC 入站样本采不到；转而用 opencode，它走 `@ai-sdk/openai-compatible` 直接 POST `/v1/chat/completions`。②采集中发现两条转换约束，均已进 canonical 覆盖表：**CC 的工具结果是每个调用一条独立 `tool` 消息，Anthropic 是全部挤进同一条 user 消息**，CC→A 编码侧要做合并而非逐条平移；**`stream_options.include_usage` 不能丢**，入口半边的 EncodeStream 要靠它决定回程补不补 usage 帧。③§9 stub 应答段补第四条实现口径：`GOLDENREC_SIDECALL=notools` 旁路豁免，**默认关闭**。④脱敏工序补一条**教训**：只隔离 `XDG_CONFIG_HOME` 不够，opencode 会把 `~/.agents/skills/` 下的个人 skill 清单塞进 system prompt，须连 `HOME` 一起换。修改人 jinpenga。
 > v0.29 变更（#25 M2-5 R→A 转换落地，2026-08-08）：均为实现层，口径不变。①§2 路径矩阵 R→A 打勾，并重算各格所差的 codec 半边——按**边际成本** ④（A→R，只差 openairesponses 出口半边）比 ③（CC→A / CC→R，各差 openaicc 入口半边，而它一个方法都没有）便宜，与口径层 §2.1 的排序相反，是否调序待 PO 裁决。②修一处 #12 遗留的**缺陷**：custom 工具的包装规则有三个必须逐字对称的面（声明 / 出站包装 / 回程拆包），#12 只做了后两个——发给上游的工具声明是空的，没有任何东西告诉模型该回 `{"input": …}`，模型回个别的形状，回程拆不动只好原样给出去，Codex 拿到一段 JSON 当 JS 跑。三件事收进 `protocol/customtool.go`，往返对称由用例钉住（§5 坑清单同条目）。③§5 新增「第二个住户」：`anthropic.Codec` 的 `DefaultMaxTokens` 走 `codecs.New` 的必填 Options 注入，**不在 `convert.go` 对 canonical 无条件填**——那会让已上线的 R→CC 在客户端没给上限时开始悄悄截断。④订正 §5 一处悬空引用：那条实例生命周期原写「v0.32 定」，而口径层的版本记录只到 v0.31，v0.32 从来不存在——它是实现层决定，本就不该按口径层编号，改为按 issue 引用，两条一并标注「待 PO 追认」。⑤新增 §9.2 记 R→A 的用例分工与五条已知缺口，其中「上游 thinking 必然丢弃、Codex 看不到 Claude 的推理过程」是**用户可感知的退化**，单独点名。修改人 jinpenga。
 > v0.28 变更（M1 落地 + 容器打包，2026-08-08）：实现层，口径不变。①新增 §11.1 容器打包——容器只是单二进制的一种分发方式，不改口径层 §2.8 的部署形态；记下三个实测坑（scratch 缺根证书 → 全 502、命名卷属主照搬镜像 → 启动即 `unable to open database file (14)`、容器内 `listen` 必须 `0.0.0.0`）。②M1 实现中两处判断落档：`ttft_ms` 只记流式（非流式填了约等于总耗时，混合流量下「平均首字延迟」失去意义，非流式的首字节耗时仍在 slog）；`error` 列写网关自己的固定词表而非上游原文（上游文案里可能带 base_url），上游自己回 4xx/5xx 的**透传成功**行不算网关侧错误、该列留空。修改人 jinpenga。
 > v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
 > v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
+> v0.29 变更（口径层 v0.32 落地，2026-08-10）：纳管模型直连寻址实现化。（本行原误标为 v0.25，与「canonical 模型定稿」那条重号，v0.30 时更正，内容未改。）①`store.Resolve` 改为**先接入点、后直连**的分派器——只有「没有这个接入点」才继续试限定名 `渠道名/纳管模型名`；接入点存在但候选不可用是另一回事，降级去试直连会把「候选停用了」报成「模型不存在」。②限定名的匹配放在 SQL 里拼 `ch.name || '/' || cm.upstream_model = ?`，**不在 Go 里按 `/` 切**：渠道名和纳管模型名本身都可能含 `/`（`anthropic/claude-3` 这类 OpenRouter 风格的模型名很常见），切在哪一刀上没有通用答案，拼起来比对根本不用切。③直连路径不进启动闸（它没有 `candidates` 行），「有这个名字但现在用不了」只能在请求时发现，故 `resolveDirect` 落空后再查一次「忽略 disabled 是否存在」，据此分 404 与 503——一律 404 会让人以为名字打错了。④`callRecord.accessPoint` 更名 `requestedModel`、结构化日志字段 `access_point` 改 `requested_model`：这一列记的是客户端填的那个名字，限定名和接入点名在里面平权（`call_logs.model_requested` 列名本来就是对的，不用动）。⑤§8、§7.1 随之改写。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
 > v0.23 变更（M2-1 入站样本实采回写 #10，2026-08-07）：两条实测观察落档，均为实现层，口径不变。①§6.1 白名单段补**反例**——某些中转站的 Anthropic 端点靠 `user-agent` + `x-app` 判定客户端，白名单转发一律 503。结论仍是**白名单不放宽**（为迎合一家中转站撤掉「不泄露本机指纹」这条口径，代价与收益不对等），绕法在配置层：Anthropic 配一条不设该闸的独立上游。顺带说明 goldenrec「转发照抄、落盘白名单」为何不算双标——防指纹外泄的对象是 git 仓库不是上游。②§9 补 `log_bodies` 的实测量级——Claude Code 2.x 单轮请求体 **185 KB**（42 个 tool 定义占大头），Codex CLI 0.144.1 是 47~50 KB，即 64 KiB 上限对前者是**几乎必截断**而非偶尔越过。不改 `bodyCaptureLimit`（排障日志该有这个上限），改的是读日志时的预期：`truncated` 在真实 harness 下是常态不是故障信号。
 > v0.22 变更（M2-1 入站样本采集 #10，2026-08-06）：§9 补「入站样本」这一类——golden 库自此分 `direction: upstream | inbound` 两类，`cmd/goldenrec` 随之加 inbound 模式。新决策一条：**没有对应协议的真实上游时，用手写 stub 应答驱动 harness 走完多轮**（PO 裁定 jinpenga）。依据 = `A→CC` 最难啃的输入是第二轮那个带 `tool_result` 的请求体，而 harness 只有先收到过一个合法 tool 调用响应才会发出它；手上没有 Anthropic / OpenAI 官方 key（#7 仍挂着），纯录制回 501 只能采到第一轮。stub 是道具不是样本：不保真、不进转录库，入库的只有 harness 发出来的真实请求字节。
@@ -347,9 +349,12 @@ auth 中间件：key hash 校验 → 取出 allowed_models
   ▼
 router：接入点（对外模型名）→ 命中候选（渠道纳管模型；M0~M2 单候选直连，M4 起加权随机；过滤 key 的 allowed_models）
   ▼
+出站协议选定（v0.33）：入口协议 ∈ 渠道支持协议集 ──► 就用它（能透传就透传）
+                        否则 ──► 按固定序 cc > responses > anthropic 取集合中第一个
+  ▼
 协议分流（seam，P0 定型）：
-  渠道协议 == 入口协议 ──► 原始字节透传，Tap 旁路提取 usage（P0）
-  渠道协议 != 入口协议 ──► codec 转换路径（P1；P0 期配置校验保证不命中，见 §7）
+  选定协议 == 入口协议 ──► 原始字节透传，Tap 旁路提取 usage（P0）
+  选定协议 != 入口协议 ──► codec 转换路径（P1；P0 期配置校验保证不命中，见 §7）
   ▼
 upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、不记忆、不摘除。**实现在 M4**；M0~M2 单候选单 key 退化：失败不切换，直接按入口协议原生格式回错）：
   候选集 = 该接入点 weight>0 的候选
@@ -382,7 +387,7 @@ logging：无论成败异步落 call_logs
 
 ### 6.1 透传实现细则（v0.10 定，M0 落地）
 
-**上游 URL 拼接**：`channels.base_url` 存「协议子路径之前」的前缀，网关按渠道协议追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
+**上游 URL 拼接**：`channels.base_url` 存「协议子路径之前」的前缀，网关按**本次选定的**出站协议（v0.33，见 §6 的选定规则）追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
 
 **客户端查询串整串照抄**（v0.24 定，#20，PO 裁定 jinpenga）：入站 URL 上的 query 原样接在拼好的上游 URL 后面，不过滤、不重排、不解码再编码。原实现只拼固定后缀，查询串被静默丢弃——实测 Claude Code 发的是 `POST /v1/messages?beta=true`，上游收到的是另一个请求，而丢没丢不看日志根本发现不了。不做白名单是因为这里没有可枚举的对象：各家 harness 的私有参数不可穷举，而查询参数不像请求头那样天然带客户端指纹（那条是请求头白名单的立论，不能照搬）。若日后发现某个参数确实泄露信息，再按「哪个参数、泄露什么」逐个拦。拼接顺序只能是 `base + 固定后缀 + "?" + query`——§7 的启动校验已拦掉带查询串的 `base_url`，所以不会拼出两个 `?`；query 为空时不产生裸 `?`。
 
@@ -391,7 +396,7 @@ logging：无论成败异步落 call_logs
 **请求头（网关 → 上游）重建而非复制**，默认丢弃客户端全部请求头，白名单构造：
 
 - `Content-Type` 取自客户端；`Accept` 取自客户端，未给且流式时补 `text/event-stream`。
-- 凭证注入按渠道协议：`anthropic` → `x-api-key: <凭证>`；`openai_cc` / `openai_responses` → `Authorization: Bearer <凭证>`。
+- 凭证注入按**本次选定的**出站协议：`anthropic` → `x-api-key: <凭证>`；`openai_cc` / `openai_responses` → `Authorization: Bearer <凭证>`。（同一个渠道两种协议都说时，两次请求的认证头因此可能不同——这是对的，头跟协议走不跟渠道走。）
 - Anthropic 渠道额外：`anthropic-version` 取自客户端、未给时默认 `2023-06-01`；`anthropic-beta` 客户端给了就原样转发（Claude Code 靠它开 1M 上下文、computer use 等能力，丢了会静默退化）。
 - 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关 key，绝不能漏到上游**。
 - `Accept-Encoding` 不转发客户端值，流式请求显式设 `identity`（避免上游压缩引入分块缓冲、拖长首字延迟）；不注入 `X-Forwarded-*`（个人自用零收益且泄露内网信息）。
@@ -446,7 +451,9 @@ retry:                             # 同候选退避重试（v0.19 口径，v0.2
 > - **启动加载时 + 管理端保存时**：每个未停用接入点有且仅有一个 weight>0 的候选；每个未停用渠道有且仅有一份未停用凭证；每个候选引用的纳管模型确实属于存在的渠道；**未停用接入点的 weight>0 候选必须真的可达——其渠道、纳管模型、凭证均未停用**（v0.15，判定条件逐条对齐 `Resolve` 的 JOIN）；**未停用渠道的 `base_url` 必须是带 host 的绝对 http/https 地址，且不带查询串与 fragment**（v0.20——schema 只要求非 NULL，而配置是手写 SQL 灌进来的，空串 / 漏 scheme 的裸域名 / `ftp://` 都存得进去，过得了校验却每次请求才在 `http.Client.Do` 里失败回 502；查询串与 fragment 更隐蔽，`buildURL` 是字符串拼接，`https://h/p?x=1` 接上 `/v1/messages` 后 Go 解出来是 `path=/p`、`query=x=1/v1/messages`——协议子路径被整个吞进查询串，请求永远打到 `/p`，启动、日志、响应三处都看不出异常）。违规即拒绝启动，报错须点名违规记录的 id/name。
 
 > **这条错误信息不回显 `base_url` 本身**：`cmd/gateway` 会把 `Validate` 的错误直接落 stderr，而 `base_url` 可以带 userinfo（`https://user:pw@host`），回显等于把上游密码打进日志。按 CLAUDE.md「错误回显严禁泄露上游 key 与 base_url」，只报「哪里不对」加渠道 name/id，让运维自己查 `channels` 表——可诊断性不靠回显原值。
-> - **请求时**：入口协议 ≠ 命中候选所在渠道协议 → 按入口协议原生格式回错，文案明确为「该转换路径尚未实现」。
+> - **请求时**：入口协议 ≠ 本次选定的出站协议、且该转换路径未放开 → 按入口协议原生格式回错，文案明确为「该转换路径尚未实现」。
+>
+> **v0.33 追加**：未停用渠道的 `protocols` 必须非空且逐项合法（`store.checkChannelFields` 调 `protocol.ParseSet`）。空集合选不出出站协议，每次请求才 500——同属 v0.21 通则要拦的形态。`count_tokens` 不需要额外的闸：`conversionOpen` 的判据是**端点**而非协议，渠道不说 `anthropic` 时它必然落进「转换路径尚未实现」回 501，不会被回退顺序送去 `/v1/chat/completions`。
 
 ### SQLite 表
 
@@ -454,7 +461,7 @@ retry:                             # 同候选退避重试（v0.19 口径，v0.2
 CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职责
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  protocol TEXT NOT NULL,          -- anthropic | openai_cc | openai_responses
+  protocols TEXT NOT NULL,         -- 支持协议集（v0.33）：逗号分隔，取值 anthropic | openai_cc | openai_responses；单值即一元集合
   base_url TEXT NOT NULL,
   credential_type TEXT NOT NULL DEFAULT 'api_key',  -- api_key | service_account（Vertex：SA JSON→token 刷新，v0.17）
   key_mode TEXT NOT NULL DEFAULT 'polling',  -- polling | random：凭证池选取模式
@@ -543,7 +550,9 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 **`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
 
-> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个接入点。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的接入点。
+> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个模型。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的名字。
+
+> **两种名平权（口径层 v0.32）**：`Allows` 比的就是客户端填的 `model` 字符串本身，接入点名与纳管模型限定名都能写进白名单。函数本身一行没改——变的是可写的值域。只认接入点名的话，一把受限 key 走直连就能打到同一个上游，白名单等于形同虚设。
 
 **不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
 
@@ -592,7 +601,11 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 ## 8. 最小管理接口
 
 - `GET /healthz`
-- `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
+- `GET /v1/models`：返回**全部可路由的模型名**（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
+
+> **两半、两者都可路由（口径层 v0.32）**：未停用的接入点名，加上可用纳管模型的限定名 `渠道名/纳管模型名`。实现是 `store.ListExposedModels` 里一条 `UNION ALL`，`ORDER BY direct, id` 把接入点排在前面，Go 侧按 id 先到先得去重——于是「接入点优先」在列表和 `store.Resolve` 里是同一条规则。
+> 直连那半边只列**当下真能打通**的（渠道启用 + 模型启用 + 渠道有启用凭证）；接入点那半边不做这层过滤，它归启动闸管（v0.18/v0.21）。直连没有 `candidates` 行，启动闸看不见它，所以这道过滤只能长在列表查询里。
+> 这张表唯一的契约是**列出来的都调得通**，因此它认的名字集合必须和 `store.Resolve` 逐字一致，改一边就得改另一边。
 
 > **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
 - Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501

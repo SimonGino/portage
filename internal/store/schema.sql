@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS channels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  protocol TEXT NOT NULL,
+  -- 支持协议集（口径层 v0.33）：逗号分隔，如 `openai_cc,openai_responses`。
+  -- 单值写法仍然合法，就是一元集合——v0.33 之前的行不用改数据。
+  protocols TEXT NOT NULL,
   base_url TEXT NOT NULL,
   credential_type TEXT NOT NULL DEFAULT 'api_key',
   key_mode TEXT NOT NULL DEFAULT 'polling',

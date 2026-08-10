@@ -180,7 +180,7 @@ func TestAdminCanConfigureAWorkingRoute(t *testing.T) {
 		ID int64 `json:"id"`
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"anthropic-main","protocol":"anthropic","base_url":"`+up.URL+`",
+		"name":"anthropic-main","protocols":["anthropic"],"base_url":"`+up.URL+`",
 		"credential":"sk-upstream-secret"}`, &created)
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(created.ID)+"/models",
 		`{"upstream_model":"claude-3-5-sonnet"}`, nil)
@@ -246,7 +246,7 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 
 	// 建一个没有凭证的渠道：临时闸要求启用渠道恰好一份凭证，这一步就该被挡。
 	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
-		`{"name":"no-credential","protocol":"anthropic","base_url":"https://api.anthropic.com"}`)
+		`{"name":"no-credential","protocols":["anthropic"],"base_url":"https://api.anthropic.com"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("无凭证渠道应被校验挡下，得到 %d：%s", status, body)
 	}
@@ -263,7 +263,7 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	// base_url 缺 scheme 同样过不了——这类配置能存进去、能过启动，只在请求时炸。
 	// 用一个不会跟校验文案里的示例撞上的主机名，否则「回显了没有」根本断言不出来。
 	status, body = a.Do(t, http.MethodPost, "/admin/api/channels",
-		`{"name":"bad-url","protocol":"anthropic","base_url":"tenant7.internal.example","credential":"sk-x"}`)
+		`{"name":"bad-url","protocols":["anthropic"],"base_url":"tenant7.internal.example","credential":"sk-x"}`)
 	if status != http.StatusBadRequest {
 		t.Errorf("缺 scheme 的 base_url 应被挡下，得到 %d：%s", status, body)
 	}

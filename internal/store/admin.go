@@ -13,12 +13,80 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
 
 // ErrNotFound means the row the caller addressed by id does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrInvalidInput means the submitted form is malformed in a way the caller can
+// fix and should be told about — 400 with the reason, not a blanket 500.
+//
+// 配套的 InvalidInput 携带给人看的中文原因；这个哨兵只用来分类。
+var ErrInvalidInput = errors.New("invalid input")
+
+// InvalidInput 是「表单填错了」的错误，Error() 就是要显示给用户的那句话。
+//
+// 不用 fmt.Errorf 包哨兵：那样 Error() 会带上 "invalid input: " 这段只有分类意义的
+// 英文前缀，而这句话是直接进管理端错误条的。
+type InvalidInput struct{ Reason string }
+
+func (e InvalidInput) Error() string        { return e.Reason }
+func (e InvalidInput) Is(target error) bool { return target == ErrInvalidInput }
+
+// ErrInUse means the row is still referenced by a candidate, so deleting it
+// would break an access point instead of just removing an upstream.
+//
+// 单独一类而不是让外键自己报错：外键错误只说「约束冲突」，管理端把它翻成
+// 「引用了不存在的渠道/模型」——那句话对建/改是对的，对删正好说反了（不是它
+// 引用了别人，是别人在引用它）。
+var ErrInUse = errors.New("in use")
+
+// InUse 跟 InvalidInput 一样，Error() 就是显示给用户的那句话。
+type InUse struct{ Reason string }
+
+func (e InUse) Error() string        { return e.Reason }
+func (e InUse) Is(target error) bool { return target == ErrInUse }
+
+// referencingAccessPoints 返回哪些接入点的候选指着这批纳管模型。
+//
+// where 是加在 channel_models 上的过滤条件，调用方给「整个渠道的」或「这一个
+// 模型的」。只回接入点名（也就是对外模型名），不带 base_url。
+func referencingAccessPoints(ctx context.Context, db Queryer, where string, arg int64) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT ap.model
+		FROM access_points ap
+		JOIN candidates cd ON cd.access_point_id = ap.id
+		JOIN channel_models cm ON cm.id = cd.channel_model_id
+		WHERE `+where+`
+		ORDER BY ap.model`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// inUse 把接入点名单拼成给人看的那句话，没人引用时返回 nil。
+func inUse(what string, aps []string) error {
+	if len(aps) == 0 {
+		return nil
+	}
+	return InUse{Reason: fmt.Sprintf(
+		"%s还被接入点 %s 引用。先在这些接入点里把候选改指到别的模型，或者把接入点删掉，再回来删——"+
+			"删渠道不顺手带走候选是故意的：接入点空着候选，下次启动闸就过不去。",
+		what, strings.Join(aps, "、"))}
+}
 
 // ChannelModel 是渠道下的一个纳管模型。
 type ChannelModel struct {
@@ -29,12 +97,14 @@ type ChannelModel struct {
 
 // Channel 是管理端看到的一个渠道。没有 credential 字段，见文件头。
 type Channel struct {
-	ID       int64             `json:"id"`
-	Name     string            `json:"name"`
-	Protocol protocol.Protocol `json:"protocol"`
-	BaseURL  string            `json:"base_url"`
-	KeyMode  string            `json:"key_mode"`
-	Disabled bool              `json:"disabled"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Protocols 是渠道能说的上游协议集（口径层 v0.33）。对前端是个字符串数组；
+	// 库里是逗号分隔的一列。
+	Protocols protocol.Set `json:"protocols"`
+	BaseURL   string       `json:"base_url"`
+	KeyMode   string       `json:"key_mode"`
+	Disabled  bool         `json:"disabled"`
 	// HasCredential 是「这个渠道能不能用」在页面上唯一看得见的凭证信息。
 	HasCredential bool           `json:"has_credential"`
 	Models        []ChannelModel `json:"models"`
@@ -44,7 +114,7 @@ type Channel struct {
 // 纳管模型清单。
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ch.id, ch.name, ch.protocol, ch.base_url, ch.key_mode, ch.disabled,
+		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.disabled,
 		       EXISTS(SELECT 1 FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		FROM channels ch ORDER BY ch.id`)
 	if err != nil {
@@ -56,8 +126,15 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	byID := map[int64]int{}
 	for rows.Next() {
 		var c Channel
-		if err := rows.Scan(&c.ID, &c.Name, &c.Protocol, &c.BaseURL, &c.KeyMode, &c.Disabled, &c.HasCredential); err != nil {
+		var protocols string
+		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.Disabled, &c.HasCredential); err != nil {
 			return nil, err
+		}
+		// 解不动就留空数组交给页面显示，不让整张列表 500：这一列可以是手写 SQL
+		// 灌坏的，而管理端恰恰是去修它的地方。真正拦下它的是启动闸。
+		c.Protocols, _ = protocol.ParseSet(protocols)
+		if c.Protocols == nil {
+			c.Protocols = protocol.Set{}
 		}
 		c.Models = []ChannelModel{}
 		byID[c.ID] = len(channels)
@@ -91,35 +168,104 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 // ChannelInput 是新建/修改渠道时可写的字段。credential 不在里面，它走
 // SetChannelCredential——分开是为了让「保存渠道」这个动作不可能顺手清掉凭证。
 type ChannelInput struct {
-	Name     string            `json:"name"`
-	Protocol protocol.Protocol `json:"protocol"`
-	BaseURL  string            `json:"base_url"`
-	Disabled bool              `json:"disabled"`
+	Name      string       `json:"name"`
+	Protocols protocol.Set `json:"protocols"`
+	BaseURL   string       `json:"base_url"`
+	Disabled  bool         `json:"disabled"`
+}
+
+// normalized 校验并归一化支持协议集：去空格、去重、保序，空集合直接拒。
+//
+// 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
+// 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
+func (in ChannelInput) normalized() (string, error) {
+	if strings.Contains(in.Name, "/") {
+		return "", InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
+	}
+	set, err := protocol.ParseSet(in.Protocols.String())
+	if err != nil {
+		return "", InvalidInput{Reason: err.Error()}
+	}
+	return set.String(), nil
 }
 
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
+	protocols, err := in.normalized()
+	if err != nil {
+		return 0, err
+	}
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO channels (name, protocol, base_url, disabled) VALUES (?, ?, ?, ?)`,
-		in.Name, in.Protocol, in.BaseURL, boolInt(in.Disabled))
+		INSERT INTO channels (name, protocols, base_url, disabled) VALUES (?, ?, ?, ?)`,
+		in.Name, protocols, in.BaseURL, boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// UpdateChannel 覆盖渠道的可写字段。
+// UpdateChannel 覆盖渠道的可写字段，改名也走这里（合并渠道之后要给它起个不带协议
+// 后缀的新名字，口径层 v0.33 不做旧限定名的兼容期）。
 func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) error {
+	protocols, err := in.normalized()
+	if err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `
-		UPDATE channels SET name = ?, protocol = ?, base_url = ?, disabled = ? WHERE id = ?`,
-		in.Name, in.Protocol, in.BaseURL, boolInt(in.Disabled), id)
+		UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ? WHERE id = ?`,
+		in.Name, protocols, in.BaseURL, boolInt(in.Disabled), id)
 	return affectedOne(res, err)
+}
+
+// ProbeTarget 是跑一次协议可达性探测要的东西：打哪儿、试哪几个协议、用哪把凭证。
+//
+// Credential 是唯一一处凭证离开 store 的地方，它只流向 upstream.Probe，**不进任何
+// JSON 响应**——「上游凭证只写不回读」那条约束管的是回读给人看，不是进程内自用。
+type ProbeTarget struct {
+	Name       string
+	BaseURL    string
+	Protocols  protocol.Set
+	Credential string
+}
+
+// ChannelProbeTarget 按 id 取探测目标。渠道没有启用凭证时 Credential 为空串——照样
+// 探，只是上游多半回 401，而 401 同样证明子路径存在，这正是探测要问的。
+func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
+	var t ProbeTarget
+	var protocols string
+	var credential sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT ch.name, ch.base_url, ch.protocols,
+		       (SELECT ck.credential FROM channel_keys ck
+		        WHERE ck.channel_id = ch.id AND ck.disabled = 0 LIMIT 1)
+		FROM channels ch WHERE ch.id = ?`, id).
+		Scan(&t.Name, &t.BaseURL, &protocols, &credential)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProbeTarget{}, ErrNotFound
+	}
+	if err != nil {
+		return ProbeTarget{}, err
+	}
+	t.Credential = credential.String
+	if t.Protocols, err = protocol.ParseSet(protocols); err != nil {
+		return ProbeTarget{}, InvalidInput{Reason: err.Error()}
+	}
+	return t, nil
 }
 
 // DeleteChannel 删渠道。凭证与纳管模型靠 schema 的 ON DELETE CASCADE 跟着走；
 // 指向它的候选不会级联（candidates 引用的是 channel_models 且没有 CASCADE），
-// 因此调用方必须在同一事务里跑 Validate——悬空候选正是 checkDanglingCandidate 逮的。
+// 所以先自己查一遍谁在引用——不查的话外键会在 DELETE 那一步报「约束冲突」，
+// 而那条消息说不出「是哪个接入点拦着」，人只能挨个点开看。
 func DeleteChannel(ctx context.Context, db Conn, id int64) error {
+	aps, err := referencingAccessPoints(ctx, db, `cm.channel_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if err := inUse("这个渠道的纳管模型", aps); err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `DELETE FROM channels WHERE id = ?`, id)
 	return affectedOne(res, err)
 }
@@ -156,8 +302,15 @@ func SetChannelModelDisabled(ctx context.Context, db Conn, id int64, disabled bo
 	return affectedOne(res, err)
 }
 
-// DeleteChannelModel 删一个纳管模型。指向它的候选同样不级联，靠 Validate 兜。
+// DeleteChannelModel 删一个纳管模型。指向它的候选同样不级联，同样先点名。
 func DeleteChannelModel(ctx context.Context, db Conn, id int64) error {
+	aps, err := referencingAccessPoints(ctx, db, `cm.id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if err := inUse("这个纳管模型", aps); err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `DELETE FROM channel_models WHERE id = ?`, id)
 	return affectedOne(res, err)
 }

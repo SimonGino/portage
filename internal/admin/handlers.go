@@ -13,6 +13,7 @@ import (
 	"github.com/SimonGino/ai-gateway/internal/auth"
 	"github.com/SimonGino/ai-gateway/internal/protocol"
 	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/ai-gateway/internal/upstream"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -167,19 +168,24 @@ func (h *Handler) listChannels(c *gin.Context) {
 // PUT /channels/:id/credential，而修改渠道的接口根本不看这个字段，因此「改个名字」
 // 不可能顺手把凭证清空。
 type channelInput struct {
-	Name       string `json:"name"`
-	Protocol   string `json:"protocol"`
-	BaseURL    string `json:"base_url"`
-	Disabled   bool   `json:"disabled"`
-	Credential string `json:"credential"`
+	Name string `json:"name"`
+	// Protocols 是支持协议集（口径层 v0.33），至少一个。
+	Protocols  []string `json:"protocols"`
+	BaseURL    string   `json:"base_url"`
+	Disabled   bool     `json:"disabled"`
+	Credential string   `json:"credential"`
 }
 
 func (in channelInput) toStore() store.ChannelInput {
+	set := make(protocol.Set, 0, len(in.Protocols))
+	for _, p := range in.Protocols {
+		set = append(set, protocol.Protocol(strings.TrimSpace(p)))
+	}
 	return store.ChannelInput{
-		Name:     strings.TrimSpace(in.Name),
-		Protocol: protocol.Protocol(strings.TrimSpace(in.Protocol)),
-		BaseURL:  strings.TrimSpace(in.BaseURL),
-		Disabled: in.Disabled,
+		Name:      strings.TrimSpace(in.Name),
+		Protocols: set,
+		BaseURL:   strings.TrimSpace(in.BaseURL),
+		Disabled:  in.Disabled,
 	}
 }
 
@@ -220,6 +226,33 @@ func (h *Handler) updateChannel(c *gin.Context) {
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		return store.UpdateChannel(ctx, tx, id, in.toStore())
 	})
+}
+
+// probeChannel 逐个协议问上游「你提供这个子路径吗」，回一组结果给页面显示。
+//
+// **只提示、不做闸**（口径层 v0.33）：不落库、不参与路由、不影响保存成败——所以它是
+// 独立的一次 POST，而不是缝在保存事务里。前端在保存成功之后调它，勾错协议集的人当场
+// 就能看见，而这条信息不会变成一份会过期的缓存躺在库里。
+//
+// 串行不并发：最多三个协议，而并发起来时上游那边看到的是三个几乎同时到达的请求，
+// 有些中转会按这个判限流。
+func (h *Handler) probeChannel(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	target, err := store.ChannelProbeTarget(c.Request.Context(), h.db, id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	results := make([]upstream.ProbeResult, 0, len(target.Protocols))
+	for _, p := range target.Protocols {
+		results = append(results, upstream.Probe(c.Request.Context(), target.BaseURL, p, target.Credential))
+	}
+	// 只报渠道名，不报 base_url。
+	h.log.Info("渠道协议探测", "channel", target.Name, "results", len(results))
+	c.JSON(http.StatusOK, gin.H{"results": results})
 }
 
 func (h *Handler) deleteChannel(c *gin.Context) {

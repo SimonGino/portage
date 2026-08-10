@@ -187,22 +187,28 @@ func (s *Server) healthz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// models 按 OpenAI models 列表格式列出全部未停用接入点——harness 启动时会拉它。
-// 对外暴露的是接入点名，不是纳管模型名：纳管模型是渠道的内部事实，不该泄露给客户端。
+// models 按 OpenAI models 列表格式列出**全部可路由的模型名**——harness 启动时会拉它。
+//
+// 两半：未停用的接入点名，加上可用纳管模型的限定名 `渠道名/纳管模型名`（口径层
+// v0.32）。这条列表的唯一契约是「列出来的都调得通」，所以它必须和 store.Resolve
+// 认的名字集合逐字一致，改一边就得改另一边。
+//
+// 不按 key 的 allowed_models 过滤：白名单校验只在转发端（口径层 v0.28），因此一把
+// 受限 key 能在这里看到它调不了的名字。
 func (s *Server) models(c *gin.Context) {
-	points, err := store.ListAccessPoints(c.Request.Context(), s.db)
+	models, err := store.ListExposedModels(c.Request.Context(), s.db)
 	if err != nil {
-		s.log.Error("列接入点失败", "err", err)
-		protocol.OpenAICC.WriteError(c.Writer, http.StatusInternalServerError, "接入点列表读取失败")
+		s.log.Error("列可路由模型失败", "err", err)
+		protocol.OpenAICC.WriteError(c.Writer, http.StatusInternalServerError, "模型列表读取失败")
 		return
 	}
 
-	data := make([]gin.H, 0, len(points))
-	for _, ap := range points {
+	data := make([]gin.H, 0, len(models))
+	for _, m := range models {
 		data = append(data, gin.H{
-			"id":       ap.Model,
+			"id":       m.ID,
 			"object":   "model",
-			"created":  ap.CreatedAt,
+			"created":  m.CreatedAt,
 			"owned_by": "ai-gateway",
 		})
 	}
@@ -241,29 +247,38 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			ep.Proto.WriteError(c.Writer, http.StatusBadRequest, "请求体缺少 model 字段")
 			return
 		}
-		rec.accessPoint, rec.stream = head.Model, head.Stream
+		rec.requestedModel, rec.stream = head.Model, head.Stream
 
 		// 白名单校验放在这儿而不是鉴权中间件：那一层跑的时候请求体还没读，
-		// 不知道要判哪个接入点。403 而不是 404——这把 key 不能用它，不是它不存在，
+		// 不知道要判哪个模型。403 而不是 404——这把 key 不能用它，不是它不存在，
 		// 说成 404 会把人引去查配置。
+		//
+		// 逐项精确匹配，接入点名与纳管模型限定名都可以写在白名单里（口径层 v0.32）：
+		// 两种名都能路由，白名单只管一种就等于留了条绕过去的路。Allows 本身不用改，
+		// 它比的就是这个字符串。
 		if key := apiKeyFrom(c); !key.Allows(head.Model) {
 			rec.outcome = "model_not_allowed"
 			ep.Proto.WriteError(c.Writer, http.StatusForbidden,
-				"当前 key 不允许访问接入点 "+head.Model)
+				"当前 key 不允许访问模型 "+head.Model)
 			return
 		}
 
-		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model)
+		// 入站协议参与解析：渠道声明的是一个支持协议集，选哪个由「能透传就透传」
+		// 决定（口径层 v0.33）。同一个渠道、同一个模型，`/v1/responses` 进来走上游
+		// Responses，`/v1/chat/completions` 进来走上游 CC，客户端不用在模型名里标。
+		cand, err := store.Resolve(c.Request.Context(), s.db, head.Model, ep.Proto)
 		switch {
 		case errors.Is(err, store.ErrAccessPointNotFound):
-			ep.Proto.WriteError(c.Writer, http.StatusNotFound, "接入点 "+head.Model+" 不存在或已停用")
+			// 这里说「模型」而不是「接入点」：客户端填的可能是限定名，报成
+			// 「接入点不存在」会把人引去接入点页面找一个本来就不该存在的条目。
+			ep.Proto.WriteError(c.Writer, http.StatusNotFound, "模型 "+head.Model+" 不存在或已停用")
 			return
 		case errors.Is(err, store.ErrNoUsableCandidate):
-			ep.Proto.WriteError(c.Writer, http.StatusServiceUnavailable, "接入点 "+head.Model+" 没有可用候选")
+			ep.Proto.WriteError(c.Writer, http.StatusServiceUnavailable, "模型 "+head.Model+" 当前没有可用的上游")
 			return
 		case err != nil:
-			s.log.Error("接入点解析失败", "model", head.Model, "err", err)
-			ep.Proto.WriteError(c.Writer, http.StatusInternalServerError, "接入点解析失败")
+			s.log.Error("模型解析失败", "model", head.Model, "err", err)
+			ep.Proto.WriteError(c.Writer, http.StatusInternalServerError, "模型解析失败")
 			return
 		}
 

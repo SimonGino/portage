@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { api } from '../api'
-import type { AccessPoint, ApiKey } from '../api'
+import type { AccessPoint, ApiKey, Channel } from '../api'
 import { Card, Confirm, Dialog, Empty, ErrorBar, Field, Toggle, fmtTime, useList } from '../ui'
+import { Chips } from '../fields'
+import type { Option } from '../fields'
+import { ModelIcon } from '../icons'
 
 export default function Keys() {
   const keys = useList(() => api.get<ApiKey[] | null>('/keys'))
-  // 接入点列表用来给白名单当选项：白名单里写的是**接入点名**，
-  // 让人手打很容易打错一个字，而打错的表现是那把 key 静默 403。
+  // 接入点与渠道都要拉：白名单里能写的是**客户端 model 字段那个字符串**，接入点名
+  // 和纳管模型限定名两种都算（口径层 v0.32）。手打很容易错一个字，而错了的表现是
+  // 那把 key 静默 403。
   const aps = useList(() => api.get<AccessPoint[] | null>('/access-points'))
+  const channels = useList(() => api.get<Channel[] | null>('/channels'))
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ApiKey | null>(null)
   const [fresh, setFresh] = useState('')
@@ -25,13 +30,29 @@ export default function Keys() {
 
   if (keys.loading && keys.data === null) return <div className="boot">加载中…</div>
   const list = keys.data ?? []
-  const apNames = (aps.data ?? []).map((a) => a.model)
+  // 可选项 = 未停用的接入点名 + 可用纳管模型的限定名，与 `GET /v1/models` 列的
+  // 那份清单同构（口径层 v0.32：两者都列、都可路由）。
+  const suggestions: Option<string>[] = [
+    ...(aps.data ?? [])
+      .filter((a) => !a.disabled)
+      .map((a) => ({ value: a.model, label: a.model, icon: <ModelIcon model={a.model} size={16} /> })),
+    ...(channels.data ?? [])
+      .filter((ch) => !ch.disabled)
+      .flatMap((ch) =>
+        (ch.models ?? [])
+          .filter((m) => !m.disabled)
+          .map((m) => {
+            const q = `${ch.name}/${m.upstream_model}`
+            return { value: q, label: q, icon: <ModelIcon model={q} size={16} /> }
+          }),
+      ),
+  ]
 
   return (
     <>
       {/* 接入点那一路的报错也要露出来：白名单的可选项全靠它，
           悄悄空掉的话看起来像「一个接入点都没建」。 */}
-      <ErrorBar message={keys.error || aps.error} />
+      <ErrorBar message={keys.error || aps.error || channels.error} />
       <Card
         title="网关 key"
         action={
@@ -51,7 +72,7 @@ export default function Keys() {
             <thead>
               <tr>
                 <th>名称</th>
-                <th>可访问接入点</th>
+                <th>可访问模型</th>
                 <th>创建时间</th>
                 <th>启用</th>
                 <th className="col-actions" />
@@ -66,9 +87,10 @@ export default function Keys() {
                       <span className="muted">不限</span>
                     ) : (
                       k.allowed_models.split(',').map((m) => (
-                        <code key={m} className="chip">
-                          {m}
-                        </code>
+                        <span key={m} className="chip">
+                          <ModelIcon model={m} size={14} />
+                          <code>{m}</code>
+                        </span>
                       ))
                     )}
                   </td>
@@ -107,7 +129,7 @@ export default function Keys() {
       {creating && (
         <KeyForm
           k={null}
-          accessPoints={apNames}
+          suggestions={suggestions}
           onClose={() => setCreating(false)}
           onSaved={(plain) => {
             setCreating(false)
@@ -119,7 +141,7 @@ export default function Keys() {
       {editing && (
         <KeyForm
           k={editing}
-          accessPoints={apNames}
+          suggestions={suggestions}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
@@ -174,12 +196,12 @@ function FreshKey({ value, onClose }: { value: string; onClose: () => void }) {
 
 function KeyForm({
   k,
-  accessPoints,
+  suggestions,
   onClose,
   onSaved,
 }: {
   k: ApiKey | null
-  accessPoints: string[]
+  suggestions: Option<string>[]
   onClose: () => void
   onSaved: (plain?: string) => void
 }) {
@@ -191,10 +213,6 @@ function KeyForm({
   const [disabled, setDisabled] = useState(k?.disabled ?? false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-
-  // 白名单里可能留着已经删掉的接入点名，那种也要显示出来——它是这把 key
-  // 当前真实的限制，藏起来会让人看着「不限」实际上是限死的。
-  const options = Array.from(new Set([...accessPoints, ...picked]))
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -224,36 +242,34 @@ function KeyForm({
         <Field label="名称" hint="会出现在调用流水里，用来分辨是哪台机器在调">
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="可访问接入点">
+        <Field
+          label="可访问模型"
+          hint="接入点名和纳管模型限定名（渠道名/模型名）都能写；逐项精确匹配，不支持通配"
+        >
           <label className="check">
             <input
               type="checkbox"
               checked={unlimited}
               onChange={(e) => setUnlimited(e.target.checked)}
             />
-            不限（所有接入点）
+            不限（所有可路由的模型）
           </label>
-          {!unlimited &&
-            (options.length === 0 ? (
-              <span className="field-hint">还没有接入点可选。不勾任何一个等于不限。</span>
-            ) : (
-              <div className="checks">
-                {options.map((m) => (
-                  <label key={m} className="check">
-                    <input
-                      type="checkbox"
-                      checked={picked.includes(m)}
-                      onChange={(e) =>
-                        setPicked((prev) =>
-                          e.target.checked ? [...prev, m] : prev.filter((x) => x !== m),
-                        )
-                      }
-                    />
-                    <code>{m}</code>
-                  </label>
-                ))}
-              </div>
-            ))}
+          {!unlimited && (
+            <>
+              {/* 已经删掉的名字也照样显示：它是这把 key 当前真实的限制，藏起来会让人
+                  看着「限了几个」实际上限的是一堆不存在的名字、等于全锁死。 */}
+              <Chips
+                items={picked}
+                onChange={setPicked}
+                placeholder="点下面的建议，或直接输入后回车"
+                suggestions={suggestions}
+                renderIcon={(m) => <ModelIcon model={m} size={14} />}
+              />
+              {picked.length === 0 && (
+                <span className="field-hint">一个都不选等于不限——后端把空白名单当作 `*`。</span>
+              )}
+            </>
+          )}
         </Field>
         {k && (
           <label className="check">

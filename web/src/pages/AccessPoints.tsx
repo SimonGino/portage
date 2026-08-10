@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AccessPoint, Channel } from '../api'
-import { Card, Confirm, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
+import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
+import { Picker } from '../fields'
+import type { Option } from '../fields'
+import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../icons'
 
 export default function AccessPoints() {
   const aps = useList(() => api.get<AccessPoint[] | null>('/access-points'))
@@ -37,7 +40,9 @@ export default function AccessPoints() {
         }
       >
         <p className="muted">
-          接入点是<strong>客户端填的模型名</strong>。客户端只看得到这一层，它背后指向哪个渠道的哪个模型是网关的内部事实。
+          接入点是**别名层**：给一个纳管模型换个对外的名字，或者（M4 之后）把一个名字分流到多个候选。
+          只想直接用某个纳管模型的话不必建接入点，客户端 <code>model</code> 直接填限定名{' '}
+          <code>渠道名/模型名</code> 就行。
         </p>
         {list.length === 0 ? (
           <Empty>
@@ -61,7 +66,10 @@ export default function AccessPoints() {
                 return (
                   <tr key={ap.id} className={ap.disabled ? 'is-off' : ''}>
                     <td>
-                      <code>{ap.model}</code>
+                      <span className="icon-row">
+                        <ModelIcon model={ap.model} size={18} />
+                        {ap.disabled ? <code>{ap.model}</code> : <CopyCode value={ap.model} />}
+                      </span>
                     </td>
                     <td>
                       {cands.length === 0 ? (
@@ -70,7 +78,9 @@ export default function AccessPoints() {
                       ) : (
                         cands.map((c) => (
                           <div key={c.id} className="cand">
-                            {c.channel_name} / <code>{c.upstream_model}</code>
+                            <ModelIcon model={c.upstream_model} size={16} />
+                            <span className="muted">{c.channel_name} /</span>
+                            <code>{c.upstream_model}</code>
                             <span className="muted"> 权重 {c.weight}</span>
                           </div>
                         ))
@@ -131,13 +141,25 @@ function AccessPointForm({
 
   // 只列启用的渠道与启用的纳管模型：停用的选了也路由不到，摆在下拉里只会让人
   // 配出一个「保存成功但怎么都不通」的接入点。
-  const options = channels
+  //
+  // 按渠道分组，每行带供应商图标；base_url 进 keywords 但不显示——同一家上游在
+  // 不同中转下会重名，搜 `dashscope` 能把它们分出来。
+  const options: Option<number>[] = channels
     .filter((ch) => !ch.disabled)
     .flatMap((ch) =>
       (ch.models ?? [])
         .filter((m) => !m.disabled)
-        .map((m) => ({ id: m.id, label: `${ch.name} / ${m.upstream_model}` })),
+        .map((m) => ({
+          value: m.id,
+          label: m.upstream_model,
+          group: ch.name,
+          keywords: ch.base_url,
+          icon: <ModelIcon model={m.upstream_model} size={18} />,
+        })),
     )
+
+  const pickedChannel = channels.find((ch) => (ch.models ?? []).some((m) => m.id === cmID))
+  const pickedModel = pickedChannel?.models?.find((m) => m.id === cmID)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -157,18 +179,33 @@ function AccessPointForm({
   return (
     <Dialog title={ap ? `编辑接入点：${ap.model}` : '新建接入点'} onClose={onClose}>
       <form className="form" onSubmit={submit}>
+        <div className="form-preview">
+          <Avatar vendor={vendorForModel(model)} fallback={model || '?'} size={40} />
+          <div>
+            <div className="form-preview-name">{model || '未命名接入点'}</div>
+            <div className="muted">
+              {pickedModel && pickedChannel ? (
+                <span className="icon-row">
+                  → <ChannelIcon channel={pickedChannel} size={14} /> {pickedChannel.name} /{' '}
+                  <code>{pickedModel.upstream_model}</code>
+                </span>
+              ) : (
+                '还没选候选'
+              )}
+            </div>
+          </div>
+        </div>
+
         <Field label="接入点名" hint="客户端请求里的 model 字段填的就是这个">
           <input autoFocus value={model} onChange={(e) => setModel(e.target.value)} />
         </Field>
         <Field label="候选（渠道 / 纳管模型）" hint="M0~M2 的临时闸：每个接入点只能有一个候选">
-          <select value={cmID} onChange={(e) => setCmID(Number(e.target.value))}>
-            <option value={0}>请选择…</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <Picker
+            value={cmID === 0 ? null : cmID}
+            options={options}
+            onChange={setCmID}
+            placeholder="选一个纳管模型…"
+          />
         </Field>
         <Field label="权重" hint="只有一个候选时不影响路由，多候选放开后才有用">
           <input

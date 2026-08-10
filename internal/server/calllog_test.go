@@ -64,7 +64,7 @@ func TestCallLogCarriesUsageFromTheRelayedStream(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"endpoint": "/v1/messages", "inbound_protocol": "anthropic",
-		"access_point": accessPointModel, "channel": "test-anthropic",
+		"requested_model": accessPointModel, "channel": "test-anthropic",
 		"channel_protocol": "anthropic", "upstream_model": upstreamModel,
 		"stop_reason": "end_turn", "outcome": "ok",
 		// 上游自报的模型名与我们发过去的纳管模型名分开记：两者对不上是排障线索。
@@ -170,8 +170,8 @@ func TestCallLogCoversRejectedAndFailedCalls(t *testing.T) {
 		if line.Int64("status") != http.StatusNotFound {
 			t.Errorf("status = %d, 期望 404", line.Int64("status"))
 		}
-		if line.Str("access_point") != "没配过的接入点" {
-			t.Errorf("access_point = %q，客户端请求的模型名必须记下来", line.Str("access_point"))
+		if line.Str("requested_model") != "没配过的接入点" {
+			t.Errorf("requested_model = %q，客户端请求的模型名必须记下来", line.Str("requested_model"))
 		}
 		if _, ok := line.Attrs["channel"]; ok {
 			t.Error("没解析出候选却记了渠道")
