@@ -11,6 +11,13 @@ const DAY_OPTIONS = [
   { value: '30' as const, label: '30 天' },
 ]
 
+// 聚合维度（口径层 v0.38）：按凭证是「这个号跑了多少」的答案，只给逐行的流水表
+// 等于把 group by 留给人的肉眼做。
+const DIM_OPTIONS = [
+  { value: 'model' as const, label: '按模型' },
+  { value: 'credential' as const, label: '按凭证' },
+]
+
 const LOG_FILTERS = [
   { value: 'all' as const, label: '全部' },
   { value: 'bad' as const, label: '只看失败' },
@@ -30,10 +37,11 @@ function fmtMs(ms: number | null) {
 
 export default function Usage() {
   const [days, setDays] = useState('7')
+  const [dim, setDim] = useState('model')
   const [filter, setFilter] = useState('all')
   const usage = useList(
-    () => api.get<{ days: number; rows: UsageRow[] | null }>(`/usage?days=${days}`),
-    [days], // 天数一变就重拉
+    () => api.get<{ days: number; rows: UsageRow[] | null }>(`/usage?days=${days}&by=${dim}`),
+    [days, dim], // 天数或维度一变就重拉
   )
   const logs = useList(() => api.get<CallLog[] | null>('/logs?limit=100'))
 
@@ -66,13 +74,20 @@ export default function Usage() {
 
       <Card
         title="用量"
-        action={<Segmented value={days} options={DAY_OPTIONS} onChange={setDays} />}
+        action={
+          <div className="row-actions">
+            <Segmented value={dim} options={DIM_OPTIONS} onChange={setDim} />
+            <Segmented value={days} options={DAY_OPTIONS} onChange={setDays} />
+          </div>
+        }
       >
         <div className="stats">
           <div className="stat">
             <div className="stat-label">调用</div>
             <div className="stat-value">{fmtInt(total.calls)}</div>
-            <div className="stat-sub">{rows.length} 个模型</div>
+            <div className="stat-sub">
+              {rows.length} {dim === 'credential' ? '份凭证' : '个模型'}
+            </div>
           </div>
           <div className="stat">
             <div className="stat-label">失败</div>
@@ -100,7 +115,7 @@ export default function Usage() {
             <table className="table table-plain">
               <thead>
                 <tr>
-                  <th>模型</th>
+                  <th>{dim === 'credential' ? '上游凭证' : '模型'}</th>
                   <th className="num">调用</th>
                   <th className="num">失败</th>
                   <th className="num">输入</th>
@@ -111,11 +126,13 @@ export default function Usage() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.model_requested}>
+                  <tr key={r.label}>
                     <td className="model-cell">
                       <span className="icon-row">
-                        <ModelIcon model={r.model_requested} size={16} />
-                        <code>{r.model_requested}</code>
+                        {/* 凭证维度不画模型图标：那个图标是从模型名猜厂商猜出来的，
+                            套在人自己起的凭证名上只会猜出一堆无意义的首字母块。 */}
+                        {dim === 'credential' ? null : <ModelIcon model={r.label} size={16} />}
+                        <code>{r.label}</code>
                       </span>
                       <div
                         className="bar-mini"
@@ -163,6 +180,7 @@ export default function Usage() {
                   <th>时间</th>
                   <th>模型</th>
                   <th>链路</th>
+                  <th>凭证</th>
                   <th className="num">状态</th>
                   <th className="num">耗时</th>
                   <th className="num">in / out</th>
@@ -197,6 +215,11 @@ export default function Usage() {
                           </>
                         )}
                       </span>
+                    </td>
+                    {/* 上游凭证（口径层 v0.38）：多凭证放开后，「这次是哪个号在跑」
+                        是排障第一问。记的是最后真正发出请求的那一份。 */}
+                    <td className="nowrap">
+                      {l.channel_key_name ? l.channel_key_name : <span className="muted">—</span>}
                     </td>
                     <td className="num">
                       <span className={'pill ' + (l.status >= 400 ? 'pill-bad' : 'pill-ok')}>

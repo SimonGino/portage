@@ -51,19 +51,13 @@ func Open(path string) (*sql.DB, error) {
 
 // migrate 补 `CREATE TABLE IF NOT EXISTS` 覆盖不到的形状变化。
 //
-// schema.sql 对已存在的表是空操作，所以列的增删改一律得在这儿补一手。目前只有一条，
-// 故不建版本表：迁移是不是已经跑过，直接问库里的列长什么样就知道，比维护一个会和
-// 实际形状漂移的 schema_version 更可信。
+// schema.sql 对已存在的表是空操作，所以列的增删改一律得在这儿补一手。不建版本表：
+// 迁移是不是已经跑过，直接问库里的列长什么样就知道，比维护一个会和实际形状漂移的
+// schema_version 更可信。
 func migrate(db *sql.DB) error {
 	// v0.33：单值 protocol → 支持协议集 protocols。只改列名，值不用动——旧的单值
 	// 在新语义下就是一元集合，含义一字不变。
-	has := func(col string) (bool, error) {
-		var n int
-		err := db.QueryRow(
-			`SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name = ?`, col).Scan(&n)
-		return n > 0, err
-	}
-	old, err := has("protocol")
+	old, err := hasColumn(db, "channels", "protocol")
 	if err != nil {
 		return fmt.Errorf("检查 channels.protocol: %w", err)
 	}
@@ -72,7 +66,59 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("迁移 channels.protocol → protocols: %w", err)
 		}
 	}
-	return renameOpenAICC(db)
+	if err := renameOpenAICC(db); err != nil {
+		return err
+	}
+	return addCredentialNames(db)
+}
+
+// hasColumn 问库里某张表有没有这一列。迁移是否已跑过全靠它判断。
+func hasColumn(db *sql.DB, table, col string) (bool, error) {
+	var n int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col).Scan(&n)
+	return n > 0, err
+}
+
+// addCredentialNames 补 v0.38 的两列：channel_keys.name 与 call_logs.channel_key_name。
+//
+// 顺序不能换：先加列、再补名、最后才建唯一索引。索引建在 schema.sql 里是不行的——
+// schema 在 migrate 之前跑，那时老库还没有 name 这一列，CREATE INDEX 当场失败。
+// 放在这里则新老库走同一条路，长出同一个形状。
+//
+// 补名用的是「同渠道内 id 不大于我的有几个」这个相关子查询，而不是全局 id：名字是
+// 给人看的，一个只有两把凭证的渠道里冒出「凭证 7」「凭证 12」比没有名字更难读。
+// 只补名字为空串的行，所以它天然幂等——补过的不会被第二次改写。（这句别写成带一对
+// 单引号的 SQL：gofmt 会把注释里的成对单引号换成中文引号，一格式化就把它改坏。）
+func addCredentialNames(db *sql.DB) error {
+	for _, m := range []struct{ table, col, ddl string }{
+		{"channel_keys", "name", `ALTER TABLE channel_keys ADD COLUMN name TEXT NOT NULL DEFAULT ''`},
+		{"call_logs", "channel_key_name", `ALTER TABLE call_logs ADD COLUMN channel_key_name TEXT NOT NULL DEFAULT ''`},
+	} {
+		has, err := hasColumn(db, m.table, m.col)
+		if err != nil {
+			return fmt.Errorf("检查 %s.%s: %w", m.table, m.col, err)
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(m.ddl); err != nil {
+			return fmt.Errorf("迁移 %s.%s: %w", m.table, m.col, err)
+		}
+	}
+	if _, err := db.Exec(`
+		UPDATE channel_keys SET name = '凭证 ' || (
+			SELECT COUNT(*) FROM channel_keys x
+			WHERE x.channel_id = channel_keys.channel_id AND x.id <= channel_keys.id)
+		WHERE name = ''`); err != nil {
+		return fmt.Errorf("给存量凭证补名: %w", err)
+	}
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_keys_name
+		ON channel_keys(channel_id, name)`); err != nil {
+		return fmt.Errorf("建凭证名唯一索引: %w", err)
+	}
+	return nil
 }
 
 // renameOpenAICC 把 v0.36 之前写进库的 `openai_cc` 改写成 `openai`。
@@ -114,9 +160,32 @@ type Candidate struct {
 	// Protocol 是**这次请求**选定的上游协议，不是渠道的全部能力——渠道支持协议集
 	// （口径层 v0.33）在解析时就按入站协议收成了一个（见 pickProtocol）。下游拿它
 	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
-	Protocol   protocol.Protocol
-	BaseURL    string
-	Credential string
+	Protocol protocol.Protocol
+	BaseURL  string
+	// Credentials 是该渠道当下全部**启用**凭证，按 id 升序（口径层 v0.38）。
+	// 用哪一份、失败了换不换，由 upstream 的 key 层内环决定——store 只负责把候选
+	// 集交出去，选取策略与轮询游标都不落在这一层。
+	Credentials []Credential
+	// KeyMode 是渠道级的选取模式：polling（默认）/ random。
+	KeyMode string
+}
+
+// 渠道级的凭证选取模式（口径层 v0.11）。库里的默认值是 polling，认不得的取值一律
+// 当 polling——这一列可以是手写 SQL 灌进来的，为一个拼错的模式名让请求失败不值当。
+const (
+	KeyModePolling = "polling"
+	KeyModeRandom  = "random"
+)
+
+// Credential 是凭证池里的一份凭证。
+//
+// Name 是给人看的归因标识（渠道内唯一），会进日志与用量；Value 只在进程内流向
+// upstream，永不进任何 JSON 响应（口径层 v0.28「只写不回读」）。ID 是 401 摘除时
+// 要改的那一行。
+type Credential struct {
+	ID    int64
+	Name  string
+	Value string
 }
 
 // QualifiedName 是纳管模型对外的限定名：`渠道名/纳管模型名`。
@@ -177,25 +246,58 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 
 	c := Candidate{RequestedModel: model}
 	var protocols string
+	var channelID int64
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.name, ch.protocols, ch.base_url, ck.credential
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
-		JOIN channel_keys ck   ON ck.channel_id = ch.id       AND ck.disabled = 0
 		WHERE cd.access_point_id = ? AND cd.weight > 0
+		  AND EXISTS (SELECT 1 FROM channel_keys ck
+		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelName, &protocols, &c.BaseURL, &c.Credential)
+		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &c.BaseURL, &c.KeyMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
 		return Candidate{}, err
 	}
+	if c.Credentials, err = loadCredentials(ctx, db, channelID); err != nil {
+		return Candidate{}, err
+	}
+	// EXISTS 与这一趟之间隔着一次 401 摘除的可能——那时凭证刚好归零，与「渠道没有
+	// 启用凭证」是同一种收场，交给 503 而不是发一个不带凭证的请求。
+	if len(c.Credentials) == 0 {
+		return Candidate{}, ErrNoUsableCandidate
+	}
 	if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
 		return Candidate{}, fmt.Errorf("接入点 %q: %w", model, err)
 	}
 	return c, nil
+}
+
+// loadCredentials 取渠道当下全部启用凭证，按 id 升序。
+//
+// 顺序稳定是选取模式的前提：polling 靠它算「下一份是谁」，random 靠它有个确定的
+// 洗牌输入。库里的行序不保证稳定，所以 ORDER BY 不能省。
+func loadCredentials(ctx context.Context, db *sql.DB, channelID int64) ([]Credential, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, name, credential FROM channel_keys
+		WHERE channel_id = ? AND disabled = 0 ORDER BY id`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Credential
+	for rows.Next() {
+		var cr Credential
+		if err := rows.Scan(&cr.ID, &cr.Name, &cr.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, cr)
+	}
+	return out, rows.Err()
 }
 
 // resolveDirect 走纳管模型直连路径，匹配 `渠道名/纳管模型名` 限定名。
@@ -209,16 +311,24 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
 	var protocols string
+	var channelID int64
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.name, ch.protocols, ch.base_url, ck.credential
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode
 		FROM channel_models cm
-		JOIN channels ch     ON ch.id = cm.channel_id
-		JOIN channel_keys ck ON ck.channel_id = ch.id AND ck.disabled = 0
+		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
 		  AND cm.disabled = 0 AND ch.disabled = 0
+		  AND EXISTS (SELECT 1 FROM channel_keys ck
+		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelName, &protocols, &c.BaseURL, &c.Credential)
+		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &c.BaseURL, &c.KeyMode)
 	if err == nil {
+		if c.Credentials, err = loadCredentials(ctx, db, channelID); err != nil {
+			return Candidate{}, err
+		}
+		if len(c.Credentials) == 0 {
+			return Candidate{}, ErrNoUsableCandidate
+		}
 		if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
 			return Candidate{}, fmt.Errorf("纳管模型 %q: %w", model, err)
 		}
@@ -317,12 +427,13 @@ type Queryer interface {
 // Validate is the startup gate. It reports every violation it finds, naming the
 // offending record, so a hand-written SQL row can be fixed in one pass.
 //
-// 临时闸（M0~M2）：单候选、单凭证。多候选分流与凭证池聚合在 M4。
+// 临时闸只剩单候选那一半（口径层 v0.38）：多候选分流仍在 M4，凭证池聚合已前移
+// 到 M3，于是凭证只剩「至少一份」这条可达性下限。
 func Validate(ctx context.Context, db Queryer) error {
 	var problems []string
 	for _, check := range []func(context.Context, Queryer) ([]string, error){
 		checkSingleCandidate,
-		checkSingleCredential,
+		checkChannelHasCredential,
 		checkDanglingCandidate,
 		checkCandidateReachable,
 		checkChannelFields,
@@ -376,21 +487,26 @@ func checkSingleCandidate(ctx context.Context, db Queryer) ([]string, error) {
 		})
 }
 
-func checkSingleCredential(ctx context.Context, db Queryer) ([]string, error) {
+// checkChannelHasCredential 要求每个未停用渠道至少有一份启用凭证。
+//
+// 上限那一半（临时闸的「恰好 1 份」）已于口径层 v0.38 放开，凭证池聚合前移到 M3；
+// 下限留着，它不是临时闸而是 v0.18 的可达性通则：零凭证的渠道每个请求都会失败，
+// 而这是启动时就判定得了的。
+func checkChannelHasCredential(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT ch.id, ch.name, COUNT(ck.id)
+		SELECT ch.id, ch.name
 		FROM channels ch
 		LEFT JOIN channel_keys ck ON ck.channel_id = ch.id AND ck.disabled = 0
 		WHERE ch.disabled = 0
 		GROUP BY ch.id
-		HAVING COUNT(ck.id) <> 1`,
+		HAVING COUNT(ck.id) = 0`,
 		func(rows *sql.Rows) (string, error) {
-			var id, n int64
+			var id int64
 			var name string
-			if err := rows.Scan(&id, &name, &n); err != nil {
+			if err := rows.Scan(&id, &name); err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("渠道 %q (id=%d) 有 %d 份启用凭证，临时闸要求恰好 1 份", name, id, n), nil
+			return fmt.Sprintf("渠道 %q (id=%d) 没有启用凭证；补一份，或者把渠道停用", name, id), nil
 		})
 }
 

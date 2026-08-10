@@ -13,7 +13,8 @@ db_path: "/data/gateway.db"
 log_bodies: false
 
 retry:
-  max_retries: 2
+  max_retries: 2      # 同一份凭证上的退避重试次数，不含首次尝试
+  max_attempts: 6     # 一次请求的全局上游尝试上限，跨凭证累计（口径层 v0.38）；写 0 即不封顶
   base_delay: 500ms
   max_delay: 10s
 

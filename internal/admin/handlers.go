@@ -164,16 +164,18 @@ func (h *Handler) listChannels(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
-// channelInput 是渠道表单。credential 只在**创建**时可选带一把——之后要换凭证走
-// PUT /channels/:id/credential，而修改渠道的接口根本不看这个字段，因此「改个名字」
-// 不可能顺手把凭证清空。
+// channelInput 是渠道表单。credential 只在**创建**时可选带一把（省去「建完再去加
+// 凭证」这一步）——之后凭证走 /channels/:id/credentials 那套逐条 CRUD，而修改渠道的
+// 接口根本不看这个字段，因此「改个名字」不可能顺手把凭证清空。
 type channelInput struct {
 	Name string `json:"name"`
 	// Protocols 是支持协议集（口径层 v0.33），至少一个。
-	Protocols  []string `json:"protocols"`
-	BaseURL    string   `json:"base_url"`
-	Disabled   bool     `json:"disabled"`
-	Credential string   `json:"credential"`
+	Protocols []string `json:"protocols"`
+	BaseURL   string   `json:"base_url"`
+	// KeyMode 是凭证选取模式 polling/random（口径层 v0.38 露到表单上）。
+	KeyMode    string `json:"key_mode"`
+	Disabled   bool   `json:"disabled"`
+	Credential string `json:"credential"`
 }
 
 func (in channelInput) toStore() store.ChannelInput {
@@ -185,6 +187,7 @@ func (in channelInput) toStore() store.ChannelInput {
 		Name:      strings.TrimSpace(in.Name),
 		Protocols: set,
 		BaseURL:   strings.TrimSpace(in.BaseURL),
+		KeyMode:   strings.TrimSpace(in.KeyMode),
 		Disabled:  in.Disabled,
 	}
 }
@@ -205,7 +208,7 @@ func (h *Handler) createChannel(c *gin.Context) {
 			return nil, err
 		}
 		if cred := strings.TrimSpace(in.Credential); cred != "" {
-			if err := store.SetChannelCredential(ctx, tx, id, cred); err != nil {
+			if err := store.AddChannelCredentials(ctx, tx, id, []store.NewCredential{{Value: cred}}); err != nil {
 				return nil, err
 			}
 		}
@@ -246,13 +249,24 @@ func (h *Handler) probeChannel(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	results := make([]upstream.ProbeResult, 0, len(target.Protocols))
-	for _, p := range target.Protocols {
-		results = append(results, upstream.Probe(c.Request.Context(), target.BaseURL, p, target.Credential))
+	// 逐把凭证探（口径层 v0.38），含已停用的——恢复既然是纯人工的，「这把被摘的凭证
+	// 现在还坏不坏」除了删掉重配就没有别的办法回答。一份凭证都没有时仍探一轮空凭证：
+	// 401 同样证明子路径存在，而那正是探测要问的。
+	creds := target.Credentials
+	if len(creds) == 0 {
+		creds = []store.ProbeCredential{{Name: ""}}
 	}
-	// 只报渠道名，不报 base_url。
-	h.log.Info("渠道协议探测", "channel", target.Name, "results", len(results))
-	c.JSON(http.StatusOK, gin.H{"results": results})
+	groups := make([]probeGroup, 0, len(creds))
+	for _, cred := range creds {
+		g := probeGroup{Credential: cred.Name, Disabled: cred.Disabled}
+		for _, p := range target.Protocols {
+			g.Results = append(g.Results, upstream.Probe(c.Request.Context(), target.BaseURL, p, cred.Value))
+		}
+		groups = append(groups, g)
+	}
+	// 只报渠道名，不报 base_url，更不报凭证值。
+	h.log.Info("渠道协议探测", "channel", target.Name, "credentials", len(groups))
+	c.JSON(http.StatusOK, gin.H{"credentials": groups})
 }
 
 func (h *Handler) deleteChannel(c *gin.Context) {
@@ -265,28 +279,99 @@ func (h *Handler) deleteChannel(c *gin.Context) {
 	})
 }
 
-// setChannelCredential 是凭证唯一的入口，且**只写不读**（PO 于 M3 裁定）。
-// 没有对应的 GET：上游 key 只存服务端，一旦能回读，它就会出现在浏览器内存、
-// devtools 的响应面板、以及任何一张截图里。
-func (h *Handler) setChannelCredential(c *gin.Context) {
+// probeGroup 是一份凭证的探测结果分组。凭证值不在里面，也不会有掩码。
+type probeGroup struct {
+	Credential string                 `json:"credential"`
+	Disabled   bool                   `json:"disabled"`
+	Results    []upstream.ProbeResult `json:"results"`
+}
+
+// ── 凭证池 ──────────────────────────────────────────────────────────────
+//
+// 凭证**只写不回读**（口径层 v0.28，v0.38 未破）：列表回的是名字、状态、时间与停用
+// 原因，没有值，也没有掩码——掩码本身是信息，且实现上很容易某次改动漏掉掩码把全串
+// 吐出去。
+
+func (h *Handler) listCredentials(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	list, err := store.ListChannelCredentials(c.Request.Context(), h.db, id)
+	if err != nil {
+		h.log.Error("列渠道凭证失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+// addCredentials 往池子里**追加**若干份（口径层 v0.38：追加，不是整把替换）。
+//
+// 支持一次贴多行：换号、扩容时人手里往往是一整块文本。名字留空由 store 给 `凭证 N`。
+func (h *Handler) addCredentials(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
 		return
 	}
 	var in struct {
-		Credential string `json:"credential"`
+		// 单条与批量共用一个入口：单条填 credential，批量填 credentials（一行一份）。
+		Name        string `json:"name"`
+		Credential  string `json:"credential"`
+		Credentials string `json:"credentials"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
-	cred := strings.TrimSpace(in.Credential)
-	if cred == "" {
+	var items []store.NewCredential
+	if cred := strings.TrimSpace(in.Credential); cred != "" {
+		items = append(items, store.NewCredential{Name: in.Name, Value: cred})
+	}
+	for _, line := range strings.Split(in.Credentials, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			items = append(items, store.NewCredential{Value: line})
+		}
+	}
+	if len(items) == 0 {
 		fail(c, http.StatusBadRequest, "凭证不能为空")
 		return
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.SetChannelCredential(ctx, tx, id, cred)
+		return store.AddChannelCredentials(ctx, tx, id, items)
+	})
+}
+
+// updateCredential 改名 / 换值 / 停用 / 启用。credential 留空即不动值——页面上读不到
+// 原值，改个名字还要重贴一遍 key 等于每次都换一把。
+func (h *Handler) updateCredential(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Name       string `json:"name"`
+		Credential string `json:"credential"`
+		Disabled   bool   `json:"disabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.UpdateCredential(ctx, tx, id, store.CredentialUpdate{
+			Name: in.Name, Value: in.Credential, Disabled: in.Disabled,
+		})
+	})
+}
+
+func (h *Handler) deleteCredential(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.DeleteCredential(ctx, tx, id)
 	})
 }
 
@@ -544,15 +629,23 @@ func (h *Handler) listLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, rows)
 }
 
+// usage 汇总用量。by=model（默认，按接入点）/ by=credential（按上游凭证，v0.38）。
+//
+// 认不得的 by 当默认处理而不是报错：这是个只影响展示的查询参数，写错了不该让整个
+// 页面打不开（同 clampQuery 的立论）。
 func (h *Handler) usage(c *gin.Context) {
 	days := clampQuery(c, "days", 7, 1, 365)
-	rows, err := store.UsageByModel(c.Request.Context(), h.db, days)
+	dim := store.UsageByModel
+	if c.Query("by") == store.UsageByCredential {
+		dim = store.UsageByCredential
+	}
+	rows, err := store.UsageBy(c.Request.Context(), h.db, days, dim)
 	if err != nil {
 		h.log.Error("汇总用量失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"days": days, "rows": rows})
+	c.JSON(http.StatusOK, gin.H{"days": days, "by": dim, "rows": rows})
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────

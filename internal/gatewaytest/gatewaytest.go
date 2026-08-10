@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -233,6 +234,7 @@ type CallRow struct {
 	ModelRequested   string
 	ModelUpstream    string
 	ChannelName      string
+	ChannelKeyName   string
 	Status           int
 	RetryCount       int
 	TTFTMs           sql.NullInt64
@@ -255,12 +257,12 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 		var r CallRow
 		err := g.DB.QueryRow(`
 			SELECT api_key_name, client_protocol, upstream_protocol,
-			       model_requested, model_upstream, channel_name,
+			       model_requested, model_upstream, channel_name, channel_key_name,
 			       status, retry_count, ttft_ms, total_ms,
 			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
-				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName,
+				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
 				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs,
 				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error)
 		if err == nil {
@@ -416,12 +418,30 @@ func SeedChannel(t *testing.T, db *sql.DB, name, protocols, baseURL, credential 
 	return id
 }
 
+// SeedCredential 往渠道的凭证池里追加一份，名字自动给 `凭证 N`（渠道内唯一，
+// 口径层 v0.38）。要指定名字（按凭证归因的用例要）用 SeedNamedCredential。
 func SeedCredential(t *testing.T, db *sql.DB, channelID int64, credential string) {
 	t.Helper()
-	if _, err := db.Exec(
-		`INSERT INTO channel_keys (channel_id, credential) VALUES (?, ?)`, channelID, credential); err != nil {
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM channel_keys WHERE channel_id = ?`, channelID).Scan(&n); err != nil {
+		t.Fatalf("数凭证失败: %v", err)
+	}
+	SeedNamedCredential(t, db, channelID, fmt.Sprintf("凭证 %d", n+1), credential)
+}
+
+// SeedNamedCredential 种一份带名字的凭证，返回它的 id——摘除类用例要用 id 去核对
+// disabled_reason / disabled_at。
+func SeedNamedCredential(t *testing.T, db *sql.DB, channelID int64, name, credential string) int64 {
+	t.Helper()
+	res, err := db.Exec(
+		`INSERT INTO channel_keys (channel_id, name, credential) VALUES (?, ?, ?)`,
+		channelID, name, credential)
+	if err != nil {
 		t.Fatalf("种凭证失败: %v", err)
 	}
+	id, _ := res.LastInsertId()
+	return id
 }
 
 func SeedChannelModel(t *testing.T, db *sql.DB, channelID int64, upstreamModel string) int64 {

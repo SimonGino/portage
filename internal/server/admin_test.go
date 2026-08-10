@@ -160,10 +160,12 @@ func TestConfigPasswordDoesNotOverrideChangedOne(t *testing.T) {
 // ── 配置 CRUD ───────────────────────────────────────────────────────────
 
 type adminChannel struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	HasCredential bool   `json:"has_credential"`
-	Models        []struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	KeyMode      string `json:"key_mode"`
+	EnabledKeys  int    `json:"enabled_keys"`
+	DisabledKeys int    `json:"disabled_keys"`
+	Models       []struct {
 		ID            int64  `json:"id"`
 		UpstreamModel string `json:"upstream_model"`
 	} `json:"models"`
@@ -216,16 +218,51 @@ func TestAdminNeverReturnsUpstreamCredential(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	// 扫全部读接口，而不是只查 channels：泄漏可能出现在任何一个返回结构上。
-	for _, path := range []string{"/admin/api/channels", "/admin/api/access-points", "/admin/api/keys", "/admin/api/logs"} {
+	for _, path := range []string{"/admin/api/channels", "/admin/api/channels/1/credentials",
+		"/admin/api/access-points", "/admin/api/keys", "/admin/api/logs"} {
 		_, body := a.Do(t, http.MethodGet, path, "")
 		if strings.Contains(body, secret) {
 			t.Errorf("%s 把上游凭证吐出来了：%s", path, body)
 		}
 	}
 
-	// 也不该有一个能读凭证的接口。
-	if status, _ := a.Do(t, http.MethodGet, "/admin/api/channels/1/credential", ""); status != http.StatusNotFound {
-		t.Errorf("凭证居然有 GET 接口，status=%d", status)
+	// 凭证列表回的是名字与状态，**没有值**——上面那一轮已经扫过它了。整把替换那个
+	// 老接口连同它的路由一起退役（口径层 v0.38 改为逐条 CRUD）。
+	if status, _ := a.Do(t, http.MethodPut, "/admin/api/channels/1/credential", `{"credential":"sk-x"}`); status != http.StatusNotFound {
+		t.Errorf("整把替换的老接口还在，status=%d", status)
+	}
+}
+
+// PUT 不带 key_mode 时那一列不动：这个字段 v0.38 才露到表单上，老前端与手写的请求体
+// 里没有它，在服务端补默认等于把一个配好 random 的渠道静默改回轮询——而「为什么总是
+// 第一把在跑」正是多凭证放开后最难自己想明白的问题，让它被一次无关的改名悄悄改掉更甚。
+func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"pool","protocols":["anthropic"],"base_url":"https://api.example.com",
+		"key_mode":"random","credential":"sk-x"}`, &created)
+
+	// 一次只改名字的保存，请求体里没有 key_mode。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
+		"name":"pool-renamed","protocols":["anthropic"],"base_url":"https://api.example.com"}`, nil)
+
+	var channels []adminChannel
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if len(channels) != 1 || channels[0].KeyMode != "random" {
+		t.Fatalf("key_mode 被静默重置了：%+v", channels)
+	}
+	// 显式给的仍然要生效，否则「不动」就变成了「改不动」。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
+		"name":"pool-renamed","protocols":["anthropic"],"base_url":"https://api.example.com",
+		"key_mode":"polling"}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if channels[0].KeyMode != "polling" {
+		t.Errorf("显式改成 polling 没生效：%+v", channels)
 	}
 }
 
@@ -244,7 +281,8 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	// 建一个没有凭证的渠道：临时闸要求启用渠道恰好一份凭证，这一步就该被挡。
+	// 建一个没有凭证的渠道：启用渠道至少要有一份启用凭证（口径层 v0.18 可达性通则，
+	// 上限那一半已于 v0.38 放开），这一步就该被挡。
 	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
 		`{"name":"no-credential","protocols":["anthropic"],"base_url":"https://api.anthropic.com"}`)
 	if status != http.StatusBadRequest {

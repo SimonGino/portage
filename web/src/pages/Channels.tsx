@@ -1,8 +1,15 @@
 import { useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SHORT, PROTOCOL_SOON } from '../api'
-import type { Channel, ProbeResult, Protocol } from '../api'
+import {
+  api,
+  KEY_MODE_OPTIONS,
+  PROTOCOL_LABEL,
+  PROTOCOL_PATH,
+  PROTOCOL_SHORT,
+  PROTOCOL_SOON,
+} from '../api'
+import type { Channel, Credential, KeyMode, ProbeGroup, Protocol } from '../api'
 import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, Toggle, useList } from '../ui'
-import { SegmentedMulti } from '../fields'
+import { Segmented, SegmentedMulti } from '../fields'
 import { Avatar, ChannelIcon, ModelIcon, vendorForChannel, vendorForModel } from '../icons'
 
 export default function Channels() {
@@ -13,13 +20,14 @@ export default function Channels() {
   const [credFor, setCredFor] = useState<Channel | null>(null)
   // 探测结果只活在这个组件的内存里：口径层 v0.33 定的是「只提示、不落库、不参与
   // 路由」——探测结果会过期，存下来就变成一份会撒谎的缓存。刷新页面它就该没了。
-  const [probes, setProbes] = useState<Record<number, ProbeResult[] | 'running'>>({})
+  const [probes, setProbes] = useState<Record<number, ProbeGroup[] | 'running'>>({})
 
   async function probe(id: number) {
     setProbes((p) => ({ ...p, [id]: 'running' }))
     try {
-      const r = await api.post<{ results: ProbeResult[] }>(`/channels/${id}/probe`)
-      setProbes((p) => ({ ...p, [id]: r.results }))
+      // 逐把凭证探（口径层 v0.38），所以结果是按凭证分的组。
+      const r = await api.post<{ credentials: ProbeGroup[] }>(`/channels/${id}/probe`)
+      setProbes((p) => ({ ...p, [id]: r.credentials }))
     } catch {
       // 探测失败不算保存失败，也不该盖掉页面上别的错误：静默丢掉那一格。
       setProbes((p) => {
@@ -92,14 +100,14 @@ export default function Channels() {
         />
       )}
       {credFor && (
-        <CredentialForm
+        /* 关掉就重拉：凭证计数会变，「缺凭证」那个标记得跟着消失。 */
+        <CredentialPool
           channel={credFor}
-          onClose={() => setCredFor(null)}
-          onSaved={() => {
+          onClose={() => {
             setCredFor(null)
             void reload()
           }}
-        /> /* 保存完要重拉：has_credential 从 false 变 true，「缺凭证」那个标记得跟着消失 */
+        />
       )}
     </>
   )
@@ -117,12 +125,11 @@ function ChannelCard({
   onEdit: () => void
   onCredential: () => void
   onProbe: () => void
-  probe?: ProbeResult[] | 'running'
+  probe?: ProbeGroup[] | 'running'
   mutate: (fn: () => Promise<unknown>) => Promise<void>
 }) {
   const models = ch.models ?? []
   const protos = ch.protocols ?? []
-  const unreachable = Array.isArray(probe) ? probe.filter((r) => !r.reachable) : []
 
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
@@ -139,16 +146,29 @@ function ChannelCard({
           ))}
           {protos.length === 0 && <span className="tag tag-warn">协议集为空</span>}
           {ch.disabled && <span className="tag tag-off">已停用</span>}
-          {/* 没凭证的启用渠道会让整个网关启动闸不过（保存时也会被挡），
-              所以这条得显眼，不能只是个灰字。 */}
-          {!ch.has_credential && <span className="tag tag-warn">缺凭证</span>}
+          {/* 可用凭证归零是渠道从能用变不能用的唯一运行期路径（摘光不设特例，
+              口径层 v0.38），而且启用渠道零凭证连启动闸都过不去，所以这条得显眼。
+              有凭证时也把数目摆出来——3 把里坏了 2 把，只说「有凭证」等于把劣化
+              过程整个藏住。 */}
+          {ch.enabled_keys === 0 ? (
+            <span className="tag tag-warn">缺凭证</span>
+          ) : (
+            <span className="tag" title="可用凭证数">
+              凭证 {ch.enabled_keys}
+            </span>
+          )}
+          {ch.disabled_keys > 0 && (
+            <span className="tag tag-warn" title="401 自动摘除或人工停用，只能人工恢复">
+              停用 {ch.disabled_keys}
+            </span>
+          )}
         </div>
         <div className="row-actions">
           <button className="btn btn-quiet" onClick={onProbe} disabled={probe === 'running'}>
             {probe === 'running' ? '探测中…' : '探测协议'}
           </button>
           <button className="btn btn-quiet" onClick={onCredential}>
-            {ch.has_credential ? '换凭证' : '设凭证'}
+            凭证池
           </button>
           <button className="btn btn-quiet" onClick={onEdit}>
             编辑
@@ -160,29 +180,10 @@ function ChannelCard({
       <div className="channel-url">{ch.base_url}</div>
 
       {/* 探测结论只提示，不挡任何操作，也不落库——它会过期（口径层 v0.33）。
-          全通就报一句就好，不通的逐条列出来。 */}
-      {Array.isArray(probe) && (
-        <div className={'probe' + (unreachable.length > 0 ? ' probe-bad' : '')}>
-          {unreachable.length === 0 ? (
-            <span>探测通过：勾选的 {probe.length} 个协议子路径上游都有</span>
-          ) : (
-            <>
-              <span>
-                探测未通过 {unreachable.length} 项——只是提示，不影响保存与路由，但这些协议的客户端打过来会
-                404：
-              </span>
-              <ul>
-                {unreachable.map((r) => (
-                  <li key={r.protocol}>
-                    <code>{PROTOCOL_PATH[r.protocol] ?? r.protocol}</code> {r.detail}
-                    {r.status > 0 && ` (HTTP ${r.status})`}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
+          按凭证分行（v0.38）：同一个子路径对不同的号可以有不同结论，合成一条就把
+          「哪一把不行」抹掉了。 */}
+      {Array.isArray(probe) &&
+        probe.map((g) => <ProbeRow key={g.credential} group={g} multi={probe.length > 1} />)}
 
       <div className="models">
         <div className="models-title">纳管模型{models.length > 0 && ` · ${models.length}`}</div>
@@ -228,6 +229,36 @@ function ChannelCard({
         )}
         <AddModels channel={ch} mutate={mutate} />
       </div>
+    </div>
+  )
+}
+
+/** ProbeRow 是一份凭证的探测结论。全通报一句，不通的逐条列。 */
+function ProbeRow({ group, multi }: { group: ProbeGroup; multi: boolean }) {
+  const unreachable = group.results.filter((r) => !r.reachable)
+  const who = group.credential ? group.credential + (group.disabled ? '（已停用）' : '') : ''
+  return (
+    <div className={'probe' + (unreachable.length > 0 ? ' probe-bad' : '')}>
+      {unreachable.length === 0 ? (
+        <span>
+          {multi && who ? `${who}：` : ''}探测通过：勾选的 {group.results.length} 个协议子路径上游都有
+        </span>
+      ) : (
+        <>
+          <span>
+            {multi && who ? `${who}：` : ''}探测未通过 {unreachable.length}{' '}
+            项——只是提示，不影响保存与路由，但这些协议的客户端打过来会 404：
+          </span>
+          <ul>
+            {unreachable.map((r) => (
+              <li key={r.protocol}>
+                <code>{PROTOCOL_PATH[r.protocol] ?? r.protocol}</code> {r.detail}
+                {r.status > 0 && ` (HTTP ${r.status})`}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   )
 }
@@ -324,6 +355,7 @@ function ChannelForm({
     channel?.protocols?.length ? channel.protocols : ['openai'],
   )
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
+  const [keyMode, setKeyMode] = useState<KeyMode>(channel?.key_mode ?? 'polling')
   const [disabled, setDisabled] = useState(channel?.disabled ?? false)
   // 凭证只在**新建**时出现在这张表单里。编辑走单独的入口，这样「改个名字」
   // 不可能顺手把凭证清空——后端的修改接口本来就不看这个字段。
@@ -335,7 +367,7 @@ function ChannelForm({
     e.preventDefault()
     setBusy(true)
     try {
-      const body = { name, protocols: protos, base_url: baseURL, disabled }
+      const body = { name, protocols: protos, base_url: baseURL, key_mode: keyMode, disabled }
       if (channel) {
         await api.put(`/channels/${channel.id}`, body)
         onSaved(channel.id)
@@ -390,8 +422,16 @@ function ChannelForm({
         >
           <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
         </Field>
+        {/* 露出选取模式（口径层 v0.38）：多凭证放开之后，「为什么总是第一把在跑」
+            是必然被问的第一个问题，答案不该只藏在 SQL 里。 */}
+        <Field
+          label="凭证选取"
+          hint="池子里有多把时按哪种顺序用。轮询把量摊开；随机适合上游按 key 限流、想避开固定节奏的场景"
+        >
+          <Segmented value={keyMode} options={KEY_MODE_OPTIONS} onChange={setKeyMode} />
+        </Field>
         {!channel && (
-          <Field label="上游凭证" hint="只写不回读：保存之后页面上再也看不到它，只能整把换掉">
+          <Field label="上游凭证" hint="只写不回读：保存之后页面上再也看不到它。建完可以在「凭证池」里继续加">
             <input
               type="password"
               autoComplete="off"
@@ -418,58 +458,182 @@ function ChannelForm({
   )
 }
 
-function CredentialForm({
-  channel,
-  onClose,
-  onSaved,
-}: {
-  channel: Channel
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [credential, setCredential] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+/**
+ * CredentialPool 是渠道凭证池的管理面（口径层 v0.38）。
+ *
+ * 逐条 CRUD，不是整把替换：值不回读 ⇒ 页面上没法把新贴进来的这堆与库里已有的对齐；
+ * 而覆盖还会连带清掉已停用的凭证，那是 401 摘除的现场，是「这把为什么不转了」的唯一
+ * 记录。列表里只有名字与状态——没有凭证值，也没有掩码。
+ */
+function CredentialPool({ channel, onClose }: { channel: Channel; onClose: () => void }) {
+  const { data, error, reload, setError } = useList(() =>
+    api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
+  )
+  const list = data ?? []
+
+  async function mutate(fn: () => Promise<unknown>) {
+    try {
+      await fn()
+      setError('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    await reload()
+  }
 
   return (
-    <Dialog title={`设置凭证：${channel.name}`} onClose={onClose}>
-      <form
-        className="form"
-        onSubmit={async (e) => {
-          e.preventDefault()
-          setBusy(true)
-          try {
-            await api.put(`/channels/${channel.id}/credential`, { credential })
-            onSaved()
-          } catch (err) {
-            setError(err instanceof Error ? err.message : String(err))
-          } finally {
-            setBusy(false)
+    <Dialog title={`凭证池：${channel.name}`} onClose={onClose}>
+      <div className="form">
+        <div className="bar bar-warn">
+          上游凭证只写不回读，服务端不会把它发回来，掩码也不做。认凭证靠下面这个名字——
+          它会出现在调用流水与用量里，渠道内不能重名。
+        </div>
+        <ErrorBar message={error} />
+
+        {list.length === 0 ? (
+          <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
+        ) : (
+          <div className="cred-list">
+            {list.map((c) => (
+              <CredentialRow key={c.id} cred={c} mutate={mutate} />
+            ))}
+          </div>
+        )}
+
+        <AddCredentials channelID={channel.id} mutate={mutate} />
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-primary" onClick={onClose}>
+            完成
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+/** CredentialRow 是池子里的一行：改名、停用/启用、删除。凭证值改不了也看不到。 */
+function CredentialRow({
+  cred,
+  mutate,
+}: {
+  cred: Credential
+  mutate: (fn: () => Promise<unknown>) => Promise<void>
+}) {
+  const [name, setName] = useState(cred.name)
+
+  return (
+    <div className={'cred' + (cred.disabled ? ' is-off' : '')}>
+      <input
+        className="cred-name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => {
+          if (name.trim() && name !== cred.name) {
+            void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: cred.disabled }))
           }
         }}
+      />
+      <div className="cred-state">
+        {cred.disabled ? (
+          /* 摘除只人工恢复（口径层 v0.38），所以原因与时刻要一直摆着——它就是
+             「这把为什么不转了」的唯一记录。 */
+          <span className="tag tag-off" title={cred.disabled_at}>
+            {cred.disabled_reason || '已停用'}
+          </span>
+        ) : (
+          <span className="muted">{cred.created_at}</span>
+        )}
+      </div>
+      <div className="row-actions">
+        <Toggle
+          on={!cred.disabled}
+          onChange={(on) =>
+            void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: !on }))
+          }
+        />
+        <Confirm ghost onConfirm={() => void mutate(() => api.del(`/credentials/${cred.id}`))} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * AddCredentials 往池子里**追加**。
+ *
+ * 单条可以自己起名字；一次贴一批（一行一份）时名字由后端给 `凭证 N`——批量粘贴的
+ * 场景里人手上只有一堆 key，逼他为每一行想个名字只会让这个入口没人用。
+ */
+function AddCredentials({
+  channelID,
+  mutate,
+}: {
+  channelID: number
+  mutate: (fn: () => Promise<unknown>) => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [credential, setCredential] = useState('')
+  const [bulk, setBulk] = useState('')
+  const [batch, setBatch] = useState(false)
+
+  const lines = bulk
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const ready = batch ? lines.length > 0 : credential.trim().length > 0
+
+  return (
+    <form
+      className="form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!ready) return
+        const body = batch ? { credentials: bulk } : { name, credential }
+        setName('')
+        setCredential('')
+        setBulk('')
+        void mutate(() => api.post(`/channels/${channelID}/credentials`, body))
+      }}
+    >
+      <Field
+        label={batch ? '批量粘贴（一行一份，追加）' : '添加一份凭证'}
+        hint={
+          batch
+            ? '只追加，不覆盖已有的——名字由网关给「凭证 N」，之后可以改'
+            : '只追加，不影响池子里已有的几份；名字之后随时能改'
+        }
       >
-        <div className="bar bar-warn">
-          上游凭证只写不回读，服务端不会把它发回来。这里填的会<strong>替换</strong>当前那把。
-        </div>
-        <Field label="上游 API key">
-          <input
-            type="password"
-            autoFocus
-            autoComplete="off"
-            value={credential}
-            onChange={(e) => setCredential(e.target.value)}
-          />
-        </Field>
-        <ErrorBar message={error} />
-        <div className="form-actions">
-          <button type="button" className="btn btn-quiet" onClick={onClose}>
-            取消
-          </button>
-          <button className="btn btn-primary" disabled={busy || !credential.trim()}>
-            {busy ? '保存中…' : '保存'}
-          </button>
-        </div>
-      </form>
-    </Dialog>
+        {batch ? (
+          <textarea rows={4} value={bulk} onChange={(e) => setBulk(e.target.value)} />
+        ) : (
+          /* 两行，key 在上：这一行是必填的那个，名字只是给它起个称呼，
+             缺省时后端会给「凭证 N」。挤成一行会让两个宽度需求差很多的输入
+             互相将就。 */
+          <div className="cred-add">
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder="上游 API key（必填）"
+              value={credential}
+              onChange={(e) => setCredential(e.target.value)}
+            />
+            <input
+              placeholder="名字（可留空，默认「凭证 N」）"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+        )}
+      </Field>
+      <div className="form-actions">
+        <button type="button" className="btn btn-quiet" onClick={() => setBatch(!batch)}>
+          {batch ? '改为单条添加' : '批量粘贴'}
+        </button>
+        <button className="btn btn-primary" disabled={!ready}>
+          {batch && lines.length > 1 ? `添加 ${lines.length} 份` : '添加'}
+        </button>
+      </div>
+    </form>
   )
 }

@@ -91,7 +91,12 @@ func (h *Handler) Mount(r *gin.Engine) {
 	auth.POST("/channels", h.createChannel)
 	auth.PUT("/channels/:id", h.updateChannel)
 	auth.DELETE("/channels/:id", h.deleteChannel)
-	auth.PUT("/channels/:id/credential", h.setChannelCredential)
+	// 凭证池：逐条 CRUD + 追加式批量粘贴（口径层 v0.38 改写 v0.28 的整把替换）。
+	// 依旧**没有任何读凭证值的接口**——GET 回的是名字与状态。
+	auth.GET("/channels/:id/credentials", h.listCredentials)
+	auth.POST("/channels/:id/credentials", h.addCredentials)
+	auth.PUT("/credentials/:id", h.updateCredential)
+	auth.DELETE("/credentials/:id", h.deleteCredential)
 	auth.POST("/channels/:id/probe", h.probeChannel)
 	auth.POST("/channels/:id/models", h.addChannelModel)
 	auth.PUT("/channel-models/:id", h.updateChannelModel)

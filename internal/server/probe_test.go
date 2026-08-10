@@ -14,13 +14,32 @@ import (
 // 「勾上的这几个子路径上游到底提供不提供」——勾错了的后果是那一半客户端全 404，
 // 而启动闸看不见（那要发包才知道）。
 
+// 探测结果按凭证分组（口径层 v0.38 逐把凭证探）。
 type probeResponse struct {
-	Results []struct {
-		Protocol  string `json:"protocol"`
-		Reachable bool   `json:"reachable"`
-		Status    int    `json:"status"`
-		Detail    string `json:"detail"`
-	} `json:"results"`
+	Credentials []struct {
+		Credential string `json:"credential"`
+		Disabled   bool   `json:"disabled"`
+		Results    []struct {
+			Protocol  string `json:"protocol"`
+			Reachable bool   `json:"reachable"`
+			Status    int    `json:"status"`
+			Detail    string `json:"detail"`
+		} `json:"results"`
+	} `json:"credentials"`
+}
+
+// only 取唯一那一组凭证的结果——单凭证渠道的用例都只关心那一组。
+func (p probeResponse) only(t *testing.T) []struct {
+	Protocol  string `json:"protocol"`
+	Reachable bool   `json:"reachable"`
+	Status    int    `json:"status"`
+	Detail    string `json:"detail"`
+} {
+	t.Helper()
+	if len(p.Credentials) != 1 {
+		t.Fatalf("期望一组凭证的结果，得到 %+v", p.Credentials)
+	}
+	return p.Credentials[0].Results
 }
 
 // 一个只提供 CC 的上游：/v1/chat/completions 回 400（缺 model），/v1/responses 回
@@ -50,11 +69,12 @@ func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
 	var got probeResponse
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", &got)
 
-	if len(got.Results) != 2 {
-		t.Fatalf("期望两个协议各一条结果，得到 %+v", got.Results)
+	results := got.only(t)
+	if len(results) != 2 {
+		t.Fatalf("期望两个协议各一条结果，得到 %+v", results)
 	}
 	byProto := map[string]bool{}
-	for _, r := range got.Results {
+	for _, r := range results {
 		byProto[r.Protocol] = r.Reachable
 	}
 	if !byProto["openai"] {
@@ -102,7 +122,7 @@ func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &got); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
-	if len(got.Results) != 1 || got.Results[0].Reachable {
-		t.Errorf("连不上的渠道应判为不可达：%+v", got.Results)
+	if results := got.only(t); len(results) != 1 || results[0].Reachable {
+		t.Errorf("连不上的渠道应判为不可达：%+v", results)
 	}
 }

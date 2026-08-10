@@ -1224,6 +1224,55 @@ select:focus {
   flex-shrink: 0;
 }
 
+/* ── 凭证池 ────────────────────────────────────────────────────────── */
+
+/* 一行一份凭证：名字（可改）+ 状态 + 开关与删除。凭证值不在这里，也不会在别处
+   ——只写不回读（口径层 v0.28/v0.38）。 */
+.cred-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cred {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* 停用的那些不隐藏、只压暗：它们是 401 摘除的现场，而恢复只能人工做。 */
+.cred.is-off {
+  opacity: 0.65;
+}
+
+.cred-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.cred-state {
+  flex-shrink: 0;
+  font-size: 12px;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cred-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cred-add input {
+  min-width: 0;
+}
+
 /* ── 用量页 ────────────────────────────────────────────────────────── */
 
 /* 顶部指标条：一屏第一眼要回答的是「这段时间跑了多少、挂了多少」，

@@ -103,6 +103,18 @@ export interface ProbeResult {
   detail: string
 }
 
+/**
+ * 探测结果按凭证分组（口径层 v0.38 逐把凭证探，含已停用的）。
+ *
+ * 含停用的那些是有意的：恢复只人工做，「这把被摘的凭证现在还坏不坏」除了删掉重配
+ * 就没有别的办法回答。一份凭证都没有时后端仍回一组，credential 是空串。
+ */
+export interface ProbeGroup {
+  credential: string
+  disabled: boolean
+  results: ProbeResult[]
+}
+
 export interface ChannelModel {
   id: number
   upstream_model: string
@@ -118,11 +130,40 @@ export interface Channel {
    */
   protocols: Protocol[]
   base_url: string
-  key_mode: string
+  /** 凭证选取模式（口径层 v0.11）：轮询或随机。 */
+  key_mode: KeyMode
   disabled: boolean
-  /** 只有这个布尔，没有凭证本身：上游凭证只写不回读（PO 于 M3 裁定）。 */
-  has_credential: boolean
+  /**
+   * 可用/停用凭证计数（口径层 v0.38）。没有凭证值，也没有掩码——上游凭证只写不回读。
+   * 用计数而不是「有没有」：摘光不设特例，3 把里坏了 2 把时布尔显示的仍是「有凭证」，
+   * 把最该被看见的劣化过程整个藏住。
+   */
+  enabled_keys: number
+  disabled_keys: number
   models: ChannelModel[] | null
+}
+
+export type KeyMode = 'polling' | 'random'
+
+export const KEY_MODE_OPTIONS: { value: KeyMode; label: string; hint: string }[] = [
+  { value: 'polling', label: '轮询', hint: '依次轮转' },
+  { value: 'random', label: '随机', hint: '每次随机挑' },
+]
+
+/**
+ * 凭证池里的一份凭证（口径层 v0.38）。
+ *
+ * **没有凭证值**，掩码也没有：只写不回读（v0.28），网关不从凭证值派生任何显示字符。
+ * 页面上认它靠的是人自己写的名字，渠道内唯一。
+ */
+export interface Credential {
+  id: number
+  name: string
+  disabled: boolean
+  /** 401 摘除的现场：只有 401 会自动摘，且只人工恢复。 */
+  disabled_reason: string
+  disabled_at: string
+  created_at: string
 }
 
 export interface Candidate {
@@ -158,6 +199,8 @@ export interface CallLog {
   model_requested: string
   model_upstream: string
   channel_name: string
+  /** 本次真正发请求的那份凭证名（换过则是最后一份）。没走到上游时是空串。 */
+  channel_key_name: string
   status: number
   retry_count: number
   ttft_ms: number | null
@@ -169,8 +212,9 @@ export interface CallLog {
   error: string
 }
 
+/** 用量汇总的一行。label 按聚合维度取值：接入点名，或上游凭证名。 */
 export interface UsageRow {
-  model_requested: string
+  label: string
   calls: number
   errors: number
   input_tokens: number
