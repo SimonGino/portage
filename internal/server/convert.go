@@ -32,6 +32,8 @@ func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 		return true // A→CC（#11，口径层 §2.1 优先级①上半）
 	case ep == protocol.EndpointResponses && channel == protocol.OpenAICC:
 		return true // R→CC（#12，优先级①下半）
+	case ep == protocol.EndpointResponses && channel == protocol.Anthropic:
+		return true // R→A（#25，优先级②：Codex 挂 Claude）
 	}
 	return false
 }
@@ -47,7 +49,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// 状态，而入口 codec 的 DecodeRequest 与 EncodeStream/EncodeFullBody 服务的是同
 	// 一次请求。openairesponses 就靠这条把「客户端声明了哪些 custom 工具」从解码侧
 	// 传到编码侧（见该包 Codec 的注释）。
-	inCodec, outCodec := codecs.New(ep.Proto), codecs.New(cand.Protocol)
+	codecOpts := codecs.Options{DefaultMaxTokens: s.cfg.DefaultMaxTokens}
+	inCodec, outCodec := codecs.New(ep.Proto, codecOpts), codecs.New(cand.Protocol, codecOpts)
 	if inCodec == nil || outCodec == nil {
 		s.log.Error("转换路径缺 codec", "inbound", ep.Proto, "channel", cand.Protocol)
 		ep.Proto.WriteError(c.Writer, http.StatusInternalServerError, "转换路径不可用")

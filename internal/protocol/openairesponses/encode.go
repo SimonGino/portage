@@ -107,12 +107,17 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		})
 
 	case protocol.EvThinkingDelta:
-		// 丢弃，且这次是**真的没有来源**：R→CC 是本包唯一开通的入口方向，而 CC 解码
-		// 侧根本不产 EvThinkingDelta（openaicc/decode.go 里没有 reasoning 分支）。
-		// Responses 确实有 response.reasoning_summary_text.delta 可以承接，但要写它
-		// 得先有 A→R 的真实转录来钉 reasoning item 的生命周期——手上三份 Responses
-		// 转录里的 reasoning item 只有 encrypted_content，一条 delta 都没有。等
-		// 优先级④（A→R）拿到证据再补，现在写等于照文档猜。
+		// 丢弃——而且 #25（R→A）之后这条**真的会被走到**：Anthropic 解码侧产
+		// thinking_delta 与 signature_delta（五份真实转录实测）。写这条注释时它还是
+		// 死路（CC 解码侧不产推理事件），现在不是了。
+		//
+		// 仍然丢，理由没变：Responses 确实有 response.reasoning_summary_text.delta
+		// 可以承接，但要写它得先有真实转录来钉 reasoning item 的生命周期——手上三份
+		// Responses 转录里的 reasoning item 只有 encrypted_content，一条 delta 都
+		// 没有。照文档猜着写一个会在流里凭空造 item 的分支，比明着丢更危险。
+		//
+		// 代价是 Codex 在 R→A 路径上看不到 Claude 的推理过程（§9.2 缺口）。signature
+		// 尤其不能漏进正文：那是一串 base64，漏了客户端会把它当回答渲染出来。
 		return nil
 
 	case protocol.EvToolCallStart, protocol.EvToolArgsDelta:
@@ -188,7 +193,7 @@ func (e *streamEncoder) flushTool(index int) error {
 	itemID, itemType, argsField := "fc_"+rand.Text(), "function_call", "arguments"
 	deltaEvent, doneEvent := "response.function_call_arguments.delta", "response.function_call_arguments.done"
 	if custom {
-		args = unwrapCustomToolArgs(args)
+		args = protocol.UnwrapCustomToolArgs(args)
 		itemID, itemType, argsField = "ctc_"+rand.Text(), "custom_tool_call", "input"
 		deltaEvent, doneEvent = "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done"
 	} else if args == "" {
@@ -441,39 +446,6 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		status = "incomplete"
 	}
 	return marshal(enc.responseBody(status, enc.done, true))
-}
-
-// unwrapCustomToolArgs 把 CC 出口合成的包装对象拆回自由文本。
-//
-// 对称的另一半是 openaicc/encode.go 的 argsWrapKey：canonical 的 ToolCall.Args 不
-// 保证是 JSON（Codex 的 exec 收 JavaScript 源码），而 CC 契约要求 function.arguments
-// 必须是 JSON 字符串，于是出口侧把它包成 `{"input":"<原文>"}`。这里不拆，Codex 拿到的
-// 就是一段包着 JS 的 JSON，`exec` 直接语法错。
-//
-// 拆不动就原样返回，而不是报错：上游未必真按我们发过去的形状回话——第三方中转会
-// 重写 arguments，模型也可能自作主张换个结构。原样给出去，客户端至少还有得看。
-// 同一套判定见 sub2api 的 extractCustomToolCallInput。
-func unwrapCustomToolArgs(args string) string {
-	trimmed := strings.TrimSpace(args)
-	if trimmed == "" {
-		return ""
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal([]byte(trimmed), &obj) != nil {
-		// 根本不是 JSON 对象：上游把自由文本原样回来了，正是我们想要的形态。
-		return trimmed
-	}
-	raw, ok := obj["input"]
-	if !ok {
-		return trimmed
-	}
-	var s string
-	if json.Unmarshal(raw, &s) != nil {
-		// 有 input 键但不是字符串，说明这是个**真的**带 input 参数的 JSON 工具，
-		// 不是我们包出来的。别拆。
-		return trimmed
-	}
-	return s
 }
 
 // usageBody 按 Responses 的 usage 形状写计数。

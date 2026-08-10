@@ -127,24 +127,21 @@ function ChannelCard({
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
       <div className="channel-head">
-        <ChannelIcon channel={ch} size={32} />
-        <div className="channel-id">
-          <div className="channel-name">
-            <strong>{ch.name}</strong>
-            {/* 协议集全列出来：这一格回答的是「这个渠道能接住哪些客户端」，
-                只显示一个就看不出来 Responses 的 harness 会不会走转换。 */}
-            {protos.map((p) => (
-              <span key={p} className="tag" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
-                {PROTOCOL_SHORT[p] ?? p}
-              </span>
-            ))}
-            {protos.length === 0 && <span className="tag tag-warn">协议集为空</span>}
-            {ch.disabled && <span className="tag tag-off">已停用</span>}
-            {/* 没凭证的启用渠道会让整个网关启动闸不过（保存时也会被挡），
-                所以这条得显眼，不能只是个灰字。 */}
-            {!ch.has_credential && <span className="tag tag-warn">缺凭证</span>}
-          </div>
-          <div className="channel-url">{ch.base_url}</div>
+        <div className="channel-title">
+          <ChannelIcon channel={ch} size={24} />
+          <strong>{ch.name}</strong>
+          {/* 协议集全列出来：这一格回答的是「这个渠道能接住哪些客户端」，
+              只显示一个就看不出来 Responses 的 harness 会不会走转换。 */}
+          {protos.map((p) => (
+            <span key={p} className="tag" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
+              {PROTOCOL_SHORT[p] ?? p}
+            </span>
+          ))}
+          {protos.length === 0 && <span className="tag tag-warn">协议集为空</span>}
+          {ch.disabled && <span className="tag tag-off">已停用</span>}
+          {/* 没凭证的启用渠道会让整个网关启动闸不过（保存时也会被挡），
+              所以这条得显眼，不能只是个灰字。 */}
+          {!ch.has_credential && <span className="tag tag-warn">缺凭证</span>}
         </div>
         <div className="row-actions">
           <button className="btn btn-quiet" onClick={onProbe} disabled={probe === 'running'}>
@@ -156,9 +153,11 @@ function ChannelCard({
           <button className="btn btn-quiet" onClick={onEdit}>
             编辑
           </button>
-          <Confirm onConfirm={() => void mutate(() => api.del(`/channels/${ch.id}`))} />
+          <Confirm ghost onConfirm={() => void mutate(() => api.del(`/channels/${ch.id}`))} />
         </div>
       </div>
+
+      <div className="channel-url">{ch.base_url}</div>
 
       {/* 探测结论只提示，不挡任何操作，也不落库——它会过期（口径层 v0.33）。
           全通就报一句就好，不通的逐条列出来。 */}
@@ -186,39 +185,46 @@ function ChannelCard({
       )}
 
       <div className="models">
-        <div className="models-title">
-          纳管模型
-          <span className="muted">
-            {models.length > 0 && ` · ${models.length} 个`}
-          </span>
-        </div>
+        <div className="models-title">纳管模型{models.length > 0 && ` · ${models.length}`}</div>
         {models.length === 0 ? (
           <div className="muted">还没有纳管模型。填上游那边真实的模型名，比如 gpt-4o、deepseek-chat。</div>
         ) : (
-          <ul className="model-list">
+          <div className="model-grid">
             {models.map((m) => (
-              <li key={m.id} className={m.disabled ? 'is-off' : ''}>
+              <div key={m.id} className={'model' + (m.disabled ? ' is-off' : '')}>
                 <ModelIcon model={m.upstream_model} size={18} />
-                <code className="model-name">{m.upstream_model}</code>
-                {/* 限定名是客户端 `model` 字段真正要填的东西（口径层 v0.32），
-                    所以摆出来而且能一键复制——手抄一个带斜杠的长串很容易漏字符，
-                    漏了的表现是 404。停用的不给复制：抄走了也调不通。 */}
+                {/* 摆的是裸模型名（网格单元里放不下限定名），复制走的是限定名——
+                    那才是客户端 `model` 字段要填的东西（口径层 v0.32），手抄一个带
+                    斜杠的长串很容易漏字符，漏了的表现是 404。停用的不给复制：抄走
+                    了也调不通，title 里给全名就够。 */}
                 {m.disabled ? (
-                  <span className="tag tag-off">已停用</span>
+                  <code className="model-name" title={m.upstream_model}>
+                    {m.upstream_model}
+                  </code>
                 ) : (
-                  <CopyCode value={`${ch.name}/${m.upstream_model}`} title="客户端 model 字段填这个" />
+                  <CopyCode
+                    className="model-name"
+                    value={`${ch.name}/${m.upstream_model}`}
+                    label={m.upstream_model}
+                    title={`点击复制 ${ch.name}/${m.upstream_model}`}
+                  />
                 )}
-                <span className="spacer" />
-                <Toggle
-                  on={!m.disabled}
-                  onChange={(on) =>
-                    void mutate(() => api.put(`/channel-models/${m.id}`, { disabled: !on }))
-                  }
-                />
-                <Confirm onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))} />
-              </li>
+                <div className="model-actions">
+                  {m.disabled && <span className="tag tag-off">已停用</span>}
+                  <Toggle
+                    on={!m.disabled}
+                    onChange={(on) =>
+                      void mutate(() => api.put(`/channel-models/${m.id}`, { disabled: !on }))
+                    }
+                  />
+                  <Confirm
+                    ghost
+                    onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))}
+                  />
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
         <AddModels channel={ch} mutate={mutate} />
       </div>
@@ -358,7 +364,7 @@ function ChannelForm({
           </div>
         </div>
 
-        <Field label="渠道名" hint="会出现在调用流水里，也是限定名的前半截（如 bailian/qwen3-max）">
+        <Field label="渠道名" hint="会出现在调用流水里，也是限定名的前半截（如 bailian/qwen3-max）。不能含 `/`——模型名那半截本来就可能带，两边都带就分不清界在哪">
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field
@@ -442,7 +448,7 @@ function CredentialForm({
         }}
       >
         <div className="bar bar-warn">
-          上游凭证只写不回读，服务端不会把它发回来。这里填的会**替换**当前那把。
+          上游凭证只写不回读，服务端不会把它发回来。这里填的会<strong>替换</strong>当前那把。
         </div>
         <Field label="上游 API key">
           <input

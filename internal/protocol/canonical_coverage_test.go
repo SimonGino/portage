@@ -41,6 +41,7 @@ var opaqueRoots = []string{
 	"input[].tools[].parameters",
 	"input[].tools[].format",
 	"messages[].content[].input",
+	"tools[].function.parameters", // CC 的工具 JSON Schema，同 tools[].input_schema
 }
 
 // coverage 是键路径 → 归宿。改动这张表就得同步改 docs/MVP设计草案.md §4 的对照表。
@@ -150,6 +151,36 @@ var coverage = map[string]disposition{
 	"input[].tools[].parameters":  dOpaque, // Tool.Schema
 	"input[].tools[].strict":      dExtras,
 	"input[].tools[].format":      dOpaque, // lark 文法，无 schema 对应物
+
+	// ---- OpenAI Chat Completions（opencode 1.18 实采，#27）----
+	//
+	// model / stream / max_tokens / messages / messages[].role / messages[].content
+	// 与上面 Anthropic 段同名同归宿，不再重复列。这里只列 CC 独有的那些。
+
+	// 工具调用：CC 把一轮的多个调用装在 assistant 消息的 tool_calls 数组里，
+	// 结果则是**每个调用一条独立的 tool 消息**（实采 in-cc-parallel-turn2 两条）。
+	// 这与 Anthropic 正相反——那边所有 tool_result 必须挤进同一条 user 消息，
+	// 所以 CC→A 的编码侧要做合并，不是逐条平移。
+	"messages[].tool_calls":                      dField, // → Message.ToolCalls
+	"messages[].tool_calls[]":                    dField,
+	"messages[].tool_calls[].id":                 dField, // → ToolCall.ID，与 tool_call_id 对上
+	"messages[].tool_calls[].type":               dField, // 恒 "function" → ToolCall.Kind
+	"messages[].tool_calls[].function":           dField,
+	"messages[].tool_calls[].function.name":      dField, // → ToolCall.Name
+	"messages[].tool_calls[].function.arguments": dField, // → ToolCall.Args（按契约是 JSON 字符串）
+	"messages[].tool_call_id":                    dField, // → ToolResult.CallID
+
+	// stream_options.include_usage 是 CC 独有的开关：不给就不发那个 usage chunk。
+	// **不能丢**——入口半边的 EncodeStream 要靠它决定回程要不要补 usage 帧，
+	// 丢了就只能猜，两个方向都会错一半。Anthropic / Responses 没有对应开关
+	// （usage 恒发），所以它进 Extras 而不是 canonical 字段。
+	"stream_options":               dExtras,
+	"stream_options.include_usage": dExtras,
+
+	"tools[].function":             dField,
+	"tools[].function.name":        dField,  // → Tool.Name
+	"tools[].function.description": dField,  // → Tool.Description
+	"tools[].function.parameters":  dOpaque, // → Tool.Schema，整棵 JSON Schema 不下钻
 }
 
 func TestCanonicalModelCoversInboundSamples(t *testing.T) {

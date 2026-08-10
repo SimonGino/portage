@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"io"
 	"net/http"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
@@ -9,34 +8,38 @@ import (
 
 // Codec 是 Anthropic Messages 协议的转换器。
 //
-// #11 落地的是 Anthropic 作**入口**要用的三个方法：DecodeRequest（decode.go）、
-// EncodeStream / EncodeFullBody（encode.go）。作**出口**的那两个（EncodeRequest、
-// DecodeStream / DecodeFullBody）属于 ② R→A、③ CC→A，仍是骨架——而且要等 #7 拿到
-// 官方凭证才验得了。
+// #11 落地入口半边（DecodeRequest、EncodeStream / EncodeFullBody），#25 补上出口
+// 半边（EncodeRequest、DecodeStream / DecodeFullBody），两半都在了。
 //
 // 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
 // 在运行时组装才发现。
 var _ protocol.Codec = (*Codec)(nil)
 
-type Codec struct{}
-
-func NewCodec() *Codec { return &Codec{} }
-
-// EncodeRequest 仍是骨架：Anthropic 作**出口**（CC→A / R→A）是 M2 后续批次，且
-// 要等 #7 拿到官方凭证才验得了。
-func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error) {
-	return nil, protocol.ErrNotImplemented
+// Options 是从配置注进来的编码参数，由 codecs.New 传入。
+type Options struct {
+	// DefaultMaxTokens 是 max_tokens 缺省时的兜底值。
+	//
+	// Anthropic 的 max_tokens 是**必填**，而 OpenAI 两个协议都可以不给：Responses
+	// 的 max_output_tokens 缺省、CC 的 max_tokens 缺省，都是合法请求。所以补默认
+	// 这件事只能发生在这里，不能在 convert.go 里对 canonical 无条件填——那会让
+	// 已经上线的 R→CC 路径开始悄悄截断（口径见 codecs.Options）。
+	DefaultMaxTokens int
 }
 
-func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
-	return nil, protocol.ErrNotImplemented
+type Codec struct {
+	opts Options
 }
 
-// DecodeFullBody 仍是骨架：本包的解码侧只在 Anthropic 作**上游**时才用得到，而那
-// 条路径（CC→A / R→A）要等 #7 拿到官方凭证才验得了。#11 走的是 Anthropic 入口，
-// 用不到它。
-func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
-	return nil, protocol.ErrNotImplemented
+// NewCodec 建一个 Anthropic Codec。
+//
+// 取可变参数只为了让入口方向的用例（#11 那批，压根用不到 Options）不必逐个改；
+// 出口方向由 codecs.New 显式传值。
+func NewCodec(opts ...Options) *Codec {
+	c := &Codec{}
+	if len(opts) > 0 {
+		c.opts = opts[0]
+	}
+	return c
 }
 
 // EncodeError 直接委托给 M0 就已落地的 protocol.WriteError——错误格式不是转换

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/ai-gateway/internal/protocol"
 )
 
 // 本文件测的是 R→CC 转换路径（#12，口径层 §2.1 优先级①下半）：Codex CLI 挂第三方
@@ -101,7 +102,10 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 		Tools []struct {
 			Type     string `json:"type"`
 			Function struct {
-				Name string `json:"name"`
+				Name       string `json:"name"`
+				Parameters struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"parameters"`
 			} `json:"function"`
 		} `json:"tools"`
 	}
@@ -120,6 +124,20 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "exec,wait" {
 		t.Errorf("上游收到的工具 = %v, 期望 exec,wait", names)
+	}
+
+	// 而且 exec 必须**带一份合成的 parameters**，声明它收一个叫 input 的字符串。
+	// 原先这里是空的：工具是发过去了，但没有任何东西告诉模型该回 {"input": …}，
+	// 模型自由发挥回个 {"cmd": …}，回程拆包拆不动只好原样给出去，Codex 拿到一段
+	// JSON 当 JS 跑。发出去的声明和回来的拆包必须是同一套约定。
+	for _, tool := range sent.Tools {
+		if tool.Function.Name != "exec" {
+			continue
+		}
+		if _, ok := tool.Function.Parameters.Properties[protocol.CustomToolArgsKey]; !ok {
+			t.Errorf("custom 工具 exec 的 parameters 没声明 %q: %s",
+				protocol.CustomToolArgsKey, req.Body)
+		}
 	}
 
 	// 历史里的 custom_tool_call：arguments 必须是**合法 JSON**（包装过的），
@@ -302,19 +320,23 @@ func TestResponsesGateOpensOnlyResponsesToCC(t *testing.T) {
 }
 
 // 上一条钉的是「开的这格是 R→CC 不是别的」，这条钉的是「只开了一格，不是开了
-// 一整行」：同一个 /v1/responses 端点挂到 anthropic 渠道仍须 501。R→A 是优先级
-// ②，openairesponses 的出口半边还没有，放过去只会拿 ErrNotImplemented 炸在半路。
-func TestResponsesGateStaysClosedForNonCCChannel(t *testing.T) {
+// 一整行」。
+//
+// 原先指的是 /v1/responses × anthropic——那一格 #25 已经放开了，于是改指一个还关着
+// 的：/v1/messages × openai_responses（③ CC→R 的邻居，openaicc 的入口半边一个都
+// 还没有）。这条断言本身比它指向哪一格更重要，所以是改指不是删除。
+func TestGateStaysClosedForUnimplementedPath(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, "claude-x", openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-x", openaiCredential)
 	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
-	resp := gw.Post(t, "/v1/responses", convertResponsesRequest, nil)
+	resp := gw.Post(t, "/v1/messages",
+		`{"model":"`+accessPointModel+`","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`, nil)
 	body := gatewaytest.ReadBody(t, resp)
 
 	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("responses → anthropic 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+		t.Errorf("messages → openai_responses 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
 	}
 	if up.Count() != 0 {
 		t.Errorf("闸没开就不该碰上游，却收到 %d 次", up.Count())
