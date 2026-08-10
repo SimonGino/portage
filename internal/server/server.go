@@ -199,7 +199,7 @@ func (s *Server) models(c *gin.Context) {
 	models, err := store.ListExposedModels(c.Request.Context(), s.db)
 	if err != nil {
 		s.log.Error("列可路由模型失败", "err", err)
-		protocol.OpenAICC.WriteError(c.Writer, http.StatusInternalServerError, "模型列表读取失败")
+		protocol.OpenAI.WriteError(c.Writer, http.StatusInternalServerError, "模型列表读取失败")
 		return
 	}
 

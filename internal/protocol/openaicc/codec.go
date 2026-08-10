@@ -1,7 +1,6 @@
 package openaicc
 
 import (
-	"io"
 	"net/http"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
@@ -9,33 +8,31 @@ import (
 
 // Codec 是 OpenAI Chat Completions 协议的转换器。
 //
-// #11 落地的是 CC 作**出口**要用的三个方法：EncodeRequest（encode.go）、
-// DecodeStream / DecodeFullBody（decode.go）。CC 作**入口**的那两个（DecodeRequest、
-// EncodeStream / EncodeFullBody）属于 ③ CC→A、CC→R，仍是骨架。
+// 出口半边（EncodeRequest / DecodeStream / DecodeFullBody）在 #11 落地，入口半边
+// （DecodeRequest / EncodeStream / EncodeFullBody）在 #9 落地——后者打开的是 CC→A，
+// 与 openairesponses 的出口半边合起来打开 CC→R。
 //
 // 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
 // 在运行时组装才发现。
 var _ protocol.Codec = (*Codec)(nil)
 var _ protocol.RequestEncodeReporter = (*Codec)(nil)
 
-type Codec struct{}
+// Codec 带**每请求状态**（includeUsage），一个实例只能服务一次请求，不可复用、
+// 不可并发共享。relayConverted 已经按这条口径把入口 codec 一路带到响应侧。
+//
+// 与 openairesponses 的 customTools 是同一类问题：响应该怎么编，取决于**请求里
+// 怎么说的**，而 EncodeStream 只看得见事件流。CC 的 usage 帧是可选的，发不发由
+// 客户端的 stream_options.include_usage 决定，事件流里没有这个信息——它来自入站
+// 请求，只能由 DecodeRequest 存下来传给编码侧。
+type Codec struct {
+	// includeUsage 是本次请求有没有要过流末的 usage 帧，由 DecodeRequest 填。
+	includeUsage bool
+}
 
 func NewCodec() *Codec { return &Codec{} }
 
-func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, error) {
-	return nil, protocol.ErrNotImplemented
-}
-
-func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
-	return protocol.ErrNotImplemented
-}
-
-func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
-	return nil, protocol.ErrNotImplemented
-}
-
 // EncodeError 直接委托给 M0 就已落地的 protocol.WriteError——错误格式不是转换
-// 逻辑，骨架期没有理由让它跟着返回「未实现」。
+// 逻辑，没有理由跟着走 codec 这条路。
 func (c *Codec) EncodeError(w http.ResponseWriter, status int, msg string) {
-	protocol.OpenAICC.WriteError(w, status, msg)
+	protocol.OpenAI.WriteError(w, status, msg)
 }

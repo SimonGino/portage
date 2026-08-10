@@ -32,6 +32,7 @@ const (
 	DropServerTool    = "server_tool"    // 入口协议声明的上游服务端工具（Responses 的 web_search 一类）
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），Anthropic 无对应能力
 	DropVendorRequest = "vendor_request" // 入口协议独有的顶层字段
+	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
 )
 
@@ -89,7 +90,7 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	}
 
 	if req.Temperature != nil {
-		out["temperature"] = *req.Temperature
+		out["temperature"] = clampTemperature(*req.Temperature)
 	}
 	if len(req.Stop) > 0 {
 		out["stop_sequences"] = req.Stop
@@ -109,6 +110,25 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		return nil, nil, fmt.Errorf("anthropic: 序列化请求体: %w", err)
 	}
 	return body, dropped, nil
+}
+
+// clampTemperature 把 OpenAI 侧的 0~2 收进 Anthropic 的 0~1（展开层 §2）。
+//
+// 两边这个字段同名不同域：CC 与 Responses 收 0~2，Anthropic 超过 1 直接 400。能走到
+// 这里的只有 CC→A 与 R→A，入站值就是 OpenAI 域的，不 clamp 等于把一部分合法请求
+// 变成必被上游拒的请求。
+//
+// 截断而不是线性缩放（不做 t/2）：缩放会**悄悄改掉**每一个请求的采样行为——客户端
+// 发 0.7 期待的是 0.7，收到 0.35 的输出会更保守而它无从知晓。截断只动那些本来就
+// 越界、否则会失败的值，动的范围最小。
+func clampTemperature(t float64) float64 {
+	switch {
+	case t < 0:
+		return 0
+	case t > 1:
+		return 1
+	}
+	return t
 }
 
 // fallbackMaxTokens 是连配置都没给时的最后兜底。
@@ -143,9 +163,17 @@ func splitSystem(req *protocol.Request) ([]protocol.Block, []protocol.Message) {
 
 // encodeMessages 铺 messages，顺带做两件 Anthropic 特有的规整。
 //
-// 一是**相邻同角色合并**：canonical 允许连发同角色（CC 那边合法），Anthropic 要求
-// 交替。二是 tool_result 的归属——canonical 沿用 Anthropic 的摆法（结果在 user
-// 消息的块里），所以这里不需要像 CC 出口那样拆成独立消息，按序编出去即可。
+// 一是**相邻同角色合并**：canonical 允许连发同角色（CC 那边合法，in-cc-consecutive-user
+// 实采就是连着两条 user），Anthropic 要求交替。
+//
+// 二是 tool_result 的归属。CC 入口解出来的是**每个结果一条 RoleTool 消息**
+// （openaicc/decode_request.go 不做归一），而 Anthropic 要求同一轮的所有 tool_result
+// 挤进同一条 user 消息里。这里不需要为它写专门的合并逻辑——RoleTool 落在下面
+// 「非 assistant 一律当 user」那条上，紧跟着就被相邻同角色合并并成一条。两条并行
+// 调用的结果（in-cc-parallel-turn2）因此自动合成一条 user 消息的两个块。
+//
+// Responses 入口解出来的则本就是 Anthropic 摆法（结果在 user 消息的块里），按序编
+// 出去即可。两条入口路径殊途同归。
 //
 // 空内容的消息剔除：纯 thinking 的 assistant 消息在丢掉 thinking 之后就空了，而
 // Anthropic 不收 content 为空数组的消息。
@@ -224,8 +252,15 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			out = append(out, encodeToolResult(b.ToolResult))
 
 		default:
-			// 认不得的块类型：跳过。canonical 的 BlockKind 是字符串，装得下没见过
-			// 的形态，但 Anthropic 只认它自己那四种，原样发过去会被拒。
+			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，
+			// 装得下没见过的形态（CC 的 image_url / input_audio 就是这么留住的），
+			// 但 Anthropic 只认它自己那四种，原样发过去会被拒。
+			//
+			// 不登记就是静默改写语义：客户端发了张图，上游收到的是一个被改成纯文本
+			// 的请求，还照样 200 回来。thinking 那一格可以不登记（它是**口径**定的
+			// 必然丢弃，每次都丢，报了等于每请求一条噪声）；这一格不同，它是「我不
+			// 认识这个东西」，恰恰是需要看见的那种。
+			drop(DropVendorContent)
 			continue
 		}
 	}

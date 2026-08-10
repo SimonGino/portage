@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SHORT } from '../api'
+import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SHORT, PROTOCOL_SOON } from '../api'
 import type { Channel, ProbeResult, Protocol } from '../api'
 import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, Toggle, useList } from '../ui'
 import { SegmentedMulti } from '../fields'
@@ -306,7 +306,7 @@ function AddModels({
   )
 }
 
-const PROTOCOLS: Protocol[] = ['anthropic', 'openai_cc', 'openai_responses']
+const PROTOCOLS: Protocol[] = ['anthropic', 'openai', 'openai_responses']
 
 function ChannelForm({
   channel,
@@ -318,10 +318,10 @@ function ChannelForm({
   onSaved: (id: number) => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
-  // 支持协议集（口径层 v0.33）。默认只勾 CC：绝大多数上游只提供它，多勾一个探测
+  // 支持协议集（口径层 v0.33）。默认只勾 OpenAI：绝大多数上游只提供它，多勾一个探测
   // 不过反而要人回来改。
   const [protos, setProtos] = useState<Protocol[]>(
-    channel?.protocols?.length ? channel.protocols : ['openai_cc'],
+    channel?.protocols?.length ? channel.protocols : ['openai'],
   )
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
   const [disabled, setDisabled] = useState(channel?.disabled ?? false)
@@ -379,6 +379,7 @@ function ChannelForm({
               label: PROTOCOL_LABEL[p],
               hint: PROTOCOL_PATH[p],
             }))}
+            soon={PROTOCOL_SOON}
           />
         </Field>
         {/* base_url 存的是「协议子路径之前」的前缀，上面那几个子路径由网关自己接。

@@ -18,7 +18,7 @@ func seedBothProtocols(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstrea
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "gpt-luna", "openai_cc,openai_responses", up.URL, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "gpt-luna", "openai,openai_responses", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "gpt-5.6-luna")
 	return gatewaytest.Start(t, db), up
 }
@@ -78,17 +78,19 @@ func TestInboundNotInSetFallsBackToChatCompletions(t *testing.T) {
 	}
 }
 
-// 只声明 Anthropic 的渠道，CC 入口进来仍报「转换路径尚未实现」——回退顺序不会把
-// 一条没落地的路径变成可用的。
+// 只声明 openai_responses 的渠道，CC 入口进来仍报「转换路径尚未实现」——回退顺序
+// 不会把一条没落地的路径变成可用的。
+//
+// 反例用 CC→R 而不是 CC→A：后者 #9 已放开，拿它当反例等于在测一条不再存在的行为。
 func TestFallbackDoesNotOpenAnUnimplementedPath(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "anthropic", "anthropic", up.URL, "sk-upstream")
-	gatewaytest.SeedChannelModel(t, db, ch, "claude-sonnet-4-5")
+	ch := gatewaytest.SeedChannel(t, db, "responses", "openai_responses", up.URL, "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, ch, "gpt-5.6")
 	gw := gatewaytest.Start(t, db)
 
 	resp := gw.Post(t, "/v1/chat/completions",
-		`{"model":"anthropic/claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`, nil)
+		`{"model":"responses/gpt-5.6","messages":[{"role":"user","content":"hi"}]}`, nil)
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("状态码 = %d，期望 501；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
 	}
@@ -113,7 +115,7 @@ func TestCountTokensNeedsAnthropicInTheSet(t *testing.T) {
 // 启动即报。
 func TestStartupGateRejectsAnEmptyProtocolSet(t *testing.T) {
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "broken", "openai_cc", "https://example.invalid", "sk-x")
+	ch := gatewaytest.SeedChannel(t, db, "broken", "openai", "https://example.invalid", "sk-x")
 	if _, err := db.Exec(`UPDATE channels SET protocols = '' WHERE id = ?`, ch); err != nil {
 		t.Fatalf("改坏 protocols 失败: %v", err)
 	}
@@ -125,6 +127,9 @@ func TestStartupGateRejectsAnEmptyProtocolSet(t *testing.T) {
 
 // v0.33 的迁移：v0.33 之前的库里那一列叫 protocol，Open 要把它改名成 protocols
 // 并保住值——不然老库一起来就是「no such column」。
+//
+// 种子用的是**当时真实写进库**的取值 `openai_cc`，所以这个用例现在一路串起两次
+// 迁移：先改列名（v0.33），再改协议名（v0.36）。
 func TestOpenMigratesTheOldProtocolColumn(t *testing.T) {
 	path := t.TempDir() + "/old.db"
 
@@ -159,12 +164,12 @@ func TestOpenMigratesTheOldProtocolColumn(t *testing.T) {
 	if err := db.QueryRow(`SELECT protocols FROM channels WHERE name = 'old'`).Scan(&protocols); err != nil {
 		t.Fatalf("迁移后读不到 protocols: %v", err)
 	}
-	// 值不动：单值在新语义下就是一元集合，含义一字不变。
-	if protocols != "openai_cc" {
-		t.Errorf("protocols = %q，期望原样保留 openai_cc", protocols)
+	// v0.33 那一步不动值（单值在新语义下就是一元集合），v0.36 那一步把它改成现名。
+	if protocols != "openai" {
+		t.Errorf("protocols = %q，期望两次迁移串完落到 openai", protocols)
 	}
 	set, err := protocol.ParseSet(protocols)
-	if err != nil || !set.Has(protocol.OpenAICC) {
+	if err != nil || !set.Has(protocol.OpenAI) {
 		t.Errorf("迁移后的值解不成集合: %v", err)
 	}
 }

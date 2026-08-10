@@ -40,7 +40,7 @@ func newResponsesConvertGateway(t *testing.T) (*gatewaytest.Gateway, *gatewaytes
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, ccUpstreamModel, openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, ccUpstreamModel, openaiCredential)
 	return gatewaytest.StartWith(t, db, gatewaytest.Options{}), up
 }
 
@@ -303,7 +303,7 @@ func TestResponsesEncryptedReasoningIsDroppedNotFatal(t *testing.T) {
 	}
 }
 
-// 闸门这次放开的是 /v1/responses × openai_cc 这一格。/v1/chat/completions 打到
+// 闸门这次放开的是 /v1/responses × openai 这一格。/v1/chat/completions 打到
 // CC 渠道是**同协议透传**，本来就不该进转换分支。
 func TestResponsesGateOpensOnlyResponsesToCC(t *testing.T) {
 	gw, up := newResponsesConvertGateway(t)

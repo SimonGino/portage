@@ -22,21 +22,23 @@ type Set []Protocol
 // CC 优先：三者里字段最贫，转过去的信息损失最可预测，且 6 条转换路径里 CC 侧最先
 // 落地、golden 样本最全。**复议触发条件**见口径层 §2.3——A→Responses 若日后能保住
 // reasoning（Responses 有 reasoning item 而 CC 没有），这个顺序要重排。
-var fallbackOrder = []Protocol{OpenAICC, OpenAIResponses, Anthropic}
+var fallbackOrder = []Protocol{OpenAI, OpenAIResponses, Anthropic}
 
 // ParseSet 读库里那一列：逗号分隔，容忍空格，保序去重。
 //
-// 单值 `openai_cc` 解出来就是一元集合——v0.33 之前写进库的行因此不用迁移，含义
-// 一字不变。
+// 单值解出来就是一元集合——v0.33 之前写进库的单值 `protocol` 列因此不用改值，含义
+// 一字不变。旧协议名（v0.36 之前的 `openai_cc`）在这里折成现名：库里的存量行由
+// store.migrate 一次性改写，这一步兜的是迁移之外的入口（手写配置、环境变量），以及
+// 去重——`openai,openai_cc` 折完是同一个值，得只留一个。
 func ParseSet(s string) (Set, error) {
 	var out Set
 	for _, part := range strings.Split(s, ",") {
-		p := Protocol(strings.TrimSpace(part))
+		p := Normalize(Protocol(strings.TrimSpace(part)))
 		if p == "" {
 			continue
 		}
 		if !p.Valid() {
-			return nil, fmt.Errorf("协议 %q 不是 anthropic/openai_cc/openai_responses 之一", p)
+			return nil, fmt.Errorf("协议 %q 不是 anthropic/openai/openai_responses 之一", p)
 		}
 		if !out.Has(p) {
 			out = append(out, p)

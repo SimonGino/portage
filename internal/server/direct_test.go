@@ -20,7 +20,7 @@ func seedDirect(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstream) {
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai_cc", up.URL, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "qwen3-max")
 	return gatewaytest.Start(t, db), up
 }
@@ -68,11 +68,11 @@ func TestAccessPointWinsOverAQualifiedNameItShadows(t *testing.T) {
 	other := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
 
-	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai_cc", up.URL, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "qwen3-max")
 
 	// 另一个渠道上建一个接入点，名字故意撞成上面那条的限定名。
-	elsewhere := gatewaytest.SeedChannel(t, db, "elsewhere", "openai_cc", other.URL, "sk-other")
+	elsewhere := gatewaytest.SeedChannel(t, db, "elsewhere", "openai", other.URL, "sk-other")
 	cm := gatewaytest.SeedChannelModel(t, db, elsewhere, "real-model")
 	ap := gatewaytest.SeedAccessPoint(t, db, "bailian/qwen3-max")
 	gatewaytest.SeedCandidate(t, db, ap, cm, 100)
@@ -127,7 +127,7 @@ func TestDirectDisabledModelIs503NotNotFound(t *testing.T) {
 func TestAllowedModelsGatesTheDirectPathToo(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai_cc", up.URL, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "bailian", "openai", up.URL, "sk-upstream")
 	cm := gatewaytest.SeedChannelModel(t, db, ch, "qwen3-max")
 	ap := gatewaytest.SeedAccessPoint(t, db, "gw-cc")
 	gatewaytest.SeedCandidate(t, db, ap, cm, 100)
@@ -186,7 +186,7 @@ func TestChannelNameWithSlashIsRejectedOnSave(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	status, body := a.Do(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"vendor/relay","protocols":["openai_cc"],"base_url":"`+up.URL+`",
+		"name":"vendor/relay","protocols":["openai"],"base_url":"`+up.URL+`",
 		"credential":"sk-upstream"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("含 `/` 的渠道名应该在保存时就被挡，得到 %d %s", status, body)
@@ -201,7 +201,7 @@ func TestChannelNameWithSlashIsRejectedOnSave(t *testing.T) {
 func TestStartupRejectsChannelNameWithSlash(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "vendor/relay", "openai_cc", up.URL, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "vendor/relay", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "qwen3-max")
 
 	err := store.Validate(t.Context(), db)

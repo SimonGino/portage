@@ -58,9 +58,9 @@ CC 入站得多做两件事，见下面「CC 入站怎么采」。
 | `responses-text/` | openai_responses | 纯文本单轮 |
 | `responses-tool-round/` | openai_responses | 单工具调用整轮（两轮请求） |
 | `responses-parallel-custom-tools/` | openai_responses | **并行** `custom_tool_call` 整轮（两轮请求） |
-| `cc-text/` | openai_cc | 纯文本单轮 |
-| `cc-tool-round/` | openai_cc | 单工具调用整轮（两轮请求） |
-| `cc-parallel-tools/` | openai_cc | 并行工具调用整轮（两轮请求） |
+| `cc-text/` | openai | 纯文本单轮 |
+| `cc-tool-round/` | openai | 单工具调用整轮（两轮请求） |
+| `cc-parallel-tools/` | openai | 并行工具调用整轮（两轮请求） |
 
 `responses-parallel-custom-tools/` 是「有真实上游也得用 stub」的那种例外，值得单独说：
 
@@ -109,7 +109,7 @@ Codex 侧另外要留意：它对 Responses 事件的字段完备性很严
 
 ```bash
 # 1) 起 goldenrec，注意多一个 SIDECALL 开关
-GOLDENREC_MODE=inbound GOLDENREC_PROTOCOL=openai_cc \
+GOLDENREC_MODE=inbound GOLDENREC_PROTOCOL=openai \
 GOLDENREC_SIDECALL=notools \
 GOLDENREC_STUBS=./testdata/goldenstub/cc-tool-round \
 GOLDENREC_OUT=/tmp/rec go run ./cmd/goldenrec

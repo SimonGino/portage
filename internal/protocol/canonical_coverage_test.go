@@ -161,14 +161,14 @@ var coverage = map[string]disposition{
 	// 结果则是**每个调用一条独立的 tool 消息**（实采 in-cc-parallel-turn2 两条）。
 	// 这与 Anthropic 正相反——那边所有 tool_result 必须挤进同一条 user 消息，
 	// 所以 CC→A 的编码侧要做合并，不是逐条平移。
-	"messages[].tool_calls":                      dField, // → Message.ToolCalls
+	"messages[].tool_calls":                      dField, // → assistant 消息里的 tool_use 块序列
 	"messages[].tool_calls[]":                    dField,
 	"messages[].tool_calls[].id":                 dField, // → ToolCall.ID，与 tool_call_id 对上
-	"messages[].tool_calls[].type":               dField, // 恒 "function" → ToolCall.Kind
+	"messages[].tool_calls[].type":               dField, // 恒 "function"，没有第二种取值
 	"messages[].tool_calls[].function":           dField,
 	"messages[].tool_calls[].function.name":      dField, // → ToolCall.Name
 	"messages[].tool_calls[].function.arguments": dField, // → ToolCall.Args（按契约是 JSON 字符串）
-	"messages[].tool_call_id":                    dField, // → ToolResult.CallID
+	"messages[].tool_call_id":                    dField, // → ToolResult.ToolCallID（消息级落到块级）
 
 	// stream_options.include_usage 是 CC 独有的开关：不给就不发那个 usage chunk。
 	// **不能丢**——入口半边的 EncodeStream 要靠它决定回程要不要补 usage 帧，

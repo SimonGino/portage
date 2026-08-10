@@ -117,12 +117,12 @@ func (s *Server) authModels() gin.HandlerFunc {
 			s.log.Warn("拒绝未鉴权的模型列表请求", "path", c.Request.URL.Path)
 			// /v1/models 本身就是 OpenAI 公开格式，错误也照 OpenAI 的形状回，
 			// 与 models handler 里的 500 分支一致。
-			protocol.OpenAICC.WriteError(c.Writer, http.StatusUnauthorized, "API key 无效")
+			protocol.OpenAI.WriteError(c.Writer, http.StatusUnauthorized, "API key 无效")
 			c.Abort()
 			return
 		case err != nil:
 			s.log.Error("key 鉴权查询失败", "err", err)
-			protocol.OpenAICC.WriteError(c.Writer, http.StatusInternalServerError, "鉴权失败")
+			protocol.OpenAI.WriteError(c.Writer, http.StatusInternalServerError, "鉴权失败")
 			c.Abort()
 			return
 		}

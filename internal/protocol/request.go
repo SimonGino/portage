@@ -41,7 +41,10 @@ const (
 	BlockThinking   BlockKind = "thinking"
 	BlockToolUse    BlockKind = "tool_use"
 	BlockToolResult BlockKind = "tool_result"
-	BlockImage      BlockKind = "image" // M2 暂不实现，占位以免后续改 Kind 集合
+	// BlockImage 目前只是占位：**还没有承载图片数据的字段**，也没有任何 codec 产出它。
+	// PO 已裁定图片要真做跨协议转换（口径层 v0.37），落地见 #33；在那之前，CC 解码侧
+	// 留住的图片 part 走的是未知块那条路——到 Anthropic 出口登记 vendor_content 后丢弃。
+	BlockImage BlockKind = "image"
 )
 
 // Block 是内容块。

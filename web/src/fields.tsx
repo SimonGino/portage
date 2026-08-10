@@ -61,10 +61,19 @@ export function Segmented<T extends string>({
 export function SegmentedMulti<T extends string>({
   value,
   options,
+  soon,
   onChange,
 }: {
   value: T[]
   options: Option<T>[]
+  /**
+   * 摆出来但点不动的占位项，用来回答「这里为什么没有 X」。
+   *
+   * 与 options 分开而不是给 Option 加个 disabled 标记：它们的 value 根本不在 T 里
+   * （后端不认这个取值），混进 options 就得把类型放宽成 string，那样真正的取值也
+   * 跟着失去检查。
+   */
+  soon?: { value: string; label: string; hint?: string }[]
   onChange: (v: T[]) => void
 }) {
   function toggle(v: T) {
@@ -100,6 +109,22 @@ export function SegmentedMulti<T extends string>({
           </button>
         )
       })}
+      {soon?.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="checkbox"
+          aria-checked={false}
+          aria-disabled
+          disabled
+          className="segment is-soon"
+          onClick={(e) => e.preventDefault()}
+        >
+          <span className="segment-check" aria-hidden />
+          <span>{o.label}</span>
+          {o.hint && <span className="segment-hint">{o.hint}</span>}
+        </button>
+      ))}
     </div>
   )
 }

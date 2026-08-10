@@ -48,7 +48,7 @@ PRAGMA foreign_keys = ON;
 -- ---------------------------------------------------------------------------
 INSERT INTO channels (name, protocol, base_url) VALUES
   ('anthropic-upstream', 'anthropic',        'https://你的-anthropic-上游'),
-  ('relay-cc',           'openai_cc',        'https://你的中转站'),
+  ('relay-cc',           'openai',           'https://你的中转站'),
   ('relay-resp',         'openai_responses', 'https://你的中转站');
 
 -- Anthropic 那条用它自己的凭证；CC 与 Responses 共用中转站的那份。
@@ -63,8 +63,8 @@ INSERT INTO channel_keys (channel_id, credential)
 -- 纳管模型：填**上游认得**的那个名字。中转站的模型名常带前缀或后缀，不确定就问它要：
 --   curl -s https://你的中转站/v1/models -H 'Authorization: Bearer sk-…' | jq -r '.data[].id'
 --
--- gemini 走 openai_cc 而不是单独一种协议：口径层 v0.17 已定 Gemini 用 OpenAI 兼容
--- 端点接入，渠道协议仍是 openai_cc，协议矩阵不动。中转站供的 gemini 同理。
+-- gemini 走 openai 而不是单独一种协议：口径层 v0.17 已定 Gemini 用 OpenAI 兼容
+-- 端点接入，渠道协议仍是 openai，协议矩阵不动。中转站供的 gemini 同理。
 -- ---------------------------------------------------------------------------
 INSERT INTO channel_models (channel_id, upstream_model) VALUES
   ((SELECT id FROM channels WHERE name = 'anthropic-upstream'), 'claude-sonnet-5'),

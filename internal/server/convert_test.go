@@ -34,7 +34,7 @@ func newConvertGateway(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstrea
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, ccUpstreamModel, openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, ccUpstreamModel, openaiCredential)
 	return gatewaytest.StartWith(t, db, gatewaytest.Options{}), up
 }
 
@@ -323,7 +323,7 @@ func TestConvertedCallIsLoggedWithUsage(t *testing.T) {
 	if line.Str("outcome") != "ok" || line.Int64("status") != http.StatusOK {
 		t.Errorf("outcome/status = %q/%d", line.Str("outcome"), line.Int64("status"))
 	}
-	if line.Str("inbound_protocol") != "anthropic" || line.Str("channel_protocol") != "openai_cc" {
+	if line.Str("inbound_protocol") != "anthropic" || line.Str("channel_protocol") != "openai" {
 		t.Errorf("协议对没记全: %+v", line.Attrs)
 	}
 	if line.Int64("input_tokens") != 69 || line.Int64("output_tokens") != 74 {
@@ -383,7 +383,7 @@ func TestConvertGateOpensOnlyMessagesToCC(t *testing.T) {
 	body := gatewaytest.ReadBody(t, resp)
 
 	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("count_tokens → openai_cc 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+		t.Errorf("count_tokens → openai 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
 	}
 	if !strings.Contains(body, "尚未实现") {
 		t.Errorf("文案应点明转换路径尚未实现: %s", body)

@@ -63,27 +63,37 @@ export const api = {
 // ── 与后端结构一一对应的类型 ────────────────────────────────────────────
 // 字段名跟 internal/store/admin.go 的 json tag 对齐，改那边记得改这里。
 
-export type Protocol = 'anthropic' | 'openai_cc' | 'openai_responses'
+export type Protocol = 'anthropic' | 'openai' | 'openai_responses'
 
 export const PROTOCOL_LABEL: Record<Protocol, string> = {
   anthropic: 'Anthropic',
-  openai_cc: 'OpenAI Chat Completions',
-  openai_responses: 'OpenAI Responses',
+  openai: 'OpenAI',
+  openai_responses: 'OpenAI-Responses',
 }
 
 /** 卡片上一行放三个全称太挤，列表处用短名。 */
 export const PROTOCOL_SHORT: Record<Protocol, string> = {
   anthropic: 'Anthropic',
-  openai_cc: 'CC',
+  openai: 'OpenAI',
   openai_responses: 'Responses',
 }
 
 /** 上游子路径，写在协议勾选框旁边——填 base_url 时最容易搞错的就是它。 */
 export const PROTOCOL_PATH: Record<Protocol, string> = {
   anthropic: '/v1/messages',
-  openai_cc: '/v1/chat/completions',
+  openai: '/v1/chat/completions',
   openai_responses: '/v1/responses',
 }
+
+/**
+ * 路线图里有、但网关还说不了的协议（口径层 v0.36）。
+ *
+ * 摆出来是为了回答「这里为什么没有 Gemini」，不是为了让人选中——后端 ParseSet 根本
+ * 不认这个取值，能选中就等于能建出一个每次请求都失败的渠道。
+ */
+export const PROTOCOL_SOON: { value: string; label: string; hint: string }[] = [
+  { value: 'gemini', label: 'Gemini', hint: '暂未支持' },
+]
 
 /** 一次协议可达性探测的结果。只提示，不落库、不参与路由（口径层 v0.33）。 */
 export interface ProbeResult {

@@ -277,7 +277,7 @@ func TestInboundUnknownEndpointKeepsScriptIntact(t *testing.T) {
 // TestInboundNonStreamStub 非流式脚本按 application/json 回，不套 SSE 那层。
 func TestInboundNonStreamStub(t *testing.T) {
 	payload := []byte(`{"type":"message","role":"assistant"}`)
-	rec, _ := newTestRecorder(t, protocol.OpenAICC, stub{name: "01.json", body: payload})
+	rec, _ := newTestRecorder(t, protocol.OpenAI, stub{name: "01.json", body: payload})
 
 	w := post(t, rec, protocol.EndpointChatCompletions.Path, []byte(`{"model":"m"}`), nil)
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
@@ -373,7 +373,7 @@ func TestShippedStubScripts(t *testing.T) {
 // 模式最难查的失败：harness 会收到一个形状对而内容驴唇不对马嘴的回复，不报错。
 func TestSideCallDoesNotConsumeStub(t *testing.T) {
 	agentStub := stub{name: "01-final.sse", body: []byte("data: {\"choices\":[]}\n\n")}
-	rec, dir := newTestRecorder(t, protocol.OpenAICC, agentStub)
+	rec, dir := newTestRecorder(t, protocol.OpenAI, agentStub)
 	rec.skipToolless = true
 
 	// 先来一条没声明 tools 的（标题生成那种）。
@@ -401,7 +401,7 @@ func TestSideCallDoesNotConsumeStub(t *testing.T) {
 // TestSideCallOffByDefault 开关不开时，没 tools 的请求仍是正常的 agent 轮。
 func TestSideCallOffByDefault(t *testing.T) {
 	s := stub{name: "01-final.sse", body: []byte("data: {\"choices\":[]}\n\n")}
-	rec, _ := newTestRecorder(t, protocol.OpenAICC, s)
+	rec, _ := newTestRecorder(t, protocol.OpenAI, s)
 
 	w := post(t, rec, protocol.EndpointChatCompletions.Path, []byte(`{"model":"m","stream":true}`), nil)
 	if !bytes.Equal(w.Body.Bytes(), s.body) {

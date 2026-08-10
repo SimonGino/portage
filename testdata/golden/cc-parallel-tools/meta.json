@@ -1,5 +1,5 @@
 {
-  "protocol": "openai_cc",
+  "protocol": "openai",
   "stream": false,
   "endpoint": "/v1/chat/completions",
   "status": 200,

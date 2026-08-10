@@ -29,7 +29,7 @@ func newOpenAIGateway(t *testing.T, apModel, proto, upstreamName string) (*gatew
 }
 
 func TestChatCompletionsPassthrough(t *testing.T) {
-	gw, up := newOpenAIGateway(t, "gw-cc", "openai_cc", "qwen3-max-2025-09-23")
+	gw, up := newOpenAIGateway(t, "gw-cc", "openai", "qwen3-max-2025-09-23")
 	const upstreamBody = `{"id":"chatcmpl-1","object":"chat.completion",` +
 		`"choices":[{"message":{"role":"assistant","content":"你好"}}],"usage":{"total_tokens":9}}`
 	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"}, upstreamBody)
@@ -87,7 +87,7 @@ func TestOpenAIStreamPassthrough(t *testing.T) {
 		// 两边都塞了 \r\n\r\n 帧和多行 data，任何按行重组的实现都会改字节。
 		frames []string
 	}{
-		{"chat completions", "/v1/chat/completions", "openai_cc", "gw-cc",
+		{"chat completions", "/v1/chat/completions", "openai", "gw-cc",
 			`{"model":"gw-cc","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
 			[]string{
 				"data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n",
@@ -122,7 +122,7 @@ func TestOpenAIStreamPassthrough(t *testing.T) {
 // 凭证注入按渠道协议分叉：OpenAI 系走 Authorization: Bearer，绝不能同时冒出
 // Anthropic 的 x-api-key。
 func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
-	gw, up := newOpenAIGateway(t, "gw-cc", "openai_cc", "qwen3-max")
+	gw, up := newOpenAIGateway(t, "gw-cc", "openai", "qwen3-max")
 
 	// 客户端这三个头都得真发出来，否则「上游收不到」的断言恒真、抓不住任何回归。
 	// 凭证头填真实有效的网关 key：无效的话请求停在 401，压根到不了上游。
@@ -137,16 +137,16 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 		t.Errorf("Authorization = %q, 期望注入渠道凭证而非客户端自带的", v)
 	}
 	if v := got.Header.Get("x-api-key"); v != "" {
-		t.Errorf("客户端自带的 x-api-key 漏到了 openai_cc 上游: %q", v)
+		t.Errorf("客户端自带的 x-api-key 漏到了 openai 上游: %q", v)
 	}
 	if v := got.Header.Get("anthropic-version"); v != "" {
-		t.Errorf("openai_cc 渠道不该收到 anthropic-version: %q", v)
+		t.Errorf("openai 渠道不该收到 anthropic-version: %q", v)
 	}
 }
 
 // 临时闸两个方向都要按**入口**协议的原生格式回错——客户端只认得它自己那套。
 func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
-	// openai_responses 而非 openai_cc：A→CC 那一格 #11 已放开，用它当反例等于在测
+	// openai_responses 而非 openai：A→CC 那一格 #11 已放开，用它当反例等于在测
 	// 一条不再存在的行为。
 	t.Run("Anthropic 入口打到 openai_responses 渠道", func(t *testing.T) {
 		gw, up := newOpenAIGateway(t, "gw-sonnet", "openai_responses", "gpt-5.6")
@@ -167,10 +167,11 @@ func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 		}
 	})
 
-	t.Run("CC 入口打到 anthropic 渠道", func(t *testing.T) {
+	// openai_responses 而非 anthropic：CC→A 那一格 #9 已放开，同上一条的理由。
+	t.Run("CC 入口打到 openai_responses 渠道", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
-		gatewaytest.SeedPassthrough(t, db, "gw-cc", "anthropic", up.URL, "claude-sonnet-4-5", anthropicCredential)
+		gatewaytest.SeedPassthrough(t, db, "gw-cc", "openai_responses", up.URL, "gpt-5.6", openaiCredential)
 		gw := gatewaytest.Start(t, db)
 
 		resp := gw.Post(t, "/v1/chat/completions", ccRequest, nil)
@@ -183,7 +184,7 @@ func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 		if !strings.Contains(body, "尚未实现") {
 			t.Errorf("文案应点明转换路径尚未实现: %s", body)
 		}
-		assertNoSecrets(t, body, anthropicCredential, up.URL)
+		assertNoSecrets(t, body, openaiCredential, up.URL)
 		if up.Count() != 0 {
 			t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 		}
@@ -193,7 +194,7 @@ func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 func TestModelsListsEnabledAccessPoints(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	channelID := gatewaytest.SeedChannel(t, db, "bailian", "openai_cc", up.URL, "sk-upstream")
+	channelID := gatewaytest.SeedChannel(t, db, "bailian", "openai", up.URL, "sk-upstream")
 	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "qwen3-max")
 	enabled := gatewaytest.SeedAccessPoint(t, db, "gw-visible")
 	gatewaytest.SeedCandidate(t, db, enabled, modelID, 100)
@@ -255,7 +256,7 @@ func TestModelsOmitsUnusableDirectModels(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
 
-	okCh := gatewaytest.SeedChannel(t, db, "good", "openai_cc", up.URL, "sk-upstream")
+	okCh := gatewaytest.SeedChannel(t, db, "good", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, okCh, "keep-me")
 
 	offModel := gatewaytest.SeedChannelModel(t, db, okCh, "model-off")
@@ -263,13 +264,13 @@ func TestModelsOmitsUnusableDirectModels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	offCh := gatewaytest.SeedChannel(t, db, "channel-off", "openai_cc", up.URL, "sk-upstream")
+	offCh := gatewaytest.SeedChannel(t, db, "channel-off", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, offCh, "hidden-by-channel")
 	if _, err := db.Exec(`UPDATE channels SET disabled = 1 WHERE id = ?`, offCh); err != nil {
 		t.Fatal(err)
 	}
 
-	nokeyCh := gatewaytest.SeedChannel(t, db, "nokey", "openai_cc", up.URL, "sk-upstream")
+	nokeyCh := gatewaytest.SeedChannel(t, db, "nokey", "openai", up.URL, "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, nokeyCh, "hidden-by-credential")
 
 	gw := gatewaytest.Start(t, db)

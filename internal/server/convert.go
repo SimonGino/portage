@@ -28,12 +28,14 @@ import (
 // 每落地一条路径在这里加一格，没落地的仍报「该转换路径尚未实现」。
 func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 	switch {
-	case ep == protocol.EndpointMessages && channel == protocol.OpenAICC:
+	case ep == protocol.EndpointMessages && channel == protocol.OpenAI:
 		return true // A→CC（#11，口径层 §2.1 优先级①上半）
-	case ep == protocol.EndpointResponses && channel == protocol.OpenAICC:
+	case ep == protocol.EndpointResponses && channel == protocol.OpenAI:
 		return true // R→CC（#12，优先级①下半）
 	case ep == protocol.EndpointResponses && channel == protocol.Anthropic:
 		return true // R→A（#25，优先级②：Codex 挂 Claude）
+	case ep == protocol.EndpointChatCompletions && channel == protocol.Anthropic:
+		return true // CC→A（#9，优先级③上半）
 	}
 	return false
 }

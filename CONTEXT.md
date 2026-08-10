@@ -22,7 +22,7 @@ _Avoid_: 裸 modelId 寻址（v0.22 封的是那条路，不是限定名）
 _Avoid_: 供应商（不是独立实体：一个渠道就对应一家上游的一次接入，图标分组由 Web 端启发式解决）、upstream（指渠道时）
 
 **支持协议集**：
-渠道声明它能说的上游协议，如 `{openai_cc, openai_responses}` 或 `{anthropic}`。取代 v0.33 之前的单值 `protocol` 列。协议不出现在对外模型名里。
+渠道声明它能说的上游协议，如 `{openai, openai_responses}` 或 `{anthropic}`。取代 v0.33 之前的单值 `protocol` 列。协议不出现在对外模型名里。
 
 **纳管模型**：
 渠道声明的可用上游模型条目；候选只能引用纳管条目，不自由填字符串。

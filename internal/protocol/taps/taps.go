@@ -19,7 +19,7 @@ func New(p protocol.Protocol, stream bool) protocol.Tap {
 	switch p {
 	case protocol.Anthropic:
 		return anthropic.NewTap(stream)
-	case protocol.OpenAICC:
+	case protocol.OpenAI:
 		return openaicc.NewTap(stream)
 	case protocol.OpenAIResponses:
 		return openairesponses.NewTap(stream)

@@ -43,7 +43,7 @@ func ccOnlyUpstream(t *testing.T) string {
 func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
 	url := ccOnlyUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai_cc,openai_responses", url, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai,openai_responses", url, "sk-upstream")
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
@@ -57,7 +57,7 @@ func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
 	for _, r := range got.Results {
 		byProto[r.Protocol] = r.Reachable
 	}
-	if !byProto["openai_cc"] {
+	if !byProto["openai"] {
 		t.Error("上游回 400 说明子路径存在，不该判成不可达")
 	}
 	if byProto["openai_responses"] {
@@ -69,7 +69,7 @@ func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
 func TestProbeDoesNotPersistAnything(t *testing.T) {
 	url := ccOnlyUpstream(t)
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai_cc,openai_responses", url, "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai,openai_responses", url, "sk-upstream")
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
@@ -79,7 +79,7 @@ func TestProbeDoesNotPersistAnything(t *testing.T) {
 	if err := db.QueryRow(`SELECT protocols FROM channels WHERE id = ?`, ch).Scan(&protocols); err != nil {
 		t.Fatalf("读 protocols 失败: %v", err)
 	}
-	if protocols != "openai_cc,openai_responses" {
+	if protocols != "openai,openai_responses" {
 		t.Errorf("探测改了协议集：%q——它只该提示", protocols)
 	}
 }
@@ -89,7 +89,7 @@ func TestProbeDoesNotPersistAnything(t *testing.T) {
 func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	const baseURL = "http://127.0.0.1:1/tenant7-secret-path"
-	ch := gatewaytest.SeedChannel(t, db, "dead", "openai_cc", baseURL, "sk-upstream-secret")
+	ch := gatewaytest.SeedChannel(t, db, "dead", "openai", baseURL, "sk-upstream-secret")
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 

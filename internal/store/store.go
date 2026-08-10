@@ -55,7 +55,7 @@ func Open(path string) (*sql.DB, error) {
 // 故不建版本表：迁移是不是已经跑过，直接问库里的列长什么样就知道，比维护一个会和
 // 实际形状漂移的 schema_version 更可信。
 func migrate(db *sql.DB) error {
-	// v0.33：单值 protocol → 支持协议集 protocols。只改列名，值不用动——`openai_cc`
+	// v0.33：单值 protocol → 支持协议集 protocols。只改列名，值不用动——旧的单值
 	// 在新语义下就是一元集合，含义一字不变。
 	has := func(col string) (bool, error) {
 		var n int
@@ -67,11 +67,35 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("检查 channels.protocol: %w", err)
 	}
-	if !old {
-		return nil
+	if old {
+		if _, err := db.Exec(`ALTER TABLE channels RENAME COLUMN protocol TO protocols`); err != nil {
+			return fmt.Errorf("迁移 channels.protocol → protocols: %w", err)
+		}
 	}
-	if _, err := db.Exec(`ALTER TABLE channels RENAME COLUMN protocol TO protocols`); err != nil {
-		return fmt.Errorf("迁移 channels.protocol → protocols: %w", err)
+	return renameOpenAICC(db)
+}
+
+// renameOpenAICC 把 v0.36 之前写进库的 `openai_cc` 改写成 `openai`。
+//
+// 三张列都要改，不能只改 channels：call_logs 的两列存的是同一套取值，漏掉它用量页
+// 会把同一个协议劈成两个名字分别聚合，而那是**历史数据**，之后再也没有机会补。
+//
+// REPLACE 而不是等值比较：channels.protocols 是逗号分隔的集合，`openai_cc` 可能夹在
+// 中间。子串替换在这里是安全的——另外两个取值 `anthropic` / `openai_responses` 都不
+// 含 `openai_cc`，不会误伤。
+//
+// 不设「跑过没有」的标记：改完之后库里再没有 `openai_cc`，第二次跑就是零行命中。
+// 幂等本身就是它的守卫，比一张会跟实际形状漂移的版本表可信。
+func renameOpenAICC(db *sql.DB) error {
+	for _, stmt := range []string{
+		`UPDATE channels  SET protocols = REPLACE(protocols, 'openai_cc', 'openai')
+		   WHERE protocols LIKE '%openai_cc%'`,
+		`UPDATE call_logs SET client_protocol = 'openai'   WHERE client_protocol = 'openai_cc'`,
+		`UPDATE call_logs SET upstream_protocol = 'openai' WHERE upstream_protocol = 'openai_cc'`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("迁移协议名 openai_cc → openai: %w", err)
+		}
 	}
 	return nil
 }
@@ -448,7 +472,7 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 			// 支持协议集非空且逐项合法（v0.33）。这一列是逗号分隔的集合，不再是单值：
 			// 空集合的渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。
 			if _, err := protocol.ParseSet(protocols); err != nil {
-				return fmt.Sprintf("渠道 %q (id=%d) 的 protocols=%q 不合法：%v（逗号分隔，取值 anthropic/openai_cc/openai_responses）",
+				return fmt.Sprintf("渠道 %q (id=%d) 的 protocols=%q 不合法：%v（逗号分隔，取值 anthropic/openai/openai_responses）",
 					name, id, protocols, err), nil
 			}
 			switch {

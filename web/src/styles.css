@@ -878,6 +878,15 @@ select:focus {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
 }
 
+/* 路线图占位项：摆出来回答「为什么没有 Gemini」，但点不动。压到 hover 之下，
+   免得鼠标扫过去时它亮起来像是可选的。 */
+.segment.is-soon,
+.segment.is-soon:hover {
+  color: var(--muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 多选版横向铺开：三个选项各带一条子路径，挤在 inline-flex 里会被压成两行。 */
 .segmented-multi {
   display: flex;

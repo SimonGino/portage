@@ -39,7 +39,7 @@ func New(p protocol.Protocol, opts Options) protocol.Codec {
 	switch p {
 	case protocol.Anthropic:
 		return anthropic.NewCodec(anthropic.Options{DefaultMaxTokens: opts.DefaultMaxTokens})
-	case protocol.OpenAICC:
+	case protocol.OpenAI:
 		return openaicc.NewCodec()
 	case protocol.OpenAIResponses:
 		return openairesponses.NewCodec()

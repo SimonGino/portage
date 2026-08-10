@@ -49,9 +49,11 @@ import (
 func main() {
 	log.SetFlags(0)
 
-	proto := protocol.Protocol(os.Getenv("GOLDENREC_PROTOCOL"))
+	// Normalize 先折旧名：Valid 故意不收 v0.36 之前的 `openai_cc`，而采集脚本是
+	// 手写的、不经过库迁移，这里不折就等于把已有的采集环境当场打死。
+	proto := protocol.Normalize(protocol.Protocol(os.Getenv("GOLDENREC_PROTOCOL")))
 	if !proto.Valid() {
-		log.Fatalf("GOLDENREC_PROTOCOL=%q 不是 anthropic/openai_cc/openai_responses 之一", proto)
+		log.Fatalf("GOLDENREC_PROTOCOL=%q 不是 anthropic/openai/openai_responses 之一", proto)
 	}
 	out := &sink{dir: envOr("GOLDENREC_OUT", "./testdata/golden/raw")}
 	if err := os.MkdirAll(out.dir, 0o755); err != nil {
@@ -148,7 +150,7 @@ func entryPath(p protocol.Protocol) string {
 	switch p {
 	case protocol.Anthropic:
 		return protocol.EndpointMessages.Path
-	case protocol.OpenAICC:
+	case protocol.OpenAI:
 		return protocol.EndpointChatCompletions.Path
 	default:
 		return protocol.EndpointResponses.Path

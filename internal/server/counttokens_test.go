@@ -38,7 +38,7 @@ func TestCountTokensPassesThroughToAnthropicChannel(t *testing.T) {
 func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_cc", up.URL, "qwen3-max", openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, "qwen3-max", openaiCredential)
 	gw := gatewaytest.Start(t, db)
 
 	resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil)
@@ -56,7 +56,7 @@ func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 
 // 同一条临时闸也管 /v1/messages：**还没放开的那几格**跨协议候选一律回错而不是乱发。
 //
-// 用 openai_responses 渠道而不是 openai_cc——A→CC 那一格已经在 #11 放开了，拿它
+// 用 openai_responses 渠道而不是 openai——A→CC 那一格已经在 #11 放开了，拿它
 // 当反例就成了测一条已经不存在的行为。
 func TestMessagesRejectsCrossProtocolCandidate(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)

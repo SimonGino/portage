@@ -1,6 +1,6 @@
 {
   "direction": "inbound",
-  "protocol": "openai_cc",
+  "protocol": "openai",
   "stream": true,
   "endpoint": "/v1/chat/completions",
   "headers": {

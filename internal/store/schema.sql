@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS channels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  -- 支持协议集（口径层 v0.33）：逗号分隔，如 `openai_cc,openai_responses`。
+  -- 支持协议集（口径层 v0.33）：逗号分隔，如 `openai,openai_responses`。取值见
+  -- internal/protocol；v0.36 之前写的 `openai_cc` 由 store.migrate 一次性改写。
   -- 单值写法仍然合法，就是一元集合——v0.33 之前的行不用改数据。
   protocols TEXT NOT NULL,
   base_url TEXT NOT NULL,

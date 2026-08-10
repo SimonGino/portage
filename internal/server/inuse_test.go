@@ -87,7 +87,7 @@ func TestDeleteChannelSucceedsOnceTheAccessPointPointsElsewhere(t *testing.T) {
 			ID int64 `json:"id"`
 		}
 		a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-			"name":"`+name+`","protocols":["openai_cc"],"base_url":"`+up.URL+`",
+			"name":"`+name+`","protocols":["openai"],"base_url":"`+up.URL+`",
 			"credential":"sk-upstream"}`, &ch)
 		a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
 			`{"upstream_model":"gpt-5.6-luna"}`, nil)
