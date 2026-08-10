@@ -179,6 +179,10 @@ type ChannelInput struct {
 // 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
 // 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
 func (in ChannelInput) normalized() (string, error) {
+	if strings.Contains(in.Name, "/") {
+		return "", InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
+	}
 	set, err := protocol.ParseSet(in.Protocols.String())
 	if err != nil {
 		return "", InvalidInput{Reason: err.Error()}

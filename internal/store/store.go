@@ -176,9 +176,12 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 
 // resolveDirect 走纳管模型直连路径，匹配 `渠道名/纳管模型名` 限定名。
 //
-// 拼接放在 SQL 里比在 Go 里按 `/` 切开更稳：渠道名和纳管模型名本身都可能含 `/`
-// （`anthropic/claude-3` 这种 OpenRouter 风格的模型名很常见），切在哪一刀上没有
-// 通用答案，而拼起来比对根本不用切。
+// 拼接放在 SQL 里比在 Go 里按 `/` 切开更稳：纳管模型名本身常含 `/`
+// （`anthropic/claude-3` 这种 OpenRouter 风格的很常见），切在哪一刀上没有通用
+// 答案，而拼起来比对根本不用切。
+//
+// 唯一性由「渠道名不含 `/`」保证——那条在保存时校验、在启动闸复查。否则渠道 a
+// 的模型 b/c 与渠道 a/b 的模型 c 会拼出同一个限定名，下面的 LIMIT 1 静默挑一个。
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
 	var protocols string
@@ -434,6 +437,13 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 			var name, protocols, credType, baseURL string
 			if err := rows.Scan(&id, &name, &protocols, &credType, &baseURL); err != nil {
 				return "", err
+			}
+			// 渠道名不能含 `/`：限定名 `渠道名/纳管模型名` 是拼起来比对的，两边都
+			// 允许 `/` 的话 `a/b/c` 有两种拆法，直连路径的 LIMIT 1 会静默挑一个——
+			// 这正是 v0.21 通则说的「静态就能判定不可能对」的配置。
+			if strings.Contains(name, "/") {
+				return fmt.Sprintf("渠道 %q (id=%d) 的名字含 `/`，会让限定名 `渠道名/纳管模型名` 产生歧义"+
+					"（纳管模型名本身常带 `/`）；改个不带 `/` 的渠道名", name, id), nil
 			}
 			// 支持协议集非空且逐项合法（v0.33）。这一列是逗号分隔的集合，不再是单值：
 			// 空集合的渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。

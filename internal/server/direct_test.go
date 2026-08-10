@@ -7,6 +7,7 @@ import (
 
 	"github.com/SimonGino/ai-gateway/internal/auth"
 	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/ai-gateway/internal/store"
 )
 
 // 纳管模型直连（口径层 v0.32）：客户端把 `渠道名/纳管模型名` 填进 model 字段就能
@@ -173,5 +174,41 @@ func TestAllowedModelsAcceptsAQualifiedName(t *testing.T) {
 	}
 	if up.Count() != 1 {
 		t.Errorf("上游收到 %d 次请求，期望 1 次", up.Count())
+	}
+}
+
+// 渠道名不能含 `/`：限定名是拼起来比对的，两边都允许 `/` 的话 `a/b/c` 有两种拆法，
+// resolveDirect 的 LIMIT 1 会静默挑一个——同一个对外模型名今天打到这个渠道、明天
+// 加了新渠道就换一个，且没有任何提示。歧义在源头掐掉，不在请求时猜。
+func TestChannelNameWithSlashIsRejectedOnSave(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	status, body := a.Do(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"vendor/relay","protocols":["openai_cc"],"base_url":"`+up.URL+`",
+		"credential":"sk-upstream"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("含 `/` 的渠道名应该在保存时就被挡，得到 %d %s", status, body)
+	}
+	if !strings.Contains(body, "歧义") && !strings.Contains(body, "不能含") {
+		t.Errorf("没说清为什么不行：%s", body)
+	}
+}
+
+// 启动闸复查一遍：手工改过库（或者是这条校验加进来之前建的渠道）也要在启动时拦住，
+// 而不是等到某次请求被静默路由到错的渠道。
+func TestStartupRejectsChannelNameWithSlash(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "vendor/relay", "openai_cc", up.URL, "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, ch, "qwen3-max")
+
+	err := store.Validate(t.Context(), db)
+	if err == nil {
+		t.Fatal("渠道名含 `/` 的库应该起不来")
+	}
+	if !strings.Contains(err.Error(), "歧义") {
+		t.Errorf("启动闸的话没点出歧义这件事：%v", err)
 	}
 }
