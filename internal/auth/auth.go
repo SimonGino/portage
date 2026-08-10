@@ -27,23 +27,24 @@ var ErrUnauthorized = errors.New("unauthorized")
 // Key is one row of api_keys, reduced to what the relay path needs.
 type Key struct {
 	Name string
-	// AllowedModels 是接入点白名单，逗号分隔，`*` 表示不限。M1 时这一列只建不校验，
+	// AllowedModels 是模型白名单，逗号分隔，`*` 表示不限。M1 时这一列只建不校验，
 	// M3 管理端能配了之后同期启用校验（PO 于 M3 裁定，兑现 v0.27 的「能配了再启用」）。
 	AllowedModels string
 }
 
-// Allows 判断这把 key 能不能用某个接入点。
+// Allows 判断这把 key 能不能用某个模型名。
 //
-// 校验的是**接入点名**（客户端请求里的 model），不是纳管模型名：纳管模型是渠道的
-// 内部事实，配 key 的人看不到也不该看到。`*` 与空串都表示不限——空串出现在手写 SQL
+// 比的就是客户端请求里那个 model 字符串本身，接入点名和纳管模型限定名
+// （`渠道名/纳管模型名`）都可以写在白名单里——两种名都能路由（口径层 v0.32），
+// 白名单只管一种就等于留了条绕过去的路。`*` 与空串都表示不限：空串出现在手写 SQL
 // 漏填的行上，那种情况按「没设限制」处理，而不是把这把 key 锁死。
-func (k Key) Allows(accessPoint string) bool {
+func (k Key) Allows(model string) bool {
 	list := strings.TrimSpace(k.AllowedModels)
 	if list == "" || list == "*" {
 		return true
 	}
 	for _, item := range strings.Split(list, ",") {
-		if item := strings.TrimSpace(item); item == "*" || item == accessPoint {
+		if item := strings.TrimSpace(item); item == "*" || item == model {
 			return true
 		}
 	}

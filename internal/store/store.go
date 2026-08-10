@@ -45,21 +45,49 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Candidate is the 候选 an 接入点 resolved to, carrying the connection details of
-// the 渠道 it belongs to — everything a 透传 needs to reach the upstream.
+// Candidate is the 候选 a request's model name resolved to, carrying the
+// connection details of the 渠道 it belongs to — everything a 透传 needs to reach
+// the upstream.
 type Candidate struct {
-	AccessPointModel string
-	UpstreamModel    string
-	ChannelName      string
-	Protocol         protocol.Protocol
-	BaseURL          string
-	Credential       string
+	// RequestedModel 是客户端在 `model` 字段里填的那个名字，接入点名或纳管模型
+	// 限定名都可能。
+	RequestedModel string
+	// Direct 记这次走的是纳管模型直连（限定名）而不是接入点。
+	Direct        bool
+	UpstreamModel string
+	ChannelName   string
+	Protocol      protocol.Protocol
+	BaseURL       string
+	Credential    string
 }
 
-// Resolve maps an 接入点 public model name to its single 候选.
+// QualifiedName 是纳管模型对外的限定名：`渠道名/纳管模型名`。
+//
+// 渠道名全局唯一、`UNIQUE(channel_id, upstream_model)` 保证渠道内模型名唯一，两者
+// 拼起来因此也唯一——这正是口径「两者都列、都可路由」能成立的前提：直连路径不需要
+// 任何「重名了选谁」的规则，因为重名压根构造不出来。
+func QualifiedName(channel, upstreamModel string) string {
+	return channel + "/" + upstreamModel
+}
+
+// Resolve maps a client-supplied model name to the 候选 it routes to.
+//
+// 接入点优先：限定名带 `/`，而接入点名理论上也可以带，撞上时以接入点为准——接入点
+// 是显式配出来的对外契约，纳管模型的限定名是自动派生的。
+func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
+	c, err := resolveAccessPoint(ctx, db, model)
+	// 只有「没有这个接入点」才继续试直连。接入点存在但候选不可用是另一回事，
+	// 那时降级去试直连会把「候选停用了」报成「模型不存在」，把人引去查错地方。
+	if !errors.Is(err, ErrAccessPointNotFound) {
+		return c, err
+	}
+	return resolveDirect(ctx, db, model)
+}
+
+// resolveAccessPoint 走接入点路径。
 //
 // M0~M2 的临时闸保证每个接入点只有一个候选，因此这里不做加权抽取；多候选分流在 M4。
-func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
+func resolveAccessPoint(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
 	var apID int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM access_points WHERE model = ? AND disabled = 0`, model).Scan(&apID)
@@ -70,7 +98,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
 		return Candidate{}, err
 	}
 
-	c := Candidate{AccessPointModel: model}
+	c := Candidate{RequestedModel: model}
 	err = db.QueryRowContext(ctx, `
 		SELECT cm.upstream_model, ch.name, ch.protocol, ch.base_url, ck.credential
 		FROM candidates cd
@@ -89,33 +117,100 @@ func Resolve(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
 	return c, nil
 }
 
-// AccessPoint is one 接入点 as the models list exposes it.
-type AccessPoint struct {
-	Model     string
-	CreatedAt int64
+// resolveDirect 走纳管模型直连路径，匹配 `渠道名/纳管模型名` 限定名。
+//
+// 拼接放在 SQL 里比在 Go 里按 `/` 切开更稳：渠道名和纳管模型名本身都可能含 `/`
+// （`anthropic/claude-3` 这种 OpenRouter 风格的模型名很常见），切在哪一刀上没有
+// 通用答案，而拼起来比对根本不用切。
+func resolveDirect(ctx context.Context, db *sql.DB, model string) (Candidate, error) {
+	c := Candidate{RequestedModel: model, Direct: true}
+	err := db.QueryRowContext(ctx, `
+		SELECT cm.upstream_model, ch.name, ch.protocol, ch.base_url, ck.credential
+		FROM channel_models cm
+		JOIN channels ch     ON ch.id = cm.channel_id
+		JOIN channel_keys ck ON ck.channel_id = ch.id AND ck.disabled = 0
+		WHERE ch.name || '/' || cm.upstream_model = ?
+		  AND cm.disabled = 0 AND ch.disabled = 0
+		LIMIT 1`, model).
+		Scan(&c.UpstreamModel, &c.ChannelName, &c.Protocol, &c.BaseURL, &c.Credential)
+	if err == nil {
+		return c, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Candidate{}, err
+	}
+
+	// 分清「没有这个名字」和「有但现在用不了」。直连路径不进启动闸（它没有
+	// candidates 行），停用渠道 / 停用模型 / 没有启用凭证只能在请求时才发现，
+	// 一律报 404 会让人以为名字打错了。
+	var exists int
+	err = db.QueryRowContext(ctx, `
+		SELECT 1 FROM channel_models cm
+		JOIN channels ch ON ch.id = cm.channel_id
+		WHERE ch.name || '/' || cm.upstream_model = ? LIMIT 1`, model).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Candidate{}, ErrAccessPointNotFound
+	}
+	if err != nil {
+		return Candidate{}, err
+	}
+	return Candidate{}, ErrNoUsableCandidate
 }
 
-// ListAccessPoints returns every enabled 接入点, in insertion order.
+// ExposedModel is one entry of `GET /v1/models`.
+type ExposedModel struct {
+	ID        string
+	CreatedAt int64
+	// Direct 区分这一条是接入点还是纳管模型限定名。对外的 OpenAI 格式里不体现，
+	// 管理端和用例靠它分辨。
+	Direct bool
+}
+
+// ListExposedModels returns everything the gateway can route to: 启用的接入点，
+// 加上每个可用纳管模型的限定名（口径层 v0.32「两者都列、都可路由」）。
+//
+// 直连那半边只列**当下真能打通**的——渠道启用、模型启用、渠道有启用凭证。列表与可
+// 路由集合必须一致：harness 拉到清单就直接照着打，列一个必然 503 的名字等于给它挖
+// 个坑。接入点那半边不做这层过滤，因为它归启动闸管（v0.18/v0.21），配置能起来就说
+// 明它通。
 //
 // created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。手写
 // SQL 塞进来的 created_at 未必是 strftime 认得的格式，那时它返回 NULL——COALESCE
 // 兜住，免得一行脏数据把整个 /v1/models 打成 500。
-func ListAccessPoints(ctx context.Context, db *sql.DB) ([]AccessPoint, error) {
+func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0)
-		FROM access_points WHERE disabled = 0 ORDER BY id`)
+		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id
+		FROM access_points WHERE disabled = 0
+		UNION ALL
+		SELECT ch.name || '/' || cm.upstream_model,
+		       COALESCE(CAST(strftime('%s', cm.created_at) AS INTEGER), 0), 1, cm.id
+		FROM channel_models cm
+		JOIN channels ch ON ch.id = cm.channel_id
+		WHERE cm.disabled = 0 AND ch.disabled = 0
+		  AND EXISTS (SELECT 1 FROM channel_keys ck
+		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
+		ORDER BY direct, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []AccessPoint
+	// 接入点名理论上可以长得和某个限定名一模一样。ORDER BY direct 把接入点排在前面，
+	// 于是这里先到先得就等于「接入点优先」——与 Resolve 的优先级一致，列表里那一条
+	// 才指向请求真正会去的地方。
+	seen := make(map[string]bool)
+	var out []ExposedModel
 	for rows.Next() {
-		var ap AccessPoint
-		if err := rows.Scan(&ap.Model, &ap.CreatedAt); err != nil {
+		var m ExposedModel
+		var id int64
+		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Direct, &id); err != nil {
 			return nil, err
 		}
-		out = append(out, ap)
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }

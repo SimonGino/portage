@@ -5,6 +5,7 @@
 > v0.27 变更（M1 开工口径，2026-08-08）：跟随口径层 v0.27 收敛 C6 与 Issue #22 的四条裁决。§7 `api_keys` 表加注：`key_hash` 是 SHA-256 裸哈希、`allowed_models` M1 只建列不校验、**无 `expires_at` 是对的**（v1 不做过期，两份文档就此一致）。新增 §7.1 写明这三条各自的理由——尤其 hash 算法：鉴权是每请求必走的路径，要吃 `key_hash` 唯一索引，加盐则 hash 不可索引须扫全表逐行比，bcrypt 更是每次十毫秒级，而那是为「防拖库后爆破人选密码」付的代价，自生成高熵串没有那个威胁。修改人 jinpenga。
 > v0.26 变更（#11 M2-2 A→CC 转换落地，2026-08-08）：均为实现层，口径不变。①§5 接口补 `DecodeFullBody`——v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的解码侧无处落脚，是**定稿漏项**；备选「非流式也向上游发流式再聚合」被否，理由见 §5（上游看到的请求与客户端发的不是一回事；断连时手里只剩半截事件序列而客户端等一个完整 JSON）。PO 拍板并确认（jinpenga）。②新增 §4.5「A→CC 出口的丢弃与代价」，五项各写明后果，其中 `metadata.user_id` 与 `cache_control` 是 #11 验收明列的两项；丢弃一律走 relay 的 warning 日志，不静默。③§5 坑清单补四条实测：工具分片输出按**首次出现**而非 index 数值排（index 不保证从 0 起、不保证连续）、CC 无逐条工具终止符故只能攒到流末尾冲出、上游响应 id 原样下发不重编 `msg_…`、转换路径**不转发客户端 query**（#20 的「整串照抄」只管同协议透传）。修改人 jinpenga。
 > v0.25 变更（#10 M2-1 canonical 模型定稿，2026-08-07）：§4 重写、§5 接口定稿并落骨架，均为实现层，口径不变。原 v0.2 的 canonical 草案照协议文档拍，本次拿 9 份真实 harness 入站样本逐字段核过，**草案被证伪四处**（§4.3）：`System string` 装不下带 `cache_control` 断点的 system 数组；role 集合装不下 Anthropic mid-conversation-system beta 塞在 messages 中段的 system 消息；`Tool` 的 name/description/JSON-schema 三件套装不下 Codex 的 lark 文法 custom 工具与 Claude Code 的服务端工具；`EvToolArgsDelta{JSONFragment}` 建立在「工具入参必是 JSON」这个不成立的不变量上（Codex code-mode 的入参是 JS 源码）。同时立两条规矩：①**装得下 ≠ 转得过去**——decode 必须是全函数，跨协议丢什么是 encode 侧的决策，「记为丢弃」与「无处存放」不是一回事，§4.4 列显式丢弃清单及代价；②逐键路径的归宿清单**只存在于 `internal/protocol/canonical_coverage_test.go`**，文档不抄第二份（两份必漂移），该测试双向红，写表时当场逮出漏掉的字段。§5 补两条实测坑（工具入参非 JSON 时编码到 CC 的后果、Codex 并行只发生在 code-mode 内部故不能拿它验交错重组）。其中两处提交 PO 拍板并获确认（jinpenga）：Responses `developer` 角色 decode 归一为 `RoleSystem`（R 出口方向再展开回 `developer`），以及 §4.4 那三项显式丢弃。修改人 jinpenga。
+> v0.25 变更（口径层 v0.32 落地，2026-08-10）：纳管模型直连寻址实现化。①`store.Resolve` 改为**先接入点、后直连**的分派器——只有「没有这个接入点」才继续试限定名 `渠道名/纳管模型名`；接入点存在但候选不可用是另一回事，降级去试直连会把「候选停用了」报成「模型不存在」。②限定名的匹配放在 SQL 里拼 `ch.name || '/' || cm.upstream_model = ?`，**不在 Go 里按 `/` 切**：渠道名和纳管模型名本身都可能含 `/`（`anthropic/claude-3` 这类 OpenRouter 风格的模型名很常见），切在哪一刀上没有通用答案，拼起来比对根本不用切。③直连路径不进启动闸（它没有 `candidates` 行），「有这个名字但现在用不了」只能在请求时发现，故 `resolveDirect` 落空后再查一次「忽略 disabled 是否存在」，据此分 404 与 503——一律 404 会让人以为名字打错了。④`callRecord.accessPoint` 更名 `requestedModel`、结构化日志字段 `access_point` 改 `requested_model`：这一列记的是客户端填的那个名字，限定名和接入点名在里面平权（`call_logs.model_requested` 列名本来就是对的，不用动）。⑤§8、§7.1 随之改写。
 > v0.24 变更（#20 修复，2026-08-07）：§6.1 补「客户端查询串整串照抄」——透传口径原文只规定了 body（「除顶层 `model` 值外逐字节相等」）与请求头白名单，查询串既不在白名单也不在丢弃清单里，是**漏项**不是裁决过的行为。PO 裁定不过滤、整串照抄（jinpenga）：查询参数不像请求头那样天然带客户端指纹，且各家 harness 的私有参数不可穷举，白名单在这里没有可枚举的对象。
 > v0.23 变更（M2-1 入站样本实采回写 #10，2026-08-07）：两条实测观察落档，均为实现层，口径不变。①§6.1 白名单段补**反例**——某些中转站的 Anthropic 端点靠 `user-agent` + `x-app` 判定客户端，白名单转发一律 503。结论仍是**白名单不放宽**（为迎合一家中转站撤掉「不泄露本机指纹」这条口径，代价与收益不对等），绕法在配置层：Anthropic 配一条不设该闸的独立上游。顺带说明 goldenrec「转发照抄、落盘白名单」为何不算双标——防指纹外泄的对象是 git 仓库不是上游。②§9 补 `log_bodies` 的实测量级——Claude Code 2.x 单轮请求体 **185 KB**（42 个 tool 定义占大头），Codex CLI 0.144.1 是 47~50 KB，即 64 KiB 上限对前者是**几乎必截断**而非偶尔越过。不改 `bodyCaptureLimit`（排障日志该有这个上限），改的是读日志时的预期：`truncated` 在真实 harness 下是常态不是故障信号。
 > v0.22 变更（M2-1 入站样本采集 #10，2026-08-06）：§9 补「入站样本」这一类——golden 库自此分 `direction: upstream | inbound` 两类，`cmd/goldenrec` 随之加 inbound 模式。新决策一条：**没有对应协议的真实上游时，用手写 stub 应答驱动 harness 走完多轮**（PO 裁定 jinpenga）。依据 = `A→CC` 最难啃的输入是第二轮那个带 `tool_result` 的请求体，而 harness 只有先收到过一个合法 tool 调用响应才会发出它；手上没有 Anthropic / OpenAI 官方 key（#7 仍挂着），纯录制回 501 只能采到第一轮。stub 是道具不是样本：不保真、不进转录库，入库的只有 harness 发出来的真实请求字节。
@@ -534,7 +535,9 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 **`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
 
-> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个接入点。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的接入点。
+> **已于 M3 启用**（口径层 v0.28）：`auth.Key.Allows` 做精确匹配（逗号分隔，`*` 与空串都是不限；空串出现在手写 SQL 漏填的行上，按「没设限制」处理而不是把那把 key 锁死）。**校验点在 `relay()` 里、解析出 `head.Model` 之后**，不在鉴权中间件——那一层跑的时候请求体还没读，不知道要判哪个模型。越权回 **403**（按入口协议原生错误格式）而不是 404：这把 key 不能用它，不是它不存在，说成 404 会把人引去查配置。`GET /v1/models` 不按白名单过滤（PO 裁定校验只在转发端），因此一把受限 key 能列出它调不了的名字。
+
+> **两种名平权（口径层 v0.32）**：`Allows` 比的就是客户端填的 `model` 字符串本身，接入点名与纳管模型限定名都能写进白名单。函数本身一行没改——变的是可写的值域。只认接入点名的话，一把受限 key 走直连就能打到同一个上游，白名单等于形同虚设。
 
 **不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
 
@@ -583,7 +586,11 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 ## 8. 最小管理接口
 
 - `GET /healthz`
-- `GET /v1/models`：返回配置中声明的对外模型（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
+- `GET /v1/models`：返回**全部可路由的模型名**（harness 启动时会拉），格式为 OpenAI 公开的 `{"object":"list","data":[{"id":…}]}`
+
+> **两半、两者都可路由（口径层 v0.32）**：未停用的接入点名，加上可用纳管模型的限定名 `渠道名/纳管模型名`。实现是 `store.ListExposedModels` 里一条 `UNION ALL`，`ORDER BY direct, id` 把接入点排在前面，Go 侧按 id 先到先得去重——于是「接入点优先」在列表和 `store.Resolve` 里是同一条规则。
+> 直连那半边只列**当下真能打通**的（渠道启用 + 模型启用 + 渠道有启用凭证）；接入点那半边不做这层过滤，它归启动闸管（v0.18/v0.21）。直连没有 `candidates` 行，启动闸看不见它，所以这道过滤只能长在列表查询里。
+> 这张表唯一的契约是**列出来的都调得通**，因此它认的名字集合必须和 `store.Resolve` 逐字一致，改一边就得改另一边。
 
 > **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
 - Anthropic 出口/入口的 `count_tokens`：P0 仅在上游为 Anthropic 时透传，否则 501
