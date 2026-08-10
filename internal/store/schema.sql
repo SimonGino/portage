@@ -15,8 +15,14 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE TABLE IF NOT EXISTS channel_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  -- 人写的凭证名（口径层 v0.38），日志与用量归因用；不填由管理端给 `凭证 N`。
+  -- 渠道内唯一——日志里两行都叫「主号」就废掉了归因本身。唯一性靠下面那条索引，
+  -- 不写成表内 UNIQUE：老库要靠 ALTER 补这一列，而 ALTER 加不了约束，
+  -- 两条路都走索引才能让新老库长成同一个形状（见 store.migrate）。
+  name TEXT NOT NULL DEFAULT '',
   credential TEXT NOT NULL,
   disabled INTEGER NOT NULL DEFAULT 0,
+  -- 仅 401 自动摘除（口径层 v0.38：403 换而不摘）；429/5xx 不摘；只人工恢复。
   disabled_reason TEXT,
   disabled_at DATETIME,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -74,6 +80,10 @@ CREATE TABLE IF NOT EXISTS call_logs (
   model_requested TEXT NOT NULL,
   model_upstream TEXT NOT NULL,
   channel_name TEXT NOT NULL,
+  -- 本次真正发请求的那份凭证名（换过则记最后一份，失败亦然）；口径层 v0.38。
+  -- 快照冗余而非 channel_key_id：删凭证是常事，存 id 会把历史 join 空。
+  -- 没走到上游时为空串（迁移前的老行同）。
+  channel_key_name TEXT NOT NULL DEFAULT '',
   status INTEGER NOT NULL,
   retry_count INTEGER NOT NULL DEFAULT 0,
   ttft_ms INTEGER,

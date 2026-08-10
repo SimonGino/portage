@@ -50,17 +50,36 @@ func TestStartupGateRejectsMultipleCandidates(t *testing.T) {
 	assertRejects(t, err, "gw-sonnet", "2")
 }
 
-func TestStartupGateRejectsMultipleCredentials(t *testing.T) {
+// 临时闸的凭证那一半已于口径层 v0.38 放开（凭证池聚合前移到 M3）：多份启用凭证是
+// 合法配置，不再是「恰好 1 份」。这条用例钉的正是那次放开——单候选那一半仍在，
+// 由 TestStartupGateRejectsMultipleCandidates 守着。
+func TestStartupGateAcceptsMultipleCredentials(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	channelID := gatewaytest.SeedChannel(t, db, "anthropic-official", "anthropic", "https://api.anthropic.com", "sk-first")
 	gatewaytest.SeedCredential(t, db, channelID, "sk-second")
+	gatewaytest.SeedCredential(t, db, channelID, "sk-third")
 	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
 	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
 	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
 
-	err := store.Validate(t.Context(), db)
+	if err := store.Validate(t.Context(), db); err != nil {
+		t.Fatalf("三份启用凭证被启动闸拒了: %v", err)
+	}
+}
 
-	assertRejects(t, err, "anthropic-official", "2")
+// 凭证名渠道内唯一（口径层 v0.38）：日志与用量的归因全靠这个名字，库层面不拦的话
+// 两行都叫「主号」时归因本身就废了。跨渠道同名照样合法——那是两个上游账号的事。
+func TestCredentialNamesAreUniquePerChannel(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	a := gatewaytest.SeedChannel(t, db, "chan-a", "anthropic", "https://api.anthropic.com", "sk-a")
+	b := gatewaytest.SeedChannel(t, db, "chan-b", "anthropic", "https://api.anthropic.com", "sk-b")
+	gatewaytest.SeedNamedCredential(t, db, a, "主号", "sk-1")
+	gatewaytest.SeedNamedCredential(t, db, b, "主号", "sk-2")
+
+	if _, err := db.Exec(
+		`INSERT INTO channel_keys (channel_id, name, credential) VALUES (?, ?, ?)`, a, "主号", "sk-3"); err == nil {
+		t.Fatal("同一渠道内的重名凭证竟然插进去了")
+	}
 }
 
 func TestStartupGateRejectsAccessPointWithoutCandidate(t *testing.T) {

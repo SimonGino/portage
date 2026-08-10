@@ -36,10 +36,18 @@ type Config struct {
 }
 
 // Retry 的默认值见 Default()。MaxRetries 是**重试**次数，不含首次尝试。
+//
+// MaxAttempts 与它是两层，不是一件事（口径层 v0.38）：MaxRetries 管同一份凭证上的
+// 抖动重试，MaxAttempts 管一次请求最多打多少次上游、跨凭证累计。两层都要——只留
+// 内层，最坏耗时随凭证数线性增长（凭证是运营数据随时会加，配置里没有任何地方提示
+// 「加第 6 把会让超时翻倍」）；只留外层且跨凭证共享一份预算，则会出现「换到第二份
+// 时预算耗尽、第三份根本没试过」，那份是好的却没被用上。
 type Retry struct {
-	MaxRetries int           `yaml:"max_retries"`
-	BaseDelay  time.Duration `yaml:"base_delay"`
-	MaxDelay   time.Duration `yaml:"max_delay"`
+	MaxRetries int `yaml:"max_retries"`
+	// MaxAttempts 是一次请求的全局上游尝试上限，跨凭证累计；写 0 即不封顶。
+	MaxAttempts int           `yaml:"max_attempts"`
+	BaseDelay   time.Duration `yaml:"base_delay"`
+	MaxDelay    time.Duration `yaml:"max_delay"`
 }
 
 // Default binds to loopback only: there is no gateway key auth until M1, so a
@@ -54,7 +62,7 @@ func Default() Config {
 		// 取值参照 M0 实测（#6）：Codex 对 5xx 的退避是 0.22→0.45→0.84→1.62s，
 		// 量级相仿。重试 2 次是「够救瞬时限流、又不至于让客户端干等太久」的折中；
 		// 真实 429 通常带 Retry-After，那时以它为下界。
-		Retry: Retry{MaxRetries: 2, BaseDelay: 500 * time.Millisecond, MaxDelay: 10 * time.Second},
+		Retry: Retry{MaxRetries: 2, MaxAttempts: 6, BaseDelay: 500 * time.Millisecond, MaxDelay: 10 * time.Second},
 	}
 }
 
@@ -85,7 +93,8 @@ func Load(path string) (Config, error) {
 	//
 	// max_retries 这里不兜底，靠 Unmarshal 覆盖在 Default() 之上的语义区分两种情况：
 	// 整个 retry 块缺席 → 保持默认 2；显式写 max_retries: 0 → 就是要关掉重试。
-	// 若在这里补零值，「写了 0」会被悄悄改回 2，关不掉。
+	// 若在这里补零值，「写了 0」会被悄悄改回 2，关不掉。max_attempts 同一个陷阱、
+	// 同样不兜底：写 0 就是「不封顶」，补回 6 会让人以为封不掉。
 	// 两个 delay 反过来必须兜底，否则只写了 max_retries 时退避退了个寂寞。
 	if cfg.Retry.BaseDelay <= 0 {
 		cfg.Retry.BaseDelay = Default().Retry.BaseDelay

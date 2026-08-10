@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/store"
 )
 
 // probeTimeout 短一些：这是保存渠道时同步跑的，人在等着看结果。上游慢到 8 秒还没
@@ -55,7 +54,7 @@ func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential 
 	}
 	// 复用转发路径那套认证头，不另写一份：探测要问的正是「按我们发请求的方式打过去
 	// 通不通」，换一套头就可能探到一个和真实转发不一样的结论。
-	applyHeaders(req.Header, http.Header{}, store.Candidate{Protocol: p, Credential: credential}, false)
+	applyHeaders(req.Header, http.Header{}, p, credential, false)
 
 	resp, err := (&http.Client{Timeout: probeTimeout}).Do(req)
 	if err != nil {

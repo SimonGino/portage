@@ -5,8 +5,8 @@ package store
 // 混在一起会让热路径顺带背上管理端才需要的 JOIN。
 //
 // 一条硬约束贯穿全文件：**上游凭证只写不回读**（PO 于 M3 裁定）。因此所有返回结构里
-// 都没有 credential 字段，只有 HasCredential 这个布尔。加一个「掩码回读」都不行——
-// 掩码本身是信息，且实现上很容易某次改动漏掉掩码把全串吐出去。
+// 都没有 credential 字段，只有名字与状态。加一个「掩码回读」都不行——掩码本身是信息，
+// 且实现上很容易某次改动漏掉掩码把全串吐出去。凭证池自身的读写在 credential.go。
 
 import (
 	"context"
@@ -105,9 +105,13 @@ type Channel struct {
 	BaseURL   string       `json:"base_url"`
 	KeyMode   string       `json:"key_mode"`
 	Disabled  bool         `json:"disabled"`
-	// HasCredential 是「这个渠道能不能用」在页面上唯一看得见的凭证信息。
-	HasCredential bool           `json:"has_credential"`
-	Models        []ChannelModel `json:"models"`
+	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
+	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
+	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
+	// 的劣化过程整个藏住。
+	EnabledKeys  int            `json:"enabled_keys"`
+	DisabledKeys int            `json:"disabled_keys"`
+	Models       []ChannelModel `json:"models"`
 }
 
 // ListChannels 返回全部渠道（含停用的——管理端要能看见并重新启用），每个带上它的
@@ -115,7 +119,8 @@ type Channel struct {
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.disabled,
-		       EXISTS(SELECT 1 FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0)
+		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
+		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
 		FROM channels ch ORDER BY ch.id`)
 	if err != nil {
 		return nil, err
@@ -127,7 +132,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	for rows.Next() {
 		var c Channel
 		var protocols string
-		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.Disabled, &c.HasCredential); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.Disabled,
+			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
 		}
 		// 解不动就留空数组交给页面显示，不让整张列表 500：这一列可以是手写 SQL
@@ -165,13 +171,16 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	return channels, mrows.Err()
 }
 
-// ChannelInput 是新建/修改渠道时可写的字段。credential 不在里面，它走
-// SetChannelCredential——分开是为了让「保存渠道」这个动作不可能顺手清掉凭证。
+// ChannelInput 是新建/修改渠道时可写的字段。credential 不在里面，它走凭证池那套逐条
+// CRUD（credential.go）——分开是为了让「保存渠道」这个动作不可能顺手清掉凭证。
 type ChannelInput struct {
 	Name      string       `json:"name"`
 	Protocols protocol.Set `json:"protocols"`
 	BaseURL   string       `json:"base_url"`
-	Disabled  bool         `json:"disabled"`
+	// KeyMode 是凭证选取模式：polling（默认）/ random。空串按默认走——它是 v0.38
+	// 才露到表单上的，老前端与手写的请求体里没有这个字段。
+	KeyMode  string `json:"key_mode"`
+	Disabled bool   `json:"disabled"`
 }
 
 // normalized 校验并归一化支持协议集：去空格、去重、保序，空集合直接拒。
@@ -190,15 +199,32 @@ func (in ChannelInput) normalized() (string, error) {
 	return set.String(), nil
 }
 
+// keyMode 归一化选取模式。空串取默认，认不得的取值直接拒——拼错的模式名会静默退化
+// 成轮询，而「为什么总是第一把在跑」正是多凭证放开后最难自己想明白的问题。
+func (in ChannelInput) keyMode() (string, error) {
+	switch mode := strings.TrimSpace(in.KeyMode); mode {
+	case "":
+		return KeyModePolling, nil
+	case KeyModePolling, KeyModeRandom:
+		return mode, nil
+	default:
+		return "", InvalidInput{Reason: "凭证选取模式只能是 polling（轮询）或 random（随机）"}
+	}
+}
+
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
 	protocols, err := in.normalized()
 	if err != nil {
 		return 0, err
 	}
+	mode, err := in.keyMode()
+	if err != nil {
+		return 0, err
+	}
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO channels (name, protocols, base_url, disabled) VALUES (?, ?, ?, ?)`,
-		in.Name, protocols, in.BaseURL, boolInt(in.Disabled))
+		INSERT INTO channels (name, protocols, base_url, key_mode, disabled) VALUES (?, ?, ?, ?, ?)`,
+		in.Name, protocols, in.BaseURL, mode, boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
 	}
@@ -212,46 +238,68 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if err != nil {
 		return err
 	}
+	mode, err := in.keyMode()
+	if err != nil {
+		return err
+	}
 	res, err := db.ExecContext(ctx, `
-		UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ? WHERE id = ?`,
-		in.Name, protocols, in.BaseURL, boolInt(in.Disabled), id)
+		UPDATE channels SET name = ?, protocols = ?, base_url = ?, key_mode = ?, disabled = ? WHERE id = ?`,
+		in.Name, protocols, in.BaseURL, mode, boolInt(in.Disabled), id)
 	return affectedOne(res, err)
 }
 
-// ProbeTarget 是跑一次协议可达性探测要的东西：打哪儿、试哪几个协议、用哪把凭证。
+// ProbeTarget 是跑一次协议可达性探测要的东西：打哪儿、试哪几个协议、用哪几份凭证。
 //
-// Credential 是唯一一处凭证离开 store 的地方，它只流向 upstream.Probe，**不进任何
-// JSON 响应**——「上游凭证只写不回读」那条约束管的是回读给人看，不是进程内自用。
+// Credentials 是唯一一处凭证值离开 store 的地方，它只流向 upstream.Probe，**不进
+// 任何 JSON 响应**——「只写不回读」那条约束管的是回读给人看，不是进程内自用。
 type ProbeTarget struct {
-	Name       string
-	BaseURL    string
-	Protocols  protocol.Set
-	Credential string
+	Name      string
+	BaseURL   string
+	Protocols protocol.Set
+	// Credentials 含**已停用**的凭证（口径层 v0.38 逐把凭证探）：恢复既然是纯人工
+	// 的，「这把被摘的凭证现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
+	// 是那个答案。一份都没有时是空切片——照样探，只是不带凭证，上游多半回 401，
+	// 而 401 同样证明子路径存在，这正是探测要问的。
+	Credentials []CredentialProbe
 }
 
-// ChannelProbeTarget 按 id 取探测目标。渠道没有启用凭证时 Credential 为空串——照样
-// 探，只是上游多半回 401，而 401 同样证明子路径存在，这正是探测要问的。
+// CredentialProbe 是探测时用的一份凭证：显示用名字 + 进程内自用的值 + 当下状态。
+type CredentialProbe struct {
+	Name     string
+	Value    string
+	Disabled bool
+}
+
+// ChannelProbeTarget 按 id 取探测目标。
 func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
 	var t ProbeTarget
 	var protocols string
-	var credential sql.NullString
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url, ch.protocols,
-		       (SELECT ck.credential FROM channel_keys ck
-		        WHERE ck.channel_id = ch.id AND ck.disabled = 0 LIMIT 1)
-		FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURL, &protocols, &credential)
+		SELECT ch.name, ch.base_url, ch.protocols FROM channels ch WHERE ch.id = ?`, id).
+		Scan(&t.Name, &t.BaseURL, &protocols)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound
 	}
 	if err != nil {
 		return ProbeTarget{}, err
 	}
-	t.Credential = credential.String
 	if t.Protocols, err = protocol.ParseSet(protocols); err != nil {
 		return ProbeTarget{}, InvalidInput{Reason: err.Error()}
 	}
-	return t, nil
+	rows, err := db.QueryContext(ctx,
+		`SELECT name, credential, disabled FROM channel_keys WHERE channel_id = ? ORDER BY id`, id)
+	if err != nil {
+		return ProbeTarget{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cp CredentialProbe
+		if err := rows.Scan(&cp.Name, &cp.Value, &cp.Disabled); err != nil {
+			return ProbeTarget{}, err
+		}
+		t.Credentials = append(t.Credentials, cp)
+	}
+	return t, rows.Err()
 }
 
 // DeleteChannel 删渠道。凭证与纳管模型靠 schema 的 ON DELETE CASCADE 跟着走；
@@ -268,23 +316,6 @@ func DeleteChannel(ctx context.Context, db Conn, id int64) error {
 	}
 	res, err := db.ExecContext(ctx, `DELETE FROM channels WHERE id = ?`, id)
 	return affectedOne(res, err)
-}
-
-// SetChannelCredential 换掉渠道的上游凭证。
-//
-// 先删后插而不是 UPDATE：临时闸要求「恰好 1 份启用凭证」，UPDATE 在有 0 份或 2 份
-// 时都会悄悄走偏。已停用的旧凭证留着不动——那是 key 熔断的现场，删了就查不到
-// 「哪一把什么时候被停的」。
-func SetChannelCredential(ctx context.Context, db Conn, channelID int64, credential string) error {
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM channel_keys WHERE channel_id = ? AND disabled = 0`, channelID); err != nil {
-		return err
-	}
-	// channel_id 指向不存在的渠道时这一句会报外键错误——Open 里 PRAGMA
-	// foreign_keys(1) 是开着的，所以这里不需要再自己查一次渠道在不在。
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO channel_keys (channel_id, credential) VALUES (?, ?)`, channelID, credential)
-	return err
 }
 
 // AddChannelModel 给渠道加一个纳管模型。重复添加视为幂等成功。
@@ -496,6 +527,7 @@ type CallLogRow struct {
 	ModelRequested   string `json:"model_requested"`
 	ModelUpstream    string `json:"model_upstream"`
 	ChannelName      string `json:"channel_name"`
+	ChannelKeyName   string `json:"channel_key_name"`
 	Status           int    `json:"status"`
 	RetryCount       int    `json:"retry_count"`
 	TTFTMs           *int64 `json:"ttft_ms"`
@@ -511,7 +543,7 @@ type CallLogRow struct {
 func ListCallLogs(ctx context.Context, db Queryer, limit, offset int) ([]CallLogRow, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, created_at, api_key_name, client_protocol, upstream_protocol,
-		       model_requested, model_upstream, channel_name, status, retry_count,
+		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       ttft_ms, total_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, COALESCE(error, '')
 		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
@@ -524,7 +556,7 @@ func ListCallLogs(ctx context.Context, db Queryer, limit, offset int) ([]CallLog
 		var r CallLogRow
 		var ttft, in, outTok, cr, cw sql.NullInt64
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
-			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.Status, &r.RetryCount,
+			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &r.Error); err != nil {
 			return nil, err
 		}
@@ -535,31 +567,46 @@ func ListCallLogs(ctx context.Context, db Queryer, limit, offset int) ([]CallLog
 	return out, rows.Err()
 }
 
-// UsageRow 是用量汇总的一行：按接入点聚合。
+// UsageRow 是用量汇总的一行。Label 按维度取值：接入点名，或上游凭证名。
 type UsageRow struct {
-	ModelRequested string `json:"model_requested"`
-	Calls          int64  `json:"calls"`
-	Errors         int64  `json:"errors"`
-	InputTokens    int64  `json:"input_tokens"`
-	OutputTokens   int64  `json:"output_tokens"`
-	CacheRead      int64  `json:"cache_read_tokens"`
-	CacheWrite     int64  `json:"cache_write_tokens"`
+	Label        string `json:"label"`
+	Calls        int64  `json:"calls"`
+	Errors       int64  `json:"errors"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	CacheRead    int64  `json:"cache_read_tokens"`
+	CacheWrite   int64  `json:"cache_write_tokens"`
 }
 
-// UsageByModel 汇总最近 days 天的用量。
+// 用量聚合的两个维度（口径层 v0.38 给用量页加了按凭证那一个）。
+const (
+	UsageByModel      = "model"
+	UsageByCredential = "credential"
+)
+
+// UsageBy 汇总最近 days 天的用量，按 dim 指定的维度聚合。
+//
+// 按凭证聚合是 v0.38 加的：「这个号跑了多少、还剩多少」是个聚合问题，只给逐行的
+// 日志表等于把 group by 留给人的肉眼做。没走到上游的行（鉴权失败、模型不存在）
+// 凭证名是空串，单独归成一档而不是丢掉——它们照样消耗了配额判断之外的东西，藏起来
+// 会让两个维度的总次数对不上。
 //
 // Errors 数的是 status >= 400 的行，包括上游自己回的 4xx——用量页要回答的是
 // 「有多少次调用没拿到东西」，而不是「网关有没有出错」，两者对使用者是一回事。
-func UsageByModel(ctx context.Context, db Queryer, days int) ([]UsageRow, error) {
+func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow, error) {
+	label := `model_requested`
+	if dim == UsageByCredential {
+		label = `CASE WHEN channel_key_name = '' THEN '(未走到上游)' ELSE channel_key_name END`
+	}
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT model_requested,
+		SELECT %s AS label,
 		       COUNT(*),
 		       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),
 		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
 		FROM call_logs
 		WHERE created_at >= datetime('now', '-%d days')
-		GROUP BY model_requested ORDER BY COUNT(*) DESC`, days))
+		GROUP BY label ORDER BY COUNT(*) DESC`, label, days))
 	if err != nil {
 		return nil, err
 	}
@@ -567,7 +614,7 @@ func UsageByModel(ctx context.Context, db Queryer, days int) ([]UsageRow, error)
 	out := []UsageRow{}
 	for rows.Next() {
 		var u UsageRow
-		if err := rows.Scan(&u.ModelRequested, &u.Calls, &u.Errors,
+		if err := rows.Scan(&u.Label, &u.Calls, &u.Errors,
 			&u.InputTokens, &u.OutputTokens, &u.CacheRead, &u.CacheWrite); err != nil {
 			return nil, err
 		}

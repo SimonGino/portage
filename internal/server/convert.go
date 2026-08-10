@@ -91,8 +91,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
 	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。#20 定的「整串照抄」
 	// 管的是同协议透传那条路。
-	resp, retries, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
-	rec.retries = retries
+	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
+	rec.retries, rec.channelKey = at.Retries(), at.Credential
 	if err != nil {
 		rec.outcome = "upstream_error"
 		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))

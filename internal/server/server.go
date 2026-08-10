@@ -114,16 +114,40 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	retry := upstream.RetryPolicy{
-		MaxRetries: cfg.Retry.MaxRetries,
-		BaseDelay:  cfg.Retry.BaseDelay,
-		MaxDelay:   cfg.Retry.MaxDelay,
+		MaxRetries:  cfg.Retry.MaxRetries,
+		MaxAttempts: cfg.Retry.MaxAttempts,
+		BaseDelay:   cfg.Retry.BaseDelay,
+		MaxDelay:    cfg.Retry.MaxDelay,
 	}
 	// 限流桶在这里造一次、四条转发路由共用。若改成在 rateLimit(ep) 里 new，
 	// 每个端点各得一只桶，全局 10 QPS 会变成 40 QPS——而且看不出来。
-	return &Server{
+	s := &Server{
 		cfg: cfg, db: db, up: upstream.NewClient(retry), log: log,
 		lim: newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 	}
+	// key 层内环的 401 摘除挂在这里接到库上（口径层 v0.38）。upstream 不认识
+	// *sql.DB，也不该认识——它只知道「这份凭证坏了」，怎么记是 store 的事。
+	s.up.Disable = s.disableCredential
+	return s
+}
+
+// disableCredential 摘掉一份 401 的上游凭证。
+//
+// 只摘 401（口径层 v0.38）：403 在上游还可能是「这把凭证没开通这个模型」，摘掉的
+// 却是渠道级资源，误伤代价不对称。摘除只人工恢复，所以这里不留任何自动恢复的钩子。
+//
+// 不用请求 ctx：它可能因为客户端断开而已经取消，而那时摘除更该落下——一把确定性
+// 失效的凭证留在池子里，下一个请求还会再吃一次 401。落库失败只记日志：这一步失败
+// 不该把一次**已经换到好凭证并成功**的转发变成客户端眼里的错误。
+func (s *Server) disableCredential(cred store.Credential, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := store.DisableCredential(ctx, s.db, cred.ID, reason); err != nil {
+		s.log.Error("摘除上游凭证失败", "credential", cred.Name, "err", err)
+		return
+	}
+	// 只报名字，不报凭证值——它连掩码都不回读（口径层 v0.28）。
+	s.log.Warn("上游凭证已停用，需人工恢复", "credential", cred.Name, "reason", reason)
 }
 
 func (s *Server) Engine() *gin.Engine {
@@ -303,8 +327,8 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		resp, retries, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
-		rec.retries = retries
+		resp, at, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
+		rec.retries, rec.channelKey = at.Retries(), at.Credential
 		if err != nil {
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
 			rec.outcome = "upstream_error"

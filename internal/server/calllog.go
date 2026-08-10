@@ -57,16 +57,20 @@ type callRecord struct {
 	inboundProto   protocol.Protocol
 	requestedModel string
 	channel        string
-	channelProto   protocol.Protocol
-	upstreamModel  string
-	stream         bool
-	status         int
+	// channelKey 是本次**真正发出请求**的那份上游凭证的名字（换过凭证时是最后一
+	// 份，失败亦然）。名字不是凭证值——网关不从凭证值派生任何显示字符（口径层
+	// v0.38），日志里出现的永远只是人自己写的那个名字。
+	channelKey    string
+	channelProto  protocol.Protocol
+	upstreamModel string
+	stream        bool
+	status        int
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
 	outcome string
-	// retries 是这次调用向同一候选重打了几次。不含首次尝试，0 是常态所以不打进
-	// 日志——否则每一行都要背一个恒为 0 的字段。非 0 才说明发生过退避重试，
-	// 「这次怎么慢了三秒」有据可查。
+	// retries 是这次调用向上游重打了几次（含换凭证之后的那些，口径层 v0.38）。
+	// 不含首次尝试，0 是常态所以不打进日志——否则每一行都要背一个恒为 0 的字段。
+	// 非 0 才说明发生过退避重试或换过凭证，「这次怎么慢了三秒」有据可查。
 	retries int
 
 	summary     protocol.Summary
@@ -91,6 +95,9 @@ func (s *Server) logCall(rec *callRecord) {
 		attrs = append(attrs, "channel", rec.channel,
 			"channel_protocol", string(rec.channelProto),
 			"upstream_model", rec.upstreamModel)
+	}
+	if rec.channelKey != "" {
+		attrs = append(attrs, "channel_key", rec.channelKey)
 	}
 	if rec.retries > 0 {
 		attrs = append(attrs, "retries", rec.retries)
@@ -142,6 +149,7 @@ func (s *Server) persistCall(rec *callRecord) {
 		ModelRequested:   rec.requestedModel,
 		ModelUpstream:    rec.upstreamModel,
 		ChannelName:      rec.channel,
+		ChannelKeyName:   rec.channelKey,
 		Status:           rec.status,
 		RetryCount:       rec.retries,
 		TotalMs:          time.Since(rec.start).Milliseconds(),
