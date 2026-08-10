@@ -7,6 +7,7 @@ package server_test
 // 只有上游那一侧的观测才说明这件事真的发生了。
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -169,6 +170,11 @@ func TestAllCredentialsExhaustedReturnsUpstreamErrorVerbatim(t *testing.T) {
 			t.Errorf("凭证 %s 回了 401 却没被摘", name)
 		}
 	}
+	// 失败的这一行也要记下最后用的是哪把（口径层 v0.38）：一次全军覆没的调用恰恰
+	// 是最需要知道「换到底了没有」的时候，只记成功的等于把归因留给猜。
+	if got := g.LastCallRow(t).ChannelKeyName; got != "二号" {
+		t.Errorf("失败流水的 channel_key_name = %q，期望最后用的那份「二号」", got)
+	}
 }
 
 // 全局尝试上限封的是「一次请求最多打几次上游」，跨凭证累计（口径层 v0.38）。
@@ -177,7 +183,7 @@ func TestGlobalAttemptBudgetCapsUpstreamSends(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	up.RespondWith(http.StatusTooManyRequests, nil, `{"error":"slow down"}`)
 	db := gatewaytest.NewDB(t)
-	seedPool(t, db, up.URL,
+	ids := seedPool(t, db, up.URL,
 		[2]string{"一号", "sk-1"}, [2]string{"二号", "sk-2"},
 		[2]string{"三号", "sk-3"}, [2]string{"四号", "sk-4"})
 	g := gatewaytest.StartWith(t, db, gatewaytest.Options{Retry: config.Retry{
@@ -192,6 +198,15 @@ func TestGlobalAttemptBudgetCapsUpstreamSends(t *testing.T) {
 	// 4 份凭证 × (1 次 + 1 次重试) = 8 次，被 max_attempts 封在 3 次。
 	if got := up.Count(); got != 3 {
 		t.Errorf("上游收到 %d 次请求，max_attempts=3 应当封在 3 次", got)
+	}
+	// 429 换而**不摘**，也不做冷却（口径层 v0.38）：限流不是确定性失效，摘掉它等于
+	// 让一次上游抖动把凭证永久下线，而恢复只有人工那一条路。等一小会儿再看，给一个
+	// 会摘的实现留出摘的时间。
+	time.Sleep(100 * time.Millisecond)
+	for name, id := range ids {
+		if disabled, _, _ := credentialState(t, db, id); disabled {
+			t.Errorf("429 摘掉了凭证 %s", name)
+		}
 	}
 }
 
@@ -297,6 +312,15 @@ func TestOpenBackfillsCredentialNames(t *testing.T) {
 		}
 		if name != "" {
 			t.Errorf("老流水的 channel_key_name 应为空串，得到 %q", name)
+		}
+		// 真的在**迁移过的库**上跑一遍按凭证聚合——验收要的是「用量页不炸」，只查列值
+		// 查不出这件事。老流水走到过上游（它有渠道名），所以不能被归进「(未走到上游)」。
+		rows, err := store.UsageBy(context.Background(), db, 7, store.UsageByCredential)
+		if err != nil {
+			t.Fatalf("第 %d 遍在迁移库上按凭证聚合失败: %v", round, err)
+		}
+		if len(rows) != 1 || rows[0].Label != "(未记录凭证)" || rows[0].Calls != 1 {
+			t.Errorf("第 %d 遍聚合结果 = %+v，期望一行「(未记录凭证)」×1", round, rows)
 		}
 		db.Close()
 	}

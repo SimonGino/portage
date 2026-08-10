@@ -233,6 +233,39 @@ func TestAdminNeverReturnsUpstreamCredential(t *testing.T) {
 	}
 }
 
+// PUT 不带 key_mode 时那一列不动：这个字段 v0.38 才露到表单上，老前端与手写的请求体
+// 里没有它，在服务端补默认等于把一个配好 random 的渠道静默改回轮询——而「为什么总是
+// 第一把在跑」正是多凭证放开后最难自己想明白的问题，让它被一次无关的改名悄悄改掉更甚。
+func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"pool","protocols":["anthropic"],"base_url":"https://api.example.com",
+		"key_mode":"random","credential":"sk-x"}`, &created)
+
+	// 一次只改名字的保存，请求体里没有 key_mode。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
+		"name":"pool-renamed","protocols":["anthropic"],"base_url":"https://api.example.com"}`, nil)
+
+	var channels []adminChannel
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if len(channels) != 1 || channels[0].KeyMode != "random" {
+		t.Fatalf("key_mode 被静默重置了：%+v", channels)
+	}
+	// 显式给的仍然要生效，否则「不动」就变成了「改不动」。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
+		"name":"pool-renamed","protocols":["anthropic"],"base_url":"https://api.example.com",
+		"key_mode":"polling"}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if channels[0].KeyMode != "polling" {
+		t.Errorf("显式改成 polling 没生效：%+v", channels)
+	}
+}
+
 // key 的哈希也不回读：它虽然不是明文，却是唯一的校验依据。
 func TestAdminNeverReturnsKeyHash(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))

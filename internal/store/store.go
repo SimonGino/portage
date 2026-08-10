@@ -88,7 +88,8 @@ func hasColumn(db *sql.DB, table, col string) (bool, error) {
 //
 // 补名用的是「同渠道内 id 不大于我的有几个」这个相关子查询，而不是全局 id：名字是
 // 给人看的，一个只有两把凭证的渠道里冒出「凭证 7」「凭证 12」比没有名字更难读。
-// `WHERE name = ''` 让它天然幂等——补过的行不会被第二次改写。
+// 只补名字为空串的行，所以它天然幂等——补过的不会被第二次改写。（这句别写成带一对
+// 单引号的 SQL：gofmt 会把注释里的成对单引号换成中文引号，一格式化就把它改坏。）
 func addCredentialNames(db *sql.DB) error {
 	for _, m := range []struct{ table, col, ddl string }{
 		{"channel_keys", "name", `ALTER TABLE channel_keys ADD COLUMN name TEXT NOT NULL DEFAULT ''`},

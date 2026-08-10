@@ -254,11 +254,11 @@ func (h *Handler) probeChannel(c *gin.Context) {
 	// 401 同样证明子路径存在，而那正是探测要问的。
 	creds := target.Credentials
 	if len(creds) == 0 {
-		creds = []store.CredentialProbe{{Name: ""}}
+		creds = []store.ProbeCredential{{Name: ""}}
 	}
-	groups := make([]credentialProbe, 0, len(creds))
+	groups := make([]probeGroup, 0, len(creds))
 	for _, cred := range creds {
-		g := credentialProbe{Credential: cred.Name, Disabled: cred.Disabled}
+		g := probeGroup{Credential: cred.Name, Disabled: cred.Disabled}
 		for _, p := range target.Protocols {
 			g.Results = append(g.Results, upstream.Probe(c.Request.Context(), target.BaseURL, p, cred.Value))
 		}
@@ -279,8 +279,8 @@ func (h *Handler) deleteChannel(c *gin.Context) {
 	})
 }
 
-// credentialProbe 是一份凭证的探测结果分组。凭证值不在里面，也不会有掩码。
-type credentialProbe struct {
+// probeGroup 是一份凭证的探测结果分组。凭证值不在里面，也不会有掩码。
+type probeGroup struct {
 	Credential string                 `json:"credential"`
 	Disabled   bool                   `json:"disabled"`
 	Results    []upstream.ProbeResult `json:"results"`

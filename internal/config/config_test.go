@@ -80,6 +80,37 @@ func TestLoadDistinguishesAbsentRetryFromExplicitZero(t *testing.T) {
 	}
 }
 
+// max_attempts 的零值陷阱与 max_retries 同（口径层 v0.38）：没写是「用默认 6」，
+// 显式写 0 是「不封顶」。补零值的后果比 max_retries 那次更隐蔽——凭证多于 6 份时，
+// 想让一次请求把所有凭证都试一遍的人会发现第 7 把永远轮不到，而配置里明明写着 0。
+func TestLoadDistinguishesAbsentMaxAttemptsFromExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{name: "整块缺席", yaml: "db_path: /tmp/a.db\n", want: config.Default().Retry.MaxAttempts},
+		{name: "块在但没写 max_attempts", yaml: "retry:\n  max_retries: 3\n", want: config.Default().Retry.MaxAttempts},
+		{name: "显式不封顶", yaml: "retry:\n  max_attempts: 0\n", want: 0},
+		{name: "显式调小", yaml: "retry:\n  max_attempts: 2\n", want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("加载失败: %v", err)
+			}
+			if cfg.Retry.MaxAttempts != tc.want {
+				t.Errorf("max_attempts = %d, 期望 %d", cfg.Retry.MaxAttempts, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMalformedYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("listen: [not, a, string\n"), 0o600); err != nil {

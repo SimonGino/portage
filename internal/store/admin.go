@@ -177,8 +177,8 @@ type ChannelInput struct {
 	Name      string       `json:"name"`
 	Protocols protocol.Set `json:"protocols"`
 	BaseURL   string       `json:"base_url"`
-	// KeyMode 是凭证选取模式：polling（默认）/ random。空串按默认走——它是 v0.38
-	// 才露到表单上的，老前端与手写的请求体里没有这个字段。
+	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
+	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
 	KeyMode  string `json:"key_mode"`
 	Disabled bool   `json:"disabled"`
 }
@@ -199,13 +199,16 @@ func (in ChannelInput) normalized() (string, error) {
 	return set.String(), nil
 }
 
-// keyMode 归一化选取模式。空串取默认，认不得的取值直接拒——拼错的模式名会静默退化
-// 成轮询，而「为什么总是第一把在跑」正是多凭证放开后最难自己想明白的问题。
+// keyMode 归一化选取模式，**空串原样返回**表示「这次请求没提这个字段」——建渠道时
+// 由 CreateChannel 补默认值，改渠道时那一列不动。不在这里补默认，是因为 PUT 是整体
+// 覆盖：老前端或手写的请求体里没有 key_mode（它 v0.38 才露到表单上），在这儿补成
+// polling 会把一个配好 random 的渠道静默改回轮询，而这种改动在页面上看不出来。
+//
+// 认不得的取值直接拒——拼错的模式名会静默退化成轮询，而「为什么总是第一把在跑」正是
+// 多凭证放开后最难自己想明白的问题。
 func (in ChannelInput) keyMode() (string, error) {
 	switch mode := strings.TrimSpace(in.KeyMode); mode {
-	case "":
-		return KeyModePolling, nil
-	case KeyModePolling, KeyModeRandom:
+	case "", KeyModePolling, KeyModeRandom:
 		return mode, nil
 	default:
 		return "", InvalidInput{Reason: "凭证选取模式只能是 polling（轮询）或 random（随机）"}
@@ -221,6 +224,9 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	mode, err := in.keyMode()
 	if err != nil {
 		return 0, err
+	}
+	if mode == "" {
+		mode = KeyModePolling
 	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, protocols, base_url, key_mode, disabled) VALUES (?, ?, ?, ?, ?)`,
@@ -242,9 +248,15 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if err != nil {
 		return err
 	}
-	res, err := db.ExecContext(ctx, `
-		UPDATE channels SET name = ?, protocols = ?, base_url = ?, key_mode = ?, disabled = ? WHERE id = ?`,
-		in.Name, protocols, in.BaseURL, mode, boolInt(in.Disabled), id)
+	// key_mode 缺省时整列不写（见 keyMode 的注释）。其余字段仍是整体覆盖——它们从第
+	// 一版起就在表单里，请求体里没有等于人真把它清空了。
+	query := `UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ? WHERE id = ?`
+	args := []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled), id}
+	if mode != "" {
+		query = `UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ?, key_mode = ? WHERE id = ?`
+		args = []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled), mode, id}
+	}
+	res, err := db.ExecContext(ctx, query, args...)
 	return affectedOne(res, err)
 }
 
@@ -260,11 +272,11 @@ type ProbeTarget struct {
 	// 的，「这把被摘的凭证现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
 	// 是那个答案。一份都没有时是空切片——照样探，只是不带凭证，上游多半回 401，
 	// 而 401 同样证明子路径存在，这正是探测要问的。
-	Credentials []CredentialProbe
+	Credentials []ProbeCredential
 }
 
-// CredentialProbe 是探测时用的一份凭证：显示用名字 + 进程内自用的值 + 当下状态。
-type CredentialProbe struct {
+// ProbeCredential 是探测时用的一份凭证：显示用名字 + 进程内自用的值 + 当下状态。
+type ProbeCredential struct {
 	Name     string
 	Value    string
 	Disabled bool
@@ -293,7 +305,7 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var cp CredentialProbe
+		var cp ProbeCredential
 		if err := rows.Scan(&cp.Name, &cp.Value, &cp.Disabled); err != nil {
 			return ProbeTarget{}, err
 		}
@@ -587,16 +599,24 @@ const (
 // UsageBy 汇总最近 days 天的用量，按 dim 指定的维度聚合。
 //
 // 按凭证聚合是 v0.38 加的：「这个号跑了多少、还剩多少」是个聚合问题，只给逐行的
-// 日志表等于把 group by 留给人的肉眼做。没走到上游的行（鉴权失败、模型不存在）
-// 凭证名是空串，单独归成一档而不是丢掉——它们照样消耗了配额判断之外的东西，藏起来
-// 会让两个维度的总次数对不上。
+// 日志表等于把 group by 留给人的肉眼做。凭证名为空串的行不丢掉——藏起来会让两个维度
+// 的总次数对不上——但也不能一股脑归成「没走到上游」，那里面混着两种行：
+//
+//   - 渠道名也为空：确实没走到上游（鉴权失败、模型不存在、限流），归「(未走到上游)」。
+//   - 渠道名不空：选出了候选却没留下凭证名。绝大多数是 v0.38 迁移之前的老流水（那时
+//     还没有这一列），少数是选出候选后、发出请求前就失败的（比如请求体转换失败）。
+//     这些行走到过上游或差一步就到，归「(未走到上游)」是错的，单独一档。
 //
 // Errors 数的是 status >= 400 的行，包括上游自己回的 4xx——用量页要回答的是
 // 「有多少次调用没拿到东西」，而不是「网关有没有出错」，两者对使用者是一回事。
 func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow, error) {
 	label := `model_requested`
 	if dim == UsageByCredential {
-		label = `CASE WHEN channel_key_name = '' THEN '(未走到上游)' ELSE channel_key_name END`
+		label = `CASE
+		           WHEN channel_key_name <> '' THEN channel_key_name
+		           WHEN channel_name <> ''     THEN '(未记录凭证)'
+		           ELSE '(未走到上游)'
+		         END`
 	}
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS label,
