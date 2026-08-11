@@ -21,4 +21,4 @@
 
 ## 参考仓库
 
-索引见 [CLAUDE.md](CLAUDE.md)「参考仓库」一节（new-api、sub2api、litellm，均在本地 `~/Code/GitHub/`），逐文件路径对照见 [MVP设计草案 §12](docs/MVP设计草案.md)。本项目不参考公司 fork `maix_ops_go`。
+索引见 [CLAUDE.md](CLAUDE.md)「参考仓库」一节（new-api、sub2api、litellm，均在本地 `~/Code/GitHub/`），逐文件路径对照见 [MVP设计草案 §12](docs/MVP设计草案.md)。本项目只参考这三个仓库。
