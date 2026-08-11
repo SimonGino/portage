@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.36
+> 状态：草案 v0.37
+> v0.37 变更（#33 图片跨协议转换的载体与采样定形，2026-08-11）：口径见口径层 v0.39，这里只记实现层落点，**尚未写代码**。①新增 §4.6：`BlockImage` 的载荷用**结构化字段** `{MediaType, Data, URL}`，不用 data URI 字符串。参考实现 sub2api `apicompat/` 走的是 data URI 当枢纽，那在它的点对点架构下只需两个 helper 就兜住六条路；hub-and-spoke 下每个 codec 半边都要重解一次那串，而 Anthropic 侧要的本就是拆开的 `media_type` + `data`。更要紧的是 **URL 得有地方放**——sub2api 的 `AnthropicImageSource` 没有 URL 字段，非 data URI 的图到 Anthropic 方向静默消失（不下载、不报错、不记日志），根在载体表达不了 url 形态，不是编码侧疏忽。②同处记三条可照抄的细节：空 base64 载荷要挡、`media_type` 为空兜底 `image/png` 且用例钉住、**`tool_result` 里的图片要「抬」成后续独立 user 消息**（Responses 的 `function_call_output.output` 只收字符串）——第三条是此前没记过的转换约束，进 canonical 覆盖表。③新增 §4.6 的**现状表**：通读三个 codec 得出四处卡点，其中 `openaicc/encode.go:302` 的 `joinBlocks` 只认 text/thinking、**其余落空且不登记**——Anthropic 入口带图打到 CC 上游今天就是无声消失的，#32 补的登记只落在 `anthropic/encode_request.go` 那一侧，CC 出口这半边漏了。它不必等图片转换整体落地，补一句登记即可先止血。另外三个入口对同一件事给出三种 `Kind`（`"image"` / `"image_url"` / 一律 `BlockText`），Responses 那行连类型判别式都丢了。④`BlockImage` 的字段由 `{MediaType, Data, URL}` 扩为 `{MediaType, Data, URL, FileID}`，对齐 Anthropic `image.source` 的三种形态；`FileID` 跨协议登记后丢弃且**单独一个丢弃项**，不混进 `DropVendorContent`（口径层 v0.39）。⑤图片样本用**真的极小图**（几百字节真 PNG）：不用手写假 base64 串（golden 库口径是真实字节存档，掺假串等于往事实里掺伪造，与「stub 是道具不进转录库」同线），也不截断存 hash（往返验不了，而往返正是这格唯一值得测的东西）。修改人 jinpenga。
 > v0.36 变更（#7 Anthropic 侧验收回写，2026-08-11）：均为实现层记录，口径不变，无代码改动。①§9 补「M0 必抓子集补齐」——`anthropic-*` 六个入库、12 个样本零 skip，并记下三处**样本与现实的出入**：中转恒给 `input_tokens` 加 357、cache 计数全 0（`cache_read_input_tokens` 的解析路径仍只有 `cc-*` 走到）、响应头保真度因中转有响应头白名单而**验不了**（`request-id` / `anthropic-ratelimit-*` 要等官方 key）。②§6.1 补 Anthropic 侧白名单实测复核：2026-08-06 那条走的是 Codex + Responses，Anthropic 半边一直靠推断，这次拿 Claude Code 打真网关 + 只打印所见的假上游逐条对过，**白名单原样成立**（私有头丢弃、`anthropic-version` 缺省补 `2023-06-01`、`anthropic-beta` 整条转发、`?beta=true` 照抄、顶层 `model` 翻译且其余字节未动）。③同处记下 `metadata.user_id`（含 `device_id`/`account_uuid`/`session_id`）**原样到达上游**且**不动它**：这是 v0.24「体除顶层 model 外逐字节相等」与「白名单只管头」两条口径的合成结果，为拦它去改写请求体，代价是承认网关可以按自己的判断删客户端字段，比泄露一个 device_id 危险。④`count_tokens` 的调用时机改记为**随 harness 版本变**（08-07 那版每轮先打一次、08-11 这版整轮没打），两条实测并存，网关侧只保留「不能当作启动必经一步」这个结论。⑤`scripts/seed-example.sql` 修两处会让干净库一行都灌不进去的错：列名 `protocol` → `protocols`（v0.31 改过名），`channel_keys` 补 `name`（v0.38 起用量与日志按它归因，留空的行到 M4 再也分不清是哪份凭证）。修改人 jinpenga。
 > v0.35 变更（口径层 v0.38 落地：渠道凭证池从 M4 前移至 M3，2026-08-10）：口径见口径层 v0.38，这里只记实现层落点。①**临时闸只拆凭证那一半**——`store.checkSingleCredential` 由「恰好 1 份」改判「≥1 份」，`checkSingleCandidate` 一字不动；`Resolve` 返回的 `Candidate.Credential` 单值扩成凭证列表 + 选取游标，`store` 里那条 JOIN 的 `LIMIT 1` 语义随之改变，改动面止于 `upstream`。②`channel_keys` 加 `name` 与 `UNIQUE(channel_id, name)`，`call_logs` 加 `channel_key_name`（快照冗余，非 id——删凭证是常事，存 id 会把历史 join 空）；两条都进 `store.migrate`，老库的已有凭证补名 `凭证 1`，老流水该列留空串。③**摘除只认 401**（403 换而不摘、429 换而不冷却），落在 `upstream/retry.go` 判定处；摘除写 `disabled_reason`/`disabled_at`，恢复只有管理端那一个按钮，**不加任何定时任务**。④`retry` 配置加 `max_attempts`（默认 6），与 `max_retries` 是两层，零值陷阱同 `rate_limit_qps` 处理。⑤`SetChannelCredential` 的先删后插退役（§8.1 那条实现口径随之划掉），换成 `/admin/api/channels/:id/credentials` 逐条 CRUD + 追加式批量粘贴；GET 只回名字/状态/时间/停用原因，凭证值仍无任何读接口。⑥`ChannelProbeTarget` 由「取一把凭证」改为返回全部凭证（含已停用），`Probe` 结果按凭证分行；仍不落库、不进路由。⑦`ChannelSummary.HasCredential` 布尔改可用/停用计数；`UsageByModel` 旁加一个按 `channel_key_name` 聚合的查询，`/admin/api/usage` 加 `by` 参数。⑧Web：渠道卡凭证区改列表（名字 + 状态 + 停用原因），`key_mode` 用既有的 `Segmented` 单选（不是下拉），日志页加「上游凭证」列，用量页加维度切换。**落地时定的五处细节**：⑴`UNIQUE(channel_id, name)` 落成独立唯一索引（ALTER 加不了约束，见 §7）；⑵`call_logs.retry_count` 由「同候选重试次数」扩义为「全部重打次数，含换凭证」——跨凭证之后前一个语义已经指不到任何东西，而这一列的用途（这次怎么慢了）两者都覆盖；⑶轮询游标挂在 `upstream.Client` 而不是 store 的包级变量，渠道 id 在每个测试库里都从 1 开始，包级 map 会让两个用例共享同一个游标；⑷按凭证聚合时凭证名为空的行**分两档**——渠道名也为空的是真没走到上游（鉴权失败、模型不存在）归「(未走到上游)」，渠道名不空的归「(未记录凭证)」（绝大多数是迁移前的老流水，少数是选出候选后、发出请求前就失败的），一档装两种会把老流水说成没走到上游；⑸`PUT /channels/:id` 请求体里**没有 `key_mode` 时不写该列**（其余字段仍整体覆盖），它 v0.38 才露到表单上，在服务端补默认会把配好 `random` 的渠道静默改回轮询。⑷⑸ 由 #36 的评审发现。修改人 jinpenga。
 > v0.34 变更（PR #32 的自动 review 三条，2026-08-10）：均为实现层。①**CC 解码侧补 `developer` → `RoleSystem` 归一**。canonical 没有 `RoleDeveloper` 是已定口径（`protocol/request.go` 的 Role 注释，PO 确认），`openairesponses` 早就这么折，CC 入口漏了。后果实打实：Anthropic 出口只把 `RoleSystem` 上提到顶层 `system`，其余非 assistant 一律当 user，于是一条 developer 系统提示降格成用户内容、还跟紧随其后的 user 合并成一条。钉这条的用例走**全链路**而不是单测——归一在 CC 侧、上提在 Anthropic 侧，分开看两边都「对」，错的是中间那一环。②`cmd/goldenrec` **先 `Normalize` 再 `Valid`**。`Valid` 故意不收旧协议名，而 `GOLDENREC_PROTOCOL` 是手写的、不经过库迁移，`protocol.go` 的注释里本来就点名它是别名要兜的读侧入口，实现却漏了——已有的采集环境会当场被打死。③`anthropic.encodeBlocksFiltered` 的 `default` 分支**补登记 `DropVendorContent`**。认不得的块（CC 的 `image_url` / `input_audio`，由解码侧刻意留住以免带图请求当场 400）此前静默蒸发：客户端发了张图，上游收到一个被改成纯文本的请求，还照样 200 回来，日志一个字都没有。与 `BlockThinking` 那一格的区别单独用例钉住——thinking 是**口径**定的必然丢弃，每次都丢，登记等于每请求一条噪声；这一格是「我不认识这个东西」，恰恰需要看见。修改人 jinpenga。
@@ -276,6 +277,47 @@ const (
 | `vendor_request` | 入口协议独有的顶层字段（`Request.Extras` 里除已知项外的其余） | 逐项枚举会随上游 beta 漂移，故按「不认识就丢并记名」处理。日志里带得出字段名，出问题时能定位 |
 
 `tool_choice` 的两种非法组合（引用未声明的工具、有 `tool_choice` 无 `tools`）不算丢弃而算**规整**：严格中转的第三方上游会直接拒请求，encode 侧当场消掉。见 §5 坑清单「严格中转的请求校验」。
+
+### 4.6 图片载荷的 canonical 形状（#33，2026-08-11 定，尚未实现）
+
+口径层 v0.37 定了图片要真做转换、v0.39 定了音频与文件类维持登记后丢弃。这里定**载体形状**，因为 hub-and-spoke 下这一个决定影响六个 codec 半边。
+
+**结构化字段，不是 data URI 字符串**：`BlockImage` 携带 `{MediaType, Data, URL, FileID}`，三种来源各填各的一组。这三组对应 Anthropic `image.source` 的三种形态（官方 vision 文档 2026-08-11 核）：
+
+| source.type | 字段 | canonical 落点 | 跨协议 |
+|---|---|---|---|
+| `base64` | `media_type` + `data` | `MediaType` + `Data` | 真做转换 |
+| `url` | `url` | `URL` | 原样转发，**不代下载** |
+| `file` | `file_id`（需 `anthropic-beta: files-api-2025-04-14`） | `FileID` | **登记后丢弃，单独一个丢弃项** |
+
+`FileID` 留字段**不是为了转换**——file_id 是上游作用域的句柄，Anthropic Files API 发的 id 到 OpenAI 上游什么都不是，唯一的搬运路径「下载再重传」已被口径排除。留它是为了让丢弃日志说得出「丢的是一张 file_id 引用的图」；混进 `DropVendorContent` 就退化成一句「有个不认识的块」，而这一格恰恰是认识的。
+
+参考实现走的是相反的路：sub2api `apicompat/` 没有 canonical，三套协议 typed struct 点对点互转（六个方向六个文件），唯一的共同货币是 **data URI 字符串**，靠 `anthropicImageToDataURI` / `dataURIToAnthropicImageSource` 两个手写 helper 收发。**那条路在它那儿成立、在我们这儿不成立**：它只有点对点，两个 helper 就把六条路兜住了；我们每加一个 codec 半边都要重解一次那个字符串，而 Anthropic 侧要的本来就是拆开的 `media_type` + `data`。
+
+更要紧的是 **URL 得有地方放**。sub2api 的 `AnthropicImageSource` 根本没有 URL 字段（`types.go`，`Type` 注释写死 `"base64"`），`dataURIToAnthropicImageSource` 首行就把非 `data:` 开头的挡回 nil，调用点拿到 nil 直接跳过——客户端发一张 https 图，到 Anthropic 方向**静默消失**，不下载、不报错、不记日志（全包无 `http.Get`）。载体表达不了 url 形态，是这个缺口的根，不是编码侧的疏忽。载体先留住，编码侧原样转发 `source.type=url`（口径层 v0.39：**不代客户端下载**）。
+
+三条可以照抄的实现细节：
+
+- **空 base64 载荷要挡**——`data:image/png;base64,` 这种只有头没有身子的（含只剩空白）当没有图，别往下传。
+- **`media_type` 为空时兜底 `image/png`**，并用例钉住。媒体类型往返本来不丢，这是唯一有损点，得是显式的。
+- **`tool_result` 里的图片要「抬」成后续独立的 user 消息**——Responses 的 `function_call_output.output` 只收字符串，图放不进去。这是本项目此前没记过的一条转换约束：`ToolResult` 带图时三个协议的容器形状不一样，进 canonical 覆盖表。
+
+**现状：四处卡点**（2026-08-11 通读三个 codec 得出，动手前照这张表逐个拆）：
+
+| # | 位置 | 现状 |
+|---|---|---|
+| ① | `protocol/request.go:44` | `BlockImage` 是裸占位，`Block` 无任何图片字段 |
+| ② | `anthropic/decode.go:146` | `image` 块 → `Kind="image"`，`source` 整块进 Extras（**字节在**） |
+| ② | `openaicc/decode_request.go:244` | `image_url` part → `Kind="image_url"`，全字段进 Extras（**字节在**） |
+| ② | `openairesponses/decode.go:240` | **所有 part 一律造成 `BlockText`**，不看 `type`——`input_image` 进来之后连「这原本是张图」都不知道了 |
+| ③ | `openaicc/encode.go:302` `joinBlocks` | 只认 `BlockText` / `BlockThinking`，**其余落空且不登记** |
+| ④ | `openairesponses/codec.go:45` | `EncodeRequest` 仍 `ErrNotImplemented` |
+
+③ 是**当下就在发生的静默丢弃**：Anthropic 入口带图打到 CC 上游，图无声消失。#32 补的 `DropVendorContent` 只落在 `anthropic/encode_request.go:254` 那一侧，CC 出口这半边漏了——正是本项目判过「不行」的那种失败模式，在自己代码里。它不必等图片转换整体落地，补一句登记就能先止血。
+
+② 的三行不一致也要一并抹平：三个入口对同一件事给出三种 `Kind`，其中 Responses 那行连判别式都丢了，是三者里最难补的。
+
+**样本采集**：用一张真的极小图（几百字节真 PNG），base64 进 `request.json`。不用手写假串（sub2api 测试里全是 `"aGVsbG8="`、`"iVBOR"` 这类编不出图的串——它测的是字段搬运，够用；我们的 golden 库口径是真实字节存档，掺假串等于往事实里掺伪造，与「stub 是道具不进转录库」同一条线），也不截断存 hash（往返验不了，而往返正是图片这格唯一值得测的东西）。体积不是问题，`cc-*` 单个样本比它大得多。
 
 ## 5. 转换器（codec）接口
 
