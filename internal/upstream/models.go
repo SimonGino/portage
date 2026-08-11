@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // listModelsTimeout 比探测宽一点：这是人点了按钮在等的一次拉取，而模型列表在聚合型

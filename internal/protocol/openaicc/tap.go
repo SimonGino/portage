@@ -5,7 +5,7 @@ package openaicc
 import (
 	"encoding/json"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Tap 从 Chat Completions 响应里提取 usage / model / finish_reason。

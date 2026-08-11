@@ -3,7 +3,7 @@ package protocol_test
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 func mustSet(t *testing.T, raw string) protocol.Set {

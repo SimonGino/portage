@@ -3,7 +3,7 @@ package anthropic
 import (
 	"net/http"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Codec 是 Anthropic Messages 协议的转换器。

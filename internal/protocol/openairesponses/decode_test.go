@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // goldenDir 是全仓共用的转录库（见 internal/protocol/golden_test.go）。

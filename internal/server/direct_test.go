@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/auth"
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // 纳管模型直连（口径层 v0.32）：客户端把 `渠道名/纳管模型名` 填进 model 字段就能
@@ -133,7 +133,7 @@ func TestAllowedModelsGatesTheDirectPathToo(t *testing.T) {
 	gatewaytest.SeedCandidate(t, db, ap, cm, 100)
 
 	gw := gatewaytest.Start(t, db)
-	const limited = "sk-aig-only-access-point"
+	const limited = "sk-ptg-only-access-point"
 	if _, err := gw.DB.Exec(
 		`INSERT INTO api_keys (name, key_hash, allowed_models) VALUES (?, ?, ?)`,
 		"限接入点", auth.Hash(limited), "gw-cc"); err != nil {
@@ -161,7 +161,7 @@ func TestAllowedModelsGatesTheDirectPathToo(t *testing.T) {
 // 白名单里写限定名就该放行限定名。
 func TestAllowedModelsAcceptsAQualifiedName(t *testing.T) {
 	gw, up := seedDirect(t)
-	const limited = "sk-aig-only-qualified"
+	const limited = "sk-ptg-only-qualified"
 	if _, err := gw.DB.Exec(
 		`INSERT INTO api_keys (name, key_hash, allowed_models) VALUES (?, ?, ?)`,
 		"限限定名", auth.Hash(limited), "bailian/qwen3-max"); err != nil {

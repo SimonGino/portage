@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // reportedModel 刻意不等于 upstreamModel（我们发过去的纳管模型名）：上游把它路由到

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // inboundBodyLimit 是入站请求体的上限。定得远高于任何真实发包，是因为这个模式存在的

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 const countTokensRequest = `{"model":"gw-sonnet","messages":[{"role":"user","content":"hi"}]}`

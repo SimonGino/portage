@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 口径层 §2.5「每请求一行流水，SQLite 落库」——表建了一直空着到 M1 才兑现。

@@ -1,4 +1,4 @@
-# ai-gateway 项目约定
+# Portage 项目约定
 
 个人项目（PO 即唯一开发者/裁决人）。参考仓库只有「参考仓库」一节列的那三个，本机上的其他 fork 一律不参考。
 
@@ -37,7 +37,7 @@
 
 ### Issue tracker
 
-Issue 记在 GitHub Issues（`SimonGino/ai-gateway`，gh CLI 操作）；外部 PR 不作为 triage 入口。见 `docs/agents/issue-tracker.md`。
+Issue 记在 GitHub Issues（`SimonGino/portage`，gh CLI 操作）；外部 PR 不作为 triage 入口。见 `docs/agents/issue-tracker.md`。
 
 ### Triage 标签
 

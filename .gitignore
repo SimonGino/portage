@@ -2,7 +2,7 @@
 /bin/
 /dist/
 *.exe
-/gateway
+/portage
 
 # Go
 *.test

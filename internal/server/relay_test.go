@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 const (

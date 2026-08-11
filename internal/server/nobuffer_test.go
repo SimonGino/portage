@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // X-Accel-Buffering: no（口径层 v0.30）。nginx 认这个头就对本次响应关掉 proxy_buffering，

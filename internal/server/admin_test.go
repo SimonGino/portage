@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // ── 鉴权与分离 ──────────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ func TestAdminKeyIsShownOnceAndWorks(t *testing.T) {
 		Key string `json:"key"`
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/keys", `{"name":"laptop"}`, &created)
-	if !strings.HasPrefix(created.Key, "sk-aig-") {
+	if !strings.HasPrefix(created.Key, "sk-ptg-") {
 		t.Fatalf("新 key 形状不对：%q", created.Key)
 	}
 

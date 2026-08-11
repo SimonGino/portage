@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // Client holds the shared transport.

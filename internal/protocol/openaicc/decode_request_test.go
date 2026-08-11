@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/openaicc"
 )
 
 // 本文件测的是 CC 作**入口**的解码侧。输入一律是 testdata/golden/in-cc-* 六份

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 这三件事对称与否此前没有任何一处用例钉着——包装在 openaicc、拆包在

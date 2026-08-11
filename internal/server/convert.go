@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/codecs"
-	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
-	"github.com/SimonGino/ai-gateway/internal/store"
-	"github.com/SimonGino/ai-gateway/internal/upstream"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/codecs"
+	"github.com/SimonGino/portage/internal/protocol/taps"
+	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
 )

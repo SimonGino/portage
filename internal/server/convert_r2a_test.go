@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件测的是 R→A 转换路径（#25，口径层 §2.1 优先级②）：Codex CLI 挂 Claude。

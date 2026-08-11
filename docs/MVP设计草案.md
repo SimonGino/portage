@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.39
+> 状态：草案 v0.40
+> v0.40 变更（口径层 v0.42 落地：项目改名 Portage，2026-08-11）：纯标识符改名，无行为变更。①Go module `github.com/SimonGino/ai-gateway` → `github.com/SimonGino/portage`，`cmd/gateway` → `cmd/portage`，构建产物 `bin/portage`、镜像内 `/portage`。②容器侧：镜像名 `portage:local`、配置路径 `/etc/portage/config.yaml`、compose 服务名 `portage`；**数据卷名 `ai-gateway-data` 保持不变**——改名会让下次 `compose up` 建一个空卷而把库留在旧卷里，是这批标识符中唯一改名有真实代价的一个（§11）。③`AIG_ADMIN_PASSWORD` → `PORTAGE_ADMIN_PASSWORD`（§7）、会话 cookie `aig_admin` → `portage_admin`、gin context key `aig.*` → `portage.*`、`GET /v1/models` 的 `owned_by` → `portage`。④网关 key 前缀 `sk-aig-` → `sk-ptg-`（§8）：**存量 key 不失效**，`internal/auth` 拿整串算 SHA-256，全仓没有一处解析前缀，因此不需要迁移也不需要兼容期。⑤`testdata/golden/` 一字未动——那是实采转录存档，改里面的字节等于篡改证据；`scripts/redact-inbound-*.jq` 经查不认前缀（按 header 名脱敏），不需要跟着改。⑥两份文档的历史版本记录不改写。修改人 jinpenga。
 > v0.39 变更（PR #42 自动 review 的四条，2026-08-11）：一条走口径（见口径层 v0.41），三条纯实现层。①**`GET /v1/models` 的接入点半边也按交集过滤**（口径层 v0.41）：判据抽在 `store.deadAccessPoints`，返回「每个候选的交集都为空」的接入点 id。写成「有没有一个候选活着」而不是「有没有一个候选死了」——M0~M2 单候选下两种等价，**等价的时候正是把它写对的时候**，M4 放开多候选后一个死候选不该抹掉整个接入点。一个候选都没有的接入点不在这个集合里（照列），那种形状 `checkSingleCandidate` 本来就拒，这里不替它改判。②**`channel_models.protocols` 的值合法性进启动闸**（新增 `checkModelProtocols`，与 `checkChannelFields` 并列）。只拦「值不合法」，**不拦交集为空**——后者是运行期状态（口径层 v0.40 ②），拦了等于让渠道少勾一个协议把进程掀翻。不拦值不合法的后果是 v0.21 通则点名的形态：进程照常起来、第一个打到它的请求才 500，而 `ListChannels` 又把解不动的值吞成空数组显示为「继承」（`admin.go:174`），页面上根本看不出哪里不对；进了启动闸之后这种库起不来，那处显示问题随之消失。③**管理端在单协议渠道上仍须显示模型协议子集**：原条件 `protos.length > 1` 会在「渠道从多协议缩成一个、而这个模型的子集不含它」时把整格藏起来——**那正是它变得不可用的那一刻**，藏了就既没有过期标记也没有清除入口，v0.40 ①「照实显示存量值」在最需要它的场景失效。条件改为 `protos.length > 1 || 存量子集非空`。④**拉取失败的协议侧不得参与推断**：`listedOn` 把「这一侧没拉到」（`models` 为 null：401 / 超时 / 回的不是 JSON）与「拉到了但没列出它」压成同一个「不在里面」，批量添加据此写库，等于凭零证据砍掉一条本来可能原生可走的协议路径、把请求推去做有损转换。新增 `listComplete`（每个协议侧都真拉到了列表），为假时一律留继承；建议气泡与「上游列表里没有它」也一并改吃它——同一份证据只该有一个成色判定。修改人 jinpenga。
 > v0.38 变更（口径层 v0.40 落地：纳管模型协议子集 + 拉上游模型列表，2026-08-11）：口径见口径层 v0.40，这里只记实现层落点。①**`channel_models` 加 `protocols` 列**（§7），默认空串；迁移 `store.addModelProtocols` 用 `ALTER TABLE … ADD COLUMN`。**存量行不回填、迁移前后行为一字不变**——ALTER 加的列必须有默认值，而这里默认值的语义（空串=继承渠道全集）恰好就是老库当下的语义，这是这一列敢用 ALTER 加的前提。跑没跑过仍问 `pragma_table_info`（`hasColumn`），不建版本表，与 v0.31 那条一致。②**`protocol.Set.Intersect` + `store.pickProtocol` 收两列**（原收一列）：渠道集与模型子集取交集之后再 `Choose`。空串走继承、**不进 `ParseSet`**——它对空输入是报错的（「支持协议集不能为空」），而这一列的空恰恰是最常见的正常值。③**三种失败分两档，不能混**：两列**解析**失败 → 500（启动闸扫过全部未停用渠道，真走到这儿说明库是运行中被手写 SQL 改坏的）；交集**为空** → `ErrNoUsableCandidate`（503），它与「渠道停用」「凭证归零」同一种「现在用不了」，报 500 会把人引去查数据损坏。接入点与直连两条 resolve 路径同改，各自 SQL 多带一列 `cm.protocols`。④**M4 的顺序约束记在 `resolveAccessPoint` 注释里**：改加权抽取时，交集为空的候选必须在抽取**之前**排除，不能像现在这样抽完了才由 `pickProtocol` 发现——单候选下两者等价，多候选下死候选会白占一份权重。⑤新增 `upstream.ListModels` / `ListModelsFor` 与 `POST /channels/:id/fetch-models`（§8.1）：两家共用 `GET {base_url}/v1/models`、都回 `{"data":[{"id":…}]}`，故不做各家 URL 特判（new-api 为此养的那张渠道类型表是 §6.1 明确不取的复杂度）；`openai` 与 `openai_responses` 共用同一次拉取（分两次打同一个 URL 只是白费一趟）。认证头复用转发路径的 `applyHeaders`，理由同 `Probe`——要问的正是「按我们发请求的方式打过去，上游认为我们能看见什么」；**这也是它能区分协议的原理**：同一个 `/v1/models`，带 Bearer 与带 `x-api-key` 打过去，聚合型中转会回各自视角的列表，`gpt-4o` 出现在前者不出现在后者就是「它只走 openai」的依据。超时 12s（比 `Probe` 宽，几百条的序列化本身就比一个 400 错误体慢）、响应体封顶 2MB。**拉回来的模型名原样保留不归一化**——它要拿去跟纳管模型名逐字比对，大小写与前缀都是语义的一部分。⑥管理端：纳管模型的增/改 body 带 `protocols`，PUT **不传该字段 = 不动它**（`*[]string` 而非 `[]string`，否则「没提到」与「清空」两种意图在 JSON 里长得一样）；渠道卡加拉取按钮，结果只摆进表单、刷新即消失，与探测同档。⑦**`GET /v1/models` 的直连清单同样按交集过滤**：交集为空的限定名当下就是调不通的，列出来等于给 harness 挖坑（「列出来的必须调得通」是口径层 v0.32 ③）。交集判据抽成 `store.usableProtocols`，**路由与清单共用同一个函数**——本批第一版正是漏了清单这一处，而漏得掉的原因就是两处各算各的。解析失败的行也不列（那种行打过去回 500，同样不属于「当下真能打通」），整个清单不因一行脏数据而 500，理由同 `created_at` 那处的 COALESCE。接入点那半边当时留着没滤，理由记成了「口径认下的」——**那句是错的，已由 v0.39 ① 更正**：v0.32 ③ 只管直连半边的理由是「启动闸兜不住它」，而交集为空同样不进启动闸，同一条理由覆盖两边。修改人 jinpenga。
 > v0.37 变更（#33 图片跨协议转换的载体与采样定形，2026-08-11）：口径见口径层 v0.39，这里只记实现层落点，**尚未写代码**。①新增 §4.6：`BlockImage` 的载荷用**结构化字段** `{MediaType, Data, URL}`，不用 data URI 字符串。参考实现 sub2api `apicompat/` 走的是 data URI 当枢纽，那在它的点对点架构下只需两个 helper 就兜住六条路；hub-and-spoke 下每个 codec 半边都要重解一次那串，而 Anthropic 侧要的本就是拆开的 `media_type` + `data`。更要紧的是 **URL 得有地方放**——sub2api 的 `AnthropicImageSource` 没有 URL 字段，非 data URI 的图到 Anthropic 方向静默消失（不下载、不报错、不记日志），根在载体表达不了 url 形态，不是编码侧疏忽。②同处记三条可照抄的细节：空 base64 载荷要挡、`media_type` 为空兜底 `image/png` 且用例钉住、**`tool_result` 里的图片要「抬」成后续独立 user 消息**（Responses 的 `function_call_output.output` 只收字符串）——第三条是此前没记过的转换约束，进 canonical 覆盖表。③新增 §4.6 的**现状表**：通读三个 codec 得出四处卡点，其中 `openaicc/encode.go:302` 的 `joinBlocks` 只认 text/thinking、**其余落空且不登记**——Anthropic 入口带图打到 CC 上游今天就是无声消失的，#32 补的登记只落在 `anthropic/encode_request.go` 那一侧，CC 出口这半边漏了。它不必等图片转换整体落地，补一句登记即可先止血。另外三个入口对同一件事给出三种 `Kind`（`"image"` / `"image_url"` / 一律 `BlockText`），Responses 那行连类型判别式都丢了。④`BlockImage` 的字段由 `{MediaType, Data, URL}` 扩为 `{MediaType, Data, URL, FileID}`，对齐 Anthropic `image.source` 的三种形态；`FileID` 跨协议登记后丢弃且**单独一个丢弃项**，不混进 `DropVendorContent`（口径层 v0.39）。⑤图片样本用**真的极小图**（几百字节真 PNG）：不用手写假 base64 串（golden 库口径是真实字节存档，掺假串等于往事实里掺伪造，与「stub 是道具不进转录库」同线），也不截断存 hash（往返验不了，而往返正是这格唯一值得测的东西）。修改人 jinpenga。
@@ -493,7 +494,7 @@ logging：无论成败异步落 call_logs
 ```yaml
 listen: "127.0.0.1:8317"          # 公网暴露时改 0.0.0.0 并配合 nginx 反代/限流（§11.3）
 db_path: "./gateway.db"
-admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 AIG_ADMIN_PASSWORD 覆盖）
+admin_password: "change-me"        # 仅首启初始化管理员；改密后此项失效（可用 PORTAGE_ADMIN_PASSWORD 覆盖）
 default_max_tokens: 8192
 log_bodies: false                  # 排障开关；默认不记请求体
 rate_limit_qps: 10                 # 全局令牌桶（v0.15，M3 落地）；写 0 即关闭
@@ -505,7 +506,7 @@ retry:                             # 同候选退避重试（v0.19 口径，v0.2
   max_delay: 10s
 ```
 
-> **唯一的环境变量是 `AIG_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
+> **唯一的环境变量是 `PORTAGE_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
 
 > **`max_attempts` 与 `max_retries` 是两层，不是一件事**（口径层 v0.38）：内层 `max_retries` 管同一份凭证上的抖动重试，外层 `max_attempts` 管一次请求最多打多少次上游、跨凭证累计。两层都要，因为只留内层时最坏耗时随凭证数线性增长（凭证是运营数据随时会加，配置里没有任何地方提示「加第 6 把会让超时翻倍」），而只留外层、跨凭证共享一份预算时会出现「换到第二份时预算耗尽、第三份根本没试过」——那份是好的却没被用上。`max_attempts` 与 `max_retries` 同一个零值陷阱，处理方式相同。
 
@@ -628,7 +629,7 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 ### 7.1 key 鉴权的三条实现口径（M1，PO 拍板 jinpenga 2026-08-08）
 
-**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-aig-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
+**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-ptg-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
 
 **`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
 
@@ -638,7 +639,7 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 **不做过期时间。** 见 `api_keys` 表注释与口径层 v0.27。
 
-其余 M1 细则（取 key 的两个头、401 走 `protocol.WriteError`、鉴权失败也落 `call_logs`、落库失败不得影响请求）见 Issue [#22](https://github.com/SimonGino/ai-gateway/issues/22)。
+其余 M1 细则（取 key 的两个头、401 走 `protocol.WriteError`、鉴权失败也落 `call_logs`、落库失败不得影响请求）见 Issue [#22](https://github.com/SimonGino/portage/issues/22)。
 
 ### 7.2 全局限流的实现口径（M3，兑现口径层 v0.15）
 
@@ -869,7 +870,7 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 
 | 里程碑 | 内容 | 粗估 |
 |---|---|---|
-| M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/ai-gateway/issues/1) | 1~2 个周末 |
+| M0 透传骨架 | 骨架 + 三协议原始字节透传 + SSE + Tap usage 提取（细则见 §6.1）；渠道/接入点 SQL 手工建；golden 样本必抓子集（§9）；对 Anthropic 官方跑通 Claude Code、对百炼/OpenAI 官方跑通 CC 透传。规格见 Issue [#1](https://github.com/SimonGino/portage/issues/1) | 1~2 个周末 |
 | M1 Key + 日志 | key 鉴权中间件 + key CRUD（SQL 手工）+ call_logs 落库；上游错误按入口协议原生回错 + 错误注入打磨；harness 透传实机验收 | 1 个周末 |
 | M2 协议转换（P1-①~④ 按序） | ① A→CC、R→CC（含 Responses 无状态化）→ ② R→A → ③ CC→A、CC→R → ④ A→R 与横切增强；每批 golden 全绿 + 真实 harness 验收。成本锚点：sub2api `apicompat/` 六方向全量 ≈ 7k 行实现 + 9k 行测试，测试为实现 1.3 倍。**另含同候选退避重试**（v0.19 从 M4 提前，见 §6；不依赖多候选，临时闸不放开） | ① ≥2~3 个周末（主工作量在 tool call 增量重组），后续批次随复盘排期 |
 | M3 管理端 + 部署 | React 管理端：渠道（模型纳管、凭证池）/ 接入点（候选+权重）/ key / 用量查询，embed 单二进制（细则见 §8.1、§11.2）；**另含凭证池聚合与 key 层内环**（口径层 v0.38 从 M4 前移：凭证逐条 CRUD、多凭证临时闸放开、401 摘除与人工恢复、按凭证归因的日志列与用量视图、逐把凭证探测）；公网部署（nginx TLS 反代见 §11.3 + 全局限流）。全局限流已落地（§7.2）。**反代配置样例已用桩上游实测四条行为（§11.3），但未接真网关/harness** | 待估 |
@@ -887,7 +888,7 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 - 灌配置在**宿主侧**做：scratch 里既没有 shell 也没有 sqlite3。`deploy/docker-compose.yml` 顶部写了对着卷跑 sqlite3 容器的命令，`--user 65532:65532` 不能省——身份不对只能只读，报的是 `attempt to write a readonly database`。
 - 健康检查刻意留空：为探活往镜像里塞一个 shell 或 curl，等于为一件外部就能做的事把攻击面加回来。
 
-**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/admin` 配（命令行那条路留着没删）。管理密码走 `AIG_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
+**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/admin` 配（命令行那条路留着没删）。管理密码走 `PORTAGE_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
 
 ### 11.2 前端 embed 策略（M3）
 

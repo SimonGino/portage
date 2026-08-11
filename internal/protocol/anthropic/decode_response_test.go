@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件测 Anthropic 作**上游**的解码半边（#25，R→A 用）。

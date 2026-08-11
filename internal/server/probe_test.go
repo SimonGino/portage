@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 协议可达性探测（口径层 v0.33 §2.2）：只提示、不落库、不参与路由。它要回答的是

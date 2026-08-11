@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/config"
+	"github.com/SimonGino/portage/internal/config"
 )
 
 func TestLoadFallsBackToDefaultsWhenFileMissing(t *testing.T) {
@@ -124,7 +124,7 @@ func TestLoadRejectsMalformedYAML(t *testing.T) {
 
 // TestAdminPasswordFromEnv：容器里设密码走 env，不用为一个密码去挂配置文件。
 //
-// 顺带钉死「空串不算设置」——`AIG_ADMIN_PASSWORD=` 与压根没写是一回事，
+// 顺带钉死「空串不算设置」——`PORTAGE_ADMIN_PASSWORD=` 与压根没写是一回事，
 // 不该把配置文件里已经写好的值清掉。
 func TestAdminPasswordFromEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -136,18 +136,18 @@ func TestAdminPasswordFromEnv(t *testing.T) {
 		{"", "from-file"},
 		{"from-env", "from-env"},
 	} {
-		t.Setenv("AIG_ADMIN_PASSWORD", tc.env)
+		t.Setenv("PORTAGE_ADMIN_PASSWORD", tc.env)
 		cfg, err := config.Load(path)
 		if err != nil {
 			t.Fatalf("加载失败: %v", err)
 		}
 		if cfg.AdminPassword != tc.want {
-			t.Errorf("AIG_ADMIN_PASSWORD=%q 时 admin_password = %q, 期望 %q", tc.env, cfg.AdminPassword, tc.want)
+			t.Errorf("PORTAGE_ADMIN_PASSWORD=%q 时 admin_password = %q, 期望 %q", tc.env, cfg.AdminPassword, tc.want)
 		}
 	}
 
 	// 没有配置文件时 env 一样管用：镜像里那份 config.docker.yaml 就没写密码。
-	t.Setenv("AIG_ADMIN_PASSWORD", "only-env")
+	t.Setenv("PORTAGE_ADMIN_PASSWORD", "only-env")
 	cfg, err := config.Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)

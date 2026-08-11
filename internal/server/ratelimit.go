@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )

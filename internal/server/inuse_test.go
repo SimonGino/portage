@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 删渠道被候选拦住时，错误必须点名是哪些接入点引着它。

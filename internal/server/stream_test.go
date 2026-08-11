@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 const streamRequest = `{"model":"gw-sonnet","max_tokens":64,"stream":true,` +

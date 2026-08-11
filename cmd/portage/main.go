@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/admin"
-	"github.com/SimonGino/ai-gateway/internal/config"
-	"github.com/SimonGino/ai-gateway/internal/server"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/admin"
+	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/server"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 func main() {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件测的是 R→CC 转换路径（#12，口径层 §2.1 优先级①下半）：Codex CLI 挂第三方

@@ -17,15 +17,15 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// cookieName 是会话 cookie 的名字。带 aig_ 前缀，免得和同一台机器上别的服务撞名
+// cookieName 是会话 cookie 的名字。带 portage_ 前缀，免得和同一台机器上别的服务撞名
 // ——cookie 是按域名共享的，端口不隔离。
-const cookieName = "aig_admin"
+const cookieName = "portage_admin"
 
 // Handler 是管理端的全部状态：一个库连接、一张会话表。
 type Handler struct {

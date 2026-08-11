@@ -5,7 +5,7 @@ package openairesponses
 import (
 	"encoding/json"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Tap 从 Responses 响应里提取 usage / model / 终止状态。

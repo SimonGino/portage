@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 本文件测的是 A→CC 转换路径（#11）：Claude Code 挂第三方便宜模型，整个项目的

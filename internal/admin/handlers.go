@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/auth"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/store"
-	"github.com/SimonGino/ai-gateway/internal/upstream"
+	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -644,7 +644,7 @@ func (h *Handler) deleteKey(c *gin.Context) {
 	})
 }
 
-// generateKey 造一把新的网关 key：sk-aig- 前缀 + 32 位十六进制（128 bit 熵）。
+// generateKey 造一把新的网关 key：sk-ptg- 前缀 + 32 位十六进制（128 bit 熵）。
 //
 // 前缀是给人看的——从一堆环境变量里一眼认出「这是网关的 key，不是上游的」。
 func generateKey() (string, error) {
@@ -652,7 +652,7 @@ func generateKey() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "sk-aig-" + hex.EncodeToString(buf), nil
+	return "sk-ptg-" + hex.EncodeToString(buf), nil
 }
 
 // normalizeAllowed 把白名单收拾干净：去空白、去空项，全空即 `*`（不限）。

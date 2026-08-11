@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // probeTimeout 短一些：这是保存渠道时同步跑的，人在等着看结果。上游慢到 8 秒还没

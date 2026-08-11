@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // feed 逐字节喂给 Tap。真实分块边界由 TCP 决定，逐字节是最恶劣的一种切法。

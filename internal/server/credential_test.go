@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/config"
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/store"
 
 	_ "modernc.org/sqlite"
 )

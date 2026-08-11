@@ -5,10 +5,10 @@
 package taps
 
 import (
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openairesponses"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/anthropic"
+	"github.com/SimonGino/portage/internal/protocol/openaicc"
+	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 )
 
 // New 按协议挑 Tap；协议不认得时返回 nil，由调用方决定是跳过旁路还是报错。

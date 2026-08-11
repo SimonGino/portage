@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // bodyCaptureLimit 是 log_bodies 打开时单侧 body 的记录上限。开这个开关是为了排障，
