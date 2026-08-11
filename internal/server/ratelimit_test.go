@@ -79,7 +79,18 @@ func TestRateLimitedCallLandsInCallLogs(t *testing.T) {
 	gw, _ := newLimitedGateway(t, 1)
 
 	gw.Post(t, "/v1/messages", anthropicRequest, nil)
-	gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	if resp := gw.Post(t, "/v1/messages", anthropicRequest, nil); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("第 2 个请求 = %d, 期望 429——没被拒的话查它的流水没有意义", resp.StatusCode)
+	}
+	// 等两行都进库再读最后一行。落库在 callLog 的 defer 里，也就是响应已经发给客户端
+	// 之后（persistCall），Post 回来不代表那一行到了；而 LastCallRow 只等「有任意一行」，
+	// 第一个请求的 200 早就在表里，429 那行慢一步就会被读成 200。CI 上实见，且整个用例
+	// 只跑了 0.09s——不是令牌回得及时，就是这个。
+	// 比对行数而不是干等：WaitCallRows 超时不 Fatal，只回最终行数，不看的话
+	// 「那一行始终没落」又会退化成一模一样的 status = 200。
+	if n := gw.WaitCallRows(t, 2); n != 2 {
+		t.Fatalf("call_logs 落了 %d 行，期望 2", n)
+	}
 
 	row := gw.LastCallRow(t)
 	if row.Status != http.StatusTooManyRequests {
