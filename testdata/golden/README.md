@@ -13,7 +13,7 @@
 
 ```
 testdata/golden/<样本名>/
-  meta.json      # direction / protocol / stream / endpoint / verified …
+  meta.json      # direction / protocol / stream / endpoint / source / verified …
   request.json   # 请求体（脱敏后）；inbound 样本要的就是这一份
   response.raw   # 上游响应原始字节，逐字节保真——仅 upstream 样本有
 ```
@@ -104,6 +104,10 @@ codex exec --ignore-user-config --skip-git-repo-check -C /tmp/goldenrec-work -s 
   **Claude Code 的指纹在请求体里，不在头里**：`metadata.user_id` 是一串 JSON，含
   `device_id`（稳定的机器指纹）、`account_uuid`、`session_id`，头白名单拦不住它，必抓。
   正文里的 `/Users/<你>` 一类绝对路径同理。
+- upstream：填 `source`——采自哪个上游、哪天，中转的话连它已知的偏差一起写（如
+  `anthropic-*` 那句「input_tokens 恒含中转注入的 357」）。这一列不参与任何断言，
+  它是给人看的：同一个目录树迟早同时躺着中转采的和官方直连采的样本（#37），
+  到那时「这个数是谁报的」只能靠它区分，写在 README 里跟不着单个样本走。
 - 确认无误后把 `verified` 改成 `true`
 
 入站样本的脱敏已经写成过滤器，别再手工改（185 KB × 42 个 tool 定义，手工既不可复现

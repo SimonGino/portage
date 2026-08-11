@@ -695,7 +695,7 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 >
 > 两处**样本与现实的出入**要跟着样本走：①**`InputTokens` 恒偏大 357**——中转往每个请求塞一段固定内容，两个不同长度的 prompt 差值一致。不影响样本作数（`golden_test.go` 只喂 `response.raw`，`request.json` 从不参与断言，数值前后自洽），但**别拿这批样本推请求体与 token 的关系**。②**cache 计数全 0**：`cc-*` 那批特意补过缓存命中，Anthropic 这侧还没有，`cache_read_input_tokens` 的解析路径目前只有 CC 样本走到。③**响应头保真度这里验不了**——中转有响应头白名单，`request-id`、`anthropic-ratelimit-*` 到不了，要验得等官方 key。
 
-**采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
+**采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / source / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
 
 `meta.json` 的 `expect` 由 goldenrec 用 Tap 自己预填，**只是草稿**：出自被测代码的期望值等于让实现给自己判卷，因此 `golden_test.go` 拒绝一切 `verified: false` 的样本。把 `verified` 置 true 是人工关卡，与「脱敏时人工过一遍」是同一道工序——核对脱敏、核对 expect 与原始字节相符，一起做。未采集的样本按名字逐个 skip，目录空着不会一路绿灯。
 
