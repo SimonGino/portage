@@ -69,7 +69,30 @@ func migrate(db *sql.DB) error {
 	if err := renameOpenAICC(db); err != nil {
 		return err
 	}
-	return addCredentialNames(db)
+	if err := addCredentialNames(db); err != nil {
+		return err
+	}
+	return addModelProtocols(db)
+}
+
+// addModelProtocols 补 v0.40 的 channel_models.protocols。
+//
+// 默认空串，而空串在读侧就是「继承渠道全集」——所以存量行不用回填，迁移前后行为
+// 一字不变。这是这一列敢用 ALTER 加的前提：ALTER 加的列必须有默认值，而这里默认值
+// 的语义恰好就是老库当下的语义。
+func addModelProtocols(db *sql.DB) error {
+	has, err := hasColumn(db, "channel_models", "protocols")
+	if err != nil {
+		return fmt.Errorf("检查 channel_models.protocols: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(
+		`ALTER TABLE channel_models ADD COLUMN protocols TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 channel_models.protocols: %w", err)
+	}
+	return nil
 }
 
 // hasColumn 问库里某张表有没有这一列。迁移是否已跑过全靠它判断。
@@ -213,19 +236,41 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 	return resolveDirect(ctx, db, model, inbound)
 }
 
-// pickProtocol 把库里那一列收成本次请求的出站协议。
+// pickProtocol 把库里那两列收成本次请求的出站协议。
 //
-// 解析失败在运行期不该发生——启动闸的 checkChannelFields 扫的是全部未停用渠道，
-// 这一列有问题的话进程根本起不来。真走到这儿说明渠道是在运行中被手写 SQL 改坏的，
-// 报错让它回 500，别猜一个协议继续往上游发。
-func pickProtocol(raw string, inbound protocol.Protocol) (protocol.Protocol, error) {
-	set, err := protocol.ParseSet(raw)
+// channelRaw 是渠道的支持协议集，modelRaw 是纳管模型自己声明的子集（口径层 v0.40，
+// 空串 = 继承渠道全集）。真正可用的是两者的交集——渠道会说 anthropic 不代表它下面
+// 每个模型都在 `/v1/messages` 上存在，而那正是「渠道级探测全通、请求照样 404」的成因。
+//
+// 三种失败分两档，不能混：
+//
+//   - 两列**解析**失败 → 500。启动闸的 checkChannelFields 扫的是全部未停用渠道，
+//     这一列有问题的话进程根本起不来；真走到这儿说明库是在运行中被手写 SQL 改坏的，
+//     报错让它回 500，别猜一个协议继续往上游发。
+//   - 交集**为空** → ErrNoUsableCandidate（503）。这是合法配置下的正常收场，不是库
+//     坏了：渠道协议集缩小之后，模型上那份没跟着改的子集就与它不再重合。它跟「渠道
+//     停用」「凭证归零」是同一种「现在用不了」，报 500 会把人引去查数据损坏。
+func pickProtocol(channelRaw, modelRaw string, inbound protocol.Protocol) (protocol.Protocol, error) {
+	set, err := protocol.ParseSet(channelRaw)
 	if err != nil {
 		return "", fmt.Errorf("渠道的 protocols 列不合法: %w", err)
 	}
+	// 空串走继承，不进 ParseSet——它对空输入是报错的（「支持协议集不能为空」），
+	// 而这一列的空恰恰是最常见的正常值。
+	if modelRaw != "" {
+		sub, err := protocol.ParseSet(modelRaw)
+		if err != nil {
+			return "", fmt.Errorf("纳管模型的 protocols 列不合法: %w", err)
+		}
+		if set = set.Intersect(sub); len(set) == 0 {
+			return "", fmt.Errorf(
+				"纳管模型声明的协议 %q 与渠道的 %q 没有交集: %w",
+				modelRaw, channelRaw, ErrNoUsableCandidate)
+		}
+	}
 	p, ok := set.Choose(inbound)
 	if !ok {
-		return "", fmt.Errorf("渠道的 protocols 列选不出协议: %q", raw)
+		return "", fmt.Errorf("渠道的 protocols 列选不出协议: %q", channelRaw)
 	}
 	return p, nil
 }
@@ -233,6 +278,11 @@ func pickProtocol(raw string, inbound protocol.Protocol) (protocol.Protocol, err
 // resolveAccessPoint 走接入点路径。
 //
 // M0~M2 的临时闸保证每个接入点只有一个候选，因此这里不做加权抽取；多候选分流在 M4。
+//
+// **M4 改加权抽取时注意顺序**：模型协议子集与渠道集无交集的候选（v0.40）必须在抽取
+// **之前**排除掉，不能像现在这样等 pickProtocol 抽完了才发现。只有一个候选时两者
+// 等价，多候选下则不然——死候选会白占一份权重，把请求判死在一个本来有兄弟候选能
+// 接的接入点上。
 func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	var apID int64
 	err := db.QueryRowContext(ctx,
@@ -245,10 +295,10 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	}
 
 	c := Candidate{RequestedModel: model}
-	var protocols string
+	var protocols, modelProtocols string
 	var channelID int64
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
@@ -256,7 +306,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &c.BaseURL, &c.KeyMode)
+		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
@@ -271,7 +321,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	if len(c.Credentials) == 0 {
 		return Candidate{}, ErrNoUsableCandidate
 	}
-	if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
+	if c.Protocol, err = pickProtocol(protocols, modelProtocols, inbound); err != nil {
 		return Candidate{}, fmt.Errorf("接入点 %q: %w", model, err)
 	}
 	return c, nil
@@ -310,10 +360,10 @@ func loadCredentials(ctx context.Context, db *sql.DB, channelID int64) ([]Creden
 // 的模型 b/c 与渠道 a/b 的模型 c 会拼出同一个限定名，下面的 LIMIT 1 静默挑一个。
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
-	var protocols string
+	var protocols, modelProtocols string
 	var channelID int64
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
@@ -321,7 +371,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &c.BaseURL, &c.KeyMode)
+		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode)
 	if err == nil {
 		if c.Credentials, err = loadCredentials(ctx, db, channelID); err != nil {
 			return Candidate{}, err
@@ -329,7 +379,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		if len(c.Credentials) == 0 {
 			return Candidate{}, ErrNoUsableCandidate
 		}
-		if c.Protocol, err = pickProtocol(protocols, inbound); err != nil {
+		if c.Protocol, err = pickProtocol(protocols, modelProtocols, inbound); err != nil {
 			return Candidate{}, fmt.Errorf("纳管模型 %q: %w", model, err)
 		}
 		return c, nil

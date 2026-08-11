@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS channel_models (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   upstream_model TEXT NOT NULL,
+  -- 这个模型自己能走的协议子集（口径层 v0.40）：逗号分隔，取值同 channels.protocols。
+  -- **空串 = 继承渠道全集**，绝大多数模型都该是空的——只有「渠道说自己会 anthropic
+  -- 和 openai，但这个模型只在 openai 那条子路径上存在」这种例外才填。
+  --
+  -- 存的是原样，不校验它是不是渠道集的子集：渠道协议集缩小时级联改这一列，等于拿
+  -- 「配置任何时刻自洽」换「你改渠道时我替你删配置」，而删掉的填法回不来。路由时
+  -- 取交集即可（见 store.pickProtocol），渠道把协议勾回来这一行自动重新生效。
+  protocols TEXT NOT NULL DEFAULT '',
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)

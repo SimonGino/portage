@@ -92,7 +92,11 @@ func inUse(what string, aps []string) error {
 type ChannelModel struct {
 	ID            int64  `json:"id"`
 	UpstreamModel string `json:"upstream_model"`
-	Disabled      bool   `json:"disabled"`
+	// Protocols 是这个模型自己能走的协议子集（口径层 v0.40）。**空数组 = 继承渠道
+	// 全集**，绝大多数模型都该是空的；只有「渠道会说 anthropic，但这个模型不在
+	// `/v1/messages` 上」这种例外才填。路由时与渠道集取交集，见 store.pickProtocol。
+	Protocols protocol.Set `json:"protocols"`
+	Disabled  bool         `json:"disabled"`
 }
 
 // Channel 是管理端看到的一个渠道。没有 credential 字段，见文件头。
@@ -153,7 +157,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	// 纳管模型单独一趟再拼回去，不用 LEFT JOIN 一次拉完：JOIN 出来的行数是
 	// 渠道 × 模型，得在 Go 里做一次去重才能还原渠道本身的字段。两趟更短也更难写错。
 	mrows, err := db.QueryContext(ctx,
-		`SELECT id, channel_id, upstream_model, disabled FROM channel_models ORDER BY id`)
+		`SELECT id, channel_id, upstream_model, protocols, disabled FROM channel_models ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +165,17 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	for mrows.Next() {
 		var m ChannelModel
 		var chID int64
-		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &m.Disabled); err != nil {
+		var mProtocols string
+		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.Disabled); err != nil {
 			return nil, err
+		}
+		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
+		// 非空解不动同样留空数组交给页面，理由同上面渠道那一列。
+		if mProtocols != "" {
+			m.Protocols, _ = protocol.ParseSet(mProtocols)
+		}
+		if m.Protocols == nil {
+			m.Protocols = protocol.Set{}
 		}
 		if i, ok := byID[chID]; ok {
 			channels[i].Models = append(channels[i].Models, m)
@@ -331,10 +344,17 @@ func DeleteChannel(ctx context.Context, db Conn, id int64) error {
 }
 
 // AddChannelModel 给渠道加一个纳管模型。重复添加视为幂等成功。
-func AddChannelModel(ctx context.Context, db Conn, channelID int64, upstreamModel string) error {
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO channel_models (channel_id, upstream_model) VALUES (?, ?)
-		ON CONFLICT(channel_id, upstream_model) DO NOTHING`, channelID, upstreamModel)
+//
+// protocols 是这个模型的协议子集（口径层 v0.40），空集合表示继承渠道全集——那是常态。
+// 幂等这条对它有个后果：重复添加时协议子集也不会被改写，改子集走 SetChannelModelProtocols。
+func AddChannelModel(ctx context.Context, db Conn, channelID int64, upstreamModel string, protocols protocol.Set) error {
+	raw, err := normalizeModelProtocols(protocols)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO channel_models (channel_id, upstream_model, protocols) VALUES (?, ?, ?)
+		ON CONFLICT(channel_id, upstream_model) DO NOTHING`, channelID, upstreamModel, raw)
 	return err
 }
 
@@ -343,6 +363,37 @@ func SetChannelModelDisabled(ctx context.Context, db Conn, id int64, disabled bo
 	res, err := db.ExecContext(ctx,
 		`UPDATE channel_models SET disabled = ? WHERE id = ?`, boolInt(disabled), id)
 	return affectedOne(res, err)
+}
+
+// SetChannelModelProtocols 改一个纳管模型的协议子集（口径层 v0.40）。
+//
+// **不校验它是不是渠道协议集的子集**，这是有意的：渠道协议集缩小时级联清理这一列，
+// 等于拿「配置任何时刻自洽」换「你改渠道时我替你删配置」，而删掉的填法回不来。存原样，
+// 路由时取交集（store.pickProtocol），渠道把协议勾回来这一行自动重新生效。
+func SetChannelModelProtocols(ctx context.Context, db Conn, id int64, protocols protocol.Set) error {
+	raw, err := normalizeModelProtocols(protocols)
+	if err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE channel_models SET protocols = ? WHERE id = ?`, raw, id)
+	return affectedOne(res, err)
+}
+
+// normalizeModelProtocols 校验并归一化模型协议子集，空集合归一成空串。
+//
+// 空串在读侧就是「继承渠道全集」，所以空是正常值不是错误——这正是它不能直接套渠道那
+// 条 ParseSet 的原因（那边空集合直接拒，因为渠道必须至少会说一个协议）。非空则照常
+// 走 ParseSet：折旧协议名、去重、拒不认识的取值，一套规则两处共用。
+func normalizeModelProtocols(s protocol.Set) (string, error) {
+	if len(s) == 0 {
+		return "", nil
+	}
+	set, err := protocol.ParseSet(s.String())
+	if err != nil {
+		return "", InvalidInput{Reason: err.Error()}
+	}
+	return set.String(), nil
 }
 
 // DeleteChannelModel 删一个纳管模型。指向它的候选同样不级联，同样先点名。
