@@ -184,7 +184,6 @@ export default function Usage() {
                   <th className="num">状态</th>
                   <th className="num">耗时</th>
                   <th className="num">in / out</th>
-                  <th>错误</th>
                 </tr>
               </thead>
               <tbody>
@@ -221,11 +220,19 @@ export default function Usage() {
                     <td className="nowrap">
                       {l.channel_key_name ? l.channel_key_name : <span className="muted">—</span>}
                     </td>
+                    {/* 错误压在状态下面，不单占一列：它写的是网关自己的**固定词表**
+                        （stream_aborted / unauthorized / rejected…，见 server/calllog.go），
+                        短且可枚举，为它留一整列会把表推得比卡片还宽，右边直接看不见。 */}
                     <td className="num">
                       <span className={'pill ' + (l.status >= 400 ? 'pill-bad' : 'pill-ok')}>
                         {l.status}
                       </span>
                       {l.retry_count > 0 && <div className="sub">重试 ×{l.retry_count}</div>}
+                      {l.error && (
+                        <div className="sub log-err" title={l.error}>
+                          {l.error}
+                        </div>
+                      )}
                     </td>
                     <td className="num nowrap tnum">
                       {fmtMs(l.total_ms)}
@@ -233,18 +240,17 @@ export default function Usage() {
                         {l.ttft_ms === null ? '—' : `首字 ${fmtMs(l.ttft_ms)}`}
                       </div>
                     </td>
+                    {/* 缓存读/写只在非零时露出：绝大多数上游根本不报这两个数，
+                        每行挂一对 0 是纯噪声，而 Anthropic 那条链路上它是成本的大头。 */}
                     <td className="num nowrap tnum muted">
                       {fmtInt(l.input_tokens)} / {fmtInt(l.output_tokens)}
-                    </td>
-                    {/* 错误单行截断，全文进 title：它可能是一整段上游返回的 JSON */}
-                    <td>
-                      {l.error ? (
-                        <span className="log-err" title={l.error}>
-                          {l.error}
-                        </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
+                      {/* 三元而非 &&：两个都是 0 时 `0 && <div/>` 会把那个 0 渲染出来 */}
+                      {l.cache_read_tokens || l.cache_write_tokens ? (
+                        <div className="sub">
+                          缓存 读 {fmtInt(l.cache_read_tokens)} / 写{' '}
+                          {fmtInt(l.cache_write_tokens)}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

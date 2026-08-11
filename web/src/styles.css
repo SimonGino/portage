@@ -1377,9 +1377,12 @@ select:focus {
   color: var(--muted);
 }
 
+/* 错误现在压在「状态」那一格里（见 Usage.tsx），跟着状态右对齐。
+   仍留截断兜底：词表是固定的，但 M4 之后可能有更长的取值。 */
 .log-err {
   display: block;
-  max-width: 240px;
+  max-width: 160px;
+  margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
