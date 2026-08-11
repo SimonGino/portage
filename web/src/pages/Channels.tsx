@@ -173,6 +173,13 @@ function ChannelCard({
       .flatMap((r) => r.protocols)
       .filter((p) => protos.includes(p))
   }
+  // 渠道的每一个协议侧都真拉到了一份列表。**证据不全就不推断子集**：`models` 为 null
+  // 是「这一侧没拉到」（401、超时、回的不是 JSON），与「拉到了但没列出它」在证据上是
+  // 两回事，而 listedOn 把两者压成了同一个「不在里面」。按后者写库，等于凭零证据砍掉
+  // 一条本来可能原生可走的协议路径，把请求推去做有损转换——比没推断坏得多。
+  const listComplete =
+    listed !== null &&
+    protos.every((p) => listed.some((r) => r.models !== null && r.protocols.includes(p)))
 
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
@@ -251,8 +258,9 @@ function ChannelCard({
                 await api.post(`/channels/${ch.id}/models`, {
                   upstream_model: name,
                   // 上游在每一侧都列出了它，就不写子集——那等价于继承，写进去只是
-                  // 一份会在渠道加协议时挡路的冗余。
-                  protocols: on.length === protos.length ? [] : on,
+                  // 一份会在渠道加协议时挡路的冗余。有一侧没拉到（listComplete 为
+                  // 假）同样留继承：见上面那段，缺证据不是「不支持」的证据。
+                  protocols: listComplete && on.length < protos.length ? on : [],
                 })
               }
             })
@@ -298,12 +306,16 @@ function ChannelCard({
                     onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))}
                   />
                 </div>
-                {protos.length > 1 && (
+                {/* 单协议渠道通常没什么可勾的，但**存量子集在的时候必须照实显示**
+                    （口径层 v0.40 ①）：渠道从多协议缩成一个、而这个模型的子集不含它，
+                    正是它变得不可用的那一刻——把这一格藏了，人就只能对着一个看上去
+                    哪都没问题的配置查 503，而且没有入口把那份存量值清掉。 */}
+                {(protos.length > 1 || (m.protocols ?? []).length > 0) && (
                   <ModelProtocols
                     model={m}
                     channelProtocols={protos}
                     listedOn={listedOn(m.upstream_model)}
-                    hasList={listed !== null}
+                    listComplete={listComplete}
                     mutate={mutate}
                   />
                 )}
@@ -384,14 +396,15 @@ function ModelProtocols({
   model,
   channelProtocols,
   listedOn,
-  hasList,
+  listComplete,
   mutate,
 }: {
   model: ChannelModel
   channelProtocols: Protocol[]
   /** 上游在哪些协议侧列出了这个模型。空数组 = 没拉过，或哪一侧都没列。 */
   listedOn: Protocol[]
-  hasList: boolean
+  /** 渠道的每一侧都真拉到了列表。为假时 listedOn 的空缺分不清「没列出」和「没拉到」。 */
+  listComplete: boolean
   mutate: (fn: () => Promise<unknown>) => Promise<void>
 }) {
   const current = model.protocols ?? []
@@ -419,7 +432,9 @@ function ModelProtocols({
   // 建议只在「上游确实只列出了一部分」时给，且不自动应用——拉回来的列表可能是中转站
   // 写死的，采信它等于把探测做成了闸（口径层 v0.33 立论）。
   const suggest =
-    hasList && listedOn.length > 0 && listedOn.length < channelProtocols.length ? listedOn : null
+    listComplete && listedOn.length > 0 && listedOn.length < channelProtocols.length
+      ? listedOn
+      : null
   const same =
     suggest !== null &&
     suggest.length === current.length &&
@@ -463,7 +478,7 @@ function ModelProtocols({
           上游只在 {suggest.map((p) => PROTOCOL_SHORT[p] ?? p).join('、')} 侧列出 · 采纳
         </button>
       )}
-      {hasList && listedOn.length === 0 && (
+      {listComplete && listedOn.length === 0 && (
         <span className="muted" title="拉回来的列表里没有这个名字。可能是上游没提供 /v1/models，也可能是名字写错了">
           上游列表里没有它
         </span>

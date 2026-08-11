@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/SimonGino/ai-gateway/internal/protocol"
@@ -97,8 +98,7 @@ func TestResolveEmptyIntersectionIsNoUsableCandidate(t *testing.T) {
 }
 
 // /v1/models 的直连那半边不许列出一个必然 503 的限定名（口径层 v0.32 ③）：交集为空
-// 时它当下就是调不通的，跟渠道停用、凭证归零同办。接入点那半边照旧列——交集为空不进
-// 启动闸（口径层 v0.40），那一条是口径认下的。
+// 时它当下就是调不通的，跟渠道停用、凭证归零同办。
 func TestListExposedModelsHidesEmptyIntersectionDirectName(t *testing.T) {
 	db := openTestDB(t)
 	seedChannel(t, db, "anthropic", "openai")
@@ -112,8 +112,50 @@ func TestListExposedModelsHidesEmptyIntersectionDirectName(t *testing.T) {
 			t.Errorf("列出了限定名 %q，但它的协议交集为空，打过去必 503", m.ID)
 		}
 	}
-	if len(got) != 1 || got[0].ID != "ap" {
-		t.Errorf("清单 = %+v，期望只剩接入点 ap", got)
+}
+
+// 接入点那半边同样不许列。交集为空不进启动闸（口径层 v0.40 ②），所以启动闸这一项
+// 兜不住接入点——「列出来的必须调得通」在这半边只能靠运行期过滤。
+func TestListExposedModelsHidesDeadAccessPoint(t *testing.T) {
+	db := openTestDB(t)
+	seedChannel(t, db, "anthropic", "openai")
+
+	got, err := ListExposedModels(context.Background(), db)
+	if err != nil {
+		t.Fatalf("列模型: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("清单 = %+v，期望空——接入点唯一的候选交集为空，打过去必 503", got)
+	}
+}
+
+// 但只要还有一个候选活着，接入点就得留在清单上：M4 放开多候选之后，一个死候选不该
+// 把整个接入点抹掉，它还有兄弟候选能接。
+func TestListExposedModelsKeepsAccessPointWithOneLiveCandidate(t *testing.T) {
+	db := openTestDB(t)
+	seedChannel(t, db, "anthropic", "openai") // 1 号候选：交集为空
+	if _, err := db.Exec(
+		`INSERT INTO channel_models (id, channel_id, upstream_model, protocols)
+		 VALUES (2, 1, 'claude-4', '')`); err != nil {
+		t.Fatalf("插第二个纳管模型: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (1, 2, 100)`); err != nil {
+		t.Fatalf("插第二个候选: %v", err)
+	}
+
+	got, err := ListExposedModels(context.Background(), db)
+	if err != nil {
+		t.Fatalf("列模型: %v", err)
+	}
+	var hasAP bool
+	for _, m := range got {
+		if !m.Direct && m.ID == "ap" {
+			hasAP = true
+		}
+	}
+	if !hasAP {
+		t.Errorf("清单 = %+v，期望含接入点 ap——它还有一个交集非空的候选", got)
 	}
 }
 
@@ -135,6 +177,34 @@ func TestListExposedModelsKeepsIntersectingDirectName(t *testing.T) {
 	if !found {
 		t.Errorf("清单 = %+v，期望含限定名 ch/gpt-4o", got)
 	}
+}
+
+// 启动闸拦「值不合法」，但**不拦**「交集为空」——后者是运行期状态不是数据损坏
+// （口径层 v0.40 ②），拦了等于让渠道少勾一个协议把整个进程掀翻。
+func TestValidateChecksModelProtocolValues(t *testing.T) {
+	t.Run("不合法的值拦下", func(t *testing.T) {
+		db := openTestDB(t)
+		seedChannel(t, db, "anthropic,openai", "")
+		// 手写 SQL 塞一个 ParseSet 认不得的值——管理端写不进来，导入的库能。
+		if _, err := db.Exec(`UPDATE channel_models SET protocols = 'gemini' WHERE id = 1`); err != nil {
+			t.Fatalf("塞脏值: %v", err)
+		}
+		err := Validate(context.Background(), db)
+		if err == nil {
+			t.Fatal("期望校验失败")
+		}
+		if !strings.Contains(err.Error(), "gpt-4o") {
+			t.Errorf("校验原文没点名是哪个模型: %v", err)
+		}
+	})
+
+	t.Run("交集为空不拦", func(t *testing.T) {
+		db := openTestDB(t)
+		seedChannel(t, db, "anthropic", "openai")
+		if err := Validate(context.Background(), db); err != nil {
+			t.Errorf("交集为空不该拦在启动闸: %v", err)
+		}
+	})
 }
 
 // 老库迁移：没有 protocols 列的 channel_models 加完列之后，存量行拿到的是空串，

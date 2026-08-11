@@ -439,14 +439,20 @@ type ExposedModel struct {
 // 解析失败的行也不列：那种行请求打过去会回 500（见 usableProtocols 的分档），同样不
 // 属于「当下真能打通」。整个清单不因一行脏数据而 500，理由同下面的 COALESCE。
 //
-// 接入点那半边不做这层过滤，因为它归启动闸管（v0.18/v0.21），配置能起来就说明它通；
-// 交集为空**不进启动闸**（口径层 v0.40），所以接入点侧仍可能列出一条运行期 503 的
-// 名字——那是口径认下的，不是这里漏的。
+// **接入点那半边只对交集这一项过滤**（v0.38 二修）。它别的项不用管——渠道停用、模型
+// 停用、凭证归零都归启动闸（v0.18/v0.21），配置能起来就说明它通；而交集为空**不进启动
+// 闸**（口径层 v0.40 ②：它是运行期状态不是数据损坏），启动闸这一项兜不住，于是「列出来
+// 的必须调得通」在这半边只能靠运行期过滤。口径层 v0.32 ③ 当初把过滤限定在直连半边，
+// 给的理由正是「启动闸兜不住它」——同一条理由现在覆盖两边。
 //
 // created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。手写
 // SQL 塞进来的 created_at 未必是 strftime 认得的格式，那时它返回 NULL——COALESCE
 // 兜住，免得一行脏数据把整个 /v1/models 打成 500。
 func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) {
+	dead, err := deadAccessPoints(ctx, db)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id, '', ''
 		FROM access_points WHERE disabled = 0
@@ -482,6 +488,8 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 			if _, err := usableProtocols(channelProtocols, modelProtocols); err != nil {
 				continue
 			}
+		} else if dead[id] {
+			continue
 		}
 		if seen[m.ID] {
 			continue
@@ -490,6 +498,45 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// deadAccessPoints 找出「候选一个都活不了」的接入点——它们的每个候选，协议子集与所在
+// 渠道的支持协议集都没有交集，于是打过去必 503。
+//
+// **判据是「有没有一个候选活着」而不是「有没有一个候选死了」**：M4 放开多候选之后，
+// 一个死候选不该把整个接入点从清单上抹掉，它还有兄弟候选能接。M0~M2 临时闸下每个接入
+// 点只有一个候选，两种写法等价，但等价的时候正是把它写对的时候。
+//
+// 一个候选都没有的接入点不在返回的集合里（照列）：那种形状启动闸本来就拒（
+// checkSingleCandidate），这里不替它改判。
+func deadAccessPoints(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT cd.access_point_id, ch.protocols, cm.protocols
+		FROM candidates cd
+		JOIN channel_models cm ON cm.id = cd.channel_model_id
+		JOIN channels ch       ON ch.id = cm.channel_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	alive, dead := make(map[int64]bool), make(map[int64]bool)
+	for rows.Next() {
+		var apID int64
+		var channelProtocols, modelProtocols string
+		if err := rows.Scan(&apID, &channelProtocols, &modelProtocols); err != nil {
+			return nil, err
+		}
+		if _, err := usableProtocols(channelProtocols, modelProtocols); err == nil {
+			alive[apID] = true
+		} else {
+			dead[apID] = true
+		}
+	}
+	for id := range alive {
+		delete(dead, id)
+	}
+	return dead, rows.Err()
 }
 
 // Queryer 是 *sql.DB 与 *sql.Tx 的公共只读面。
@@ -516,6 +563,7 @@ func Validate(ctx context.Context, db Queryer) error {
 		checkDanglingCandidate,
 		checkCandidateReachable,
 		checkChannelFields,
+		checkModelProtocols,
 	} {
 		found, err := check(ctx, db)
 		if err != nil {
@@ -680,6 +728,37 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 				return fmt.Sprintf("渠道 %q (id=%d) 的 base_url %s；它要填到「协议子路径之前」，"+
 					"例如 https://api.anthropic.com。按不泄露上游地址的约定这里不回显实际值，"+
 					"请查 channels 表核对", name, id, why), nil
+			}
+			return "", nil
+		})
+}
+
+// checkModelProtocols 扫纳管模型那一列协议子集（v0.38，口径层 v0.40）。
+//
+// 拦的只有「**值本身不合法**」——空串是继承渠道全集（最常见的正常值），交集为空则
+// **刻意不拦**：那是运行期状态不是数据损坏，口径层 v0.40 ② 明确把它挡在启动闸外，
+// 拦了等于让「渠道少勾一个协议」把整个进程掀翻。
+//
+// 管理端写这一列时已经过 ParseSet，所以不合法的值只能来自手写 SQL 或导入的库。但
+// 那正是 v0.21 通则要拦的形态：不拦的话进程照常起来，第一个打到这个模型的请求才
+// 500，而管理端把解不动的值显示成「继承」（ListChannels 吞掉解析错误），页面上根本
+// 看不出哪里不对。
+func checkModelProtocols(ctx context.Context, db Queryer) ([]string, error) {
+	return collect(ctx, db, `
+		SELECT cm.id, cm.upstream_model, cm.protocols, ch.name
+		FROM channel_models cm
+		JOIN channels ch ON ch.id = cm.channel_id
+		WHERE cm.disabled = 0 AND ch.disabled = 0 AND cm.protocols <> ''`,
+		func(rows *sql.Rows) (string, error) {
+			var id int64
+			var model, protocols, channel string
+			if err := rows.Scan(&id, &model, &protocols, &channel); err != nil {
+				return "", err
+			}
+			if _, err := protocol.ParseSet(protocols); err != nil {
+				return fmt.Sprintf("渠道 %q 的纳管模型 %q (id=%d) 的 protocols=%q 不合法：%v"+
+					"（逗号分隔，取值 anthropic/openai/openai_responses；留空表示继承渠道全集）",
+					channel, model, id, protocols, err), nil
 			}
 			return "", nil
 		})
