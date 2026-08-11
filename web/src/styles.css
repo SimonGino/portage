@@ -100,6 +100,9 @@ code {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 650;
   letter-spacing: -0.01em;
   margin-right: 20px;
@@ -827,10 +830,15 @@ select:focus {
   padding: 28px;
 }
 
+/* flex 而不是 text-align: center——标记与字要在基线之外还对上中心，
+   而 text-align 只管行内内容的水平位置，管不了这一件。 */
 .login h1 {
   margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
   font-size: 18px;
-  text-align: center;
   letter-spacing: -0.01em;
 }
 

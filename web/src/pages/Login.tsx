@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
+import { PortageMark } from '../brand'
 import { ErrorBar } from '../ui'
 
 export default function Login({
@@ -29,7 +30,10 @@ export default function Login({
   return (
     <div className="login-wrap">
       <form className="login" onSubmit={submit}>
-        <h1>Portage</h1>
+        <h1>
+          <PortageMark size={20} />
+          Portage
+        </h1>
         {/* 「还没设密码」跟「密码错了」要分开说：前者的补救是去改配置重启，
             后者是再输一次。含糊成一句「登录失败」会让人对着配置文件反复重试。 */}
         {!passwordSet ? (

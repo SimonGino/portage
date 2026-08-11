@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api, setUnauthorizedHandler } from './api'
+import { PortageMark } from './brand'
 import type { SessionState } from './api'
 import Login from './pages/Login'
 import Channels from './pages/Channels'
@@ -38,7 +39,10 @@ export default function App() {
   return (
     <div className="app">
       <nav className="nav">
-        <span className="brand">Portage</span>
+        <span className="brand">
+          <PortageMark />
+          Portage
+        </span>
         <NavLink to="/channels">渠道</NavLink>
         <NavLink to="/access-points">接入点</NavLink>
         <NavLink to="/keys">网关 key</NavLink>
