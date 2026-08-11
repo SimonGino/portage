@@ -1,0 +1,17 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": true,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "expect": {
+    "Model": "claude-sonnet-4-5",
+    "InputTokens": 937,
+    "OutputTokens": 53,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "StopReason": "tool_use",
+    "Degraded": false
+  },
+  "verified": true
+}

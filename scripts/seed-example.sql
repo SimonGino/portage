@@ -46,17 +46,25 @@ PRAGMA foreign_keys = ON;
 -- 回 404 就说明它不供那条协议，对应渠道别建（建了启动校验过得去，请求打过去才
 -- 失败，错得太晚）。
 -- ---------------------------------------------------------------------------
-INSERT INTO channels (name, protocol, base_url) VALUES
+-- protocols 是**协议集**（口径层 v0.33）：逗号分隔，如 `openai,openai_responses`。
+-- 下面三条各自只供一种协议，写的就是一元集合。列名是复数，别照老写法写 protocol
+-- ——那样 sqlite 直接报 `table channels has no column named protocol`，一行都灌不进去。
+INSERT INTO channels (name, protocols, base_url) VALUES
   ('anthropic-upstream', 'anthropic',        'https://你的-anthropic-上游'),
   ('relay-cc',           'openai',           'https://你的中转站'),
   ('relay-resp',         'openai_responses', 'https://你的中转站');
 
 -- Anthropic 那条用它自己的凭证；CC 与 Responses 共用中转站的那份。
-INSERT INTO channel_keys (channel_id, credential) VALUES
-  ((SELECT id FROM channels WHERE name = 'anthropic-upstream'), 'sk-ant-把这里换成 Anthropic 上游的凭证');
+--
+-- name 是人写的凭证名（口径层 v0.38），用量与日志按它归因。这里每条渠道只有一份
+-- 凭证，看着像多余，但**留空的代价在事后**：call_logs 存的是当时那份凭证的名字，
+-- 空名字的行到 M4 凭证池铺开后再也分不清是哪一份。起个名最省事。
+INSERT INTO channel_keys (channel_id, name, credential) VALUES
+  ((SELECT id FROM channels WHERE name = 'anthropic-upstream'), '主号',
+   'sk-ant-把这里换成 Anthropic 上游的凭证');
 
-INSERT INTO channel_keys (channel_id, credential)
-  SELECT id, 'sk-把这里换成中转站凭证' FROM channels
+INSERT INTO channel_keys (channel_id, name, credential)
+  SELECT id, '中转主号', 'sk-把这里换成中转站凭证' FROM channels
    WHERE name IN ('relay-cc', 'relay-resp');
 
 -- ---------------------------------------------------------------------------

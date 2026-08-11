@@ -150,9 +150,11 @@ name 与 input_schema 形状、`tool_use.id` ↔ `tool_result.tool_use_id`（Res
 | `in-responses-tool-turn2` | 同上 | **reasoning 项带真 `encrypted_content`** + `custom_tool_call` + output |
 | `in-responses-parallel-turn2` | Codex CLI → **stub** | **2 个并行 `custom_tool_call` + 2 个 output**（真上游逼不出来，理由见 `testdata/goldenstub/README.md`） |
 
-对应的 `response.raw` 没跟着入库：这批经中转站回来，`stop_details`、`usage.iterations`
-一类字段的出处没核过，不能拿去顶 §9 还缺的六个 `anthropic-*` upstream 样本（#7）。原始
-未脱敏目录仍在 `testdata/golden/raw/`，要回头核对时对着它看。
+对应的 `response.raw` 仍没跟着入库，但理由已经不是「字段出处不明」了——那条 2026-08-10
+核清楚了（见下节「经中转站采集」）。真正的理由是这批响应是 Claude Code 真实会话的产物，
+带 67 KB 缓存上下文与 thinking 块，脱敏成本远高于照 §9 场景重录一遍；六个 `anthropic-*`
+upstream 样本因此另采（2026-08-11），没有复用它们。原始未脱敏目录仍在
+`testdata/golden/raw/`，要回头核对时对着它看。
 
 **还缺非流式变体**：两个 harness 都只走流式。要补就拿录下来的请求体改 `"stream":false`
 重放一遍。
@@ -191,10 +193,51 @@ Responses 样本与上游异常样本（§9 的 8、9）留到 M1。
   ——Tap 只提 usage / model / stop_reason，不重组工具调用；index 交错是 P1
   codec 的事，届时要么换个会交错的上游采，要么承认 §9 这条脱离实际。
 
-`anthropic-*` 六个仍缺，卡在没有 Anthropic 上游（见验收票 #6）。
+### 已入库（2026-08-11）
+
+`anthropic-*` 六个补齐，M0 必抓子集不再有 skip。采自**第三方 Anthropic 协议中转**
+（订阅池型，非官方直连；PO 2026-08-10 裁定可当真实上游用，理由见下节的透传核查）。
+场景是照 §9 直接构造的六个 curl，不是 harness 会话：三例非流式 + 同三例流式，
+文本 / 单 `tool_use` / 并行 `tool_use`。
+
+`expect` 同样用一个独立的 jq 脚本从 `response.raw` 重算核对过，六个全对得上——
+与 `cc-*` 那批同一个做法，不复用 Go 侧任何代码。
+
+两点要知道：
+
+- **`InputTokens` 偏大 357**（纯文本那例 376，而请求体自己只有 12 token）。中转会往
+  每个请求里塞一段固定内容，实测两个不同长度的 prompt 差值恒定 357。这不影响样本
+  作数：`golden_test.go` 只拿 `response.raw` 喂 Tap，`request.json` 从不参与断言，
+  数值是「这条响应自己报的数」，前后自洽。但**别拿这批样本去推请求体与 token 的关系**。
+- **cache 全 0**。`cc-*` 那批特意补过缓存命中的缺口，Anthropic 这侧还没有；
+  `cache_read_input_tokens` 的解析路径目前只有 CC 样本走到。要补就照 `cc-text` 的做法，
+  超长固定前缀配 `cache_control` 打两遍取第二遍。
+
+### 经中转站采集：先核透传，再避三个雷
+
+2026-08-10 起、到 08-11 采样前，对手上这个中转做过一轮源码 + 探针核查（它跑的是
+`sub2api`，本地有源码）。
+结论是**响应体逐字透传**（`gateway_anthropic_passthrough.go` 按行 `io.WriteString` 原样
+回写，只旁路解析 usage，不做 decode→encode），佐证是响应里的 `inference_geo`、
+`usage.iterations` 在中转源码里根本不存在，它造不出来。`stop_details` 则是当前 API 的
+无条件字段——加不加 `anthropic-beta` 都在，四组对照实测一致，不是 beta 门控、也不是中转
+杜撰。**响应头是被过滤的**（中转有一张响应头白名单），所以 `request-id`、
+`anthropic-ratelimit-*` 一类头的保真度这里验不了，得等官方 key。
+
+拿它录样本要绕开三个雷，都是读源码读出来的：
+
+| 雷 | 触发条件 | 绕法 |
+|---|---|---|
+| 假响应顶包 | 正文含 `[SUGGESTION MODE:`、CC 那句取标题提示词或 `Warmup`；或 `max_tokens=1` + haiku | 场景正文别用这几个词，`max_tokens` 给大 |
+| 工具名字节改写 | 工具名以 `session_` / `sessions_` 开头（默认就开，不是配置项） | 工具名别用这两个前缀 |
+| 请求体注入 | 无条件，固定 357 token | 认了，只在读 `InputTokens` 时记得 |
+
+还有个操作上的坑：**流式连打会把 goldenrec 那个进程的上游连接打死**——非流式三个跑完
+接着跑流式，之后每个流式请求都在上游那一跳超时（`*url.Error`），换个新进程立刻就好。
+原因没深究，照方抓药：流式样本单独起一个 goldenrec，中间隔几秒。
 
 ## 顺带核对
 
 采集时留意 harness 实际发了什么，用来验证 §6.1 里那些**从参考仓库推断**的假设：
 请求头白名单、`anthropic-beta` 是否真的要转发、`count_tokens` 的调用时机。
-对不上的记在验收票（#6）里，回写展开层。
+对不上的记在验收票里（Anthropic 侧是 #7，其余 #6 已收官），回写展开层。
