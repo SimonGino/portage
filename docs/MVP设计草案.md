@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.35
+> 状态：草案 v0.36
+> v0.36 变更（#7 Anthropic 侧验收回写，2026-08-11）：均为实现层记录，口径不变，无代码改动。①§9 补「M0 必抓子集补齐」——`anthropic-*` 六个入库、12 个样本零 skip，并记下三处**样本与现实的出入**：中转恒给 `input_tokens` 加 357、cache 计数全 0（`cache_read_input_tokens` 的解析路径仍只有 `cc-*` 走到）、响应头保真度因中转有响应头白名单而**验不了**（`request-id` / `anthropic-ratelimit-*` 要等官方 key）。②§6.1 补 Anthropic 侧白名单实测复核：2026-08-06 那条走的是 Codex + Responses，Anthropic 半边一直靠推断，这次拿 Claude Code 打真网关 + 只打印所见的假上游逐条对过，**白名单原样成立**（私有头丢弃、`anthropic-version` 缺省补 `2023-06-01`、`anthropic-beta` 整条转发、`?beta=true` 照抄、顶层 `model` 翻译且其余字节未动）。③同处记下 `metadata.user_id`（含 `device_id`/`account_uuid`/`session_id`）**原样到达上游**且**不动它**：这是 v0.24「体除顶层 model 外逐字节相等」与「白名单只管头」两条口径的合成结果，为拦它去改写请求体，代价是承认网关可以按自己的判断删客户端字段，比泄露一个 device_id 危险。④`count_tokens` 的调用时机改记为**随 harness 版本变**（08-07 那版每轮先打一次、08-11 这版整轮没打），两条实测并存，网关侧只保留「不能当作启动必经一步」这个结论。⑤`scripts/seed-example.sql` 修两处会让干净库一行都灌不进去的错：列名 `protocol` → `protocols`（v0.31 改过名），`channel_keys` 补 `name`（v0.38 起用量与日志按它归因，留空的行到 M4 再也分不清是哪份凭证）。修改人 jinpenga。
 > v0.35 变更（口径层 v0.38 落地：渠道凭证池从 M4 前移至 M3，2026-08-10）：口径见口径层 v0.38，这里只记实现层落点。①**临时闸只拆凭证那一半**——`store.checkSingleCredential` 由「恰好 1 份」改判「≥1 份」，`checkSingleCandidate` 一字不动；`Resolve` 返回的 `Candidate.Credential` 单值扩成凭证列表 + 选取游标，`store` 里那条 JOIN 的 `LIMIT 1` 语义随之改变，改动面止于 `upstream`。②`channel_keys` 加 `name` 与 `UNIQUE(channel_id, name)`，`call_logs` 加 `channel_key_name`（快照冗余，非 id——删凭证是常事，存 id 会把历史 join 空）；两条都进 `store.migrate`，老库的已有凭证补名 `凭证 1`，老流水该列留空串。③**摘除只认 401**（403 换而不摘、429 换而不冷却），落在 `upstream/retry.go` 判定处；摘除写 `disabled_reason`/`disabled_at`，恢复只有管理端那一个按钮，**不加任何定时任务**。④`retry` 配置加 `max_attempts`（默认 6），与 `max_retries` 是两层，零值陷阱同 `rate_limit_qps` 处理。⑤`SetChannelCredential` 的先删后插退役（§8.1 那条实现口径随之划掉），换成 `/admin/api/channels/:id/credentials` 逐条 CRUD + 追加式批量粘贴；GET 只回名字/状态/时间/停用原因，凭证值仍无任何读接口。⑥`ChannelProbeTarget` 由「取一把凭证」改为返回全部凭证（含已停用），`Probe` 结果按凭证分行；仍不落库、不进路由。⑦`ChannelSummary.HasCredential` 布尔改可用/停用计数；`UsageByModel` 旁加一个按 `channel_key_name` 聚合的查询，`/admin/api/usage` 加 `by` 参数。⑧Web：渠道卡凭证区改列表（名字 + 状态 + 停用原因），`key_mode` 用既有的 `Segmented` 单选（不是下拉），日志页加「上游凭证」列，用量页加维度切换。**落地时定的五处细节**：⑴`UNIQUE(channel_id, name)` 落成独立唯一索引（ALTER 加不了约束，见 §7）；⑵`call_logs.retry_count` 由「同候选重试次数」扩义为「全部重打次数，含换凭证」——跨凭证之后前一个语义已经指不到任何东西，而这一列的用途（这次怎么慢了）两者都覆盖；⑶轮询游标挂在 `upstream.Client` 而不是 store 的包级变量，渠道 id 在每个测试库里都从 1 开始，包级 map 会让两个用例共享同一个游标；⑷按凭证聚合时凭证名为空的行**分两档**——渠道名也为空的是真没走到上游（鉴权失败、模型不存在）归「(未走到上游)」，渠道名不空的归「(未记录凭证)」（绝大多数是迁移前的老流水，少数是选出候选后、发出请求前就失败的），一档装两种会把老流水说成没走到上游；⑸`PUT /channels/:id` 请求体里**没有 `key_mode` 时不写该列**（其余字段仍整体覆盖），它 v0.38 才露到表单上，在服务端补默认会把配好 `random` 的渠道静默改回轮询。⑷⑸ 由 #36 的评审发现。修改人 jinpenga。
 > v0.34 变更（PR #32 的自动 review 三条，2026-08-10）：均为实现层。①**CC 解码侧补 `developer` → `RoleSystem` 归一**。canonical 没有 `RoleDeveloper` 是已定口径（`protocol/request.go` 的 Role 注释，PO 确认），`openairesponses` 早就这么折，CC 入口漏了。后果实打实：Anthropic 出口只把 `RoleSystem` 上提到顶层 `system`，其余非 assistant 一律当 user，于是一条 developer 系统提示降格成用户内容、还跟紧随其后的 user 合并成一条。钉这条的用例走**全链路**而不是单测——归一在 CC 侧、上提在 Anthropic 侧，分开看两边都「对」，错的是中间那一环。②`cmd/goldenrec` **先 `Normalize` 再 `Valid`**。`Valid` 故意不收旧协议名，而 `GOLDENREC_PROTOCOL` 是手写的、不经过库迁移，`protocol.go` 的注释里本来就点名它是别名要兜的读侧入口，实现却漏了——已有的采集环境会当场被打死。③`anthropic.encodeBlocksFiltered` 的 `default` 分支**补登记 `DropVendorContent`**。认不得的块（CC 的 `image_url` / `input_audio`，由解码侧刻意留住以免带图请求当场 400）此前静默蒸发：客户端发了张图，上游收到一个被改成纯文本的请求，还照样 200 回来，日志一个字都没有。与 `BlockThinking` 那一格的区别单独用例钉住——thinking 是**口径**定的必然丢弃，每次都丢，登记等于每请求一条噪声；这一格是「我不认识这个东西」，恰恰需要看见。修改人 jinpenga。
 > v0.33 变更（口径层 v0.36 落地：协议取值改名，2026-08-10）：口径见口径层 v0.36，这里只记实现层的落点。①全仓 `openai_cc` → `openai`：Go 常量 `protocol.OpenAICC` 一并更名为 `protocol.OpenAI`（值与常量名脱节比多改一处更难读），golden `meta.json` 的 `protocol` 字段一并改——它记的是「哪个 codec 录的」，协议改了名记的还是同一件事，证据本身（`request.json` 与 SSE 转录）一字未动。**包名 `openaicc` 与 golden 目录名 `cc-*` 保持不变**：内部标识，跟着改只会搅动全部 import 而换不来任何对外收益。②`protocol.Normalize` 收旧名、`Valid` 不收：别名与枚举分开，混在一起的话某天 `Set.String()` 会把旧名重新写回库里。`ParseSet` 在校验前折一次，顺带解决 `openai,openai_cc` 这种折完重名的去重。③`store.migrate` 新增 `renameOpenAICC`，改 `channels.protocols` 与 `call_logs` 的两列。channels 那条用 `REPLACE` 而非等值比较（集合是逗号分隔的，旧名可能夹在中间），子串替换在这里安全——另两个取值都不含 `openai_cc`。**不设「跑过没有」的标记**：改完库里再没有旧名，第二次跑就是零行命中，幂等本身就是守卫；用例跑两遍钉这一点。原 v0.33 列改名那条迁移的用例种子改回**当时真实写进库**的 `openai_cc`，于是它现在一路串起两次迁移。④管理端：`PROTOCOL_LABEL` 改为 OpenAI / OpenAI-Responses / Anthropic（**Responses 是复数**，参照的截图写成单数是那个产品的笔误，OpenAI 官方端点就是 `/v1/responses`）；新增 `PROTOCOL_SOON` 与 `SegmentedMulti` 的 `soon` 占位项渲染 Gemini（置灰、点不动）。占位项与 `options` 分开传而不是给 `Option` 加 `disabled`：它们的 value 根本不在 `Protocol` 里，混进去就得把类型放宽成 `string`，真正的取值也跟着失去检查。修改人 jinpenga。
@@ -417,6 +418,18 @@ logging：无论成败异步落 call_logs
 >
 > 需要区分的是 `cmd/goldenrec`：它**转发时照抄入站头、落盘时才走白名单**（`8de1dab`）。看着像双标，其实是两件事——采集要的是「让 harness 与真上游把整轮跑通」，防指纹外泄的对象是 git 仓库而不是上游。网关不同，它的对象就是上游，所以按白名单构造。
 
+> **Anthropic 侧白名单实测复核（#7 验收，2026-08-11）**：上面那条 2026-08-06 的复核走的是 Codex CLI + Responses，Anthropic 这半边一直是**照参考仓库推断**的。这次拿 Claude Code 打真网关、上游换成一个只打印所见的假上游，逐条对出来的结果是白名单**照原样成立，一个字不改**：
+>
+> - 客户端自带的 `user-agent`、自定义 `x-client-fingerprint` 一类头到不了上游（与 §6.1 的「重建而非复制」一致）。
+> - 客户端没给 `anthropic-version` 时，上游收到的是网关补的 `2023-06-01`。
+> - `anthropic-beta` 原样转发，Claude Code 那串多值的 beta 列表整条到达，没有被拆开或重排。
+> - `?beta=true` 查询串照抄（v0.24 那条的 Anthropic 侧实证）。
+> - 顶层 `model` 被翻译成纳管模型名，其余字节未动。
+>
+> **`metadata.user_id` 原样到达上游**，内含 `device_id`（稳定机器指纹）、`account_uuid`、`session_id`。这不是白名单漏了，而是两条既有口径的**合成结果**：v0.24 定的是请求体除顶层 `model` 外逐字节相等，而白名单管的只是请求头。**不动它**——要拦就得改写请求体，那等于承认网关会按自己的判断删客户端的字段，比泄露一个 device_id 危险得多（今天删指纹，明天删的就是某个没建模的厂商参数）。记在这里是为了下次有人问「白名单挡住指纹了吗」时，答案是「头挡住了，体没挡也不该挡」。
+>
+> **`count_tokens` 的调用时机随 harness 版本变**：`testdata/golden/README.md` 记的 2026-08-07 那版 Claude Code 是每轮先打一次，而 08-11 这版跑完一整轮工具调用一次都没打。两条都是当时的实测，都不作废——网关这侧的结论是它**不能被当作启动必经的一步**（M0 起就实现了该端点，两种时机都跑得通）。
+
 **响应头（上游 → 客户端）**：除 `Content-Length` 外原样回传（流式下无意义，非流式由 Go 按实际写入量重设），状态码原样。上游 `x-request-id` / `request-id` 既回传客户端也记日志——个人自用场景下能拿它去找上游对账，比藏起来有用。
 
 **流式转发按字节块复制，永不按帧切分**：循环 `Read`（32KB 量级）→ `Write` → `Flush` 直到 EOF。不用 `bufio.Scanner` 按行读再重组——会引入换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。SSE 帧解析**只发生在 Tap 内**，Tap 从 `io.TeeReader` 拿同一份字节自组帧、自管缓冲上限（MB 级，并行工具调用的 JSON 参数单帧可以很大），**超限即放弃解析并降级**：Tap 的上限只影响日志字段完整性，绝不截断转发字节。（new-api 按行 Scanner 读、靠把 token 上限调到 64MB 躲大参数帧截断，本设计不取该路径。）
@@ -678,7 +691,11 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 
 **M0 必抓子集（v0.10）**：样本 1~3（Anthropic 流式：文本 / 单 tool_use / 并行 tool_use）、4~6（CC 流式：文本 / 单 tool_calls 参数跨 chunk / 并行 index 交错）及其非流式版本（样本 7 的对应部分）。理由是 Tap 的测试要真实转录作输入，M0 就得有，等不到 M1。样本 8（Responses）与 9（上游异常）仍留 M1。**raw 字节存档前须人工过一遍，去掉真实凭证与个人对话内容。**
 
-**采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
+> **M0 必抓子集补齐（#7，2026-08-11）**：`anthropic-*` 六个入库，`golden_test.go` 12 个样本零 skip。采自**第三方 Anthropic 协议中转**而非官方直连（PO 2026-08-10 裁定可当真实上游用），依据是先核了透传：中转跑的是 `sub2api`，响应体按行原样回写、只旁路解析 usage，佐证是响应里的 `usage.iterations`、`inference_geo` 在它源码里根本不存在。采集时要绕的三个雷（假响应顶包、`session_` 前缀工具名被改写、请求体注入）与操作坑记在 `testdata/golden/README.md`，这里不抄第二份。
+>
+> 两处**样本与现实的出入**要跟着样本走：①**`InputTokens` 恒偏大 357**——中转往每个请求塞一段固定内容，两个不同长度的 prompt 差值一致。不影响样本作数（`golden_test.go` 只喂 `response.raw`，`request.json` 从不参与断言，数值前后自洽），但**别拿这批样本推请求体与 token 的关系**。②**cache 计数全 0**：`cc-*` 那批特意补过缓存命中，Anthropic 这侧还没有，`cache_read_input_tokens` 的解析路径目前只有 CC 样本走到。③**响应头保真度这里验不了**——中转有响应头白名单，`request-id`、`anthropic-ratelimit-*` 到不了，要验得等官方 key。
+
+**采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / source / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
 
 `meta.json` 的 `expect` 由 goldenrec 用 Tap 自己预填，**只是草稿**：出自被测代码的期望值等于让实现给自己判卷，因此 `golden_test.go` 拒绝一切 `verified: false` 的样本。把 `verified` 置 true 是人工关卡，与「脱敏时人工过一遍」是同一道工序——核对脱敏、核对 expect 与原始字节相符，一起做。未采集的样本按名字逐个 skip，目录空着不会一路绿灯。
 

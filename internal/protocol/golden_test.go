@@ -38,6 +38,10 @@ type sampleMeta struct {
 	Status   int              `json:"status"`
 	Expect   protocol.Summary `json:"expect"`
 	Verified bool             `json:"verified"`
+	// Source 记这份样本采自哪个上游，不参与任何断言。声明在这里是为了让它可被发现：
+	// 同一个目录树里迟早会同时躺着中转采的和官方直连采的样本（#37），到那时
+	// 「这个数是谁报的」只能靠它区分。
+	Source string `json:"source"`
 }
 
 // TestGoldenSamples 用真实转录驱动 Tap：样本 → Tap → Summary，与人工核过的 expect 比对。
