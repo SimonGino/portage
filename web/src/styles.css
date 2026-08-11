@@ -261,8 +261,47 @@ code {
   overflow-x: auto;
 }
 
-.scroll-x .table {
-  min-width: 1020px;
+/* 横向滚动的下限**逐表给**，不给一个全局值。
+   1020px 是 10 列时代定的（v0.30 那次「恢复横向滚动」），08-10 压到七列之后
+   没人回头改它，于是七列被硬撑到 1020：卡片最宽只有 1118px（.main 1160 减
+   padding），窗口一窄，最右那列（in / out）就滚到可视区外——而 in/out 恰恰是
+   这张表最该被扫到的一列。 */
+.scroll-x .table-usage {
+  min-width: 700px;
+}
+
+.scroll-x .table-logs {
+  min-width: 900px;
+}
+
+/* 这两张表列多，18px 的左右内边距光 padding 就吃掉 250px。压到 12px，
+   省下的宽度正好够最右那列留在可视区里。 */
+.table-usage th,
+.table-usage td,
+.table-logs th,
+.table-logs td {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* 模型列封顶截断：`claude-sonnet-4-5-20250929` 这种名字一个人就能顶掉 200px，
+   而它右边还有五列，最右那列（in / out）正是被这么顶出可视区的。截断的全名
+   进 title，信息不丢。
+
+   封顶加在**单元格内部的块**上而不是 `td` 上：auto 表格布局里 `td` 的
+   max-width 只算给列宽算法的提示，浏览器常常直接忽略它，只有 table-layout:
+   fixed 才当真——而那个要连所有列宽一起接管，代价大得多。 */
+.table-logs .log-model .icon-row,
+.table-logs .log-model .sub {
+  max-width: 230px;
+}
+
+.table-logs .log-model code,
+.table-logs .log-model .sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 渠道卡 ────────────────────────────────────────────────────────── */
