@@ -7,7 +7,15 @@ import {
   PROTOCOL_SHORT,
   PROTOCOL_SOON,
 } from '../api'
-import type { Channel, Credential, KeyMode, ProbeGroup, Protocol } from '../api'
+import type {
+  Channel,
+  ChannelModel,
+  Credential,
+  KeyMode,
+  ModelListResult,
+  ProbeGroup,
+  Protocol,
+} from '../api'
 import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, Toggle, useList } from '../ui'
 import { Segmented, SegmentedMulti } from '../fields'
 import { Avatar, ChannelIcon, ModelIcon, vendorForChannel, vendorForModel } from '../icons'
@@ -21,6 +29,25 @@ export default function Channels() {
   // 探测结果只活在这个组件的内存里：口径层 v0.33 定的是「只提示、不落库、不参与
   // 路由」——探测结果会过期，存下来就变成一份会撒谎的缓存。刷新页面它就该没了。
   const [probes, setProbes] = useState<Record<number, ProbeGroup[] | 'running'>>({})
+  // 拉回来的上游模型列表同样只活在内存里（口径层 v0.40）：它是填表助手，不是配置。
+  // 中转站的 /v1/models 返回一份写死的大列表是常态，存下来就成了一份会撒谎的缓存——
+  // 与 v0.33 拒绝把探测做成闸是同一条立论。刷新页面它就该没了。
+  const [fetched, setFetched] = useState<Record<number, ModelListResult[] | 'running'>>({})
+
+  async function fetchModels(id: number) {
+    setFetched((p) => ({ ...p, [id]: 'running' }))
+    try {
+      const r = await api.post<{ results: ModelListResult[] }>(`/channels/${id}/fetch-models`)
+      setFetched((p) => ({ ...p, [id]: r.results }))
+    } catch {
+      // 拉不到不算错误：上游没有 /v1/models 是常事，手工填就是了。
+      setFetched((p) => {
+        const next = { ...p }
+        delete next[id]
+        return next
+      })
+    }
+  }
 
   async function probe(id: number) {
     setProbes((p) => ({ ...p, [id]: 'running' }))
@@ -79,6 +106,8 @@ export default function Channels() {
                 onCredential={() => setCredFor(ch)}
                 onProbe={() => void probe(ch.id)}
                 probe={probes[ch.id]}
+                onFetchModels={() => void fetchModels(ch.id)}
+                fetched={fetched[ch.id]}
                 mutate={mutate}
               />
             ))}
@@ -119,6 +148,8 @@ function ChannelCard({
   onCredential,
   onProbe,
   probe,
+  onFetchModels,
+  fetched,
   mutate,
 }: {
   ch: Channel
@@ -126,10 +157,22 @@ function ChannelCard({
   onCredential: () => void
   onProbe: () => void
   probe?: ProbeGroup[] | 'running'
+  onFetchModels: () => void
+  fetched?: ModelListResult[] | 'running'
   mutate: (fn: () => Promise<unknown>) => Promise<void>
 }) {
   const models = ch.models ?? []
   const protos = ch.protocols ?? []
+  const listed = Array.isArray(fetched) ? fetched : null
+  // 上游在哪些协议侧列出了这个模型。**只用于给建议**，不自动改配置——拉回来的列表
+  // 可能是中转站写死的（口径层 v0.40），采信它等于把探测做成了闸。
+  function listedOn(model: string): Protocol[] {
+    if (!listed) return []
+    return listed
+      .filter((r) => (r.models ?? []).includes(model))
+      .flatMap((r) => r.protocols)
+      .filter((p) => protos.includes(p))
+  }
 
   return (
     <div className={'channel' + (ch.disabled ? ' is-off' : '')}>
@@ -167,6 +210,16 @@ function ChannelCard({
           <button className="btn btn-quiet" onClick={onProbe} disabled={probe === 'running'}>
             {probe === 'running' ? '探测中…' : '探测协议'}
           </button>
+          {/* 拉的是上游自己声明的模型列表，用来省掉「这个模型到底在哪一侧」的手工核对。
+              结果只进表单不进路由（口径层 v0.40）。 */}
+          <button
+            className="btn btn-quiet"
+            onClick={onFetchModels}
+            disabled={fetched === 'running'}
+            title="拉上游 /v1/models，只用来帮你填表，不落库也不影响路由"
+          >
+            {fetched === 'running' ? '拉取中…' : '拉模型列表'}
+          </button>
           <button className="btn btn-quiet" onClick={onCredential}>
             凭证池
           </button>
@@ -184,6 +237,28 @@ function ChannelCard({
           「哪一把不行」抹掉了。 */}
       {Array.isArray(probe) &&
         probe.map((g) => <ProbeRow key={g.credential} group={g} multi={probe.length > 1} />)}
+
+      {listed && (
+        <FetchedModels
+          results={listed}
+          existing={new Set(models.map((m) => m.upstream_model))}
+          onAdd={(names) =>
+            void mutate(async () => {
+              for (const name of names) {
+                // 逐个 POST 而不是一把批量接口：AddChannelModel 本来就是幂等的，
+                // 而逐个发能让「加到一半上游把我限流了」停在一个确定的位置上。
+                const on = listedOn(name)
+                await api.post(`/channels/${ch.id}/models`, {
+                  upstream_model: name,
+                  // 上游在每一侧都列出了它，就不写子集——那等价于继承，写进去只是
+                  // 一份会在渠道加协议时挡路的冗余。
+                  protocols: on.length === protos.length ? [] : on,
+                })
+              }
+            })
+          }
+        />
+      )}
 
       <div className="models">
         <div className="models-title">纳管模型{models.length > 0 && ` · ${models.length}`}</div>
@@ -223,12 +298,176 @@ function ChannelCard({
                     onConfirm={() => void mutate(() => api.del(`/channel-models/${m.id}`))}
                   />
                 </div>
+                {protos.length > 1 && (
+                  <ModelProtocols
+                    model={m}
+                    channelProtocols={protos}
+                    listedOn={listedOn(m.upstream_model)}
+                    hasList={listed !== null}
+                    mutate={mutate}
+                  />
+                )}
               </div>
             ))}
           </div>
         )}
         <AddModels channel={ch} mutate={mutate} />
       </div>
+    </div>
+  )
+}
+
+/**
+ * FetchedModels 是「拉模型列表」的结论条（口径层 v0.40）。
+ *
+ * 它是**填表助手**，不是配置：这里显示的一切都还没进库，人点了「加进来」才落库。
+ * 中转站返回一份写死的大列表是常态，所以这条不给「同步」这种字眼——同步意味着以
+ * 上游为准，而以一份会撒谎的列表为准正是 §2.2 拒绝把探测做成闸的理由。
+ */
+function FetchedModels({
+  results,
+  existing,
+  onAdd,
+}: {
+  results: ModelListResult[]
+  existing: Set<string>
+  onAdd: (names: string[]) => void
+}) {
+  // 各侧的名字并起来去重：一个模型出现在哪几侧是 ModelProtocols 那行的事，
+  // 这里只回答「还有哪些没纳管」。
+  const all = Array.from(new Set(results.flatMap((r) => r.models ?? [])))
+  const fresh = all.filter((m) => !existing.has(m))
+  const failed = results.filter((r) => (r.models ?? []).length === 0)
+
+  return (
+    <div className={'probe' + (failed.length === results.length ? ' probe-bad' : '')}>
+      <span>
+        {results
+          .map(
+            (r) =>
+              `${r.protocols.map((p) => PROTOCOL_SHORT[p] ?? p).join('/')} 侧：${r.detail}`,
+          )
+          .join('；')}
+        {all.length > 0 &&
+          (fresh.length > 0 ? ` · 其中 ${fresh.length} 个还没纳管` : ' · 都已经纳管了')}
+      </span>
+      {fresh.length > 0 && (
+        <>
+          <ul>
+            {fresh.slice(0, 12).map((m) => (
+              <li key={m}>
+                <code>{m}</code>
+              </li>
+            ))}
+            {fresh.length > 12 && <li className="muted">…还有 {fresh.length - 12} 个</li>}
+          </ul>
+          <button className="btn btn-quiet" onClick={() => onAdd(fresh)}>
+            把这 {fresh.length} 个加进来
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * ModelProtocols 是模型格子里那行协议子集（口径层 v0.40）。
+ *
+ * 只在渠道支持多个协议时出现——单协议渠道没有子集可言，摆一行只能勾一个的 chips
+ * 是纯噪音。它总是占一行而不是「有值才出现」：模型网格里某一格凭空高一截，同一行
+ * 其它格会跟着拉高，整片网格参差（同 .model-name 那条截断不换行的理由）。
+ *
+ * 全勾等价于继承，所以勾满时归一成空数组存回去，不在库里留一份跟渠道集重复的冗余：
+ * 那份冗余会在渠道日后加一个协议时，悄悄把新协议挡在这个模型外面。
+ */
+function ModelProtocols({
+  model,
+  channelProtocols,
+  listedOn,
+  hasList,
+  mutate,
+}: {
+  model: ChannelModel
+  channelProtocols: Protocol[]
+  /** 上游在哪些协议侧列出了这个模型。空数组 = 没拉过，或哪一侧都没列。 */
+  listedOn: Protocol[]
+  hasList: boolean
+  mutate: (fn: () => Promise<unknown>) => Promise<void>
+}) {
+  const current = model.protocols ?? []
+  const inherit = current.length === 0
+  // 渠道协议集缩小之后，模型上没跟着改的那些值会留在这儿（宽松存，见口径层 v0.40）。
+  // 照实显示而不是悄悄滤掉：它们此刻确实让这个模型不可用，藏起来只会让人对着一个
+  // 「看上去哪都没问题」的配置查 503。
+  const stale = current.filter((p) => !channelProtocols.includes(p))
+
+  function save(next: Protocol[]) {
+    const inChannel = channelProtocols.filter((p) => next.includes(p))
+    const rest = next.filter((p) => !channelProtocols.includes(p))
+    // 勾满且没有失效项才归一成继承——还留着失效项时归零会把它们一并抹掉，
+    // 而那是人没点过的东西。
+    const norm = inChannel.length === channelProtocols.length && rest.length === 0 ? [] : [...inChannel, ...rest]
+    void mutate(() =>
+      api.put(`/channel-models/${model.id}`, { disabled: model.disabled, protocols: norm }),
+    )
+  }
+
+  function toggle(p: Protocol) {
+    save(current.includes(p) ? current.filter((x) => x !== p) : [...current, p])
+  }
+
+  // 建议只在「上游确实只列出了一部分」时给，且不自动应用——拉回来的列表可能是中转站
+  // 写死的，采信它等于把探测做成了闸（口径层 v0.33 立论）。
+  const suggest =
+    hasList && listedOn.length > 0 && listedOn.length < channelProtocols.length ? listedOn : null
+  const same =
+    suggest !== null &&
+    suggest.length === current.length &&
+    suggest.every((p) => current.includes(p))
+
+  return (
+    <div className="model-protocols">
+      <span className="model-protocols-label" title="不勾 = 跟渠道一样。勾了就只走勾中的那些。">
+        协议
+      </span>
+      {channelProtocols.map((p) => (
+        <button
+          key={p}
+          type="button"
+          className={'chip' + (current.includes(p) ? ' is-on' : '')}
+          onClick={() => toggle(p)}
+          title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}
+        >
+          {PROTOCOL_SHORT[p] ?? p}
+        </button>
+      ))}
+      {stale.map((p) => (
+        <button
+          key={p}
+          type="button"
+          className="chip is-stale"
+          onClick={() => toggle(p)}
+          title={`渠道已经不说 ${PROTOCOL_LABEL[p] ?? p} 了，这一项正让这个模型没有可用协议。点一下移除。`}
+        >
+          {PROTOCOL_SHORT[p] ?? p}
+        </button>
+      ))}
+      {inherit && stale.length === 0 && <span className="muted">跟渠道一样</span>}
+      {!inherit && stale.length === current.length && (
+        <span className="tag tag-warn" title="与渠道协议集没有交集，这个模型当下用不了">
+          无可用协议
+        </span>
+      )}
+      {suggest && !same && (
+        <button type="button" className="chip chip-suggest" onClick={() => save(suggest)}>
+          上游只在 {suggest.map((p) => PROTOCOL_SHORT[p] ?? p).join('、')} 侧列出 · 采纳
+        </button>
+      )}
+      {hasList && listedOn.length === 0 && (
+        <span className="muted" title="拉回来的列表里没有这个名字。可能是上游没提供 /v1/models，也可能是名字写错了">
+          上游列表里没有它
+        </span>
+      )}
     </div>
   )
 }

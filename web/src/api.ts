@@ -118,7 +118,27 @@ export interface ProbeGroup {
 export interface ChannelModel {
   id: number
   upstream_model: string
+  /**
+   * 这个模型自己能走的协议子集（口径层 v0.40）。**空数组 = 继承渠道全集**，绝大多数
+   * 模型都该是空的；只有「渠道会说 anthropic，但这个模型不在 /v1/messages 上」这种
+   * 例外才填。路由时与渠道集取交集，没有交集这个模型就当下用不了。
+   */
+  protocols: Protocol[]
   disabled: boolean
+}
+
+/**
+ * 朝一个协议侧拉上游模型列表的结果（口径层 v0.40）。
+ *
+ * **只做填表助手**：拉回来的东西不落库、不参与路由，人在表单上确认之后落库的才是配置。
+ * 中转站返回一份写死的大列表是常态，直接采信等于把一份会撒谎的缓存放进请求路径。
+ */
+export interface ModelListResult {
+  /** 这份列表适用的协议。openai 与 openai_responses 共用一次拉取，所以是数组。 */
+  protocols: Protocol[]
+  models: string[] | null
+  status: number
+  detail: string
 }
 
 export interface Channel {
