@@ -98,6 +98,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 	auth.PUT("/credentials/:id", h.updateCredential)
 	auth.DELETE("/credentials/:id", h.deleteCredential)
 	auth.POST("/channels/:id/probe", h.probeChannel)
+	// 拉上游模型列表给表单做预勾选（口径层 v0.40）。POST 而不是 GET：它会朝上游
+	// 发真请求、花上游的配额，不该被浏览器或中间层当成可缓存的读操作重放。
+	auth.POST("/channels/:id/fetch-models", h.fetchChannelModels)
 	auth.POST("/channels/:id/models", h.addChannelModel)
 	auth.PUT("/channel-models/:id", h.updateChannelModel)
 	auth.DELETE("/channel-models/:id", h.deleteChannelModel)

@@ -341,6 +341,68 @@ code {
   border-radius: var(--radius-sm);
   background: var(--bg);
   min-width: 0;
+  /* 协议子集那行（口径层 v0.40）要换到第二行去，名字和操作仍挤在第一行。 */
+  flex-wrap: wrap;
+}
+
+/* 模型自己的协议子集（口径层 v0.40）。渠道只说一个协议时整行不渲染——那时没有
+   子集可言。渲染了就总占一行，不按「有值才出现」走：网格里某一格凭空高一截，
+   同一行其它格会跟着拉高（同 .model-name 那条截断不换行的理由）。 */
+.model-protocols {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 12px;
+}
+
+.model-protocols-label {
+  color: var(--fg-muted);
+  cursor: help;
+}
+
+.model-protocols .muted {
+  font-size: 12px;
+}
+
+.chip {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* 渠道已经不说这个协议了，但模型上还留着（宽松存）。照实显示：它此刻正让这个模型
+   没有可用协议，藏起来只会让人对着一个「看上去哪都没问题」的配置查 503。 */
+.chip.is-stale {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  text-decoration: line-through;
+}
+
+.chip-suggest {
+  border-style: dashed;
 }
 
 .model:hover {

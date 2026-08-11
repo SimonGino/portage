@@ -286,6 +286,40 @@ type probeGroup struct {
 	Results    []upstream.ProbeResult `json:"results"`
 }
 
+// fetchChannelModels 朝渠道声明的每个协议侧拉一次模型列表，回给表单做预勾选
+// （口径层 v0.40）。
+//
+// **拉回来的东西不落库、不参与路由**：它只是替人把「这个模型在哪个协议侧存在」看一眼，
+// 落库的仍是人在表单上确认过的配置。中转站的 `/v1/models` 返回一份写死的大列表是常态，
+// 直接采信等于把一份会撒谎的缓存放进请求路径——那正是 §2.2 拒绝把探测做成闸的理由。
+//
+// 只用第一把**启用**凭证，不像 Probe 那样逐把跑：那边逐把是因为「这把被摘的凭证还坏
+// 不坏」本身就是要问的；这边问的是上游有哪些模型，换一把凭证不会换来另一份答案。
+func (h *Handler) fetchChannelModels(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	// 复用探测目标：要的东西（打哪儿、哪几个协议、凭证）一模一样，为拉列表另起一个
+	// 查询只会让两处对「渠道当下长什么样」的理解慢慢分叉。
+	target, err := store.ChannelProbeTarget(c.Request.Context(), h.db, id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	var cred string
+	for _, x := range target.Credentials {
+		if !x.Disabled {
+			cred = x.Value
+			break
+		}
+	}
+	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURL, target.Protocols, cred)
+	// 只报渠道名与拉到几组，不报 base_url，更不报凭证值。
+	h.log.Info("拉上游模型列表", "channel", target.Name, "groups", len(results))
+	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
 // ── 凭证池 ──────────────────────────────────────────────────────────────
 //
 // 凭证**只写不回读**（口径层 v0.28，v0.38 未破）：列表回的是名字、状态、时间与停用
@@ -382,6 +416,8 @@ func (h *Handler) addChannelModel(c *gin.Context) {
 	}
 	var in struct {
 		UpstreamModel string `json:"upstream_model"`
+		// Protocols 是协议子集（口径层 v0.40），不传或传空数组 = 继承渠道全集。
+		Protocols []string `json:"protocols"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
@@ -393,8 +429,20 @@ func (h *Handler) addChannelModel(c *gin.Context) {
 		return
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.AddChannelModel(ctx, tx, id, model)
+		return store.AddChannelModel(ctx, tx, id, model, toProtocolSet(in.Protocols))
 	})
+}
+
+// toProtocolSet 把前端传的字符串数组收成协议集，只去空格——取值合法性交给 store 侧的
+// ParseSet，一处校验一处报错，别在两层各写一遍还写出两种口径。
+func toProtocolSet(in []string) protocol.Set {
+	set := make(protocol.Set, 0, len(in))
+	for _, p := range in {
+		if p = strings.TrimSpace(p); p != "" {
+			set = append(set, protocol.Protocol(p))
+		}
+	}
+	return set
 }
 
 func (h *Handler) updateChannelModel(c *gin.Context) {
@@ -404,13 +452,23 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 	}
 	var in struct {
 		Disabled bool `json:"disabled"`
+		// 指针是为了分清「没提这个字段」和「提了、要清空」（口径层 v0.40）：
+		// nil 不动那一列，空数组则是显式改回「继承渠道全集」。同 key_mode 那条
+		// 理由——PUT 整体覆盖时，老前端不传的字段不该被静默改掉。
+		Protocols *[]string `json:"protocols"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.SetChannelModelDisabled(ctx, tx, id, in.Disabled)
+		if err := store.SetChannelModelDisabled(ctx, tx, id, in.Disabled); err != nil {
+			return err
+		}
+		if in.Protocols == nil {
+			return nil
+		}
+		return store.SetChannelModelProtocols(ctx, tx, id, toProtocolSet(*in.Protocols))
 	})
 }
 
