@@ -35,6 +35,12 @@ function fmtMs(ms: number | null) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
 }
 
+/** 这次落到哪个渠道的哪个上游模型。抽出来是为了让截断用的 title 与显示的正文
+ *  一定是同一个串——两处各拼一次，早晚会分叉成「看到的」和「悬停看到的」不一样。 */
+function upstreamOf(l: CallLog) {
+  return l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'
+}
+
 export default function Usage() {
   const [days, setDays] = useState('7')
   const [dim, setDim] = useState('model')
@@ -112,7 +118,7 @@ export default function Usage() {
           <Empty>这段时间还没有调用。</Empty>
         ) : (
           <div className="scroll-x">
-            <table className="table table-plain">
+            <table className="table table-plain table-usage">
               <thead>
                 <tr>
                   <th>{dim === 'credential' ? '上游凭证' : '模型'}</th>
@@ -174,7 +180,7 @@ export default function Usage() {
           <Empty>{filter === 'bad' && list.length > 0 ? '这一百条里没有失败。' : '还没有流水。'}</Empty>
         ) : (
           <div className="scroll-x">
-            <table className="table table-plain">
+            <table className="table table-plain table-logs">
               <thead>
                 <tr>
                   <th>时间</th>
@@ -194,13 +200,13 @@ export default function Usage() {
                       <div className="sub">{l.api_key_name || '—'}</div>
                     </td>
                     {/* 请求的模型是主信息，落到哪个渠道的哪个上游模型是次信息，压在下面一行 */}
-                    <td>
+                    <td className="log-model">
                       <span className="icon-row nowrap">
                         <ModelIcon model={l.model_requested} size={16} />
-                        <code>{l.model_requested}</code>
+                        <code title={l.model_requested}>{l.model_requested}</code>
                       </span>
-                      <div className="sub">
-                        {l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'}
+                      <div className="sub" title={upstreamOf(l)}>
+                        {upstreamOf(l)}
                       </div>
                     </td>
                     {/* 客户端协议 → 上游协议：转换过的才出现第二枚芯片 */}
