@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 func TestSchemaIsCreatedAndReopenable(t *testing.T) {
@@ -246,7 +246,7 @@ func TestStartupGateRejectsUnusableBaseURL(t *testing.T) {
 }
 
 // base_url 可能带 userinfo，把它回显进错误信息就是把上游密码打进 stderr——
-// cmd/gateway 会把 Validate 的错误直接落日志。CLAUDE.md：错误回显严禁泄露 base_url。
+// cmd/portage 会把 Validate 的错误直接落日志。CLAUDE.md：错误回显严禁泄露 base_url。
 func TestStartupGateDoesNotEchoBaseURL(t *testing.T) {
 	const secret = "https://alice:hunter2@internal.example.invalid/private?x=1"
 	db := gatewaytest.NewDB(t)

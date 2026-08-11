@@ -7,23 +7,23 @@ import (
 	"path"
 	"strings"
 
-	"github.com/SimonGino/ai-gateway/internal/webui"
+	"github.com/SimonGino/portage/internal/webui"
 
 	"github.com/gin-gonic/gin"
 )
 
 // notBuiltPage 是没带前端的二进制在 /admin 上回的东西。
 //
-// 回一句人话而不是 404：`go build ./cmd/gateway` 编出来的二进制默认就不含前端，
+// 回一句人话而不是 404：`go build ./cmd/portage` 编出来的二进制默认就不含前端，
 // 而 404 会让人以为路由挂错了，跑去翻 Mount。
 const notBuiltPage = `<!doctype html><meta charset="utf-8">
-<title>ai-gateway 管理端</title>
+<title>Portage 管理端</title>
 <body style="font:14px/1.7 -apple-system,system-ui,sans-serif;max-width:44em;margin:4em auto;padding:0 1em">
 <h1>管理端未编译进此二进制</h1>
 <p>这个二进制是用默认构建编出来的，不含管理端前端。转发功能不受影响。</p>
 <p>要带上管理端：</p>
 <pre style="background:#f5f5f5;padding:1em;overflow-x:auto">make build-ui        # 或者 cd web &amp;&amp; npm ci &amp;&amp; npm run build
-go build -tags webui -o gateway ./cmd/gateway</pre>
+go build -tags webui -o portage ./cmd/portage</pre>
 <p>Docker 镜像（<code>deploy/docker-compose.yml</code>）默认就是带管理端的构建。</p>
 <p>开发前端时不用编 Go：<code>cd web &amp;&amp; npm run dev</code>，Vite 会把 /admin/api 代理到本网关。</p>
 </body>`

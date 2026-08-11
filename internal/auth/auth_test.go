@@ -9,7 +9,7 @@ import (
 // hash 值钉死：它是**落库格式**，改算法等于让所有已发出去的 key 一起失效。
 // 换算法时这条会红，提醒你那不是一次普通重构。
 func TestHashIsPlainSHA256Hex(t *testing.T) {
-	if got := Hash("sk-aig-example"); len(got) != 64 {
+	if got := Hash("sk-ptg-example"); len(got) != 64 {
 		t.Fatalf("hash 长度 = %d, 期望 64 位十六进制", len(got))
 	}
 	// 空串的 SHA-256 是公开常量，用它验算法本身而不是验我们自己算的结果。

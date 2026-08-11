@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/taps"
 )
 
 // goldenDir 是全仓共用的转录库。它不放在某个包的 testdata/ 下，是因为同一份样本

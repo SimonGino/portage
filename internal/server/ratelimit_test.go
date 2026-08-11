@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 口径层 §2.7（v0.15 定）：单个全局令牌桶，超限回 429 带 Retry-After，不分维度。

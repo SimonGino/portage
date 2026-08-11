@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/openaicc"
 )
 
 // loadUpstream 读一份**上游响应**转录（direction=upstream，M0 语料）。

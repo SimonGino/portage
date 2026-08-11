@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 func newTestRecorder(t *testing.T, proto protocol.Protocol, stubs ...stub) (*inboundRecorder, string) {
@@ -192,7 +192,7 @@ func TestInboundHeaderWhitelist(t *testing.T) {
 
 	post(t, rec, protocol.EndpointMessages.Path, []byte(`{"model":"m","stream":true}`), map[string]string{
 		"x-api-key":             "sk-ant-secret",
-		"authorization":         "Bearer sk-aig-secret",
+		"authorization":         "Bearer sk-ptg-secret",
 		"user-agent":            "claude-cli/1.2.3",
 		"x-stainless-arch":      "arm64",
 		"x-app":                 "cli",
@@ -223,7 +223,7 @@ func TestInboundHeaderWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, leak := range []string{"sk-ant-secret", "sk-aig-secret", "claude-cli/1.2.3", "arm64", "8f3c"} {
+	for _, leak := range []string{"sk-ant-secret", "sk-ptg-secret", "claude-cli/1.2.3", "arm64", "8f3c"} {
 		if bytes.Contains(raw, []byte(leak)) {
 			t.Errorf("meta.json 里泄漏了 %q: %s", leak, raw)
 		}

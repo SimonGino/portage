@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/auth"
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 每个转发端点都得认 key。逐个列而不是只测一个：闸是按端点挂的，漏挂一个的表现
@@ -82,7 +82,7 @@ func TestStaleHeaderDoesNotMaskTheValidOne(t *testing.T) {
 	gw, _ := newAnthropicGateway(t)
 
 	resp := gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{
-		"x-api-key":     "sk-aig-stale-and-wrong",
+		"x-api-key":     "sk-ptg-stale-and-wrong",
 		"Authorization": "Bearer " + gatewaytest.DefaultKey,
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -92,18 +92,18 @@ func TestStaleHeaderDoesNotMaskTheValidOne(t *testing.T) {
 
 func TestDisabledKeyIsRejected(t *testing.T) {
 	gw, _ := newAnthropicGateway(t)
-	gatewaytest.SeedAPIKey(t, gw.DB, "已停用", "sk-aig-disabled")
+	gatewaytest.SeedAPIKey(t, gw.DB, "已停用", "sk-ptg-disabled")
 	if _, err := gw.DB.Exec(`UPDATE api_keys SET disabled = 1 WHERE name = ?`, "已停用"); err != nil {
 		t.Fatal(err)
 	}
 
-	resp := gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{"x-api-key": "sk-aig-disabled"})
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{"x-api-key": "sk-ptg-disabled"})
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("状态码 = %d, 期望 401", resp.StatusCode)
 	}
 	// 「不存在」与「已停用」回同一句话：区分开就等于告诉扫描者这把 key 是存在的。
 	body := gatewaytest.ReadBody(t, resp)
-	for _, leaked := range []string{"disabled", "停用", "sk-aig-disabled", "已停用"} {
+	for _, leaked := range []string{"disabled", "停用", "sk-ptg-disabled", "已停用"} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("401 回显泄漏了 %q: %s", leaked, body)
 		}

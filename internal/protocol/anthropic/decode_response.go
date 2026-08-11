@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件是 Anthropic Messages 的**出口**解码：上游响应 → canonical 事件序列。

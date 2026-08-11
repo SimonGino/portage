@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 空串是这一列最常见的正常值：绝大多数模型不声明子集，继承渠道全集（口径层 v0.40）。

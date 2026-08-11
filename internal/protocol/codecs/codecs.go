@@ -5,10 +5,10 @@
 package codecs
 
 import (
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openairesponses"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/anthropic"
+	"github.com/SimonGino/portage/internal/protocol/openaicc"
+	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 )
 
 // Options 是建 Codec 时要从配置注进去的东西。

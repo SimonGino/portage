@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/anthropic"
-	"github.com/SimonGino/ai-gateway/internal/protocol/openaicc"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/anthropic"
+	"github.com/SimonGino/portage/internal/protocol/openaicc"
 )
 
 const goldenDir = "../../../testdata/golden"

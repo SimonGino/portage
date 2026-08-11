@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // seedChannel 灌一个渠道 + 一把启用凭证 + 一个纳管模型 + 一个指向它的接入点。

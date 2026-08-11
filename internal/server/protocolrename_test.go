@@ -3,7 +3,7 @@ package server_test
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // v0.36 的迁移：线上取值 `openai_cc` 改名成 `openai`，Open 要把存量行一次性改写。

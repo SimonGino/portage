@@ -5,7 +5,7 @@ package anthropic
 import (
 	"encoding/json"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Tap 从 Anthropic Messages 响应里提取 usage / model / stop_reason。

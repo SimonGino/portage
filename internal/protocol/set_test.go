@@ -3,7 +3,7 @@ package protocol_test
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 func TestParseSetAcceptsASingleValue(t *testing.T) {

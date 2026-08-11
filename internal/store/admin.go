@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // ErrNotFound means the row the caller addressed by id does not exist.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // 本文件测的是 CC→A 转换路径（#9，口径层 §2.1 优先级③上半）：opencode 一类的

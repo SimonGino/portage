@@ -38,7 +38,7 @@ export default function App() {
   return (
     <div className="app">
       <nav className="nav">
-        <span className="brand">ai-gateway</span>
+        <span className="brand">Portage</span>
         <NavLink to="/channels">渠道</NavLink>
         <NavLink to="/access-points">接入点</NavLink>
         <NavLink to="/keys">网关 key</NavLink>

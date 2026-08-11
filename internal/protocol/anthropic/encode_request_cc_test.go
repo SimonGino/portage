@@ -3,7 +3,7 @@ package anthropic
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件补的是 Anthropic 出口在 **CC 入口**接上来之后才走得到的两条分支（#9）：

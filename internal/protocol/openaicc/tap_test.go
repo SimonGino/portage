@@ -3,7 +3,7 @@ package openaicc
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 func feed(t *testing.T, tap protocol.Tap, raw string) protocol.Summary {

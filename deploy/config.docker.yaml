@@ -1,5 +1,5 @@
 # 容器内的默认启动配置，烤进镜像。要改就在 compose 里挂一份盖掉
-# /etc/ai-gateway/config.yaml。
+# /etc/portage/config.yaml。
 #
 # listen 绑 0.0.0.0 而不是宿主上的默认 127.0.0.1：容器里的 loopback 只有容器自己
 # 看得见，绑它等于端口映射永远连不上。边界因此从「进程绑哪个地址」挪到了「你把

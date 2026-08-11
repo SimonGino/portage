@@ -1,4 +1,6 @@
-# ai-gateway
+# Portage
+
+> portage：在两段不通航的水道之间，把船和货扛过陆地。
 
 个人自用的 AI 模型网关，参考 new-api 的转发内核从头重写。核心能力：三协议（OpenAI Chat Completions / OpenAI Responses / Anthropic Messages）转发与互转、API Key 生命周期、接入点路由（多候选加权分流与故障转移在 M4）、调用用量记录。明确不做多用户运营功能。
 

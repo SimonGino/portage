@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件是 OpenAI Responses 的**编码**侧：canonical 事件序列 → 下行响应。

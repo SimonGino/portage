@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/admin"
-	"github.com/SimonGino/ai-gateway/internal/auth"
-	"github.com/SimonGino/ai-gateway/internal/config"
-	"github.com/SimonGino/ai-gateway/internal/server"
-	"github.com/SimonGino/ai-gateway/internal/store"
+	"github.com/SimonGino/portage/internal/admin"
+	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/server"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // client 不设整体 Timeout（长流会被掐断），只限响应头的等待时长：网关若把首帧连同
@@ -354,7 +354,7 @@ func Start(t *testing.T, db *sql.DB) *Gateway {
 // 有了它，M1 鉴权接进来之后既有用例一行都不用改，而且走的是**真实**鉴权路径而非
 // 绕过——比给测试开后门强。要测「不带 key」「带错 key」的用例显式传头覆盖，传空串
 // 即「不出示」。
-const DefaultKey = "sk-aig-test-default"
+const DefaultKey = "sk-ptg-test-default"
 
 // StartWith is Start with configuration overrides.
 func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {

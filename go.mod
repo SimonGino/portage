@@ -1,4 +1,4 @@
-module github.com/SimonGino/ai-gateway
+module github.com/SimonGino/portage
 
 go 1.26.4
 

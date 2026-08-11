@@ -6,7 +6,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件是 Chat Completions 的**解码**侧：上游响应 → canonical 事件序列。

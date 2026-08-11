@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/admin"
-	"github.com/SimonGino/ai-gateway/internal/config"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
-	"github.com/SimonGino/ai-gateway/internal/store"
-	"github.com/SimonGino/ai-gateway/internal/upstream"
+	"github.com/SimonGino/portage/internal/admin"
+	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/taps"
+	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -233,7 +233,7 @@ func (s *Server) models(c *gin.Context) {
 			"id":       m.ID,
 			"object":   "model",
 			"created":  m.CreatedAt,
-			"owned_by": "ai-gateway",
+			"owned_by": "portage",
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})

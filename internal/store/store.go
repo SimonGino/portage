@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 
 	_ "modernc.org/sqlite"
 )

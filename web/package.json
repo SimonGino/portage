@@ -1,5 +1,5 @@
 {
-  "name": "ai-gateway-web",
+  "name": "portage-web",
   "private": true,
   "type": "module",
   "scripts": {

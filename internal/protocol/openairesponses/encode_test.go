@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 本文件的断言对象是**线格式**，参照系是 testdata/golden/raw/resp-* 三份真实上游

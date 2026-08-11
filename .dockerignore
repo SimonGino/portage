@@ -14,7 +14,7 @@ config.yaml
 # 构建产物
 /bin
 /dist
-/gateway
+/portage
 
 # golden 原始转录（未脱敏的那份，本来就不进 git）
 /testdata/golden/raw

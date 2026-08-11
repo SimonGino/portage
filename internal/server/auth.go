@@ -5,20 +5,20 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/auth"
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/protocol"
 
 	"github.com/gin-gonic/gin"
 )
 
 const (
 	// ctxCallRecord 是调用日志记录在 gin 上下文里的键。
-	ctxCallRecord = "aig.call_record"
+	ctxCallRecord = "portage.call_record"
 	// ctxAPIKey 是本次请求认出来的网关 key。
 	//
 	// 只放 auth.Key（名字 + 白名单），不放明文也不放 hash：上下文里的东西迟早会被
 	// 顺手打进日志。
-	ctxAPIKey = "aig.api_key"
+	ctxAPIKey = "portage.api_key"
 )
 
 // callLog 建这次调用的日志记录并保证它**恰好**落一行，无论后面在哪个中间件收场。

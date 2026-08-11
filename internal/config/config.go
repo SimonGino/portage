@@ -23,7 +23,7 @@ type Config struct {
 	Retry Retry `yaml:"retry"`
 
 	// AdminPassword 只用来**初始化**管理端密码（口径层 §2.7：登录后可改，改后配置项失效）。
-	// 可以用环境变量 AIG_ADMIN_PASSWORD 覆盖，见 Load。
+	// 可以用环境变量 PORTAGE_ADMIN_PASSWORD 覆盖，见 Load。
 	AdminPassword string `yaml:"admin_password"`
 
 	// RateLimitQPS / RateLimitBurst 是全局令牌桶（口径层 §2.7，v0.15 定 10/20）。
@@ -113,11 +113,11 @@ func Load(path string) (Config, error) {
 // 操作。密码属于凭证，凭证走 env 是容器里的常规做法。
 //
 // 优先级 env > 文件：env 是部署时才知道的，文件是仓库里带着的。
-// 空串不算设置——`AIG_ADMIN_PASSWORD=` 与没写它是一回事，不该把文件里的值清掉。
+// 空串不算设置——`PORTAGE_ADMIN_PASSWORD=` 与没写它是一回事，不该把文件里的值清掉。
 //
 // 注意这仍然只是**初始化**：库里已经有密码了，这里给什么都不生效（见 admin.Bootstrap）。
 func applyEnv(cfg *Config) {
-	if v := os.Getenv("AIG_ADMIN_PASSWORD"); v != "" {
+	if v := os.Getenv("PORTAGE_ADMIN_PASSWORD"); v != "" {
 		cfg.AdminPassword = v
 	}
 }

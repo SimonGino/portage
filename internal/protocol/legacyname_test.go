@@ -3,7 +3,7 @@ package protocol_test
 import (
 	"testing"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // v0.36 把线上取值 `openai_cc` 改成了 `openai`。旧名在**读**侧永远收（手写配置、

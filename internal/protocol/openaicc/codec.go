@@ -3,7 +3,7 @@ package openaicc
 import (
 	"net/http"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Codec 是 OpenAI Chat Completions 协议的转换器。

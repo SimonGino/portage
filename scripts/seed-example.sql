@@ -132,7 +132,7 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight)
 -- api_keys 是空表，所有请求都是 401。
 --
 -- 表里存的是 hash，不是明文——明文只有你自己留着。生成一把：
---   KEY="sk-aig-$(openssl rand -hex 16)"; echo "$KEY"
+--   KEY="sk-ptg-$(openssl rand -hex 16)"; echo "$KEY"
 --   printf %s "$KEY" | shasum -a 256      # 这串填 key_hash
 -- printf 而不是 echo：echo 会多一个换行，算出来的 hash 对不上，表现是永远 401。
 --

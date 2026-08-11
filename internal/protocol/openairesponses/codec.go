@@ -4,7 +4,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // Codec 是 OpenAI Responses 协议的转换器。

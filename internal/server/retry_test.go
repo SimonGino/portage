@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/config"
-	"github.com/SimonGino/ai-gateway/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
 // fastRetry 是行为测试用的策略：退避压到毫秒级，只保留「重试几次」这一个语义。

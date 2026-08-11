@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SimonGino/ai-gateway/internal/protocol"
-	"github.com/SimonGino/ai-gateway/internal/protocol/taps"
+	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/protocol/taps"
 )
 
 // proxyRecorder 是 M0 的录制反代：转发到真实上游，把上游响应的原始字节落盘。
