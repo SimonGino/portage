@@ -1,6 +1,6 @@
 # ai-gateway 项目约定
 
-个人项目（PO 即唯一开发者/裁决人），与公司仓库无关，不参考公司 fork `../maix_ops_go`。
+个人项目（PO 即唯一开发者/裁决人）。参考仓库只有「参考仓库」一节列的那三个，本机上的其他 fork 一律不参考。
 
 ## 角色与协作方式
 
@@ -21,7 +21,7 @@
 
 涉及协议细节、字段语义、转换坑，先查以下仓库再下结论，不凭记忆。逐文件的路径对照表见 `docs/MVP设计草案.md` §12。
 
-- `new-api`（QuantumNous/new-api）：Go 网关主参考。读 `relay/` 协议适配层、SSE 流式转发、`controller/`+`middleware/` 的 key 鉴权与渠道路由；运营功能（计费/多用户/渠道权重）不抄。**上游 canonical DTO 在 `relaykit/dto/`，与公司 fork 的 `dto/` 结构不同，勿混。**
+- `new-api`（QuantumNous/new-api）：Go 网关主参考。读 `relay/` 协议适配层、SSE 流式转发、`controller/`+`middleware/` 的 key 鉴权与渠道路由；运营功能（计费/多用户/渠道权重）不抄。**上游 canonical DTO 在 `relaykit/dto/`；下游 fork 常把它改成另一套 `dto/`，勿混。**
 - `sub2api`（Wei-Shaw/sub2api）：**协议转换的 Go 实现首要参考**。`backend/internal/pkg/apicompat/` 是自包含转换库（Responses↔ChatCompletions、Responses↔Anthropic、CC↔Anthropic bridge、Responses SSE 事件线格式，含 Codex 事件流测试）；`previous_response_id` 处理见 `internal/service/openai_previous_response_id.go` 与 `RemovePreviousResponseIDFromBody`。**LGPL-3.0：参考思路与字段语义可以，整包复制需评估义务（Go 静态链接下约等于整项目跟随）。**订阅池、计费不在本项目范围。
 - `litellm`（BerriAI/litellm）：Python 网关，字段映射最全。做 Anthropic↔OpenAI 转换时对照 `litellm/llms/*/chat/` 各 provider transformation 核对 thinking、tool calling、usage 语义。
 
