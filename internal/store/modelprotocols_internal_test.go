@@ -96,6 +96,47 @@ func TestResolveEmptyIntersectionIsNoUsableCandidate(t *testing.T) {
 	}
 }
 
+// /v1/models 的直连那半边不许列出一个必然 503 的限定名（口径层 v0.32 ③）：交集为空
+// 时它当下就是调不通的，跟渠道停用、凭证归零同办。接入点那半边照旧列——交集为空不进
+// 启动闸（口径层 v0.40），那一条是口径认下的。
+func TestListExposedModelsHidesEmptyIntersectionDirectName(t *testing.T) {
+	db := openTestDB(t)
+	seedChannel(t, db, "anthropic", "openai")
+
+	got, err := ListExposedModels(context.Background(), db)
+	if err != nil {
+		t.Fatalf("列模型: %v", err)
+	}
+	for _, m := range got {
+		if m.Direct {
+			t.Errorf("列出了限定名 %q，但它的协议交集为空，打过去必 503", m.ID)
+		}
+	}
+	if len(got) != 1 || got[0].ID != "ap" {
+		t.Errorf("清单 = %+v，期望只剩接入点 ap", got)
+	}
+}
+
+// 反面：交集非空的限定名必须照列，别把过滤写成一刀切。
+func TestListExposedModelsKeepsIntersectingDirectName(t *testing.T) {
+	db := openTestDB(t)
+	seedChannel(t, db, "anthropic,openai", "openai")
+
+	got, err := ListExposedModels(context.Background(), db)
+	if err != nil {
+		t.Fatalf("列模型: %v", err)
+	}
+	var found bool
+	for _, m := range got {
+		if m.Direct && m.ID == "ch/gpt-4o" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("清单 = %+v，期望含限定名 ch/gpt-4o", got)
+	}
+}
+
 // 老库迁移：没有 protocols 列的 channel_models 加完列之后，存量行拿到的是空串，
 // 也就是「继承渠道全集」——迁移前后行为一字不变，所以不需要回填。
 func TestMigrateAddsModelProtocolsWithInheritingDefault(t *testing.T) {

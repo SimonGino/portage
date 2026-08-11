@@ -236,11 +236,15 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 	return resolveDirect(ctx, db, model, inbound)
 }
 
-// pickProtocol 把库里那两列收成本次请求的出站协议。
+// usableProtocols 把库里那两列收成「这个纳管模型当下真能走的协议集」。
 //
 // channelRaw 是渠道的支持协议集，modelRaw 是纳管模型自己声明的子集（口径层 v0.40，
 // 空串 = 继承渠道全集）。真正可用的是两者的交集——渠道会说 anthropic 不代表它下面
 // 每个模型都在 `/v1/messages` 上存在，而那正是「渠道级探测全通、请求照样 404」的成因。
+//
+// **路由（pickProtocol）与 /v1/models 的直连清单（ListExposedModels）共用这一个函数**，
+// 不是为了省几行：这两处各算各的交集，清单就会列出一个必然 503 的名字，而「列出来的
+// 必须调得通」是口径层 v0.32 ③。v0.40 落地时正是漏了清单那一处。
 //
 // 三种失败分两档，不能混：
 //
@@ -250,23 +254,33 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 //   - 交集**为空** → ErrNoUsableCandidate（503）。这是合法配置下的正常收场，不是库
 //     坏了：渠道协议集缩小之后，模型上那份没跟着改的子集就与它不再重合。它跟「渠道
 //     停用」「凭证归零」是同一种「现在用不了」，报 500 会把人引去查数据损坏。
-func pickProtocol(channelRaw, modelRaw string, inbound protocol.Protocol) (protocol.Protocol, error) {
+func usableProtocols(channelRaw, modelRaw string) (protocol.Set, error) {
 	set, err := protocol.ParseSet(channelRaw)
 	if err != nil {
-		return "", fmt.Errorf("渠道的 protocols 列不合法: %w", err)
+		return nil, fmt.Errorf("渠道的 protocols 列不合法: %w", err)
 	}
 	// 空串走继承，不进 ParseSet——它对空输入是报错的（「支持协议集不能为空」），
 	// 而这一列的空恰恰是最常见的正常值。
-	if modelRaw != "" {
-		sub, err := protocol.ParseSet(modelRaw)
-		if err != nil {
-			return "", fmt.Errorf("纳管模型的 protocols 列不合法: %w", err)
-		}
-		if set = set.Intersect(sub); len(set) == 0 {
-			return "", fmt.Errorf(
-				"纳管模型声明的协议 %q 与渠道的 %q 没有交集: %w",
-				modelRaw, channelRaw, ErrNoUsableCandidate)
-		}
+	if modelRaw == "" {
+		return set, nil
+	}
+	sub, err := protocol.ParseSet(modelRaw)
+	if err != nil {
+		return nil, fmt.Errorf("纳管模型的 protocols 列不合法: %w", err)
+	}
+	if set = set.Intersect(sub); len(set) == 0 {
+		return nil, fmt.Errorf(
+			"纳管模型声明的协议 %q 与渠道的 %q 没有交集: %w",
+			modelRaw, channelRaw, ErrNoUsableCandidate)
+	}
+	return set, nil
+}
+
+// pickProtocol 从可用协议集里定本次请求打上游哪一个。失败分档见 usableProtocols。
+func pickProtocol(channelRaw, modelRaw string, inbound protocol.Protocol) (protocol.Protocol, error) {
+	set, err := usableProtocols(channelRaw, modelRaw)
+	if err != nil {
+		return "", err
 	}
 	p, ok := set.Choose(inbound)
 	if !ok {
@@ -417,21 +431,29 @@ type ExposedModel struct {
 // ListExposedModels returns everything the gateway can route to: 启用的接入点，
 // 加上每个可用纳管模型的限定名（口径层 v0.32「两者都列、都可路由」）。
 //
-// 直连那半边只列**当下真能打通**的——渠道启用、模型启用、渠道有启用凭证。列表与可
-// 路由集合必须一致：harness 拉到清单就直接照着打，列一个必然 503 的名字等于给它挖
-// 个坑。接入点那半边不做这层过滤，因为它归启动闸管（v0.18/v0.21），配置能起来就说
-// 明它通。
+// 直连那半边只列**当下真能打通**的——渠道启用、模型启用、渠道有启用凭证，**且协议
+// 集与渠道的有交集**（v0.38，口径层 v0.40）。列表与可路由集合必须一致：harness 拉到
+// 清单就直接照着打，列一个必然 503 的名字等于给它挖个坑。判据走 usableProtocols，与
+// pickProtocol 同一个函数——各算各的正是这一处漏过的原因。
+//
+// 解析失败的行也不列：那种行请求打过去会回 500（见 usableProtocols 的分档），同样不
+// 属于「当下真能打通」。整个清单不因一行脏数据而 500，理由同下面的 COALESCE。
+//
+// 接入点那半边不做这层过滤，因为它归启动闸管（v0.18/v0.21），配置能起来就说明它通；
+// 交集为空**不进启动闸**（口径层 v0.40），所以接入点侧仍可能列出一条运行期 503 的
+// 名字——那是口径认下的，不是这里漏的。
 //
 // created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。手写
 // SQL 塞进来的 created_at 未必是 strftime 认得的格式，那时它返回 NULL——COALESCE
 // 兜住，免得一行脏数据把整个 /v1/models 打成 500。
 func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id
+		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id, '', ''
 		FROM access_points WHERE disabled = 0
 		UNION ALL
 		SELECT ch.name || '/' || cm.upstream_model,
-		       COALESCE(CAST(strftime('%s', cm.created_at) AS INTEGER), 0), 1, cm.id
+		       COALESCE(CAST(strftime('%s', cm.created_at) AS INTEGER), 0), 1, cm.id,
+		       ch.protocols, cm.protocols
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE cm.disabled = 0 AND ch.disabled = 0
@@ -451,8 +473,15 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 	for rows.Next() {
 		var m ExposedModel
 		var id int64
-		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Direct, &id); err != nil {
+		var channelProtocols, modelProtocols string
+		if err := rows.Scan(
+			&m.ID, &m.CreatedAt, &m.Direct, &id, &channelProtocols, &modelProtocols); err != nil {
 			return nil, err
+		}
+		if m.Direct {
+			if _, err := usableProtocols(channelProtocols, modelProtocols); err != nil {
+				continue
+			}
 		}
 		if seen[m.ID] {
 			continue
