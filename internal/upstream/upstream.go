@@ -34,6 +34,13 @@ type Client struct {
 	// 最终是成功的，返回值里没有地方安放「顺带摘了一把」。
 	Disable func(cred store.Credential, reason string)
 
+	// Queue 是渠道并发闸的排队参数（口径层 v0.50），由 server 从配置接上，
+	// 与 Disable 同一个挂法。零值 Wait 会让排队立即超时，兜底在 config.Load。
+	Queue QueuePolicy
+
+	// gates 是渠道并发闸，按渠道 id 一份（见 gate.go），与 cursor 同锁。
+	gates map[int64]*gate
+
 	// cursor 是 polling 选取模式的轮询游标，按渠道名一份。
 	//
 	// 只放内存、不落库（口径层 v0.38 实现口径）：它是「上次从哪把开始」这种纯运行
@@ -74,6 +81,9 @@ type Attempt struct {
 	// Credential 是**最后真正发出请求**的那份凭证名（换过则是最后一份，失败亦然），
 	// 进 call_logs.channel_key_name 与日志（口径层 v0.38 的按凭证归因）。
 	Credential string
+	// QueueWait 是在渠道并发闸上排队的耗时（口径层 v0.52），没排队为 0，
+	// 进 call_logs.queue_wait_ms。排队被拒的那两种收场它照样有值。
+	QueueWait time.Duration
 }
 
 // Retries 是「为拿到这个结果多打了几次」，进 call_logs.retry_count。
@@ -102,7 +112,33 @@ func (a Attempt) Retries() int {
 // 原字节，网关不改写不吞：M0 已验证的 429 逐字节透传，不能因为加了这两层而失效。
 //
 // rawQuery 是客户端 URL 上的查询串，整串照抄给上游（见 buildURL）。
+//
+// 渠道并发闸（口径层 v0.49/v0.50）拦在最外面：设了上限的渠道先占坑，闸满有界
+// 排队，队满/等超时返回 ErrQueueFull / ErrQueueTimeout（不带响应，由 server 译成
+// 429）。**一次 Do 只占一个坑**——里面的退避重试与换凭证全在同一个坑里发生，坑
+// 一直占到响应体读完（Close）才还，上游还在生成流时并发就是还占着的。
 func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
+	if cand.MaxConcurrency <= 0 {
+		return c.do(ctx, cand, ep, rawQuery, body, clientHdr, stream)
+	}
+	g, limit := c.gateFor(cand.ChannelID), cand.MaxConcurrency
+	waited, err := g.acquire(ctx, limit, limit*c.Queue.Factor, c.Queue.Wait)
+	if err != nil {
+		return nil, Attempt{QueueWait: waited}, err
+	}
+	resp, at, err := c.do(ctx, cand, ep, rawQuery, body, clientHdr, stream)
+	at.QueueWait = waited
+	if resp == nil {
+		// 没有响应体可挂，坑当场还掉——包括 err != nil 与「凭证为空」两种收场。
+		g.release(limit)
+		return resp, at, err
+	}
+	resp.Body = &releasingBody{ReadCloser: resp.Body, release: func() { g.release(limit) }}
+	return resp, at, err
+}
+
+// do 是闸内的主体：凭证外环 + 同凭证退避内环。
+func (c *Client) do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
 	creds := c.order(cand)
 	var at Attempt
 	for i, cred := range creds {

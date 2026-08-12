@@ -22,6 +22,10 @@ type Config struct {
 	// Retry 是同候选退避重试（口径层 v0.19）。max_retries 配 0 即关闭，行为回到 M0。
 	Retry Retry `yaml:"retry"`
 
+	// Queue 是渠道并发闸的有界排队参数（口径层 v0.50）。全局两项、不进渠道表——
+	// 渠道表只填「限多少」（max_concurrency），排队策略是网关行为不是渠道属性。
+	Queue Queue `yaml:"concurrency_queue"`
+
 	// AdminPassword 只用来**初始化**管理端密码（口径层 §2.7：登录后可改，改后配置项失效）。
 	// 可以用环境变量 PORTAGE_ADMIN_PASSWORD 覆盖，见 Load。
 	AdminPassword string `yaml:"admin_password"`
@@ -50,6 +54,17 @@ type Retry struct {
 	MaxDelay    time.Duration `yaml:"max_delay"`
 }
 
+// Queue 的默认值见 Default()。只对设了 max_concurrency 的渠道生效。
+type Queue struct {
+	// Factor 是队列上限系数：队列上限 = 渠道并发上限 × factor（口径层 v0.50 默认
+	// ×1）。**显式写 0 = 不排队**，闸满立即回 429（queue_full）。
+	Factor int `yaml:"factor"`
+	// Wait 是排队等待超时，到点回 429（queue_timeout）。<=0 时兜底默认值。
+	Wait time.Duration `yaml:"wait"`
+	// RetryAfter 是队满/超时那两种 429 的 Retry-After 值。<=0 时兜底默认值。
+	RetryAfter time.Duration `yaml:"retry_after"`
+}
+
 // Default binds to loopback only as the conservative default; deployments that
 // want LAN access opt in with listen: "0.0.0.0:8317" (relay has key auth and
 // the admin UI has session auth, so exposing it is a deliberate choice, not a leak).
@@ -64,6 +79,8 @@ func Default() Config {
 		// 量级相仿。重试 2 次是「够救瞬时限流、又不至于让客户端干等太久」的折中；
 		// 真实 429 通常带 Retry-After，那时以它为下界。
 		Retry: Retry{MaxRetries: 2, MaxAttempts: 6, BaseDelay: 500 * time.Millisecond, MaxDelay: 10 * time.Second},
+		// 口径层 v0.50 定的三个默认：队列 = 上限 ×1、等 30s、Retry-After 10s。
+		Queue: Queue{Factor: 1, Wait: 30 * time.Second, RetryAfter: 10 * time.Second},
 	}
 }
 
@@ -102,6 +119,15 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Retry.MaxDelay <= 0 {
 		cfg.Retry.MaxDelay = Default().Retry.MaxDelay
+	}
+	// factor 与 max_retries 同一个道理不兜底：显式写 0 = 闸满不排队立即拒。
+	// 两个时长则必须兜底——wait 停在 0 会让每个排队请求当场超时，而那看起来
+	// 像闸坏了，不像配置漏了。
+	if cfg.Queue.Wait <= 0 {
+		cfg.Queue.Wait = Default().Queue.Wait
+	}
+	if cfg.Queue.RetryAfter <= 0 {
+		cfg.Queue.RetryAfter = Default().Queue.RetryAfter
 	}
 	applyEnv(&cfg)
 	return cfg, nil

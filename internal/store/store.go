@@ -75,7 +75,34 @@ func migrate(db *sql.DB) error {
 	if err := addModelProtocols(db); err != nil {
 		return err
 	}
-	return addKeyPlain(db)
+	if err := addKeyPlain(db); err != nil {
+		return err
+	}
+	return addConcurrencyColumns(db)
+}
+
+// addConcurrencyColumns 补渠道限流批（口径层 v0.49/v0.52）的两列：
+// channels.max_concurrency 与 call_logs.queue_wait_ms。
+//
+// 两列的默认值恰好都是老库的既有语义——0 = 不限并发 / 没排过队——所以存量行不用
+// 回填，迁移前后行为一字不变。
+func addConcurrencyColumns(db *sql.DB) error {
+	for _, m := range []struct{ table, col, ddl string }{
+		{"channels", "max_concurrency", `ALTER TABLE channels ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0`},
+		{"call_logs", "queue_wait_ms", `ALTER TABLE call_logs ADD COLUMN queue_wait_ms INTEGER NOT NULL DEFAULT 0`},
+	} {
+		has, err := hasColumn(db, m.table, m.col)
+		if err != nil {
+			return fmt.Errorf("检查 %s.%s: %w", m.table, m.col, err)
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(m.ddl); err != nil {
+			return fmt.Errorf("迁移 %s.%s: %w", m.table, m.col, err)
+		}
+	}
+	return nil
 }
 
 // addKeyPlain 补 v0.47 的 api_keys.key_plain。
@@ -202,7 +229,12 @@ type Candidate struct {
 	// Direct 记这次走的是纳管模型直连（限定名）而不是接入点。
 	Direct        bool
 	UpstreamModel string
-	ChannelName   string
+	// ChannelID 是并发闸（口径层 v0.49）按渠道聚合的 key。用 id 不用名字：渠道
+	// 改名不该把在闸上排着的请求劈成两个池子。
+	ChannelID   int64
+	ChannelName string
+	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
+	MaxConcurrency int
 	// Protocol 是**这次请求**选定的上游协议，不是渠道的全部能力——渠道支持协议集
 	// （口径层 v0.33）在解析时就按入站协议收成了一个（见 pickProtocol）。下游拿它
 	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
@@ -333,9 +365,8 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 
 	c := Candidate{RequestedModel: model}
 	var protocols, modelProtocols string
-	var channelID int64
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
@@ -343,14 +374,14 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
 		return Candidate{}, err
 	}
-	if c.Credentials, err = loadCredentials(ctx, db, channelID); err != nil {
+	if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 		return Candidate{}, err
 	}
 	// EXISTS 与这一趟之间隔着一次 401 摘除的可能——那时凭证刚好归零，与「渠道没有
@@ -398,9 +429,8 @@ func loadCredentials(ctx context.Context, db *sql.DB, channelID int64) ([]Creden
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
 	var protocols, modelProtocols string
-	var channelID int64
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
@@ -408,9 +438,9 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &channelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency)
 	if err == nil {
-		if c.Credentials, err = loadCredentials(ctx, db, channelID); err != nil {
+		if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 			return Candidate{}, err
 		}
 		if len(c.Credentials) == 0 {

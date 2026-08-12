@@ -92,8 +92,11 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。#20 定的「整串照抄」
 	// 管的是同协议透传那条路。
 	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
-	rec.retries, rec.channelKey = at.Retries(), at.Credential
+	rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 	if err != nil {
+		if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
+			return
+		}
 		rec.outcome = "upstream_error"
 		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")

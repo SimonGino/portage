@@ -109,7 +109,9 @@ type Channel struct {
 	Protocols protocol.Set `json:"protocols"`
 	BaseURL   string       `json:"base_url"`
 	KeyMode   string       `json:"key_mode"`
-	Disabled  bool         `json:"disabled"`
+	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
+	MaxConcurrency int  `json:"max_concurrency"`
+	Disabled       bool `json:"disabled"`
 	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
 	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
 	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
@@ -123,7 +125,7 @@ type Channel struct {
 // 纳管模型清单。
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.disabled,
+		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.disabled,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
 		FROM channels ch ORDER BY ch.id`)
@@ -137,7 +139,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	for rows.Next() {
 		var c Channel
 		var protocols string
-		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.Disabled,
+		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.Disabled,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
 		}
@@ -193,8 +195,13 @@ type ChannelInput struct {
 	BaseURL   string       `json:"base_url"`
 	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
 	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
-	KeyMode  string `json:"key_mode"`
-	Disabled bool   `json:"disabled"`
+	KeyMode string `json:"key_mode"`
+	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针的 nil 是
+	// 「没提这个字段」——与 KeyMode 的空串同一个陷阱（v0.35⑸ 整体覆盖）：它是并发
+	// 闸批才露到表单上的，老请求体里没有，缺省时那一列不动；0 在这里是有意义的
+	// 取值（不限），所以哨兵只能是 nil，不能再借零值。
+	MaxConcurrency *int `json:"max_concurrency"`
+	Disabled       bool `json:"disabled"`
 }
 
 // normalized 校验并归一化支持协议集：去空格、去重、保序，空集合直接拒。
@@ -229,6 +236,16 @@ func (in ChannelInput) keyMode() (string, error) {
 	}
 }
 
+// maxConcurrency 校验并发上限。负数直接拒而不是当 0 用：写 -1 的人多半以为它是
+// 某种「不限」的暗号，静默当成 0 恰好蒙对了语义，但下次改成 -5 想「更不限」时就
+// 该困惑了——说清楚只有 0 表示不限。
+func (in ChannelInput) maxConcurrency() (*int, error) {
+	if in.MaxConcurrency != nil && *in.MaxConcurrency < 0 {
+		return nil, InvalidInput{Reason: "并发上限不能是负数：0 表示不限，正整数表示上限"}
+	}
+	return in.MaxConcurrency, nil
+}
+
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
 	protocols, err := in.normalized()
@@ -242,9 +259,17 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if mode == "" {
 		mode = KeyModePolling
 	}
+	maxConc, err := in.maxConcurrency()
+	if err != nil {
+		return 0, err
+	}
+	conc := 0
+	if maxConc != nil {
+		conc = *maxConc
+	}
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO channels (name, protocols, base_url, key_mode, disabled) VALUES (?, ?, ?, ?, ?)`,
-		in.Name, protocols, in.BaseURL, mode, boolInt(in.Disabled))
+		INSERT INTO channels (name, protocols, base_url, key_mode, max_concurrency, disabled) VALUES (?, ?, ?, ?, ?, ?)`,
+		in.Name, protocols, in.BaseURL, mode, conc, boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
 	}
@@ -262,15 +287,25 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if err != nil {
 		return err
 	}
-	// key_mode 缺省时整列不写（见 keyMode 的注释）。其余字段仍是整体覆盖——它们从第
-	// 一版起就在表单里，请求体里没有等于人真把它清空了。
-	query := `UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ? WHERE id = ?`
-	args := []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled), id}
-	if mode != "" {
-		query = `UPDATE channels SET name = ?, protocols = ?, base_url = ?, disabled = ?, key_mode = ? WHERE id = ?`
-		args = []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled), mode, id}
+	maxConc, err := in.maxConcurrency()
+	if err != nil {
+		return err
 	}
-	res, err := db.ExecContext(ctx, query, args...)
+	// key_mode / max_concurrency 缺省时整列不写（分别见 keyMode 与 MaxConcurrency
+	// 的注释）。其余字段仍是整体覆盖——它们从第一版起就在表单里，请求体里没有等于
+	// 人真把它清空了。
+	sets := `name = ?, protocols = ?, base_url = ?, disabled = ?`
+	args := []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled)}
+	if mode != "" {
+		sets += `, key_mode = ?`
+		args = append(args, mode)
+	}
+	if maxConc != nil {
+		sets += `, max_concurrency = ?`
+		args = append(args, *maxConc)
+	}
+	args = append(args, id)
+	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
 	return affectedOne(res, err)
 }
 

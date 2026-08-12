@@ -181,6 +181,8 @@ export interface Channel {
   base_url: string
   /** 凭证选取模式（口径层 v0.11）：轮询或随机。 */
   key_mode: KeyMode
+  /** 渠道级并发上限（口径层 v0.49）：0 = 不限。 */
+  max_concurrency: number
   disabled: boolean
   /**
    * 可用/停用凭证计数（口径层 v0.38）。这里只有计数，没有凭证值——值由凭证池那一个

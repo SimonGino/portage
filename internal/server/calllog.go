@@ -72,6 +72,9 @@ type callRecord struct {
 	// 不含首次尝试，0 是常态所以不打进日志——否则每一行都要背一个恒为 0 的字段。
 	// 非 0 才说明发生过退避重试或换过凭证，「这次怎么慢了三秒」有据可查。
 	retries int
+	// queueWait 是在渠道并发闸上排队的耗时（口径层 v0.52），没排队为 0。
+	// 与 retries 同理，非 0 才进 slog；落库则恒落（列不可空，0 就是 0）。
+	queueWait time.Duration
 
 	summary     protocol.Summary
 	haveSummary bool
@@ -101,6 +104,9 @@ func (s *Server) logCall(rec *callRecord) {
 	}
 	if rec.retries > 0 {
 		attrs = append(attrs, "retries", rec.retries)
+	}
+	if rec.queueWait > 0 {
+		attrs = append(attrs, "queue_wait_ms", rec.queueWait.Milliseconds())
 	}
 	if !rec.firstByte.IsZero() {
 		attrs = append(attrs, "ttfb_ms", rec.firstByte.Sub(rec.start).Milliseconds())
@@ -153,6 +159,7 @@ func (s *Server) persistCall(rec *callRecord) {
 		Status:           rec.status,
 		RetryCount:       rec.retries,
 		TotalMs:          time.Since(rec.start).Milliseconds(),
+		QueueWaitMs:      rec.queueWait.Milliseconds(),
 	}
 	// 只记流式（展开层 §7 该列原文「首字节耗时（流式）」）。非流式也填的话它约等于
 	// 总耗时，混合流量下「平均首字延迟」就成了一个没有意义的数。非流式的首字节耗时
@@ -168,8 +175,9 @@ func (s *Server) persistCall(rec *callRecord) {
 	}
 	// 表里没有 outcome 列（#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表（upstream_error /
-	// stream_aborted / unauthorized / rejected），不是上游原文——上游错误文案里
-	// 可能带 base_url。
+	// stream_aborted / unauthorized / rejected，并发闸批加 queue_full /
+	// queue_timeout / queue_abandoned，口径层 v0.52），不是上游原文——上游错误
+	// 文案里可能带 base_url。
 	if rec.outcome != "ok" {
 		row.Error = sql.NullString{String: rec.outcome, Valid: true}
 	}

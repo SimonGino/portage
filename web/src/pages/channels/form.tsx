@@ -45,6 +45,8 @@ export function ChannelForm({
     channel?.protocols?.length ? channel.protocols : ['openai'],
   )
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
+  // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
+  const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
   // 凭证只在**新建**时出现在这张表单里。编辑走凭证池，这样「改个名字」不可能顺手把
   // 凭证清空——后端的修改接口本来就不看这个字段。
   const [credential, setCredential] = useState('')
@@ -60,10 +62,14 @@ export function ChannelForm({
     return () => clearTimeout(t)
   }, [saved])
 
+  // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
+  const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
+
   const dirty =
     channel !== null &&
     (name !== channel.name ||
       baseURL !== channel.base_url ||
+      maxConcValue !== channel.max_concurrency ||
       protos.join(',') !== (channel.protocols ?? []).join(','))
 
   async function submit(e: React.FormEvent) {
@@ -77,7 +83,13 @@ export function ChannelForm({
       // disabled 直接从 prop 读、不进表单状态：启停已经挪到右栏抬头那个开关上
       // （v0.46），它改的是同一个字段。存成 state 的话，抬头拨一下、这儿再保存，
       // 就会拿一份挂载时的旧值把刚拨的那下覆盖回去。
-      const body = { name, protocols: protos, base_url: baseURL, disabled: channel?.disabled ?? false }
+      const body = {
+        name,
+        protocols: protos,
+        base_url: baseURL,
+        max_concurrency: maxConcValue,
+        disabled: channel?.disabled ?? false,
+      }
       if (channel) {
         await api.put(`/channels/${channel.id}`, body)
         setSaved(true)
@@ -148,10 +160,22 @@ export function ChannelForm({
       </div>
       {/* base_url 存的是「协议子路径之前」的前缀，子路径由网关自己接。这里不写
           「不要带 /v1」那句提示了——下面那行预览把拼出来的结果直接摆出来，比任何
-          一句提示都硬。 */}
-      <Field label="Base URL">
-        <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
-      </Field>
+          一句提示都硬。并发上限与它并排：一宽一窄，各占一行是浪费。 */}
+      <div className="form-row">
+        <Field label="Base URL">
+          <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
+        </Field>
+        <Field label="并发上限" hint="同时打向这个上游的请求数上限，超出的在网关排队；留空 = 不限">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            placeholder="不限"
+            value={maxConc}
+            onChange={(e) => setMaxConc(e.target.value)}
+          />
+        </Field>
+      </div>
       {/* 边填边把拼出来的完整地址摆出来。这是 base_url 那个必踩的坑唯一说得清的
           方式——上面那句提示写了「不带 /v1」，但人是照着上游文档粘的，粘进来的多半
           就带；只有把 `…/v1/v1/chat/completions` 摆在眼前，那句提示才真的被读到。 */}

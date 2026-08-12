@@ -239,6 +239,7 @@ type CallRow struct {
 	RetryCount       int
 	TTFTMs           sql.NullInt64
 	TotalMs          int64
+	QueueWaitMs      int64
 	InputTokens      sql.NullInt64
 	OutputTokens     sql.NullInt64
 	CacheReadTokens  sql.NullInt64
@@ -258,12 +259,12 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 		err := g.DB.QueryRow(`
 			SELECT api_key_name, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
-			       status, retry_count, ttft_ms, total_ms,
+			       status, retry_count, ttft_ms, total_ms, queue_wait_ms,
 			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
-				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs,
+				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
 				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error)
 		if err == nil {
 			return r
@@ -328,6 +329,11 @@ type Options struct {
 	// 变红，而且是间歇性的（跑得慢的机器上令牌来得及回）。要测限流的用例显式传值。
 	RateLimitQPS   int
 	RateLimitBurst int
+	// Queue 覆盖并发闸排队参数。与上面两个相反，零值**跟随** config.Default()：
+	// 排队参数只对设了 max_concurrency 的渠道生效，默认渠道不设上限，跟随默认值
+	// 不会改变任何既有用例的行为；而 Wait 停在 0 会让闸上的每次排队立即超时——
+	// 那不是「关闭」，是一个没人想要的形态。
+	Queue config.Queue
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -368,6 +374,9 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	cfg.Retry = opts.Retry
 	cfg.RateLimitQPS = opts.RateLimitQPS
 	cfg.RateLimitBurst = opts.RateLimitBurst
+	if opts.Queue != (config.Queue{}) {
+		cfg.Queue = opts.Queue
+	}
 	cfg.AdminPassword = AdminPassword
 	// 走真正的 Bootstrap，不直接往 settings 里塞哈希：管理端测试要覆盖的正是
 	// 「配置里的明文只用来初始化」这条口径，绕过它就等于没测。
@@ -416,6 +425,15 @@ func SeedChannel(t *testing.T, db *sql.DB, name, protocols, baseURL, credential 
 		SeedCredential(t, db, id, credential)
 	}
 	return id
+}
+
+// SetChannelConcurrency 给渠道设并发上限（口径层 v0.49），0 = 不限。
+func SetChannelConcurrency(t *testing.T, db *sql.DB, channelID int64, limit int) {
+	t.Helper()
+	if _, err := db.Exec(
+		`UPDATE channels SET max_concurrency = ? WHERE id = ?`, limit, channelID); err != nil {
+		t.Fatalf("设渠道并发上限失败: %v", err)
+	}
 }
 
 // SeedCredential 往渠道的凭证池里追加一份，名字自动给 `凭证 N`（渠道内唯一，

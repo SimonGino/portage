@@ -19,11 +19,14 @@ type CallLog struct {
 	ChannelName      string
 	// ChannelKeyName 是本次真正发请求的那份凭证名（口径层 v0.38）。快照文本而不是
 	// 外键：删凭证是常事，存 id 会把历史 join 空。没走到上游时是空串。
-	ChannelKeyName   string
-	Status           int
-	RetryCount       int
-	TTFTMs           sql.NullInt64
-	TotalMs          int64
+	ChannelKeyName string
+	Status         int
+	RetryCount     int
+	TTFTMs         sql.NullInt64
+	TotalMs        int64
+	// QueueWaitMs 是并发闸排队耗时（口径层 v0.52）。**不是** NullInt64：没排队就是
+	// 0，这一列上「没排」与「排了 0ms」没有语义差别，不像 ttft 那样要区分「没有」。
+	QueueWaitMs      int64
 	InputTokens      sql.NullInt64
 	OutputTokens     sql.NullInt64
 	CacheReadTokens  sql.NullInt64
@@ -48,12 +51,12 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 		INSERT INTO call_logs (
 			api_key_name, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
-			status, retry_count, ttft_ms, total_ms,
+			status, retry_count, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.APIKeyName, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
-		l.Status, l.RetryCount, l.TTFTMs, l.TotalMs,
+		l.Status, l.RetryCount, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error)
 	return err
 }

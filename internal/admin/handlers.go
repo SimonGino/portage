@@ -174,9 +174,12 @@ type channelInput struct {
 	Protocols []string `json:"protocols"`
 	BaseURL   string   `json:"base_url"`
 	// KeyMode 是凭证选取模式 polling/random（口径层 v0.44 起露在凭证池弹窗里，不在渠道表单）。
-	KeyMode    string `json:"key_mode"`
-	Disabled   bool   `json:"disabled"`
-	Credential string `json:"credential"`
+	KeyMode string `json:"key_mode"`
+	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针留 nil 表示
+	// 「请求体没提」，缺省不动库里那一列（同 KeyMode 的整体覆盖陷阱）。
+	MaxConcurrency *int   `json:"max_concurrency"`
+	Disabled       bool   `json:"disabled"`
+	Credential     string `json:"credential"`
 }
 
 func (in channelInput) toStore() store.ChannelInput {
@@ -185,11 +188,12 @@ func (in channelInput) toStore() store.ChannelInput {
 		set = append(set, protocol.Protocol(strings.TrimSpace(p)))
 	}
 	return store.ChannelInput{
-		Name:      strings.TrimSpace(in.Name),
-		Protocols: set,
-		BaseURL:   strings.TrimSpace(in.BaseURL),
-		KeyMode:   strings.TrimSpace(in.KeyMode),
-		Disabled:  in.Disabled,
+		Name:           strings.TrimSpace(in.Name),
+		Protocols:      set,
+		BaseURL:        strings.TrimSpace(in.BaseURL),
+		KeyMode:        strings.TrimSpace(in.KeyMode),
+		MaxConcurrency: in.MaxConcurrency,
+		Disabled:       in.Disabled,
 	}
 }
 

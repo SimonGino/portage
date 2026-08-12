@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS channels (
   base_url TEXT NOT NULL,
   credential_type TEXT NOT NULL DEFAULT 'api_key',
   key_mode TEXT NOT NULL DEFAULT 'polling',
+  -- 渠道级最大并发（in-flight）上限（口径层 v0.49）：0 = 不限（默认）。闸在网关
+  -- 内存态（upstream.Client），这一列只是配置来源；有界排队与 429 见口径层 v0.50。
+  max_concurrency INTEGER NOT NULL DEFAULT 0,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -106,6 +109,9 @@ CREATE TABLE IF NOT EXISTS call_logs (
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+  -- 并发闸排队耗时（口径层 v0.52）：没排队就是 0，不可空——「没排」与「排了 0ms」
+  -- 在这一列上就是一回事。排队被拒的行靠 error 归因（queue_full / queue_timeout）。
+  queue_wait_ms INTEGER NOT NULL DEFAULT 0,
   error TEXT
 );
 

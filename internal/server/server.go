@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,8 @@ type Server struct {
 	log *slog.Logger
 	// lim 是全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
 	lim *rate.Limiter
+	// queueRetryAfter 是并发闸 429 的 Retry-After 值（整秒字符串），启动时换算一次。
+	queueRetryAfter string
 }
 
 func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
@@ -128,7 +131,44 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 	// key 层内环的 401 摘除挂在这里接到库上（口径层 v0.38）。upstream 不认识
 	// *sql.DB，也不该认识——它只知道「这份凭证坏了」，怎么记是 store 的事。
 	s.up.Disable = s.disableCredential
+	// 渠道并发闸的排队参数（口径层 v0.50）走同一个挂法。Retry-After 在这里就换算
+	// 成整秒字符串：它的单位是整秒，不足 1 秒的配置向上顶成 1，回一个 0 等于让
+	// 客户端立刻再撞一次闸。
+	s.up.Queue = upstream.QueuePolicy{Factor: cfg.Queue.Factor, Wait: cfg.Queue.Wait}
+	s.queueRetryAfter = strconv.Itoa(max(1, int(cfg.Queue.RetryAfter/time.Second)))
 	return s
+}
+
+// writeQueueReject 译写渠道并发闸的三种收场（口径层 v0.50/v0.52）；不是闸的错误
+// 则返回 false，调用方接着走通用的 upstream_error 分支。透传与转换两条路共用。
+func (s *Server) writeQueueReject(c *gin.Context, rec *callRecord, ep protocol.Endpoint, channel string, err error) bool {
+	var word, msg string
+	switch {
+	case errors.Is(err, upstream.ErrQueueFull):
+		word, msg = "queue_full", "渠道并发已满，请稍后重试"
+	case errors.Is(err, upstream.ErrQueueTimeout):
+		word, msg = "queue_timeout", "渠道并发排队超时，请稍后重试"
+	case errors.Is(err, upstream.ErrQueueAbandoned):
+		// 客户端在排队途中自己断了：没人在听，不写错误体；状态记 499（nginx 的
+		// client closed request 惯例码），流水靠 error=queue_abandoned 归因，
+		// 与「打到上游后失败」（upstream_error）分开——这种请求没碰过上游。
+		rec.outcome = "queue_abandoned"
+		s.log.Info("排队途中客户端断开", "channel", channel,
+			"queue_wait_ms", rec.queueWait.Milliseconds())
+		c.Writer.WriteHeader(499)
+		return true
+	default:
+		return false
+	}
+	rec.outcome = word
+	s.log.Warn("渠道并发闸拒绝", "channel", channel, "reason", word,
+		"queue_wait_ms", rec.queueWait.Milliseconds())
+	// Retry-After 要赶在 WriteError 之前设（同 rateLimit）：那里面就 WriteHeader
+	// 了，之后再往 Header() 里写什么都不会发出去。回 429 而不是 503：对 Codex 这类
+	// harness 429 是「稍后重试」，503 是「换地方」，闸满要的是前者（口径层 v0.50）。
+	c.Writer.Header().Set("Retry-After", s.queueRetryAfter)
+	ep.Proto.WriteError(c.Writer, http.StatusTooManyRequests, msg)
+	return true
 }
 
 // disableCredential 摘掉一份 401 的上游凭证。
@@ -329,8 +369,11 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 
 		resp, at, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
-		rec.retries, rec.channelKey = at.Retries(), at.Credential
+		rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 		if err != nil {
+			if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
+				return
+			}
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
 			rec.outcome = "upstream_error"
 			s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))

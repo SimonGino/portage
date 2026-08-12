@@ -157,6 +157,40 @@ func TestAdminPasswordFromEnv(t *testing.T) {
 	}
 }
 
+// concurrency_queue.factor 的零值陷阱与 max_retries 同：没写是「用默认 ×1」，
+// 显式写 0 是「不排队，闸满立即拒」。两个时长反过来必须兜底——wait 停在 0 会让
+// 每个排队请求当场超时，看起来像闸坏了，不像配置漏了。
+func TestLoadDistinguishesAbsentQueueFactorFromExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{name: "整块缺席", yaml: "db_path: /tmp/a.db\n", want: config.Default().Queue.Factor},
+		{name: "块在但没写 factor", yaml: "concurrency_queue:\n  wait: 5s\n", want: config.Default().Queue.Factor},
+		{name: "显式不排队", yaml: "concurrency_queue:\n  factor: 0\n", want: 0},
+		{name: "显式调大", yaml: "concurrency_queue:\n  factor: 3\n", want: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("加载失败: %v", err)
+			}
+			if cfg.Queue.Factor != tc.want {
+				t.Errorf("factor = %d, 期望 %d", cfg.Queue.Factor, tc.want)
+			}
+			if cfg.Queue.Wait <= 0 || cfg.Queue.RetryAfter <= 0 {
+				t.Errorf("wait / retry_after = %v / %v, 都必须为正", cfg.Queue.Wait, cfg.Queue.RetryAfter)
+			}
+		})
+	}
+}
+
 // rate_limit_qps 写 0 就是要关掉限流。它与 max_retries 同一个陷阱：在 Load 里
 // 「顺手补个零值」会让 0 被悄悄改回默认 10，配置项形同虚设。
 func TestRateLimitZeroIsHonoured(t *testing.T) {
