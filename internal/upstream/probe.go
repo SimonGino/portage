@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,8 +74,35 @@ func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential 
 	default:
 		res.Reachable = true
 		res.Detail = "子路径存在"
+		// 非 2xx 但仍判 reachable 的那些，把状态码翻成一句话带上。判据不变
+		// （404/405 之外都算路由存在），但「路由在」与「这把凭证打过去被 401」
+		// 是两件事：只报前一句，一个每条子路径都回 401 的渠道在页面上显示的是
+		// 「探测通过」。摘要仍走我方固定词表，不带上游原文（口径层 v0.43 ②）。
+		if note := subpathNote(resp.StatusCode); note != "" {
+			res.Detail += "，但上游回了" + note
+		}
 	}
 	return res
+}
+
+// subpathNote 只翻译那些「路由在、但这次打过去不顺」的状态码。
+//
+// 400 不在其列：探测发的是空 `{}`，被参数校验拒掉正是它预期的成功形态（见 Probe
+// 的判据那段），把它报成异常等于每次探测都亮一次假警报。
+func subpathNote(status int) string {
+	switch {
+	case status == http.StatusUnauthorized:
+		return "凭证不对（401）"
+	case status == http.StatusForbidden:
+		return "拒绝（403）——可能是这把凭证没开通、或来源被限"
+	case status == http.StatusTooManyRequests:
+		return "限流（429）"
+	case status >= 500:
+		return "上游错误（" + strconv.Itoa(status) + "）"
+	case status > 400:
+		return "HTTP " + strconv.Itoa(status)
+	}
+	return ""
 }
 
 // ModelProbeState 是模型级探测一格的三态结论（口径层 v0.43）。

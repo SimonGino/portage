@@ -2,11 +2,15 @@ package store
 
 // credential.go 是渠道凭证池的读写面（口径层 v0.38 把它从 M4 前移到 M3）。
 //
-// 两条硬约束贯穿全文件：
-//   - **凭证值只写不回读**（v0.28）。这里的返回结构里没有 credential 字段，掩码
-//     也不做——掩码本身是信息，且实现上很容易某次改动漏掉掩码把全串吐出去。
-//   - **网关不从凭证值派生任何显示字符**（v0.38）。页面上认凭证靠的是人自己写的
-//     名字；名字渠道内唯一，否则日志里两行都叫「主号」就废掉了归因本身。
+// **凭证值可回读**（v0.47 推翻 v0.28 的「只写不回读」与 v0.38 的「不派生显示字符」）。
+// PO 裁定：管理端要能看见、能复制，否则「这把到底是哪一把」在页面上没有任何直观表达。
+// 值原本就是明文存库的，所以这一版只是把它读出来，没有降低任何既有强度。
+//
+// 仍然成立的一条：**名字才是归因依据**。日志与用量按名字认凭证，名字渠道内唯一——
+// 两行都叫「主号」就废掉了归因本身。回读只是让人对得上号，不是让别处改用值来指代它。
+//
+// 注意这跟错误回显那条纪律不冲突：上游 key 与 base_url 一律不进错误信息（CLAUDE.md），
+// 那条管的是**转发链路吐给客户端的东西**，跟管理端登录后自己看自己的配置是两码事。
 
 import (
 	"context"
@@ -16,11 +20,14 @@ import (
 	"strings"
 )
 
-// CredentialInfo 是管理端看到的一份凭证：名字、状态、时间，没有值。
+// CredentialInfo 是管理端看到的一份凭证：名字、值、状态、时间。
 type CredentialInfo struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Disabled bool   `json:"disabled"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Credential 是明文的上游 key（v0.47）。掩码在页面上做，不在这儿做——服务端
+	// 掩码等于既发了值又发了个假的，两份都得维护。
+	Credential string `json:"credential"`
+	Disabled   bool   `json:"disabled"`
 	// DisabledReason / DisabledAt 是 401 摘除的现场（口径层 v0.38 只摘 401）。
 	// 恢复是纯人工的，所以这两项就是「这把为什么不转了」的唯一记录。
 	DisabledReason string `json:"disabled_reason"`
@@ -32,7 +39,8 @@ type CredentialInfo struct {
 // 原因、要人工恢复的那些。
 func ListChannelCredentials(ctx context.Context, db Queryer, channelID int64) ([]CredentialInfo, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, name, disabled, COALESCE(disabled_reason, ''), COALESCE(disabled_at, ''), created_at
+		SELECT id, name, credential, disabled,
+		       COALESCE(disabled_reason, ''), COALESCE(disabled_at, ''), created_at
 		FROM channel_keys WHERE channel_id = ? ORDER BY id`, channelID)
 	if err != nil {
 		return nil, err
@@ -41,7 +49,8 @@ func ListChannelCredentials(ctx context.Context, db Queryer, channelID int64) ([
 	out := []CredentialInfo{}
 	for rows.Next() {
 		var c CredentialInfo
-		if err := rows.Scan(&c.ID, &c.Name, &c.Disabled, &c.DisabledReason, &c.DisabledAt, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Credential, &c.Disabled,
+			&c.DisabledReason, &c.DisabledAt, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -58,9 +67,9 @@ type NewCredential struct {
 
 // AddChannelCredentials 往渠道的凭证池里**追加**若干份。
 //
-// 语义是追加而不是整把替换（口径层 v0.38 改写 v0.28 的写入形态）：值不回读 ⇒ 页面
-// 上无法把贴进来的这堆与库里已有的对齐；而覆盖还会连带清掉已停用的凭证，那是 401
-// 摘除的现场。
+// 语义是追加而不是整把替换（口径层 v0.38 改写 v0.28 的写入形态）。v0.47 让值可回读之后
+// 「页面上对不齐」那半条理由没了，但另半条还在，而且是决定性的：覆盖会连带清掉已停用
+// 的凭证，那是 401 摘除的现场，也是「这把为什么不转了」的唯一记录。
 func AddChannelCredentials(ctx context.Context, db Conn, channelID int64, items []NewCredential) error {
 	for _, it := range items {
 		value := strings.TrimSpace(it.Value)

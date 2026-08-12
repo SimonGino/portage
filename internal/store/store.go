@@ -72,7 +72,30 @@ func migrate(db *sql.DB) error {
 	if err := addCredentialNames(db); err != nil {
 		return err
 	}
-	return addModelProtocols(db)
+	if err := addModelProtocols(db); err != nil {
+		return err
+	}
+	return addKeyPlain(db)
+}
+
+// addKeyPlain 补 v0.47 的 api_keys.key_plain。
+//
+// 默认空串，存量行就停在空串上——不是「还没回填」，是**回填不了**：老库里只有裸
+// SHA-256，没有任何路径能还原出原值。读侧把空串读作「这把的原值没存过」，界面据此
+// 提示删了重建，而不是显示一串假的掩码。
+func addKeyPlain(db *sql.DB) error {
+	has, err := hasColumn(db, "api_keys", "key_plain")
+	if err != nil {
+		return fmt.Errorf("检查 api_keys.key_plain: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(
+		`ALTER TABLE api_keys ADD COLUMN key_plain TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 api_keys.key_plain: %w", err)
+	}
+	return nil
 }
 
 // addModelProtocols 补 v0.40 的 channel_models.protocols。
@@ -203,8 +226,8 @@ const (
 // Credential 是凭证池里的一份凭证。
 //
 // Name 是给人看的归因标识（渠道内唯一），会进日志与用量；Value 只在进程内流向
-// upstream，永不进任何 JSON 响应（口径层 v0.28「只写不回读」）。ID 是 401 摘除时
-// 要改的那一行。
+// upstream，永不进任何 JSON 响应——回读走的是管理端那条独立的 CredentialInfo
+// （v0.47），热路径这个结构不该是它的出口。ID 是 401 摘除时要改的那一行。
 type Credential struct {
 	ID    int64
 	Name  string

@@ -396,9 +396,9 @@ func (h *Handler) fetchChannelModels(c *gin.Context) {
 
 // ── 凭证池 ──────────────────────────────────────────────────────────────
 //
-// 凭证**只写不回读**（口径层 v0.28，v0.38 未破）：列表回的是名字、状态、时间与停用
-// 原因，没有值，也没有掩码——掩码本身是信息，且实现上很容易某次改动漏掉掩码把全串
-// 吐出去。
+// 凭证值可回读（口径层 v0.47 推翻 v0.28），但**只在这一组接口里**：列表回名字、值、
+// 状态、时间与停用原因。掩码在前端做，后端发全串——掩码后的串复制出去没用，而 PO 要的
+// 正是复制。其余任何接口都不带值，收口在这里。
 
 func (h *Handler) listCredentials(c *gin.Context) {
 	id, ok := pathID(c)
@@ -651,10 +651,10 @@ func (h *Handler) listKeys(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
-// createKey 生成明文、存哈希、把明文**只回显这一次**。
+// createKey 生成明文，哈希与明文各存一列（口径层 v0.47）。
 //
-// 服务端不留明文，所以没有「再看一次」的接口——忘了就删了重发一把。这条约束是
-// key_hash 用裸 SHA-256（展开层 §7.1）的前提：明文只在这一个响应里存在过。
+// 明文照旧在这个响应里回一次，但它不再是唯一的一次：列表接口也带明文，页面上随时
+// 能看能复制。加列之前建的 key 拿不回来——哈希不可逆，那些只能删了重建。
 func (h *Handler) createKey(c *gin.Context) {
 	var in struct {
 		Name          string `json:"name"`
@@ -676,7 +676,7 @@ func (h *Handler) createKey(c *gin.Context) {
 		return
 	}
 	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
-		id, err := store.CreateAPIKey(ctx, tx, name, auth.Hash(plain), normalizeAllowed(in.AllowedModels))
+		id, err := store.CreateAPIKey(ctx, tx, name, auth.Hash(plain), plain, normalizeAllowed(in.AllowedModels))
 		if err != nil {
 			return nil, err
 		}

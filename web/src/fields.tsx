@@ -12,6 +12,8 @@ export interface Option<T> {
   label: string
   /** hint 显示在标签右侧的次要文字（base_url、协议名这类）。 */
   hint?: string
+  /** title 只进 tooltip，不占版面——横排的按钮里塞不下一条子路径。 */
+  title?: string
   icon?: ReactNode
   /** group 相同的选项归在一个小标题下，按首次出现的顺序排。 */
   group?: string
@@ -98,7 +100,7 @@ export function SegmentedMulti<T extends string>({
             role="checkbox"
             aria-checked={on}
             className={'segment' + (on ? ' is-on' : '')}
-            title={on && value.length === 1 ? '至少要留一个协议' : undefined}
+            title={on && value.length === 1 ? '至少要留一个协议' : o.title ?? o.hint}
             onClick={() => toggle(o.value)}
           >
             <span className="segment-check" aria-hidden>

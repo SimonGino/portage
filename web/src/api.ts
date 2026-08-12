@@ -183,7 +183,8 @@ export interface Channel {
   key_mode: KeyMode
   disabled: boolean
   /**
-   * 可用/停用凭证计数（口径层 v0.38）。没有凭证值，也没有掩码——上游凭证只写不回读。
+   * 可用/停用凭证计数（口径层 v0.38）。这里只有计数，没有凭证值——值由凭证池那一个
+   * 接口单独发（v0.47）。
    * 用计数而不是「有没有」：摘光不设特例，3 把里坏了 2 把时布尔显示的仍是「有凭证」，
    * 把最该被看见的劣化过程整个藏住。
    */
@@ -202,12 +203,15 @@ export const KEY_MODE_OPTIONS: { value: KeyMode; label: string; hint: string }[]
 /**
  * 凭证池里的一份凭证（口径层 v0.38）。
  *
- * **没有凭证值**，掩码也没有：只写不回读（v0.28），网关不从凭证值派生任何显示字符。
- * 页面上认它靠的是人自己写的名字，渠道内唯一。
+ * 带值（v0.47 推翻 v0.28 的「只写不回读」）：PO 裁定页面上要能看能复制，否则「这把
+ * 到底是哪一把」没有直观表达。掩码在页面上做，服务端发的是全串。名字仍然是归因依据
+ * ——日志与用量按名字认凭证。
  */
 export interface Credential {
   id: number
   name: string
+  /** 明文的上游 key。 */
+  credential: string
   disabled: boolean
   /** 401 摘除的现场：只有 401 会自动摘，且只人工恢复。 */
   disabled_reason: string
@@ -234,6 +238,9 @@ export interface AccessPoint {
 export interface ApiKey {
   id: number
   name: string
+  /** 明文（v0.47）。**空串 = 原值没存过**——这把是加 key_plain 那一列之前建的，
+   *  库里只剩哈希，还原不了，只能删了重建。不是「key 是空的」。 */
+  key: string
   allowed_models: string
   disabled: boolean
   created_at: string

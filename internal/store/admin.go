@@ -4,9 +4,10 @@ package store
 // 热路径**上，形状由「一次请求要什么」决定；这里的形状由「一个页面要展示什么」决定，
 // 混在一起会让热路径顺带背上管理端才需要的 JOIN。
 //
-// 一条硬约束贯穿全文件：**上游凭证只写不回读**（PO 于 M3 裁定）。因此所有返回结构里
-// 都没有 credential 字段，只有名字与状态。加一个「掩码回读」都不行——掩码本身是信息，
-// 且实现上很容易某次改动漏掉掩码把全串吐出去。凭证池自身的读写在 credential.go。
+// 一条约束贯穿全文件：**这里的返回结构都不带 credential 字段**。凭证值从 v0.47 起
+// 可回读，但只由凭证池那一个接口发（见 credential.go）——渠道列表、接入点、流水、
+// 校验错误一律不带。收口在一个接口上，漏出去才是可控的；散在每个页面结构里，某次
+// 改动顺手 SELECT * 就出去了。
 
 import (
 	"context"
@@ -560,11 +561,16 @@ func DeleteAccessPoint(ctx context.Context, db Conn, id int64) error {
 	return affectedOne(res, err)
 }
 
-// APIKey 是管理端看到的一把网关 key。没有 key_hash——它虽然不是明文，但它是**唯一
-// 的校验依据**，泄露等于把离线爆破的靶子交出去，而 key 是低熵的人造串。
+// APIKey 是管理端看到的一把网关 key。
+//
+// 带明文（Key，口径层 v0.47：PO 裁定管理端要能看能复制），**不带 key_hash**——
+// 后者仍是转发热路径的校验依据，把它发给页面没有任何用处，只是多一个泄露面。
+// Key 为空串表示这把是加 key_plain 那一列之前建的：原值只留了哈希，还原不了。
 type APIKey struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Key 是明文。空串 = 原值没存过（存量 key），不是「这把 key 是空的」。
+	Key           string `json:"key"`
 	AllowedModels string `json:"allowed_models"`
 	Disabled      bool   `json:"disabled"`
 	CreatedAt     string `json:"created_at"`
@@ -573,7 +579,8 @@ type APIKey struct {
 // ListAPIKeys 返回全部网关 key。
 func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, name, allowed_models, disabled, created_at FROM api_keys ORDER BY id`)
+		`SELECT id, name, COALESCE(key_plain, ''), allowed_models, disabled, created_at
+		 FROM api_keys ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +588,7 @@ func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
 	keys := []APIKey{}
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.AllowedModels, &k.Disabled, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Key, &k.AllowedModels, &k.Disabled, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -589,19 +596,21 @@ func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
 	return keys, rows.Err()
 }
 
-// CreateAPIKey 存一把新 key 的哈希。明文由调用方生成并**只回显一次**，这里不经手。
-func CreateAPIKey(ctx context.Context, db Conn, name, keyHash, allowedModels string) (int64, error) {
+// CreateAPIKey 存一把新 key：哈希给转发热路径查，明文给管理端回读（v0.47）。
+// 明文仍由调用方生成——这里只负责落库，不决定 key 长什么样。
+func CreateAPIKey(ctx context.Context, db Conn, name, keyHash, keyPlain, allowedModels string) (int64, error) {
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO api_keys (name, key_hash, allowed_models) VALUES (?, ?, ?)`,
-		name, keyHash, allowedModels)
+		`INSERT INTO api_keys (name, key_hash, key_plain, allowed_models) VALUES (?, ?, ?, ?)`,
+		name, keyHash, keyPlain, allowedModels)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// UpdateAPIKey 改名字、模型白名单与启用状态。改不了 key 本身——要换就删了重建，
-// 因为服务端只有哈希，没法「在原 key 上改」。
+// UpdateAPIKey 改名字、模型白名单与启用状态。改不了 key 本身——要换就删了重建。
+// v0.47 之后服务端确实留着明文了，但「改 key」这个动作依然不提供：它跟「删了重建」
+// 的效果一字不差，多一条路只是多一处能把线上客户端改死的地方。
 func UpdateAPIKey(ctx context.Context, db Conn, id int64, name, allowedModels string, disabled bool) error {
 	res, err := db.ExecContext(ctx,
 		`UPDATE api_keys SET name = ?, allowed_models = ?, disabled = ? WHERE id = ?`,

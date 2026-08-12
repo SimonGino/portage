@@ -146,7 +146,8 @@ func (s *Server) disableCredential(cred store.Credential, reason string) {
 		s.log.Error("摘除上游凭证失败", "credential", cred.Name, "err", err)
 		return
 	}
-	// 只报名字，不报凭证值——它连掩码都不回读（口径层 v0.28）。
+	// 只报名字，不报凭证值：日志会进文件、进采集、被贴进 issue，跟管理端里那个
+	// 要登录才看得到的回读（v0.47）不是一回事。
 	s.log.Warn("上游凭证已停用，需人工恢复", "credential", cred.Name, "reason", reason)
 }
 

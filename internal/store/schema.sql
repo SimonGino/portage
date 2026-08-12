@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   key_hash TEXT NOT NULL UNIQUE,
+  -- 明文（口径层 v0.47：管理端要能回读并复制）。**存量行永远是空串**——加这一列
+  -- 之前建的 key 只留下哈希，哈希不可逆，那些 key 的原值谁也拿不回来，界面上如实
+  -- 说明并让人删了重建。
+  --
+  -- key_hash 保留且仍是唯一的校验依据：转发热路径按哈希查，跟这一列无关。它用裸
+  -- SHA-256 的原始理由（「明文只在创建那一个响应里存在过」）从这一版起不成立了，
+  -- 但也不再有意义——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。
+  key_plain TEXT NOT NULL DEFAULT '',
   allowed_models TEXT NOT NULL DEFAULT '*',
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

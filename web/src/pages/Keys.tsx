@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AccessPoint, ApiKey, Channel } from '../api'
-import { Card, Confirm, Dialog, Empty, ErrorBar, Field, Toggle, fmtTime, useList } from '../ui'
+import { Card, Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../ui'
 import { Chips } from '../fields'
 import type { Option } from '../fields'
 import { ModelIcon } from '../icons'
@@ -54,24 +54,25 @@ export default function Keys() {
           悄悄空掉的话看起来像「一个接入点都没建」。 */}
       <ErrorBar message={keys.error || aps.error || channels.error} />
       <Card
-        title="网关 key"
+        title="API Key"
         action={
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
-            新建 key
+            新建 API Key
           </button>
         }
       >
         <p className="muted">
-          客户端拿这个 key 调网关（<code>x-api-key</code> 或 <code>Authorization: Bearer</code>）。
-          它跟上游凭证是两回事，也跟管理端密码是两回事。
+          客户端拿它调网关（<code>x-api-key</code> 或 <code>Authorization: Bearer</code>）。
+          它跟渠道里那份上游凭证是两回事，也跟管理端密码是两回事。默认掩码，点「显示」看明文、点「复制」拿全串。
         </p>
         {list.length === 0 ? (
-          <Empty>还没有 key。没有 key 的话所有转发请求都会回 401。</Empty>
+          <Empty>还没有 API Key。一把都没有的话，所有转发请求都会回 401。</Empty>
         ) : (
           <table className="table">
             <thead>
               <tr>
                 <th>名称</th>
+                <th>API Key</th>
                 <th>可访问模型</th>
                 <th>创建时间</th>
                 <th>状态</th>
@@ -82,6 +83,11 @@ export default function Keys() {
               {list.map((k) => (
                 <tr key={k.id} className={k.disabled ? 'is-off' : ''}>
                   <td>{k.name}</td>
+                  {/* 明文（v0.47）。空串是加 key_plain 之前建的那些——哈希不可逆，
+                      原值谁也拿不回来，所以这里说的是「重建」而不是掩码一串假的。 */}
+                  <td>
+                    <SecretValue value={k.key} empty="原值没存过，只能删了重建" />
+                  </td>
                   <td>
                     {k.allowed_models === '*' ? (
                       <span className="muted">不限</span>
@@ -155,19 +161,17 @@ export default function Keys() {
 }
 
 /**
- * FreshKey 是新 key 的**唯一一次**露面。
+ * FreshKey 是新 key 生成后的回执。
  *
- * 服务端只存 key 的哈希，不留明文，所以没有「再看一次」的接口——关掉这个框
- * 就真的没了。这一点必须在界面上说清楚，不然人会以为哪里还能翻出来。
+ * v0.47 之前这是它唯一一次露面（服务端只留哈希）；现在列表里随时看得到，所以这个框
+ * 只剩「拿去用」这一个作用，那句「关掉就再也看不到」的警告也跟着撤了——留着就是撒谎。
  */
 function FreshKey({ value, onClose }: { value: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
   return (
-    <Dialog title="新 key 已生成" onClose={onClose}>
+    <Dialog title="新 API Key 已生成" onClose={onClose}>
       <div className="form">
-        <div className="bar bar-warn">
-          现在就复制走。服务端只存哈希，关掉这个框之后<strong>再也看不到</strong>，忘了只能删掉重发一把。
-        </div>
+        <p className="muted">复制走就能用。这把之后在列表里随时能再看到、再复制。</p>
         <code className="keybox">{value}</code>
         <div className="form-actions">
           <button
@@ -237,7 +241,7 @@ function KeyForm({
   }
 
   return (
-    <Dialog title={k ? `编辑 key：${k.name}` : '新建 key'} onClose={onClose}>
+    <Dialog title={k ? `编辑 API Key：${k.name}` : '新建 API Key'} onClose={onClose}>
       <form className="form" onSubmit={submit}>
         <Field label="名称" hint="会出现在调用流水里，用来分辨是哪台机器在调">
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
@@ -278,7 +282,7 @@ function KeyForm({
               checked={disabled}
               onChange={(e) => setDisabled(e.target.checked)}
             />
-            停用这把 key
+            停用这把 API Key
           </label>
         )}
         <ErrorBar message={error} />

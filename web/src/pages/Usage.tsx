@@ -30,6 +30,73 @@ function fmtCompact(n: number) {
   return (n / 1_000_000).toFixed(1) + 'M'
 }
 
+const tokensOf = (r: UsageRow) => r.input_tokens + r.output_tokens
+
+/** 一根柱子最多画到第几名。再多柱子就细到读不出来，剩下的在下面那张表里。 */
+const CHART_TOP = 8
+
+/**
+ * 堆叠柱状图：一根柱子一行，下段输入、上段输出，高度按 token 总量相对最大值。
+ *
+ * 只在有 token 可画时出现。绝大多数上游会报 usage，但 sub2api 这类中转有时整段
+ * 不报——那时全部行都是 0，画出来是一排贴地的横线，不如不画：一张说不出话的图
+ * 比没有图更浪费那 200px。
+ */
+function UsageChart({ rows }: { rows: UsageRow[] }) {
+  const top = [...rows].sort((a, b) => tokensOf(b) - tokensOf(a)).slice(0, CHART_TOP)
+  const max = Math.max(...top.map(tokensOf), 0)
+  if (max === 0) return null
+  // 占比的分母取**全部**行，不是画出来的这几根：截断是显示上的事，「占了多少」
+  // 问的是在总量里的份额，拿前 8 名当全集会把每个百分比都抬高。
+  const totalTokens = rows.reduce((a, r) => a + tokensOf(r), 0) || 1
+
+  return (
+    <>
+      <div className="usage-chart">
+        {top.map((r) => {
+          const outShare = tokensOf(r) ? (r.output_tokens / tokensOf(r)) * 100 : 0
+          return (
+            <div className="usage-col" key={r.label}>
+              {/* 0.6% 是给「有调用但一个 token 都没报」的行留的一线，让它在图上
+                  仍然占一格位置——直接高度 0 的话，那一行会从图里凭空消失，而
+                  下面的表里明明有它。 */}
+              <div
+                className="usage-col-stack"
+                style={{ height: `${Math.max((tokensOf(r) / max) * 100, 0.6)}%` }}
+                title={`${r.label}：输入 ${fmtInt(r.input_tokens)} · 输出 ${fmtInt(r.output_tokens)}`}
+              >
+                <div className="usage-seg-out" style={{ height: `${outShare}%` }} />
+                <div className="usage-seg-in" style={{ height: `${100 - outShare}%` }} />
+              </div>
+              <div className="usage-col-label" title={r.label}>
+                {r.label}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {/* 图例 + 一句「该看什么」（DESIGN.md §6）。堆叠的两段没法直接标注在柱子上
+          （细柱塞不下两个数），这正是 §6 允许「系列区分不开时才用色」的那种情况；
+          但光有图例就落进 §8 那条「图例代替直接标注」，所以把结论写出来——一张图
+          该说的是「谁是大头」，不是「这里有两种颜色」。 */}
+      <div className="usage-legend">
+        <span>
+          <i className="usage-dot" style={{ background: 'var(--data-in)' }} />
+          输入
+        </span>
+        <span>
+          <i className="usage-dot" style={{ background: 'var(--data-out)' }} />
+          输出
+        </span>
+        <span>
+          <code>{top[0].label}</code> 占了 {((tokensOf(top[0]) / totalTokens) * 100).toFixed(1)}%
+        </span>
+        {rows.length > CHART_TOP && <span>只画了前 {CHART_TOP} 个，其余在下表</span>}
+      </div>
+    </>
+  )
+}
+
 function fmtMs(ms: number | null) {
   if (ms === null) return '—'
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
@@ -71,7 +138,6 @@ export default function Usage() {
       ),
     [rows],
   )
-  const maxCalls = Math.max(1, ...rows.map((r) => r.calls))
   const errRate = total.calls ? (total.errors / total.calls) * 100 : 0
 
   return (
@@ -87,9 +153,9 @@ export default function Usage() {
           </div>
         }
       >
-        {/* 一条有主次的指标行，不是四个等大方块（DESIGN.md §8）。调用是主语，失败
-            次之且只有非零才上错误色，两个 token 数退成右边的附注——逐模型的明细就在
-            下面那张表里，顶上再摆一遍只是把同一个数说两遍。 */}
+        {/* 一条有主次的指标行，不是三张等大卡（DESIGN.md §8，v0.11 照参照图做过
+            那一版，PO 没选）。调用是主语，失败次之且只有非零才上错误色，token 合计
+            退成右边的附注——拆开的输入/输出在下面的图与表里各有一份。 */}
         <div className="stats">
           <div className="stat-lead">
             <span className="stat-lead-value">{fmtInt(total.calls)}</span>
@@ -101,17 +167,18 @@ export default function Usage() {
             失败 <b>{fmtInt(total.errors)}</b>
             <span>{total.calls ? `${errRate.toFixed(1)}%` : '—'}</span>
           </div>
+          {/* 只留一个合计。输入/输出拆开的那两项已经由下面的柱状图和它的图例
+              说了一遍，这里再说一遍就是把同一个数说两遍——图上分不出量级的
+              精确值本来就该去表里看。 */}
           <div className="stat-tokens">
             <span>
-              输入 <b>{fmtCompact(total.input)}</b>
+              合计 <b>{fmtCompact(total.input + total.output)}</b> token
               {total.cacheRead > 0 && `（缓存读 ${fmtCompact(total.cacheRead)}）`}
-            </span>
-            <span>
-              输出 <b>{fmtCompact(total.output)}</b>
-              {total.cacheWrite > 0 && `（缓存写 ${fmtCompact(total.cacheWrite)}）`}
             </span>
           </div>
         </div>
+
+        <UsageChart rows={rows} />
 
         {rows.length === 0 ? (
           <Empty>这段时间还没有调用。</Empty>
@@ -139,10 +206,6 @@ export default function Usage() {
                         {dim === 'credential' ? null : <ModelIcon model={r.label} size={16} />}
                         <code>{r.label}</code>
                       </span>
-                      <div
-                        className="bar-mini"
-                        style={{ width: `${(r.calls / maxCalls) * 100}%` }}
-                      />
                     </td>
                     <td className="num">{fmtInt(r.calls)}</td>
                     <td className="num">

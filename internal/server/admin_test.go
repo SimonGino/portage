@@ -208,8 +208,11 @@ func TestAdminCanConfigureAWorkingRoute(t *testing.T) {
 	}
 }
 
-// 凭证只写不回读（PO 于 M3 裁定）：整个管理端响应里不该出现凭证的任何一段。
-func TestAdminNeverReturnsUpstreamCredential(t *testing.T) {
+// 凭证可回读（口径层 v0.47 推翻 v0.28）：凭证池那个接口要把值发出来，别处一律不发。
+//
+// 这条测试从「哪儿都不许出现」翻成「只许在这一个地方出现」。守的东西没变少：
+// 值出现在渠道列表、接入点、流水里都是泄漏面，只有凭证池那一屏是人主动去看的地方。
+func TestAdminReturnsCredentialOnlyFromThePool(t *testing.T) {
 	const secret = "sk-upstream-super-secret-value"
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
@@ -217,17 +220,26 @@ func TestAdminNeverReturnsUpstreamCredential(t *testing.T) {
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
-	// 扫全部读接口，而不是只查 channels：泄漏可能出现在任何一个返回结构上。
-	for _, path := range []string{"/admin/api/channels", "/admin/api/channels/1/credentials",
-		"/admin/api/access-points", "/admin/api/keys", "/admin/api/logs"} {
+	// 凭证池：**要有**值，否则页面上没法认出这把是哪一把（PO 于 v0.47 裁定）。
+	if _, body := a.Do(t, http.MethodGet, "/admin/api/channels/1/credentials", ""); !strings.Contains(body, secret) {
+		t.Errorf("凭证池没把值发出来：%s", body)
+	}
+
+	// 其余读接口一个都不许带上它。回读是给凭证池那一屏开的口子，不是全局放开。
+	for _, path := range []string{"/admin/api/channels", "/admin/api/access-points",
+		"/admin/api/keys", "/admin/api/logs"} {
 		_, body := a.Do(t, http.MethodGet, path, "")
 		if strings.Contains(body, secret) {
 			t.Errorf("%s 把上游凭证吐出来了：%s", path, body)
 		}
 	}
 
-	// 凭证列表回的是名字与状态，**没有值**——上面那一轮已经扫过它了。整把替换那个
-	// 老接口连同它的路由一起退役（口径层 v0.38 改为逐条 CRUD）。
+	// 没登录就什么都拿不到——回读的前提是这一层拦得住。
+	if status, body := g.Admin(t).Do(t, http.MethodGet, "/admin/api/channels/1/credentials", ""); status == http.StatusOK || strings.Contains(body, secret) {
+		t.Errorf("未登录也能读凭证：status=%d body=%s", status, body)
+	}
+
+	// 整把替换那个老接口连同它的路由一起退役（口径层 v0.38 改为逐条 CRUD）。
 	if status, _ := a.Do(t, http.MethodPut, "/admin/api/channels/1/credential", `{"credential":"sk-x"}`); status != http.StatusNotFound {
 		t.Errorf("整把替换的老接口还在，status=%d", status)
 	}
@@ -266,12 +278,13 @@ func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
 	}
 }
 
-// key 的哈希也不回读：它虽然不是明文，却是唯一的校验依据。
+// 哈希不回读。明文从 v0.47 起回读（见 TestAdminKeyIsReadableAndWorks），但哈希没有
+// 任何理由发给页面——它是转发热路径的校验依据，多发一份只是多一个泄露面。
 func TestAdminNeverReturnsKeyHash(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	_, body := g.LoggedIn(t).Do(t, http.MethodGet, "/admin/api/keys", "")
-	if strings.Contains(body, "key_hash") || strings.Contains(body, gatewaytest.DefaultKey) {
-		t.Errorf("key 列表里带上了哈希或明文：%s", body)
+	if strings.Contains(body, "key_hash") {
+		t.Errorf("key 列表里带上了哈希：%s", body)
 	}
 }
 
@@ -311,7 +324,8 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	}
 }
 
-func TestAdminKeyIsShownOnceAndWorks(t *testing.T) {
+// 新建的 key 能用，而且**之后还能再看到**（口径层 v0.47）。
+func TestAdminKeyIsReadableAndWorks(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
 	gatewaytest.SeedPassthrough(t, db, "claude-direct", "anthropic", up.URL, "claude-3-5-sonnet", "sk-up")
@@ -333,10 +347,22 @@ func TestAdminKeyIsShownOnceAndWorks(t *testing.T) {
 		t.Errorf("管理端新建的 key 用不了：%d %s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
 	}
 
-	// 之后再也拿不到明文：服务端只有哈希。
+	// 之后照样读得到：明文跟哈希各存一列。
 	_, body := a.Do(t, http.MethodGet, "/admin/api/keys", "")
-	if strings.Contains(body, created.Key) {
-		t.Errorf("key 明文能被再次读到：%s", body)
+	if !strings.Contains(body, created.Key) {
+		t.Errorf("key 列表里没有明文，PO 要的「能看能复制」落不了地：%s", body)
+	}
+
+	// 加 key_plain 之前种下的 key 只有哈希，明文栏是空串——不是「空 key」，是拿不回来。
+	var keys []struct {
+		Name string `json:"name"`
+		Key  string `json:"key"`
+	}
+	a.JSONInto(t, http.MethodGet, "/admin/api/keys", "", &keys)
+	for _, k := range keys {
+		if k.Name == "test-default" && k.Key != "" {
+			t.Errorf("只种了哈希的存量 key 不该有明文：%+v", k)
+		}
 	}
 }
 

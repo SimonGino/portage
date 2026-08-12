@@ -225,6 +225,68 @@ export function CopyCode({
   )
 }
 
+/** mask 只露头尾：头几位是「这是哪一类 key」（sk-ant / sk-ptg），尾四位是「这是哪一把」。
+ *  短到没法既遮住又留出线索时全遮——留两位等于没遮。 */
+function mask(v: string) {
+  if (v.length <= 12) return '•'.repeat(Math.max(v.length, 8))
+  return v.slice(0, 6) + '••••••••' + v.slice(-4)
+}
+
+/**
+ * SecretValue 是一串密钥在页面上的样子：默认掩码，一颗眼睛切换明文，一颗按钮复制。
+ *
+ * 口径层 v0.47 之前上游凭证与网关 key 都不回读，页面上只有名字——PO 裁定那样「没法
+ * 直观地表达这是哪一把」，于是两处都改成可看可复制。掩码是默认态而不是保护措施：
+ * 值就在这一份响应里，遮住只是免得截图和录屏顺手把它带出去。
+ *
+ * 复制的永远是全串，跟当前是不是明文态无关——「先点显示再手动选中」正是这颗按钮
+ * 要省掉的那几步。
+ */
+export function SecretValue({ value, empty }: { value: string; empty?: ReactNode }) {
+  const [shown, setShown] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1200)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  // 值拿不到的情形是真实存在的：加 key_plain 那一列之前建的网关 key 只剩哈希，
+  // 哈希不可逆。这时候摆一串假掩码是撒谎，得说清楚它为什么不在。
+  if (!value) return <span className="muted">{empty ?? '—'}</span>
+
+  return (
+    <span className="secret">
+      <code className="secret-value">{shown ? value : mask(value)}</code>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={() => setShown((v) => !v)}
+        title={shown ? '藏起来' : '看明文'}
+      >
+        {shown ? '隐藏' : '显示'}
+      </button>
+      <button
+        type="button"
+        className={'btn btn-ghost' + (copied ? ' is-copied' : '')}
+        onClick={async () => {
+          // clipboard API 在非 HTTPS 的非 localhost 页面上不可用（局域网访问就是
+          // 这种情况）。失败了就把明文亮出来，让人自己选中——总比一颗没反应的按钮强。
+          try {
+            await navigator.clipboard.writeText(value)
+            setCopied(true)
+          } catch {
+            setShown(true)
+          }
+        }}
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
+    </span>
+  )
+}
+
 /**
  * Toggle 是「启用/停用」的开关，长成一段可点的状态文字而不是 iOS 拨杆。
  *

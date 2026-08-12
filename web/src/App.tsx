@@ -45,7 +45,7 @@ export default function App() {
         </span>
         <NavLink to="/channels">渠道</NavLink>
         <NavLink to="/access-points">接入点</NavLink>
-        <NavLink to="/keys">网关 key</NavLink>
+        <NavLink to="/keys">API Key</NavLink>
         <NavLink to="/usage">用量</NavLink>
         <span className="spacer" />
         <button className="btn btn-quiet" onClick={() => setPwOpen(true)}>
@@ -65,6 +65,9 @@ export default function App() {
       <main className="main">
         <Routes>
           <Route path="/channels" element={<Channels />} />
+          {/* 选中的渠道进 URL（口径层 v0.45 主从两栏）：刷新、回退都还留在同一个
+              渠道上。`new` 占的是同一段位置——新建时右栏就是那张空表单。 */}
+          <Route path="/channels/:id" element={<Channels />} />
           <Route path="/access-points" element={<AccessPoints />} />
           <Route path="/keys" element={<Keys />} />
           <Route path="/usage" element={<Usage />} />

@@ -4,7 +4,9 @@
 /* 一层表面，不是两层。
    原先 --bg 是页面的灰底、--panel 是浮在上面的白卡片，于是每一页都得先包一张卡才
    看得清——而 DESIGN.md §3 要的是「页面是连续画布」。现在 --bg 就是画布本身，
-   --panel 只留给**真的浮起来**的东西：模态框、下拉浮层、跟着滚动钉住的组标题。
+   --panel 只给浮起来的东西（模态框、下拉浮层、跟着滚动钉住的组标题）。列表项一律
+   不给表面：渠道块曾短暂有过一块（DESIGN.md v0.6），主从两栏之后那个问题由位置
+   解决，条款已在 v0.8 撤回。
    --sunken 是反过来那一档（比画布再退后半格），给输入框里的只读块、代码块这种
    「凹进去」的东西，不给区块分组用。 */
 :root {
@@ -32,6 +34,11 @@
   --ok-bg: #e9f7ef;
   --ok-line: #a7d9bd;
   --ok-text: #1a7f47;
+  /* 图表里的数据色（DESIGN.md v0.11）。它们**不是** accent，也不承载语义：
+     输入/输出没有好坏，只是同一根柱子上要能分开的两段。全站只有用量图用它们，
+     别拿去染按钮或状态——那正是 §1.4 要防的「一种颜色同时指五件事」。 */
+  --data-in: #0d9488;
+  --data-out: #c026d3;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -62,6 +69,8 @@
     --ok-bg: #14301f;
     --ok-line: #2c5c3f;
     --ok-text: #86d6a8;
+    --data-in: #2dd4bf;
+    --data-out: #e879f9;
 
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
@@ -147,7 +156,11 @@ code {
    1118px，一到窄屏它就滚出可视区（issue #29）。
    不干脆取消上限：§4 要的是「表格占满内容区」，不是「内容区占满一块 5K 屏」——
    一行文字拉到两千多像素，眼睛从行首扫到行尾会串行。1520 是流水表七列各自舒展
-   开、又不至于让说明段落变成长条的那个位置。 */
+   开、又不至于让说明段落变成长条的那个位置。
+   **居中**：超出上限的部分左右均分。贴边试过一轮（v0.5）又收回来了（v0.6）——
+   贴边把全部余量堆到右边，宽屏上整页看着往左歪，那点「起点固定」的好处抵不过
+   这个。左右漂的问题实际不存在：真正在漂的是右边缘，第一列位置只在窗口宽过
+   1520 之后才动，而那一档下面的内容本来就够宽。 */
 .main {
   max-width: 1520px;
   margin: 0 auto;
@@ -165,8 +178,8 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 30px;
-  margin-bottom: 10px;
+  min-height: 28px;
+  margin-bottom: 8px;
 }
 
 .section-head h2 {
@@ -179,7 +192,7 @@ code {
 /* 区段顶部的说明句。跟下面的表拉开距离，不然会被误读成第一行数据；封个宽度是
    因为整块画布现在有一千五百像素宽，一段说明拉满就成了没法读的长条。 */
 .section > p.muted {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   max-width: 76ch;
   font-size: 13px;
 }
@@ -335,53 +348,157 @@ code {
 
 /* ── 渠道 ──────────────────────────────────────────────────────────── */
 
-.channels {
+/* 主从两栏（口径层 v0.45）。左栏只列渠道，右栏是选中那一个的全部。
+   `align-items: flex-start` 是为了让左栏能 sticky——拉伸到等高的话 sticky 没有
+   可滚的余地。 */
+.split {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+/* 左栏钉住：右栏动辄几屏（模型列表 + 探测矩阵），滚到底还能直接换渠道，
+   不用先滚回顶上。宽度固定不跟着窗口涨——它装的是一串名字，给它 20% 的
+   弹性只会在宽屏上摊出一列空条。 */
+.master {
+  flex: 0 0 232px;
+  position: sticky;
+  /* 53px 是导航条（52px + 1px 下边框）——它自己也是 sticky 的，不让开这一档
+     就会被它盖住半个标题。 */
+  top: 69px;
+  max-height: calc(100vh - 91px);
   display: flex;
   flex-direction: column;
-}
-
-/* 一条实线分渠道，渠道里面那些细线分模型——两档线正好对上两层结构，不用再包框。
-   左内边距归零，跟区段标题和表格首列对齐（卡片没了就没有那圈内边距了）。 */
-.channel {
-  padding: 18px 0 20px;
-  border-top: 1px solid var(--line);
-}
-
-.channel:first-child {
-  border-top: none;
-  padding-top: 4px;
-}
-
-.channel.is-off {
-  opacity: 0.55;
-}
-
-.channel-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.channel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
   min-width: 0;
 }
 
-.channel-title strong {
-  font-size: 15px;
-  letter-spacing: -0.01em;
+.master-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
 }
 
-.channel-url {
-  color: var(--faint);
-  font-family: var(--mono);
+.master-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.master-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.master-empty {
+  padding: 10px 2px;
+  font-size: 13px;
+}
+
+/* 选中态用 --sunken 的底 + 字重，不用 accent：accent 只给焦点环（DESIGN.md §3）。
+   左栏一整列同样的行，靠底色区分「在哪一个上」比靠一条彩色竖线更稳——竖线在
+   停用渠道的半透明下几乎看不见。 */
+.master-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.master-item:hover {
+  background: var(--sunken);
+}
+
+.master-item.is-current {
+  background: var(--sunken);
+  font-weight: 550;
+}
+
+.master-item.is-off {
+  opacity: 0.55;
+}
+
+.master-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 右栏。`min-width: 0` 是必须的：里面有 model-grid 和会横滚的表格，
+   flex 子项默认 min-width:auto 会让它们把整页撑宽。 */
+.detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-head h2 {
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.detail-head.is-off {
+  opacity: 0.62;
+}
+
+.detail-probes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* base_url + 各协议子路径拼出来的完整地址。等宽字体 + 凹一档的底：它是「机器会去
+   请求的那一串」，不是一句说明。 */
+.url-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--sunken);
   font-size: 12px;
-  margin-top: 3px;
+}
+
+.url-preview code {
+  font-family: var(--mono);
   word-break: break-all;
+}
+
+/* 新增凭证那一格：输入框 + 「显示」。按钮不参与拉伸，输入框吃掉剩下的宽度。 */
+/* 两个字段并排：短输入（渠道名）+ 一排按钮（协议集），各占一整行是纯浪费。
+   窄屏上换行，不去压缩输入框。 */
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+.form-row > .field {
+  flex: 1;
+  min-width: 240px;
 }
 
 /* 纳管模型：网格而不是整行。
@@ -680,11 +797,37 @@ select:focus {
   outline-offset: -1px;
 }
 
+/* ghost-input 是**就地改名**用的：平时看着就是那行文字，悬停才知道它能点，
+   聚焦了才是个输入框。给的是「这是一条记录，顺手可以改」，而描边输入框给的是
+   「这是一张待填的表单」——一份已经存在的东西不该长成后者。
+   内边距一直留着、靠负外边距把文字拉回左边界对齐：hover 时才补上内边距的话，
+   文字会横跳一下，那比一直画着边框更烦人。 */
+.ghost-input {
+  margin-left: -10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.ghost-input:hover {
+  border-color: var(--line-soft);
+}
+
+.ghost-input:focus {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+/* 弹框里的表单自带内边距；长在段里的那份不要——外面已经有段距了。 */
 .form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
+}
+
+.section.form,
+.section .form {
+  padding: 0;
 }
 
 .field {
@@ -1185,17 +1328,18 @@ select:focus {
   cursor: not-allowed;
 }
 
-/* 多选版横向铺开：三个选项各带一条子路径，挤在 inline-flex 里会被压成两行。 */
+/* 横排一行。曾经竖排过一阵，理由是「每个选项都带一条子路径，横排会压成两行」——
+   子路径现在由 Base URL 底下那行完整地址预览负责（它显示的是真的会被请求的那一串，
+   比这里挂一个后缀更有用），选项本身只剩三个词，横排一行就够。竖排四行占掉一百多
+   像素，而这一页最缺的就是纵向空间。 */
 .segmented-multi {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: 100%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-self: flex-start;
 }
 
 .segmented-multi .segment {
-  justify-content: flex-start;
-  padding: 7px 9px;
+  padding: 5px 10px;
 }
 
 /* 定宽占位，选没选中都占同一格——不然勾上的那一行会把文字往右顶。 */
@@ -1255,11 +1399,24 @@ select:focus {
 }
 
 .probe-models li {
+  padding: 2px 0;
+}
+
+.probe-model-row {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 14px;
-  padding: 2px 0;
+}
+
+/* 非通的格子把摘要摆在下一行，缩进到模型名那一列的右边。挤在同一行的话三个
+   协议侧各带一句话就把行撑到两屏宽，而这几句话恰恰是要读的那部分。 */
+.probe-why {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  padding: 1px 0 3px 18ch;
+  color: var(--muted);
 }
 
 .probe-models code {
@@ -1569,7 +1726,45 @@ select:focus {
   flex-shrink: 0;
 }
 
+/* ── 密钥展示 ────────────────────────────────────────────────────────
+   默认掩码 + 「显示」 + 「复制」。掩码不是保护措施——值就在同一份响应里——只是
+   免得截图、录屏、共享屏幕时顺手把它带出去。 */
+.secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.secret-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 复制成功那一下给个语义色，其余时候跟别的 ghost 按钮一样安静。 */
+.secret .btn.is-copied {
+  color: var(--ok-text);
+}
+
 /* ── 凭证池 ────────────────────────────────────────────────────────── */
+
+/* 这一段不吃满整栏（v0.10）。上面的 base_url 该吃满——那儿装的是真会长到换行的
+   东西；这儿装的是「凭证 1」这种短标识，值又永远不出现（只写不回读），拉到一整行
+   宽只会在名字和右边的开关之间空出一大片，眼睛得跑一趟长途才知道那个「启用」说的
+   是谁。42em 是这一段所有横向东西的共同上限：说明、列表、添加行、按钮行都对齐到
+   同一条右边界，才像一段而不是三段各自为政。 */
+.cred-section > p.muted,
+.cred-section .cred-list,
+.cred-section .cred-add-form {
+  /* 52em 而不是 v0.10 定的 42em：那时行里只有名字与状态，现在多了一串密钥加两颗
+     按钮。上限跟着内容走，这正是 v0.10 那条「宽度按内容给」自己的说法。 */
+  max-width: 52em;
+}
 
 /* 一行一份凭证：名字（可改）+ 状态 + 开关与删除。凭证值不在这里，也不会在别处
    ——只写不回读（口径层 v0.28/v0.38）。 */
@@ -1596,8 +1791,14 @@ select:focus {
   opacity: 0.65;
 }
 
+/* 名字与密钥各占一段，密钥那段宽一些——掩码本身就有十八九个字符，再挤两颗按钮。 */
 .cred-name {
-  flex: 1;
+  flex: 2;
+  min-width: 0;
+}
+
+.cred .secret {
+  flex: 3;
   min-width: 0;
 }
 
@@ -1610,14 +1811,26 @@ select:focus {
   white-space: nowrap;
 }
 
+/* 添加行：输入框吃掉整行，「显示」与「添加」跟在后面。整段只剩这一个描边输入框
+   ——上面的凭证名是 ghost，于是「你正在贴一把新的」跟「库里已经有这么一把」一眼
+   分得开，不必靠位置去猜。 */
 .cred-add {
   display: flex;
-  flex-direction: column;
   gap: 6px;
 }
 
-.cred-add input {
+.cred-add-key {
+  flex: 1;
   min-width: 0;
+}
+
+/* 「批量粘贴」在下面单起一行、靠左：它是次要入口，右对齐会让它跟「添加」抢同一
+   个位置。 */
+.cred-add-alt {
+  display: flex;
+  gap: 6px;
+  /* -8px 抵掉 btn-ghost 的左内边距，让这句小字跟上面的凭证名对齐到同一条左边界。 */
+  margin: 2px 0 0 -8px;
 }
 
 /* ── 用量页 ────────────────────────────────────────────────────────── */
@@ -1690,16 +1903,76 @@ select:focus {
   font-variant-numeric: tabular-nums;
 }
 
-/* 调用占比条垫在模型名底下：几十行数字里看不出谁是大头，一条横杠能。
-   中性色不是 accent：「这一行占了多少」是量，不是状态，染成蓝的只会让人以为
-   它跟别处的蓝是一回事（§1.4）。 */
-.bar-mini {
-  height: 3px;
-  margin-top: 5px;
-  border-radius: 2px;
-  background: var(--muted);
-  opacity: 0.5;
-  min-width: 2px;
+/* 堆叠柱状图：一根柱子一个模型（或一份凭证），下段输入、上段输出，高度按
+   token 总量。原先这件事由模型名底下那条 `.bar-mini` 占比条做，但那条只画调用
+   次数——而「谁在烧钱」问的是 token，两者能差一个量级（93 次调用烧掉 317 万
+   token，5 次调用只烧 40 万）。有了柱子，占比条就成了同一件事说两遍，删掉。
+
+   高度只取相对值，不画 Y 轴刻度：这一屏要回答的是「谁是大头」，精确值就在下面
+   那张表里，为它配一套刻度线只是把表格的数字再画一遍。 */
+.usage-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2%;
+  height: 200px;
+  padding-top: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.usage-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+}
+
+.usage-col-stack {
+  width: 100%;
+  max-width: 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+}
+
+.usage-seg-in {
+  background: var(--data-in);
+}
+
+.usage-seg-out {
+  background: var(--data-out);
+}
+
+.usage-col-label {
+  width: 100%;
+  padding-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 图例兼着「只画了前 N 根」那句交代：截断必须说出来，否则这张图读起来像全集。 */
+.usage-legend {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.usage-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 999px;
 }
 
 .model-cell {
