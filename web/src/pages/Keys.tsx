@@ -74,7 +74,7 @@ export default function Keys() {
                 <th>名称</th>
                 <th>可访问模型</th>
                 <th>创建时间</th>
-                <th>启用</th>
+                <th>状态</th>
                 <th className="col-actions" />
               </tr>
             </thead>
@@ -116,7 +116,7 @@ export default function Keys() {
                       <button className="btn btn-quiet" onClick={() => setEditing(k)}>
                         编辑
                       </button>
-                      <Confirm onConfirm={() => void mutate(() => api.del(`/keys/${k.id}`))} />
+                      <Confirm ghost onConfirm={() => void mutate(() => api.del(`/keys/${k.id}`))} />
                     </div>
                   </td>
                 </tr>

@@ -193,7 +193,8 @@ export function vendorForChannel(channel: { name: string; base_url: string }): s
 
 /**
  * Avatar 是那枚方块本身。没匹配到图标时退回首字母块，而不是留个空洞——列表里每一行
- * 都得占同样宽度，否则名字会参差不齐。
+ * 都得占同样宽度，否则名字会参差不齐。品牌色在 CSS 里统一 grayscale 掉（DESIGN.md
+ * §1.4 / §3），这里不管颜色，只管取哪一份标记。
  *
  * 深色版靠 CSS 显隐而不是 JS 选：跟随系统主题切换时不用监听 media query，也就不会有
  * 「切了主题但图标还是上一套」的窗口。只有一份标记的（大多数带底色的品牌方块深浅色
@@ -214,7 +215,7 @@ export function Avatar({
   const light = vendor === null ? undefined : LIGHT.get(vendor)
   if (light === undefined || vendor === null) {
     return (
-      <span className="avatar avatar-text" style={{ ...style, ...hueOf(fallback) }} title={title}>
+      <span className="avatar avatar-text" style={style} title={title}>
         {initialOf(fallback)}
       </span>
     )
@@ -254,13 +255,6 @@ function initialOf(name: string) {
   if (!s) return '?'
   const first = [...s][0]
   return /[a-z]/i.test(first) ? first.toUpperCase() : first
-}
-
-/** hueOf 把名字散成一个稳定的色相——同一个名字每次渲染都是同一个颜色。 */
-function hueOf(name: string) {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
-  return { '--avatar-hue': String(h) } as React.CSSProperties
 }
 
 /** IconRow 把「图标 + 文字」这个到处都在重复的组合收成一个。 */

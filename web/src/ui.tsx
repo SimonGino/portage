@@ -51,10 +51,18 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>
 }
 
+/**
+ * Card 现在不是卡片，是一个区段——名字留着只为省一次全站改名。
+ *
+ * 去掉边框/底色/阴影是执行 DESIGN.md §3「页面是连续画布：区块靠间距分隔，不逐区包
+ * 卡片、不嵌套面板」。原先每页一张卡、渠道页还在卡里套渠道行、行里再套模型格，
+ * 三层框叠出来的层级其实一层都不承载信息——标题的字号字重加区段间距已经说清了
+ * 「这是一块」。§9 自查第 5 条（删掉任意一个边框，层级是否依然成立）在这一处成立。
+ */
 export function Card({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <section className="card">
-      <header className="card-head">
+    <section className="section">
+      <header className="section-head">
         <h2>{title}</h2>
         {action}
       </header>
@@ -217,12 +225,48 @@ export function CopyCode({
   )
 }
 
-export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/**
+ * Toggle 是「启用/停用」的开关，长成一段可点的状态文字而不是 iOS 拨杆。
+ *
+ * 拨杆有两个毛病，DESIGN.md §4 都点了名：一是它把状态压进一个纯色块，靠位置和颜色
+ * 表达，而「启用/停用」是**状态**，规矩是语义色 + 文字标注；二是那抹蓝跟主按钮、
+ * 导航选中态用的是同一个 accent，颜色不再承载语义（§1.4），一屏里蓝得到处都是。
+ *
+ * 现在按下去之前就能读出此刻是什么：`● 启用` / `○ 已停用`。圆点是非颜色线索——
+ * §3 要求语义色必须配一个不靠颜色的线索，色盲和灰度截图下都还认得出。
+ */
+/** StateText 是 Toggle 的只读版：状态一样地写出来，但这里改不了（比如接入点的启用
+ *  状态在编辑表单里改）。跟 Toggle 共用同一套类，免得同一件事在两页长得不一样。 */
+export function StateText({ on }: { on: boolean }) {
   return (
-    <label className="toggle">
-      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} />
-      <span />
-    </label>
+    <span className={'statetoggle is-static' + (on ? ' is-on' : '')}>
+      <span className="statetoggle-dot" aria-hidden>
+        {on ? '●' : '○'}
+      </span>
+      {on ? '启用' : '已停用'}
+    </span>
+  )
+}
+
+export function Toggle({ on, onChange, label }: {
+  on: boolean
+  onChange: (v: boolean) => void
+  /** 被开关的东西叫什么，只进 title：「点击停用 gpt-4o」比光一个「点击停用」有用。 */
+  label?: string
+}) {
+  const what = label ? ` ${label}` : ''
+  return (
+    <button
+      type="button"
+      className={'statetoggle' + (on ? ' is-on' : '')}
+      title={on ? `点击停用${what}` : `点击启用${what}`}
+      onClick={() => onChange(!on)}
+    >
+      <span className="statetoggle-dot" aria-hidden>
+        {on ? '●' : '○'}
+      </span>
+      {on ? '启用' : '已停用'}
+    </button>
   )
 }
 

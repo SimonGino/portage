@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AccessPoint, Channel } from '../api'
-import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
+import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, StateText, useList } from '../ui'
 import { Picker } from '../fields'
 import type { Option } from '../fields'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../icons'
@@ -40,7 +40,8 @@ export default function AccessPoints() {
         }
       >
         <p className="muted">
-          接入点是**别名层**：给一个纳管模型换个对外的名字，或者（M4 之后）把一个名字分流到多个候选。
+          {/* JSX 不是 Markdown，`**x**` 会原样显示成星号（issue #29）。 */}
+          接入点是<strong>别名层</strong>：给一个纳管模型换个对外的名字，或者（M4 之后）把一个名字分流到多个候选。
           只想直接用某个纳管模型的话不必建接入点，客户端 <code>model</code> 直接填限定名{' '}
           <code>渠道名/模型名</code> 就行。
         </p>
@@ -86,7 +87,11 @@ export default function AccessPoints() {
                         ))
                       )}
                     </td>
-                    <td>{ap.disabled ? <span className="tag tag-off">已停用</span> : '启用'}</td>
+                    {/* 只读：接入点的启用状态在编辑表单里改。跟网关 key 那页的开关
+                        共用同一套写法，同一件事不该在两页长得不一样。 */}
+                    <td>
+                      <StateText on={!ap.disabled} />
+                    </td>
                     {/* 按钮包一层 div：直接把 display:flex 挂在 td 上，这一格就脱离了
                         表格的列模型，渲染出来会跑到卡片外面去。 */}
                     <td className="col-actions">
@@ -94,7 +99,7 @@ export default function AccessPoints() {
                         <button className="btn btn-quiet" onClick={() => setEditing(ap)}>
                           编辑
                         </button>
-                        <Confirm onConfirm={() => void mutate(() => api.del(`/access-points/${ap.id}`))} />
+                        <Confirm ghost onConfirm={() => void mutate(() => api.del(`/access-points/${ap.id}`))} />
                       </div>
                     </td>
                   </tr>

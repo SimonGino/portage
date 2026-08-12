@@ -87,30 +87,29 @@ export default function Usage() {
           </div>
         }
       >
+        {/* 一条有主次的指标行，不是四个等大方块（DESIGN.md §8）。调用是主语，失败
+            次之且只有非零才上错误色，两个 token 数退成右边的附注——逐模型的明细就在
+            下面那张表里，顶上再摆一遍只是把同一个数说两遍。 */}
         <div className="stats">
-          <div className="stat">
-            <div className="stat-label">调用</div>
-            <div className="stat-value">{fmtInt(total.calls)}</div>
-            <div className="stat-sub">
-              {rows.length} {dim === 'credential' ? '份凭证' : '个模型'}
-            </div>
+          <div className="stat-lead">
+            <span className="stat-lead-value">{fmtInt(total.calls)}</span>
+            <span className="stat-lead-label">
+              次调用 · {rows.length} {dim === 'credential' ? '份凭证' : '个模型'}
+            </span>
           </div>
-          <div className="stat">
-            <div className="stat-label">失败</div>
-            <div className={'stat-value' + (total.errors > 0 ? ' is-bad' : '')}>
-              {fmtInt(total.errors)}
-            </div>
-            <div className="stat-sub">{total.calls ? `${errRate.toFixed(1)}%` : '—'}</div>
+          <div className={'stat-side' + (total.errors > 0 ? ' is-bad' : '')}>
+            失败 <b>{fmtInt(total.errors)}</b>
+            <span>{total.calls ? `${errRate.toFixed(1)}%` : '—'}</span>
           </div>
-          <div className="stat">
-            <div className="stat-label">输入 token</div>
-            <div className="stat-value">{fmtCompact(total.input)}</div>
-            <div className="stat-sub">缓存读 {fmtCompact(total.cacheRead)}</div>
-          </div>
-          <div className="stat">
-            <div className="stat-label">输出 token</div>
-            <div className="stat-value">{fmtCompact(total.output)}</div>
-            <div className="stat-sub">缓存写 {fmtCompact(total.cacheWrite)}</div>
+          <div className="stat-tokens">
+            <span>
+              输入 <b>{fmtCompact(total.input)}</b>
+              {total.cacheRead > 0 && `（缓存读 ${fmtCompact(total.cacheRead)}）`}
+            </span>
+            <span>
+              输出 <b>{fmtCompact(total.output)}</b>
+              {total.cacheWrite > 0 && `（缓存写 ${fmtCompact(total.cacheWrite)}）`}
+            </span>
           </div>
         </div>
 

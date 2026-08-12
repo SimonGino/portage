@@ -1,9 +1,16 @@
 /* 手写而不是引框架：整个管理端就四页表格加几个表单。
    跟随系统深浅色——这东西多半开在一堆终端旁边。 */
 
+/* 一层表面，不是两层。
+   原先 --bg 是页面的灰底、--panel 是浮在上面的白卡片，于是每一页都得先包一张卡才
+   看得清——而 DESIGN.md §3 要的是「页面是连续画布」。现在 --bg 就是画布本身，
+   --panel 只留给**真的浮起来**的东西：模态框、下拉浮层、跟着滚动钉住的组标题。
+   --sunken 是反过来那一档（比画布再退后半格），给输入框里的只读块、代码块这种
+   「凹进去」的东西，不给区块分组用。 */
 :root {
-  --bg: #f4f5f7;
+  --bg: #ffffff;
   --panel: #ffffff;
+  --sunken: #f5f6f8;
   /* 两档分隔线：line 画边框，line-soft 画表格内的行间线。表格里每行都用实边框
      会织成一张网，把眼睛的横向扫描打断。 */
   --line: #dfe3e8;
@@ -12,8 +19,9 @@
   --muted: #667085;
   /* faint 比 muted 再淡一档，给表头、单位、时间戳这类「在场但不该抢眼」的东西。 */
   --faint: #98a2b3;
+  /* accent 只有一个去处：焦点环。它不再兼任主按钮、导航选中、开关打开、芯片选中
+     ——那些各自换成了字重/对比度/语义色。见 DESIGN.md §3 那条「accent 只给焦点环」。 */
   --accent: #2563eb;
-  --accent-soft: #eff4ff;
   --hover: #f7f8fa;
   --warn-bg: #fff8e8;
   --warn-line: #ecc46a;
@@ -35,15 +43,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #131519;
-    --panel: #1b1e23;
+    --bg: #16181c;
+    --panel: #1e2126;
+    --sunken: #1b1e22;
     --line: #2d323a;
     --line-soft: #23272d;
     --text: #e6e8eb;
     --muted: #98a1ac;
     --faint: #6d7681;
     --accent: #5b8cf7;
-    --accent-soft: #1c2740;
     --hover: #21252b;
     --warn-bg: #2e2408;
     --warn-line: #6b5314;
@@ -90,9 +98,9 @@ code {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 20px;
+  padding: 0 28px;
   height: 52px;
-  background: var(--panel);
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -108,69 +116,72 @@ code {
   margin-right: 20px;
 }
 
+/* 选中态用「字色 + 字重 + 底下一条线」而不是蓝底蓝字：accent 现在只留给焦点环
+   （§1.4 颜色只承载语义，而「我在哪一页」不是四个语义色里的任何一个）。
+   下划线画在导航条自己的下边框上，所以要 -1px 压住它。 */
 .nav a {
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
+  padding: 15px 12px;
   color: var(--muted);
   text-decoration: none;
-  transition: background 0.1s, color 0.1s;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.1s, border-color 0.1s;
 }
 
 .nav a:hover {
-  background: var(--hover);
   color: var(--text);
 }
 
 .nav a.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-weight: 500;
+  color: var(--text);
+  border-bottom-color: var(--text);
+  font-weight: 550;
 }
 
 .spacer {
   flex: 1;
 }
 
+/* 上限从 1160 提到 1520。原先那个数是给「卡片里的表」定的，而流水表有七列、
+   最右那列（in / out）恰恰最该被扫到——1160 减掉页边距和卡片内边距之后只剩
+   1118px，一到窄屏它就滚出可视区（issue #29）。
+   不干脆取消上限：§4 要的是「表格占满内容区」，不是「内容区占满一块 5K 屏」——
+   一行文字拉到两千多像素，眼睛从行首扫到行尾会串行。1520 是流水表七列各自舒展
+   开、又不至于让说明段落变成长条的那个位置。 */
 .main {
-  max-width: 1160px;
+  max-width: 1520px;
   margin: 0 auto;
-  padding: 24px 20px 80px;
+  padding: 22px 28px 80px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 34px;
 }
 
-/* ── 卡片与表格 ────────────────────────────────────────────────────── */
+/* ── 区段与表格 ────────────────────────────────────────────────────── */
 
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-
-.card-head {
+/* 区段之间靠 .main 的 gap 分开，自己不画任何框（§3）。 */
+.section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
+  min-height: 30px;
+  margin-bottom: 10px;
 }
 
-.card-head h2 {
+.section-head h2 {
   margin: 0;
-  font-size: 15px;
-  letter-spacing: -0.01em;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
-/* 卡片顶部的说明句。放在表头之上、与表格之间留白，不然它会被误读成第一行数据。 */
-.card > p.muted {
-  margin: 0;
-  padding: 12px 18px;
+/* 区段顶部的说明句。跟下面的表拉开距离，不然会被误读成第一行数据；封个宽度是
+   因为整块画布现在有一千五百像素宽，一段说明拉满就成了没法读的长条。 */
+.section > p.muted {
+  margin: 0 0 12px;
+  max-width: 76ch;
   font-size: 13px;
-  border-bottom: 1px solid var(--line-soft);
 }
 
 .muted {
@@ -184,10 +195,22 @@ code {
 
 .table th,
 .table td {
-  padding: 11px 18px;
+  padding: 11px 14px;
   text-align: left;
   border-top: 1px solid var(--line-soft);
   vertical-align: middle;
+}
+
+/* 首末两列跟区段标题对齐，不再往里缩：卡片没了，那圈内边距也就没有理由留着，
+   留着的话表格看上去像浮在一块看不见的板子上。 */
+.table th:first-child,
+.table td:first-child {
+  padding-left: 0;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
 }
 
 .table th {
@@ -196,6 +219,7 @@ code {
   font-size: 12px;
   letter-spacing: 0.02em;
   border-top: none;
+  border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
@@ -264,21 +288,23 @@ code {
   overflow-x: auto;
 }
 
-/* 横向滚动的下限**逐表给**，不给一个全局值。
-   1020px 是 10 列时代定的（v0.30 那次「恢复横向滚动」），08-10 压到七列之后
-   没人回头改它，于是七列被硬撑到 1020：卡片最宽只有 1118px（.main 1160 减
-   padding），窗口一窄，最右那列（in / out）就滚到可视区外——而 in/out 恰恰是
-   这张表最该被扫到的一列。 */
+/* 横向滚动的下限**逐表给**，不给一个全局值：它是「窄到这个份上就该滚了」的地板，
+   跟内容区上限（.main 那条）是两件事。1020px 是 10 列时代定的（v0.30 那次
+   「恢复横向滚动」），压到七列之后调下来的。 */
+/* 用量表反过来还要封个**上**限：七列全是短数字，摊到一千五百像素之后第一列会
+   独吞几百像素的空白，眼睛从模型名扫到「调用」那一格中间隔着一片荒地，正是
+   §4 要避免的串行。流水表没这个问题——它每列都装着要读的东西。 */
 .scroll-x .table-usage {
   min-width: 700px;
+  max-width: 1180px;
 }
 
 .scroll-x .table-logs {
   min-width: 900px;
 }
 
-/* 这两张表列多，18px 的左右内边距光 padding 就吃掉 250px。压到 12px，
-   省下的宽度正好够最右那列留在可视区里。 */
+/* 这两张表列多，内边距光 padding 就吃掉两百多像素。压到 12px，省下的宽度正好
+   够最右那列在窄窗口里也留在可视区。 */
 .table-usage th,
 .table-usage td,
 .table-logs th,
@@ -307,16 +333,23 @@ code {
   white-space: nowrap;
 }
 
-/* ── 渠道卡 ────────────────────────────────────────────────────────── */
+/* ── 渠道 ──────────────────────────────────────────────────────────── */
 
 .channels {
   display: flex;
   flex-direction: column;
 }
 
+/* 一条实线分渠道，渠道里面那些细线分模型——两档线正好对上两层结构，不用再包框。
+   左内边距归零，跟区段标题和表格首列对齐（卡片没了就没有那圈内边距了）。 */
 .channel {
-  padding: 16px 18px 18px;
-  border-top: 1px solid var(--line-soft);
+  padding: 18px 0 20px;
+  border-top: 1px solid var(--line);
+}
+
+.channel:first-child {
+  border-top: none;
+  padding-top: 4px;
 }
 
 .channel.is-off {
@@ -367,21 +400,26 @@ code {
   margin-bottom: 8px;
 }
 
+/* column-gap 留着（相邻两格要分开），row-gap 归零：行与行靠 .model 的上细线分，
+   再留缝的话线就浮在半空。 */
+/* 下限给到 420：小了会在宽窗口上排出四五列，而模型名（`qwen3.7-coder-2026-05-14`
+   这种）随即被省略号切掉——一列格子看不出是哪个模型，网格就白排了。 */
 .model-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 6px;
-  margin-bottom: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  column-gap: 26px;
+  margin-bottom: 12px;
 }
 
+/* 一格一个模型，不再是一个带边框的小卡片：这里原先是「卡里套卡里套卡」的最内层
+   （§8 反模式「每个区块一张卡、卡里套卡」）。分隔改成一条上细线——网格本来就有
+   列，横线补上行，边界照样清楚，而框全部消失。 */
 .model {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 8px 7px 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  padding: 7px 10px 7px 0;
+  border-top: 1px solid var(--line-soft);
   min-width: 0;
   /* 协议子集那行（口径层 v0.40）要换到第二行去，名字和操作仍挤在第一行。 */
   flex-wrap: wrap;
@@ -396,14 +434,15 @@ code {
   align-items: center;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--line-soft);
+  /* 不画分隔线：上面 .model 那条实线已经把「一个模型」框出来了，这里再来一条虚线
+     就是拿边框修层级（§9 自查第 5 条：删掉还成立就删）。 */
+  margin-top: 5px;
+  padding-bottom: 2px;
   font-size: 12px;
 }
 
 .model-protocols-label {
-  color: var(--fg-muted);
+  color: var(--muted);
   cursor: help;
 }
 
@@ -411,32 +450,37 @@ code {
   font-size: 12px;
 }
 
-.chip {
-  padding: 1px 7px;
+/* 协议芯片（可点，是控件）。原先这一块写的是 --fg / --fg-muted：这两个 token
+   本项目根本没定义过，实际一直在静默继承父级颜色，只是碰巧看不出错。
+   选中态不再是蓝底蓝字——「选中」不是四个语义色里的任何一个（§1.4），改成
+   实心反白 + 加粗，靠对比度而不是色相。 */
+.chip-toggle {
+  padding: 1px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
   cursor: pointer;
 }
 
-.chip:hover {
-  border-color: var(--accent);
-  color: var(--fg);
+.chip-toggle:hover {
+  border-color: var(--muted);
+  color: var(--text);
 }
 
-.chip.is-on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--fg);
+.chip-toggle.is-on {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
   font-weight: 500;
 }
 
 /* 渠道已经不说这个协议了，但模型上还留着（宽松存）。照实显示：它此刻正让这个模型
-   没有可用协议，藏起来只会让人对着一个「看上去哪都没问题」的配置查 503。 */
-.chip.is-stale {
+   没有可用协议，藏起来只会让人对着一个「看上去哪都没问题」的配置查 503。
+   这里的黄是**语义色**（警告），留着，配删除线做非颜色线索。 */
+.chip-toggle.is-stale {
   border-color: var(--warn-line);
   background: var(--warn-bg);
   color: var(--warn-text);
@@ -492,7 +536,7 @@ code {
   border-radius: 999px;
   font-size: 11px;
   line-height: 1.5;
-  background: var(--bg);
+  background: var(--sunken);
   border: 1px solid var(--line);
   color: var(--muted);
   white-space: nowrap;
@@ -508,14 +552,19 @@ code {
   color: var(--warn-text);
 }
 
+/* .chip 是静态标注（key 的白名单、批量粘贴的预览），不可点。可点的那种是
+   .chip-toggle，两者曾经共用一个类名、隔着一百行定义两遍，后者悄悄覆盖前者。 */
 .chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin: 2px 4px 2px 0;
   padding: 2px 7px;
-  background: var(--bg);
+  background: var(--sunken);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
   color: var(--muted);
+  font-size: 12px;
 }
 
 /* ── 按钮与表单 ────────────────────────────────────────────────────── */
@@ -543,17 +592,20 @@ code {
   cursor: default;
 }
 
+/* 主按钮是实心的**文字色**，不是蓝色。「这是这一屏的主动作」是分量问题，靠对比度
+   就说得清；把它染成 accent 之后，同一块蓝还同时兼着导航选中、开关打开、芯片选中，
+   于是蓝不再指任何东西（§1.4）。现在 accent 只剩焦点环一个去处。 */
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
   font-weight: 500;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  filter: brightness(1.08);
+  background: var(--text);
+  border-color: var(--text);
+  opacity: 0.86;
 }
 
 .btn-danger {
@@ -579,9 +631,10 @@ code {
 }
 
 .btn-quiet.is-on {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  border-color: var(--text);
+  color: var(--text);
+  font-weight: 500;
 }
 
 .icon {
@@ -764,7 +817,7 @@ select:focus {
 .keybox {
   display: block;
   padding: 12px;
-  background: var(--bg);
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   word-break: break-all;
@@ -894,45 +947,54 @@ select:focus {
   margin-right: auto;
 }
 
-/* ── 开关 ──────────────────────────────────────────────────────────── */
+/* ── 启用/停用 ─────────────────────────────────────────────────────── */
 
-.toggle {
+/* 状态写成字，不画拨杆（§4）。定宽是必须的：「启用」和「已停用」差一个字，
+   不锁住的话同一列里的行会左右跳，而这一列正是竖着扫的。 */
+.statetoggle {
   display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 5.6em;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.toggle input {
-  display: none;
+.statetoggle:hover {
+  border-color: var(--line);
+  background: var(--hover);
 }
 
-.toggle span {
-  width: 32px;
-  height: 18px;
-  border-radius: 9px;
-  background: var(--line);
-  position: relative;
-  transition: background 0.12s;
+/* 只读版：同一副样子，但不做出「能点」的样子。 */
+.statetoggle.is-static {
+  padding-left: 0;
+  cursor: default;
 }
 
-.toggle span::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--panel);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.2);
-  transition: transform 0.12s;
+.statetoggle.is-static:hover {
+  border-color: transparent;
+  background: none;
 }
 
-.toggle input:checked + span {
-  background: var(--accent);
+.statetoggle.is-on {
+  color: var(--text);
 }
 
-.toggle input:checked + span::after {
-  transform: translateX(14px);
+/* 圆点是语义色，实心/空心是配套的非颜色线索（§3：语义色必须配非颜色线索）。 */
+.statetoggle-dot {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.statetoggle.is-on .statetoggle-dot {
+  color: var(--ok-text);
 }
 
 /* ── 登录页 ────────────────────────────────────────────────────────── */
@@ -973,20 +1035,23 @@ select:focus {
 /* ── 供应商图标 ────────────────────────────────────────────────────── */
 
 /* 图标本身是 120×120 带底色的品牌方块（少数是 24×24 透明描摹），统一裁成圆角方块。
-   inline-flex + shrink:0：它经常跟一段会被省略的长文本并排，不锁住就会被压扁。 */
+   inline-flex + shrink:0：它经常跟一段会被省略的长文本并排，不锁住就会被压扁。
+
+   **去底砖 + 降饱和**（§3 硬性禁止「图标彩色底砖」，§1.4 单色是默认态）：垫在下面
+   那层中性底和那圈描边去掉了，品牌色统一 grayscale 掉。这条**不能做到「按当前
+   文字色渲染」**——那要求整枚标记是单路径 currentColor，而这批资产里自带底色铺满
+   整块的那种（Anthropic、Qwen 一类）在 CSS 里怎么处理都还是一块底砖，只是灰的。
+   真要连灰砖都不留，只能换一套线性描摹资产，不在本次范围。
+   grayscale 之后不同家的区分度只剩形状，所以保留圆角裁切——那也是形状的一部分。 */
 .avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   overflow: hidden;
   vertical-align: middle;
-  /* 垫一层中性底：各家标记不是一个路数，有的自带底色铺满整块（Anthropic 那种），
-     有的是透明描摹只占中间一小块（OpenRouter 那种）。不垫的话后者在列表里像是掉了
-     图标。自带底色的会把这层完全盖住，看不出区别。 */
-  background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--line);
+  filter: grayscale(1);
 }
 
 .avatar svg,
@@ -1015,21 +1080,16 @@ select:focus {
   }
 }
 
-/* 没匹配到图标时的首字母块。色相由名字散出来，同一个名字永远同一个颜色——
-   一眼扫过去仍然能靠颜色区分行，只是认不出是哪家。 */
+/* 没匹配到图标时的首字母块。原先色相由名字散出来，一行一个颜色——那正是 §8 说的
+   「无意义颜色」：色相是名字的哈希，不指任何东西，却把整张表点成了糖豆。
+   现在只留字母，配一层最浅的凹底把它跟真图标区分开（「这个没认出来」也是信息）。 */
 .avatar-text {
-  background: hsl(var(--avatar-hue, 220) 45% 88%);
-  color: hsl(var(--avatar-hue, 220) 45% 28%);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--muted);
   font-size: 0.62em;
   font-weight: 600;
   line-height: 1;
-}
-
-@media (prefers-color-scheme: dark) {
-  .avatar-text {
-    background: hsl(var(--avatar-hue, 220) 32% 26%);
-    color: hsl(var(--avatar-hue, 220) 45% 82%);
-  }
 }
 
 .icon-row {
@@ -1075,9 +1135,10 @@ select:focus {
   opacity: 1;
 }
 
+/* 「已复制」是一次成功确认，用成功色，不是 accent（§1.4）。 */
 .copycode.is-copied {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--ok-line);
+  color: var(--ok-text);
 }
 
 /* ── Segmented ─────────────────────────────────────────────────────── */
@@ -1086,7 +1147,7 @@ select:focus {
   display: inline-flex;
   padding: 2px;
   gap: 2px;
-  background: var(--bg);
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 7px;
 }
@@ -1141,7 +1202,7 @@ select:focus {
 .segment-check {
   display: inline-block;
   width: 12px;
-  color: var(--accent, currentColor);
+  color: var(--text);
   font-size: 11px;
 }
 
@@ -1153,26 +1214,36 @@ select:focus {
 }
 
 /* ── 协议探测结果 ──────────────────────────────────────────────────── */
-/* 只提示，所以是卡片内的一条便签，不是错误条：它不表示保存失败。 */
+/* 只提示，不是错误条：它不表示保存失败。所以不画框也不上色，缩进一格 + 一条左线
+   说明「这是挂在上面那个渠道下的一句话」——层级靠位置，不靠又一个盒子（§3）。 */
 
+/* flex 是给「拉模型列表」那条结论用的：它后面挂着一颗「挑要纳管的…」，块级布局下
+   按钮紧贴着最后一个字，读起来像是句子的一部分。wrap 让窄屏时按钮换行而不是把
+   那句话挤没。 */
 .probe {
-  margin: 0 14px 12px;
-  padding: 8px 11px;
-  border-radius: 7px;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 10px 0 0;
+  padding: 2px 0 2px 11px;
+  border-left: 2px solid var(--line);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
 }
 
+/* 有不通的子路径时左线转成警告色——语义色，配下面那串逐条列出的文字当非颜色线索。 */
 .probe-bad {
-  border-color: var(--warn-line, var(--line));
+  border-left-color: var(--warn-line);
   color: var(--text);
 }
 
+/* 逐条列不通的子路径。flex-basis 100% 把它顶到自己一行——不写的话它会跟前面那句
+   话并排，一行里半句话半张名单。 */
 .probe ul {
-  margin: 4px 0 0;
+  flex-basis: 100%;
+  margin: 0;
   padding-left: 18px;
 }
 
@@ -1207,7 +1278,7 @@ select:focus {
 }
 
 .picker.is-open .picker-trigger {
-  border-color: var(--accent);
+  border-color: var(--text);
 }
 
 .picker-value {
@@ -1306,7 +1377,7 @@ select:focus {
 /* 高亮只跟 is-active 走（键盘和鼠标共用同一个状态），不用 :hover——
    两套高亮同时亮着会让人不知道回车会选中哪一个。 */
 .picker-option.is-active {
-  background: var(--bg);
+  background: var(--hover);
 }
 
 .picker-option.is-selected .picker-label {
@@ -1316,7 +1387,7 @@ select:focus {
 .picker-option.is-selected::after {
   content: '✓';
   margin-left: auto;
-  color: var(--accent);
+  color: var(--text);
 }
 
 /* ── Chips ─────────────────────────────────────────────────────────── */
@@ -1339,7 +1410,7 @@ select:focus {
 }
 
 .chips-row:focus-within {
-  border-color: var(--accent);
+  border-color: var(--text);
 }
 
 /* 输入框在标签之间流动，所以不能吃满宽；给个能打下一个模型名的下限。 */
@@ -1386,7 +1457,7 @@ select:focus {
 
 .chip-add:hover {
   border-style: solid;
-  border-color: var(--accent);
+  border-color: var(--muted);
   color: var(--text);
 }
 
@@ -1398,10 +1469,8 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line-soft);
   min-width: 0;
 }
 
@@ -1468,17 +1537,19 @@ select:focus {
 .cred-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
+/* 一行一份，横线分隔，不是一叠小卡片（§8「卡里套卡」——这一层在模态框里面）。 */
 .cred {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.cred:first-child {
+  border-top: none;
 }
 
 /* 停用的那些不隐藏、只压暗：它们是 401 摘除的现场，而恢复只能人工做。 */
@@ -1512,46 +1583,83 @@ select:focus {
 
 /* ── 用量页 ────────────────────────────────────────────────────────── */
 
-/* 顶部指标条：一屏第一眼要回答的是「这段时间跑了多少、挂了多少」，
-   而不是「gpt-luna 的缓存写是多少」。明细留给下面的表。 */
+/* 顶部指标条。原先是四个等大方块并排（§8 点名的反模式「指标堆砌成一排等大方块
+   ——有主次就给主次，没有就合并」），而且那四块之间的 1px 缝隙是拿背景色伪造的
+   边框，正好也是 §3 不让画的那种。
+   现在**有主次**：调用是这一屏的主语，字号最大；失败次之，只有非零时才上语义色；
+   两个 token 数合成一行附注——它们回答的是「烧了多少」，而逐模型的明细就在下面
+   那张表里，摆在顶上只是把同一个数说两遍。 */
 .stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1px;
-  background: var(--line);
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 34px;
+  padding: 2px 0 18px;
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.stat {
-  padding: 14px 16px;
-  background: var(--panel);
+.stat-lead {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
 }
 
-.stat-label {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.stat-value {
-  margin-top: 4px;
-  font-size: 22px;
-  line-height: 1.2;
+.stat-lead-value {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
-.stat-sub {
-  margin-top: 2px;
-  font-size: 12px;
+.stat-lead-label {
+  font-size: 13px;
   color: var(--muted);
 }
 
-/* 调用占比条垫在模型名底下：几十行数字里看不出谁是大头，一条横杠能。 */
+.stat-side {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stat-side b,
+.stat-tokens b {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 有失败才上错误色，且同时把「失败」两个字留着当非颜色线索（§3）。 */
+.stat-side.is-bad b,
+.stat-side.is-bad {
+  color: var(--err-text);
+}
+
+/* token 两项推到最右：它们是附注，不该跟前两个指标抢同一条视线起点。 */
+.stat-tokens {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 调用占比条垫在模型名底下：几十行数字里看不出谁是大头，一条横杠能。
+   中性色不是 accent：「这一行占了多少」是量，不是状态，染成蓝的只会让人以为
+   它跟别处的蓝是一回事（§1.4）。 */
 .bar-mini {
   height: 3px;
   margin-top: 5px;
   border-radius: 2px;
-  background: var(--accent);
-  opacity: 0.65;
+  background: var(--muted);
+  opacity: 0.5;
   min-width: 2px;
 }
 
@@ -1565,7 +1673,7 @@ select:focus {
   padding: 1px 8px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--sunken);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1597,7 +1705,7 @@ select:focus {
 .route-node {
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--sunken);
   border: 1px solid var(--line);
   color: var(--muted);
 }

@@ -220,24 +220,27 @@ function ChannelCard({
             </span>
           )}
         </div>
+        {/* 五颗等分量的描边按钮排一行，等于没有主次（DESIGN.md §5：渠道编辑是最高频
+            动作）。只有「编辑」保留边框，探测/拉列表/凭证池这三个是偶发的诊断与配置
+            动作，压到 ghost 那一档——文字照常可读，只是不再跟正主抢视线。 */}
         <div className="row-actions">
-          <button className="btn btn-quiet" onClick={onProbe} disabled={probe === 'running'}>
+          <button className="btn btn-ghost" onClick={onProbe} disabled={probe === 'running'}>
             {probe === 'running' ? '探测中…' : '探测协议'}
           </button>
           {/* 拉的是上游自己声明的模型列表，用来省掉「这个模型到底在哪一侧」的手工核对。
               结果只进表单不进路由（口径层 v0.40）。 */}
           <button
-            className="btn btn-quiet"
+            className="btn btn-ghost"
             onClick={onFetchModels}
             disabled={fetched === 'running'}
             title="拉上游 /v1/models，只用来帮你填表，不落库也不影响路由"
           >
             {fetched === 'running' ? '拉取中…' : '拉模型列表'}
           </button>
-          <button className="btn btn-quiet" onClick={onCredential}>
+          <button className="btn btn-ghost" onClick={onCredential}>
             凭证池
           </button>
-          <button className="btn btn-quiet" onClick={onEdit}>
+          <button className="btn" onClick={onEdit}>
             编辑
           </button>
           <Confirm ghost onConfirm={() => void mutate(() => api.del(`/channels/${ch.id}`))} />
@@ -314,9 +317,11 @@ function ChannelCard({
                   />
                 )}
                 <div className="model-actions">
-                  {m.disabled && <span className="tag tag-off">已停用</span>}
+                  {/* 状态标注不再单独挂一枚 tag：开关自己就写着「已停用」，
+                      两处说同一件事只是把行挤窄。 */}
                   <Toggle
                     on={!m.disabled}
+                    label={m.upstream_model}
                     onChange={(on) =>
                       void mutate(() => api.put(`/channel-models/${m.id}`, { disabled: !on }))
                     }
@@ -725,7 +730,7 @@ function ModelProtocols({
         <button
           key={p}
           type="button"
-          className={'chip' + (current.includes(p) ? ' is-on' : '')}
+          className={'chip-toggle' + (current.includes(p) ? ' is-on' : '')}
           onClick={() => toggle(p)}
           title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}
         >
@@ -736,7 +741,7 @@ function ModelProtocols({
         <button
           key={p}
           type="button"
-          className="chip is-stale"
+          className="chip-toggle is-stale"
           onClick={() => toggle(p)}
           title={`渠道已经不说 ${PROTOCOL_LABEL[p] ?? p} 了，这一项正让这个模型没有可用协议。点一下移除。`}
         >
@@ -750,7 +755,7 @@ function ModelProtocols({
         </span>
       )}
       {suggest && !same && (
-        <button type="button" className="chip chip-suggest" onClick={() => save(suggest)}>
+        <button type="button" className="chip-toggle chip-suggest" onClick={() => save(suggest)}>
           上游只在 {suggest.map((p) => PROTOCOL_SHORT[p] ?? p).join('、')} 侧列出 · 采纳
         </button>
       )}
@@ -1079,6 +1084,7 @@ function CredentialRow({
       <div className="row-actions">
         <Toggle
           on={!cred.disabled}
+          label={cred.name}
           onChange={(on) =>
             void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: !on }))
           }
