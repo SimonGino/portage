@@ -1247,6 +1247,45 @@ select:focus {
   padding-left: 18px;
 }
 
+/* 模型矩阵（口径层 v0.43）：一模型一行，行内逐侧一格。去掉列表圆点——每行自带
+   模型名当行首，再加一颗圆点是两个行首。 */
+.probe-models {
+  list-style: none;
+  padding-left: 0;
+}
+
+.probe-models li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 2px 0;
+}
+
+.probe-models code {
+  font-family: var(--mono);
+  min-width: 18ch;
+}
+
+/* 三态配色只承载语义（DESIGN.md §3），✓/✗/? 是配套的非颜色线索：
+   通 = 成功色，不通 = 警告色，「说不清」不上色——它不是一个状态，是状态未知。 */
+.probe-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.probe-ok {
+  color: var(--ok-text);
+}
+
+.probe-missing {
+  color: var(--warn-text);
+}
+
+.probe-unclear {
+  color: var(--muted);
+}
+
 .probe code {
   font-family: var(--mono);
 }

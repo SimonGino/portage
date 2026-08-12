@@ -286,6 +286,9 @@ type ProbeTarget struct {
 	// 是那个答案。一份都没有时是空切片——照样探，只是不带凭证，上游多半回 401，
 	// 而 401 同样证明子路径存在，这正是探测要问的。
 	Credentials []ProbeCredential
+	// Models 是**启用中**的纳管模型（模型级探测，口径层 v0.43）。停用的不探：
+	// 它本来就路由不到，探出来的结论没有消费者。
+	Models []ProbeModel
 }
 
 // ProbeCredential 是探测时用的一份凭证：显示用名字 + 进程内自用的值 + 当下状态。
@@ -293,6 +296,14 @@ type ProbeCredential struct {
 	Name     string
 	Value    string
 	Disabled bool
+}
+
+// ProbeModel 是模型级探测的一格目标：模型名 + 它自己的协议子集（口径层 v0.40，
+// 空 = 继承渠道全集）。子集按**存的原样**给出，不与渠道集取交——探测答的是
+// 「上游有没有」，跟路由取交集是两个问题；人填了什么就照什么探。
+type ProbeModel struct {
+	Name      string
+	Protocols protocol.Set
 }
 
 // ChannelProbeTarget 按 id 取探测目标。
@@ -324,7 +335,32 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 		}
 		t.Credentials = append(t.Credentials, cp)
 	}
-	return t, rows.Err()
+	if err := rows.Err(); err != nil {
+		return ProbeTarget{}, err
+	}
+
+	mrows, err := db.QueryContext(ctx, `
+		SELECT upstream_model, protocols FROM channel_models
+		WHERE channel_id = ? AND disabled = 0 ORDER BY upstream_model`, id)
+	if err != nil {
+		return ProbeTarget{}, err
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var pm ProbeModel
+		var raw string
+		if err := mrows.Scan(&pm.Name, &raw); err != nil {
+			return ProbeTarget{}, err
+		}
+		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
+		if raw != "" {
+			if pm.Protocols, err = protocol.ParseSet(raw); err != nil {
+				return ProbeTarget{}, InvalidInput{Reason: err.Error()}
+			}
+		}
+		t.Models = append(t.Models, pm)
+	}
+	return t, mrows.Err()
 }
 
 // DeleteChannel 删渠道。凭证与纳管模型靠 schema 的 ON DELETE CASCADE 跟着走；

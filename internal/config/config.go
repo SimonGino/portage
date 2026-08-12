@@ -50,8 +50,9 @@ type Retry struct {
 	MaxDelay    time.Duration `yaml:"max_delay"`
 }
 
-// Default binds to loopback only: there is no gateway key auth until M1, so a
-// stray 0.0.0.0 would put an unauthenticated relay on the network.
+// Default binds to loopback only as the conservative default; deployments that
+// want LAN access opt in with listen: "0.0.0.0:8317" (relay has key auth and
+// the admin UI has session auth, so exposing it is a deliberate choice, not a leak).
 func Default() Config {
 	return Config{
 		Listen:           "127.0.0.1:8317",

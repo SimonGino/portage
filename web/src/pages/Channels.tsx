@@ -10,9 +10,11 @@ import {
 import type {
   Channel,
   ChannelModel,
+  ChannelProbe,
   Credential,
   KeyMode,
   ModelListResult,
+  ModelProbeRow,
   ProbeGroup,
   Protocol,
 } from '../api'
@@ -28,7 +30,7 @@ export default function Channels() {
   const [credFor, setCredFor] = useState<Channel | null>(null)
   // 探测结果只活在这个组件的内存里：口径层 v0.33 定的是「只提示、不落库、不参与
   // 路由」——探测结果会过期，存下来就变成一份会撒谎的缓存。刷新页面它就该没了。
-  const [probes, setProbes] = useState<Record<number, ProbeGroup[] | 'running'>>({})
+  const [probes, setProbes] = useState<Record<number, ChannelProbe | 'running'>>({})
   // 拉回来的上游模型列表同样只活在内存里（口径层 v0.40）：它是填表助手，不是配置。
   // 中转站的 /v1/models 返回一份写死的大列表是常态，存下来就成了一份会撒谎的缓存——
   // 与 v0.33 拒绝把探测做成闸是同一条立论。刷新页面它就该没了。
@@ -49,12 +51,15 @@ export default function Channels() {
     }
   }
 
-  async function probe(id: number) {
+  // withModels 分开的是「谁在调」：人点探测按钮才连模型矩阵一起跑（口径层 v0.43 ①
+  // 只由人手点——那一层每格都是要花钱的真请求），保存渠道后自动跑的那次只要
+  // 免费的子路径层（v0.33 定的就是「朝勾选的子路径各发一次」）。
+  async function probe(id: number, withModels: boolean) {
     setProbes((p) => ({ ...p, [id]: 'running' }))
     try {
-      // 逐把凭证探（口径层 v0.38），所以结果是按凭证分的组。
-      const r = await api.post<{ credentials: ProbeGroup[] }>(`/channels/${id}/probe`)
-      setProbes((p) => ({ ...p, [id]: r.credentials }))
+      // 子路径层逐把凭证探（v0.38），模型矩阵只用第一把启用凭证。
+      const r = await api.post<ChannelProbe>(`/channels/${id}/probe${withModels ? '?models=1' : ''}`)
+      setProbes((p) => ({ ...p, [id]: r }))
     } catch {
       // 探测失败不算保存失败，也不该盖掉页面上别的错误：静默丢掉那一格。
       setProbes((p) => {
@@ -109,7 +114,7 @@ export default function Channels() {
                 ch={ch}
                 onEdit={() => setEditing(ch)}
                 onCredential={() => setCredFor(ch)}
-                onProbe={() => void probe(ch.id)}
+                onProbe={() => void probe(ch.id, true)}
                 probe={probes[ch.id]}
                 onFetchModels={() => void fetchModels(ch.id)}
                 fetched={fetched[ch.id]}
@@ -129,7 +134,8 @@ export default function Channels() {
             void reload()
             // 保存成功之后才探测，且不挡保存——勾错协议集的后果（一半端点全 404、
             // 另一半完全正常）启动闸看不见，人正好在这一刻最有可能改对它。
-            void probe(id)
+            // 只跑免费的子路径层：改个 base_url 不该顺手打出一屏花钱的模型探测。
+            void probe(id, false)
           }}
         />
       )}
@@ -161,7 +167,7 @@ function ChannelCard({
   onEdit: () => void
   onCredential: () => void
   onProbe: () => void
-  probe?: ProbeGroup[] | 'running'
+  probe?: ChannelProbe | 'running'
   onFetchModels: () => void
   fetched?: ModelListResult[] | 'running'
   /** 回 false 表示这次写没成——挑选面板据此决定关不关框，别的调用方不看。 */
@@ -252,8 +258,18 @@ function ChannelCard({
       {/* 探测结论只提示，不挡任何操作，也不落库——它会过期（口径层 v0.33）。
           按凭证分行（v0.38）：同一个子路径对不同的号可以有不同结论，合成一条就把
           「哪一把不行」抹掉了。 */}
-      {Array.isArray(probe) &&
-        probe.map((g) => <ProbeRow key={g.credential} group={g} multi={probe.length > 1} />)}
+      {probe && probe !== 'running' && (
+        <>
+          {probe.credentials.map((g) => (
+            <ProbeRow key={g.credential} group={g} multi={probe.credentials.length > 1} />
+          ))}
+          {/* 模型矩阵（口径层 v0.43）：子路径存在不等于模型存在——聚合型中转的
+              gpt-4o 未必在 Anthropic 那一侧列出，这一段答的就是那个差别。 */}
+          {(probe.models?.length ?? 0) > 0 && (
+            <ModelProbeGrid rows={probe.models!} credential={probe.model_credential} />
+          )}
+        </>
+      )}
 
       {listed && (
         <FetchedModels
@@ -492,8 +508,10 @@ function ModelPicker({
   }, [visible])
 
   // 搜的时候一律展开：搜完还要再点开一层，等于这个搜索框只帮你缩小了标题栏。
-  const isOpen = (g: { name: string; items: string[] }) =>
-    q !== '' || (expanded[g.name] ?? g.items.length <= COLLAPSE_AT)
+  // 第一组无条件默认展开（PO 裁定）：分组时特意把最大的族排最前——「真正要找的
+  // 多半在最大那族里」——再把它收起来，等于把最可能的答案藏在第一次点击后面。
+  const isOpen = (g: { name: string; items: string[] }, index: number) =>
+    q !== '' || (expanded[g.name] ?? (index === 0 || g.items.length <= COLLAPSE_AT))
 
   const pickable = visible.filter((n) => !existing.has(n))
   const allPicked = pickable.length > 0 && pickable.every((n) => picked.has(n))
@@ -571,8 +589,8 @@ function ModelPicker({
               {q ? `没有匹配「${query}」的模型。` : '上游列出的都已经纳管了。'}
             </Empty>
           )}
-          {groups.map((g) => {
-            const open = isOpen(g)
+          {groups.map((g, gi) => {
+            const open = isOpen(g, gi)
             const free = g.items.filter((n) => !existing.has(n))
             const on = free.filter((n) => picked.has(n)).length
             return (
@@ -799,6 +817,45 @@ function ProbeRow({ group, multi }: { group: ProbeGroup; multi: boolean }) {
 }
 
 /**
+ * ModelProbeGrid 是模型级探测的结论（口径层 v0.43）：每个启用中的纳管模型一行，
+ * 它的有效协议集里每一侧一格。
+ *
+ * 三态不是二态：把 429 画成 ✗、把 400 画成 ✓ 都是撒谎，而探测的口径是只提示——
+ * 提示就得诚实。「说不清」画 ?，状态码摆出来，判断留给人。符号是非颜色线索
+ * （DESIGN.md §3：语义色必须配一个不靠颜色的线索）。
+ */
+function ModelProbeGrid({ rows, credential }: { rows: ModelProbeRow[]; credential: string }) {
+  // 只有确定的「不通」才把左线转警告色；「说不清」不算——凭证 401 时整个矩阵都是
+  // 说不清，把它画成警告等于每次都在喊狼来了。
+  const bad = rows.some((r) => r.results.some((x) => x.state === 'missing'))
+  return (
+    <div className={'probe' + (bad ? ' probe-bad' : '')}>
+      <span>
+        模型探测{credential ? `（用「${credential}」）` : ''}：每格发了一个带模型名的最小真实请求
+        ——只提示，不落库也不影响路由
+      </span>
+      <ul className="probe-models">
+        {rows.map((r) => (
+          <li key={r.model}>
+            <code>{r.model}</code>
+            {r.results.map((x) => (
+              <span
+                key={x.protocol}
+                className={'probe-cell probe-' + x.state}
+                title={x.detail + (x.status > 0 ? `（HTTP ${x.status}）` : '')}
+              >
+                {PROTOCOL_SHORT[x.protocol] ?? x.protocol}{' '}
+                {x.state === 'ok' ? '✓' : x.state === 'missing' ? '✗' : `? ${x.status || '—'}`}
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
  * AddModels 是往渠道里加纳管模型的那一行。
  *
  * 接受**一次粘一批**——逗号、空格、换行都算分隔。上游控制台的模型列表复制下来就是
@@ -890,7 +947,6 @@ function ChannelForm({
     channel?.protocols?.length ? channel.protocols : ['openai'],
   )
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
-  const [keyMode, setKeyMode] = useState<KeyMode>(channel?.key_mode ?? 'polling')
   const [disabled, setDisabled] = useState(channel?.disabled ?? false)
   // 凭证只在**新建**时出现在这张表单里。编辑走单独的入口，这样「改个名字」
   // 不可能顺手把凭证清空——后端的修改接口本来就不看这个字段。
@@ -902,7 +958,10 @@ function ChannelForm({
     e.preventDefault()
     setBusy(true)
     try {
-      const body = { name, protocols: protos, base_url: baseURL, key_mode: keyMode, disabled }
+      // key_mode 不在这张表单上（v0.38 ⑨ 的位置已由 v0.44 修订到凭证池），干脆
+      // 不传：后端对缺省的 key_mode 是「整列不写」（v0.35 ⑸），比回传 prop 上的
+      // 旧值安全——凭证池那边刚改过的话，这儿的 prop 还是老的。
+      const body = { name, protocols: protos, base_url: baseURL, disabled }
       if (channel) {
         await api.put(`/channels/${channel.id}`, body)
         onSaved(channel.id)
@@ -957,14 +1016,6 @@ function ChannelForm({
         >
           <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
         </Field>
-        {/* 露出选取模式（口径层 v0.38）：多凭证放开之后，「为什么总是第一把在跑」
-            是必然被问的第一个问题，答案不该只藏在 SQL 里。 */}
-        <Field
-          label="凭证选取"
-          hint="池子里有多把时按哪种顺序用。轮询把量摊开；随机适合上游按 key 限流、想避开固定节奏的场景"
-        >
-          <Segmented value={keyMode} options={KEY_MODE_OPTIONS} onChange={setKeyMode} />
-        </Field>
         {!channel && (
           <Field label="上游凭证" hint="只写不回读：保存之后页面上再也看不到它。建完可以在「凭证池」里继续加">
             <input
@@ -1005,6 +1056,7 @@ function CredentialPool({ channel, onClose }: { channel: Channel; onClose: () =>
     api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
   )
   const list = data ?? []
+  const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
 
   async function mutate(fn: () => Promise<unknown>) {
     try {
@@ -1015,6 +1067,26 @@ function CredentialPool({ channel, onClose }: { channel: Channel; onClose: () =>
       return
     }
     await reload()
+  }
+
+  /** 改选取模式立即落库。渠道的修改接口是整体覆盖，其余字段原样回传。 */
+  function saveKeyMode(mode: KeyMode) {
+    const prev = keyMode
+    setKeyMode(mode)
+    void mutate(() =>
+      api
+        .put(`/channels/${channel.id}`, {
+          name: channel.name,
+          protocols: channel.protocols ?? [],
+          base_url: channel.base_url,
+          key_mode: mode,
+          disabled: channel.disabled,
+        })
+        .catch((e) => {
+          setKeyMode(prev) // 没写成就把单选钮拨回去，别让页面撒谎
+          throw e
+        }),
+    )
   }
 
   return (
@@ -1037,6 +1109,20 @@ function CredentialPool({ channel, onClose }: { channel: Channel; onClose: () =>
         )}
 
         <AddCredentials channelID={channel.id} mutate={mutate} />
+
+        {/* 选取模式只在 ≥2 把（含停用）时出现（v0.44 修订 v0.38 ⑨ 的位置）：它描述
+            的是「多把 key 之间怎么轮」，单 key 渠道从头到尾不该看到这个概念；含停用
+            是因为 1 启用 + 1 停用时人马上要恢复第二把，模式马上就有意义。原裁决
+            「露出来」的立论（多凭证后「为什么总是第一把在跑」必然被问）在 key 列表
+            旁边成立得更彻底。 */}
+        {list.length >= 2 && (
+          <Field
+            label="凭证选取"
+            hint="按哪种顺序用池子里的 key。轮询把量摊开；随机适合上游按 key 限流、想避开固定节奏的场景。改了立即生效"
+          >
+            <Segmented value={keyMode} options={KEY_MODE_OPTIONS} onChange={saveKeyMode} />
+          </Field>
+        )}
 
         <div className="form-actions">
           <button type="button" className="btn btn-primary" onClick={onClose}>

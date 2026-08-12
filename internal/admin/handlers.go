@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
@@ -172,7 +173,7 @@ type channelInput struct {
 	// Protocols 是支持协议集（口径层 v0.33），至少一个。
 	Protocols []string `json:"protocols"`
 	BaseURL   string   `json:"base_url"`
-	// KeyMode 是凭证选取模式 polling/random（口径层 v0.38 露到表单上）。
+	// KeyMode 是凭证选取模式 polling/random（口径层 v0.44 起露在凭证池弹窗里，不在渠道表单）。
 	KeyMode    string `json:"key_mode"`
 	Disabled   bool   `json:"disabled"`
 	Credential string `json:"credential"`
@@ -264,9 +265,82 @@ func (h *Handler) probeChannel(c *gin.Context) {
 		}
 		groups = append(groups, g)
 	}
+
+	// 模型矩阵要花钱，所以**默认不跑**，由调用方显式 `?models=1` 要（口径层 v0.43 ①
+	// 「只由人手点」）。缺省站在不花钱那一侧：上面那层是保存渠道后自动跑的（v0.33），
+	// 把矩阵默认挂上去等于每改一次 base_url 就静默打出「模型数 × 协议数」次真实推理。
+	// 写成 opt-out（`?models=0`）的话，将来漏传参数的代价是花钱，opt-in 漏传只是少一层提示。
+	var models []modelProbeRow
+	var modelCred string
+	if c.Query("models") == "1" {
+		models, modelCred = probeModelMatrix(c.Request.Context(), target)
+	}
+
 	// 只报渠道名，不报 base_url，更不报凭证值。
-	h.log.Info("渠道协议探测", "channel", target.Name, "credentials", len(groups))
-	c.JSON(http.StatusOK, gin.H{"credentials": groups})
+	h.log.Info("渠道协议探测", "channel", target.Name,
+		"credentials", len(groups), "models", len(models))
+	c.JSON(http.StatusOK, gin.H{
+		"credentials":      groups,
+		"models":           models,
+		"model_credential": modelCred,
+	})
+}
+
+// probeModelMatrix 跑模型级探测（口径层 v0.43）：启用中的纳管模型 × 各自的有效协议
+// 集（自己声明的子集，空则继承渠道全集），每格发一个带模型名的最小真实请求。
+//
+// 只用第一把**启用**凭证：这一层每格都是要花钱的真请求，逐把凭证轰全矩阵是
+// 模型数 × 协议数 × 凭证数的立方爆炸；「这把凭证还活不活」的问题上面那层已经
+// 逐把答过了。403 的格子固定词表里写明「可能是这把凭证没开通」——那正是 403 的
+// 凭证相关含义，所以响应里带上探的是哪把（model_credential），页面照实标注。
+//
+// 并发跑但压到 4：与上面那层「串行防中转按并发判限流」的顾虑相对，这一层的请求
+// 形状就是普通推理流量，4 路并发是任何客户端都会有的样子；串行在 20 个模型 ×
+// 8 秒超时的最坏情形下要等三分钟，人在对话框前面等不了那么久。
+func probeModelMatrix(ctx context.Context, target store.ProbeTarget) ([]modelProbeRow, string) {
+	if len(target.Models) == 0 {
+		return nil, ""
+	}
+	var cred store.ProbeCredential
+	for _, x := range target.Credentials {
+		if !x.Disabled {
+			cred = x
+			break
+		}
+	}
+	if cred.Value == "" {
+		// 一把启用的凭证都没有：拿空凭证发请求只会攒一屏 401 说不清，不如不发。
+		// 上面那层同样会是空的，页面只剩子路径探测不到东西的提示。
+		return nil, ""
+	}
+
+	rows := make([]modelProbeRow, len(target.Models))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for i, m := range target.Models {
+		protos := m.Protocols
+		if len(protos) == 0 {
+			protos = target.Protocols
+		}
+		rows[i] = modelProbeRow{Model: m.Name, Results: make([]upstream.ModelProbeResult, len(protos))}
+		for j, p := range protos {
+			wg.Add(1)
+			go func(i, j int, p protocol.Protocol, model string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				rows[i].Results[j] = upstream.ProbeModel(ctx, target.BaseURL, p, cred.Value, model)
+			}(i, j, p, m.Name)
+		}
+	}
+	wg.Wait()
+	return rows, cred.Name
+}
+
+// modelProbeRow 是一个纳管模型的探测结论行。凭证值不在里面，也不会有掩码。
+type modelProbeRow struct {
+	Model   string                      `json:"model"`
+	Results []upstream.ModelProbeResult `json:"results"`
 }
 
 func (h *Handler) deleteChannel(c *gin.Context) {

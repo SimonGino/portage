@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -74,4 +75,117 @@ func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential 
 		res.Detail = "子路径存在"
 	}
 	return res
+}
+
+// ModelProbeState 是模型级探测一格的三态结论（口径层 v0.43）。
+//
+// 刻意不是二态：把 429 画成「不通」、把 400 画成「通」都是撒谎，而探测的口径是
+// 只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
+type ModelProbeState string
+
+const (
+	// ModelOK：上游 2xx，这个模型在这一侧真实回了话。
+	ModelOK ModelProbeState = "ok"
+	// ModelMissing：404/405。模型不存在与子路径不存在合并——对使用者是同一个
+	// 结论：这一格当下不能用。
+	ModelMissing ModelProbeState = "missing"
+	// ModelUnclear：其余一切（400/401/403/429/5xx/连不上）。
+	ModelUnclear ModelProbeState = "unclear"
+)
+
+// ModelProbeResult 是「这个模型在这一侧通不通」的一格答案。
+type ModelProbeResult struct {
+	Protocol protocol.Protocol `json:"protocol"`
+	State    ModelProbeState   `json:"state"`
+	// Status 是上游的 HTTP 状态码，0 表示没连上。
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+}
+
+// ProbeModel 拿一个真实的最小请求问上游「这个模型在这条子路径上存在吗」。
+//
+// 空 `{}` 的 Probe 答不了这个问题——v0.40 记录的坑正是「渠道级探测全通、请求照样
+// 404」：聚合型中转在同一前缀下提供两套子路径，但它转的 gpt-4o 未必在 Anthropic
+// 那一侧列出。带模型名就得发真请求，所以这一层会花一点点钱（`max_tokens` 压到
+// 最小），也因此只用一把凭证、只由人手点，不逐把凭证轰全矩阵。
+//
+// 结论沿 v0.33 血统：只提示、不落库、不进路由。
+func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, credential, model string) ModelProbeResult {
+	res := ModelProbeResult{Protocol: p, State: ModelUnclear}
+	ep, ok := protocol.UpstreamEndpoint(p)
+	if !ok {
+		res.Detail = "没有对应的上游端点"
+		return res
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		buildURL(baseURL, ep, ""), strings.NewReader(modelProbeBody(p, model)))
+	if err != nil {
+		res.Detail = "请求构造失败"
+		return res
+	}
+	applyHeaders(req.Header, http.Header{}, p, credential, false)
+
+	resp, err := (&http.Client{Timeout: probeTimeout}).Do(req)
+	if err != nil {
+		res.Detail = "连不上：" + Redact(err).Error()
+		return res
+	}
+	drain(resp)
+	res.Status = resp.StatusCode
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		res.State = ModelOK
+		res.Detail = "通"
+	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusMethodNotAllowed:
+		res.State = ModelMissing
+		res.Detail = "这一侧没有这个模型（或子路径不存在）"
+	default:
+		// 摘要用我们自己的固定词表，**不带上游原文**——上游错误文案里可能带
+		// base_url，与 call_logs.error 的处理是同一条纪律。
+		res.Detail = unclearDetail(resp.StatusCode)
+	}
+	return res
+}
+
+// unclearDetail 把「说不清」的状态码翻成一句人话。判断不替人下：400 多半意味着
+// 模型其实存在（路由和模型都认了，拒的是请求形状），429 说明模型八成存在只是限流，
+// 但「八成」不该被画成通。
+func unclearDetail(status int) string {
+	switch {
+	case status == http.StatusBadRequest:
+		return "参数被拒（模型多半存在，是请求形状问题）"
+	case status == http.StatusUnauthorized:
+		return "凭证不对（401）"
+	case status == http.StatusForbidden:
+		return "被拒（403）——可能是这把凭证没开通这个模型"
+	case status == http.StatusTooManyRequests:
+		return "限流（429）"
+	case status >= 500:
+		return "上游错误"
+	default:
+		return "说不清"
+	}
+}
+
+// modelProbeBody 给出各协议的最小合法请求体。
+//
+//   - CC 与 Anthropic 用 `max_tokens: 1`——两边的通用最小参数。注意 OpenAI 官方的
+//     推理系模型（o 系、gpt-5 系）拒收 max_tokens、只认 max_completion_tokens，
+//     那会落成 400 →「说不清」；不迁就它，因为兼容型上游对不认识的字段各有脾气，
+//     而 400 的固定词表已经写明「模型多半存在」。
+//   - Responses 用 `max_output_tokens: 16`——OpenAI 给这个字段定了 16 的下限。
+func modelProbeBody(p protocol.Protocol, model string) string {
+	m, _ := json.Marshal(model) // 模型名来自库，仍然按 JSON 字符串正经编码
+	switch p {
+	case protocol.Anthropic, protocol.OpenAI:
+		return `{"model":` + string(m) + `,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
+	case protocol.OpenAIResponses:
+		return `{"model":` + string(m) + `,"input":"hi","max_output_tokens":16}`
+	}
+	return `{"model":` + string(m) + `}`
 }

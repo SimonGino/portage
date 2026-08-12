@@ -115,6 +115,35 @@ export interface ProbeGroup {
   results: ProbeResult[]
 }
 
+/**
+ * 模型级探测一格的三态结论（口径层 v0.43）。
+ *
+ * 刻意不是二态：把 429 画成「不通」、把 400 画成「通」都是撒谎，而探测的口径是
+ * 只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
+ */
+export type ModelProbeState = 'ok' | 'missing' | 'unclear'
+
+export interface ModelProbeResult {
+  protocol: Protocol
+  state: ModelProbeState
+  status: number
+  detail: string
+}
+
+/** 一个纳管模型的探测结论行：它的有效协议集里每一侧一格。 */
+export interface ModelProbeRow {
+  model: string
+  results: ModelProbeResult[]
+}
+
+/** 一次「探测协议」的完整回包：子路径层（逐凭证）+ 模型矩阵（第一把启用凭证）。 */
+export interface ChannelProbe {
+  credentials: ProbeGroup[]
+  models: ModelProbeRow[] | null
+  /** 模型矩阵用的那把凭证的名字。403 的格子要靠它说清「探的是哪把」。 */
+  model_credential: string
+}
+
 export interface ChannelModel {
   id: number
   upstream_model: string
