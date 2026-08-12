@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.41
+> 状态：草案 v0.43
+> v0.43 变更（口径层 v0.45~v0.48 落地补记：渠道页两栏与凭证可回读，2026-08-12）：该批同日落地且早于 v0.42 的内容，头部条目当时漏了，终审（#58）点出后补记。界面侧落点（主从两栏、右栏三段、启停开关、地址预览、左栏搜索）在 DESIGN.md v0.5~v0.10 版本记录，本文档动的只有凭证可回读那半（口径层 v0.47/v0.48）：①`api_keys` 加 `key_plain` 列——明文与哈希各存一列，存量行空串读作「原值没存过」，界面提示删了重建、不摆假掩码；鉴权仍走 `key_hash` 唯一索引，与这一列无关。②`key_hash` 裸 SHA-256 的立论加注：「明文只在创建那一个响应里存在过」的前提自 v0.47 不成立，结论不变且更无所谓——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。③§8.1「凭证先删后插作废」条随 v0.47 改写：去掉「值不回读 ⇒ 页面对不齐」那半条立论（已不成立），列表改回名字、凭证值、状态等。④散文两处旧称「网关 key」改「API Key」（v0.48 术语：网关侧一律 API Key，上游侧写全「上游凭证」）。修改人 jinpenga。
+> v0.42 变更（口径层 v0.49~v0.52 落地：渠道并发上限设计，2026-08-12）：只落设计，实现未排期。①新增 §7.5：数据模型（`channels.max_concurrency`，0 = 不限）、挂点（`upstream.Client.Do`，内存态信号量）、持有区间（一次 `Do` 内重试与换凭证共占一个闸坑）、排队（队列 ×1 / 超时 30s，config.yaml 全局项，客户端断连即出队）、队满/超时 429、拥塞期零改动（含三个「改到要回头复核 v0.51」的既有事实锚点）、观测与验收（`queue_wait_ms` 一列 + error 词表 `queue_full`/`queue_timeout` 两词、Go 集成测试四断言）。②§7 DDL 两处注记：`channels.max_concurrency` 与 `call_logs.queue_wait_ms`。③§6 时序补渠道并发闸一行。排队两个界与 `Retry-After` 的配置项名与形态实现时定（§7.5），启动配置样例暂不列。修改人 jinpenga。
 > v0.41 变更（口径层 v0.43/v0.44 落地：模型级探测 + 选取模式移位，2026-08-12）：口径见口径层 v0.43/v0.44，这里只记实现层落点。①新增 `upstream.ProbeModel`：带模型名的最小真实请求，CC 与 Anthropic 用 `max_tokens: 1`，Responses 用 `max_output_tokens: 16`（OpenAI 给该字段定了 16 的下限）；OpenAI 官方推理系模型（o 系、gpt-5 系）拒收 `max_tokens` 会落成 400 →「说不清」，**不迁就**——兼容型上游对不认识的字段各有脾气，而 400 的固定词表已写明「模型多半存在」。三态摘要用我方固定词表不带上游原文（上游错误文案可能带 base_url），传输错误过 `Redact`。②`store.ChannelProbeTarget` 加 `Models`（启用中的纳管模型 + 各自协议子集，**按存的原样**给出不与渠道集取交——探测答「上游有没有」，与路由取交集是两个问题）。③`POST /channels/:id/probe` 回包加 `models` 与 `model_credential`；矩阵并发压 4（子路径层维持串行防中转按并发判限流，矩阵这层的请求形状就是普通推理流量，串行在 20 模型 × 8s 超时的最坏情形要等三分钟）。④Web：探测结论加模型矩阵段（✓/✗/`? 状态码` 三态，非颜色线索；只有确定的「不通」才把左线转警告色——凭证 401 时整格「说不清」，画警告等于每次喊狼来了）；挑选面板第一组无条件默认展开；`key_mode` 的 `Segmented` 从渠道表单移进凭证池对话框、≥2 把（含停用）才显示，改了立即 PUT；渠道表单提交时**不传** `key_mode`——后端对缺省是整列不写（v0.35 ⑸），比回传 prop 上的旧值安全（凭证池那边刚改过的话表单里的 prop 还是老的）。⑤**矩阵默认不跑，靠 `?models=1` opt-in**（本 PR 自动 review 揪出，口径层 v0.43 ①「只由人手点」）：探测接口是保存渠道后自动调一次的（v0.33，那时它发空 `{}` 不花钱），矩阵直接挂进同一个响应等于每改一次 base_url 就静默打出「模型数 × 协议数」次真实推理；口径层其实早就自洽——v0.33 那句写的是「保存渠道时朝**勾选的子路径**各发一次」，跑偏的是实现。写成 opt-in 而不是 `?models=0` 的 opt-out：将来漏传参数，前者的代价是少一层提示，后者的代价是花钱。修改人 jinpenga。
 > v0.40 变更（口径层 v0.42 落地：项目改名 Portage，2026-08-11）：纯标识符改名，无行为变更。①Go module `github.com/SimonGino/ai-gateway` → `github.com/SimonGino/portage`，`cmd/gateway` → `cmd/portage`，构建产物 `bin/portage`、镜像内 `/portage`。②容器侧：镜像名 `portage:local`、配置路径 `/etc/portage/config.yaml`、compose 服务名 `portage`；**数据卷名 `ai-gateway-data` 保持不变**——改名会让下次 `compose up` 建一个空卷而把库留在旧卷里，是这批标识符中唯一改名有真实代价的一个（§11）。③`AIG_ADMIN_PASSWORD` → `PORTAGE_ADMIN_PASSWORD`（§7）、会话 cookie `aig_admin` → `portage_admin`、gin context key `aig.*` → `portage.*`、`GET /v1/models` 的 `owned_by` → `portage`。④网关 key 前缀 `sk-aig-` → `sk-ptg-`（§8）：**存量 key 不失效**，`internal/auth` 拿整串算 SHA-256，全仓没有一处解析前缀，因此不需要迁移也不需要兼容期。⑤`testdata/golden/` 一字未动——那是实采转录存档，改里面的字节等于篡改证据；`scripts/redact-inbound-*.jq` 经查不认前缀（按 header 名脱敏），不需要跟着改。⑥两份文档的历史版本记录不改写。修改人 jinpenga。
 > v0.39 变更（PR #42 自动 review 的四条，2026-08-11）：一条走口径（见口径层 v0.41），三条纯实现层。①**`GET /v1/models` 的接入点半边也按交集过滤**（口径层 v0.41）：判据抽在 `store.deadAccessPoints`，返回「每个候选的交集都为空」的接入点 id。写成「有没有一个候选活着」而不是「有没有一个候选死了」——M0~M2 单候选下两种等价，**等价的时候正是把它写对的时候**，M4 放开多候选后一个死候选不该抹掉整个接入点。一个候选都没有的接入点不在这个集合里（照列），那种形状 `checkSingleCandidate` 本来就拒，这里不替它改判。②**`channel_models.protocols` 的值合法性进启动闸**（新增 `checkModelProtocols`，与 `checkChannelFields` 并列）。只拦「值不合法」，**不拦交集为空**——后者是运行期状态（口径层 v0.40 ②），拦了等于让渠道少勾一个协议把进程掀翻。不拦值不合法的后果是 v0.21 通则点名的形态：进程照常起来、第一个打到它的请求才 500，而 `ListChannels` 又把解不动的值吞成空数组显示为「继承」（`admin.go:174`），页面上根本看不出哪里不对；进了启动闸之后这种库起不来，那处显示问题随之消失。③**管理端在单协议渠道上仍须显示模型协议子集**：原条件 `protos.length > 1` 会在「渠道从多协议缩成一个、而这个模型的子集不含它」时把整格藏起来——**那正是它变得不可用的那一刻**，藏了就既没有过期标记也没有清除入口，v0.40 ①「照实显示存量值」在最需要它的场景失效。条件改为 `protos.length > 1 || 存量子集非空`。④**拉取失败的协议侧不得参与推断**：`listedOn` 把「这一侧没拉到」（`models` 为 null：401 / 超时 / 回的不是 JSON）与「拉到了但没列出它」压成同一个「不在里面」，批量添加据此写库，等于凭零证据砍掉一条本来可能原生可走的协议路径、把请求推去做有损转换。新增 `listComplete`（每个协议侧都真拉到了列表），为假时一律留继承；建议气泡与「上游列表里没有它」也一并改吃它——同一份证据只该有一个成色判定。修改人 jinpenga。
@@ -134,7 +136,7 @@ web/                       # Vite + React 源码；产物落 internal/webui/dist
 
 > **实现偏离待裁（v0.11）**：M0-1 把接入点解析（`Resolve`，返回命中候选 + 其渠道连通信息）实现在 `internal/store` 而非本节列出的 `internal/router/`。理由：临时闸下解析就是一条 SQL，单开一个只做转调的包是空壳。代价：`store` 同时管 schema、启动校验与解析，职责在发散。M4 上多候选加权分流时解析会长出真正的逻辑，届时要么拆出 `internal/router/`、要么本节按实际改写——请 PO 在 M4 排期时一并裁定。
 >
-> ~~**实现偏离待裁（v0.12）**~~ **已裁（口径层 v0.28，2026-08-08）**：`internal/admin` **只收管理面**；`GET /v1/models` 与 `/healthz` 是业务面，留在 `internal/server`。理由即当初提请裁定的那条——`/v1/models` 是 harness 走网关 key 打的业务端点，放 `admin` 会让「业务面 vs 管理面」的边界糊掉，而这条边界正是两套凭证彻底分离的依据。本节模块表已按裁决改写。
+> ~~**实现偏离待裁（v0.12）**~~ **已裁（口径层 v0.28，2026-08-08）**：`internal/admin` **只收管理面**；`GET /v1/models` 与 `/healthz` 是业务面，留在 `internal/server`。理由即当初提请裁定的那条——`/v1/models` 是 harness 走 API Key 打的业务端点，放 `admin` 会让「业务面 vs 管理面」的边界糊掉，而这条边界正是两套凭证彻底分离的依据。本节模块表已按裁决改写。
 
 ## 4. 内部事件模型（canonical events）
 
@@ -411,6 +413,8 @@ router：接入点（对外模型名）→ 命中候选（渠道纳管模型；M
 upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、不记忆、不摘除。**候选间转移实现在 M4，key 层内环实现在 M3**；M0~M2 单候选单凭证退化：失败不切换，直接按入口协议原生格式回错）：
   候选集 = 该接入点 weight>0 的候选
   loop：对未试过的候选重新归一化权重，加权随机抽一个
+      渠道并发闸（口径层 v0.49/v0.50，实现未排期，细节见 §7.5）：设了上限的渠道先占闸坑，闸满在网关侧有界排队
+          （队列 ×1 / 超时 30s），队满或等超时按入口协议原生格式回网关自产 429；一次 Do 的重试与换凭证共占同一个闸坑
       渠道内按 key_mode 选启用凭证（key 层内环，v0.11，口径层 v0.38 修订，实现在 M3）：
           请求上游成功 ──► 透传 / 转换下行（写出首字节后不再切换）
           429/5xx/网络错误（未写首字节）──► 同候选同凭证退避重试（最内环，v0.19，实现在 M2）
@@ -453,7 +457,7 @@ logging：无论成败异步落 call_logs
 - `Content-Type` 取自客户端；`Accept` 取自客户端，未给且流式时补 `text/event-stream`。
 - 凭证注入按**本次选定的**出站协议：`anthropic` → `x-api-key: <凭证>`；`openai` / `openai_responses` → `Authorization: Bearer <凭证>`。（同一个渠道两种协议都说时，两次请求的认证头因此可能不同——这是对的，头跟协议走不跟渠道走。）
 - Anthropic 渠道额外：`anthropic-version` 取自客户端、未给时默认 `2023-06-01`；`anthropic-beta` 客户端给了就原样转发（Claude Code 靠它开 1M 上下文、computer use 等能力，丢了会静默退化）。
-- 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关 key，绝不能漏到上游**。
+- 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关下发的 API Key，绝不能漏到上游**。
 - `Accept-Encoding` 不转发客户端值，流式请求显式设 `identity`（避免上游压缩引入分块缓冲、拖长首字延迟）；不注入 `X-Forwarded-*`（个人自用零收益且泄露内网信息）。
 
 > **白名单实测复核（M0 验收，2026-08-06）**：用一次性反代录下 Codex CLI 实际发出的全部请求头，逐条对照上面的白名单。结论是**白名单不放宽**，依据两条：① Codex 的私有头（`X-Codex-*` 一族、session/turn 标识等）全部被丢弃，整轮工具调用照样跑通——上游不需要它们；② 其中 `X-Codex-Turn-Metadata` 携带 `installation_id`，属于客户端安装标识，转发出去等于把本机指纹泄露给上游，个人自用场景零收益。若日后某个 harness 因缺头而降级，按「哪个头、丢了坏什么」逐个加白，不做整类放行。
@@ -535,6 +539,7 @@ CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职
   base_url TEXT NOT NULL,
   credential_type TEXT NOT NULL DEFAULT 'api_key',  -- api_key | service_account（Vertex：SA JSON→token 刷新，v0.17）
   key_mode TEXT NOT NULL DEFAULT 'polling',  -- polling | random：凭证池选取模式
+  max_concurrency INTEGER NOT NULL DEFAULT 0,  -- 渠道并发上限（口径层 v0.49）：in-flight 上限，0 = 不限；老库靠 store.migrate 的既有 ALTER 模式补列。实现未排期，见 §7.5
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -587,6 +592,7 @@ CREATE TABLE api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   key_hash TEXT NOT NULL UNIQUE,             -- SHA-256(明文) 的小写十六进制，不加盐，见下
+  key_plain TEXT NOT NULL DEFAULT '',        -- 明文（口径层 v0.47）。存量行永远是空串，见下
   allowed_models TEXT NOT NULL DEFAULT '*',  -- JSON 数组或 *；M1 只建列不校验，一律当 *
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -610,6 +616,8 @@ CREATE TABLE call_logs (
                                            -- 原为「同候选重试次数」）：这一列回答的是「这次怎么慢了三秒」，
                                            -- 而换凭证同样会慢。结构化日志里对应 retries 字段（v0.21）
   ttft_ms INTEGER,                     -- 首字节耗时（流式）
+  queue_wait_ms INTEGER NOT NULL DEFAULT 0,  -- 渠道并发闸排队等待（口径层 v0.52）：没闸/没等为 0；配套 error 词表
+                                             -- 加 queue_full / queue_timeout 两词。实现未排期，见 §7.5
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
@@ -630,7 +638,9 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
 
 ### 7.1 key 鉴权的三条实现口径（M1，PO 拍板 jinpenga 2026-08-08）
 
-**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 理由：key 是网关自己生成的高熵随机串（`sk-ptg-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
+**`key_plain` = 明文，与哈希各存一列（口径层 v0.47）。** 管理端要能看能复制（PO 裁定），而明文此前从未落库，只能加列。**存量行补不回来**：`ALTER TABLE` 的默认值是空串，而哈希不可逆，加列之前建的 key 谁也还原不了——读侧把空串读作「原值没存过」，界面据此提示删了重建，不摆假掩码。鉴权仍走 `key_hash` 的唯一索引，与这一列无关。
+
+**`key_hash` = SHA-256 裸哈希，不加盐、不用 bcrypt/argon2。** 注：下面这段理由里「明文只在创建那一个响应里存在过」的前提自 v0.47 起不成立，但结论不变且更无所谓——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。原理由：key 是网关自己生成的高熵随机串（`sk-ptg-` + 随机），不是人选的密码，字典攻击与彩虹表都不成立；而鉴权是**每个转发请求都要走一遍**的路径，要按 hash 精确匹配吃 `key_hash` 上的唯一索引。加盐意味着盐各行不同、hash 不可索引，每次鉴权得扫全表逐行比；bcrypt 更是每次比对十毫秒级——那是为「防拖库后爆破人选密码」付的代价，本场景没有那个威胁。
 
 **`allowed_models` M1 只建列不校验，一律当 `*`。** 现在启用也没有界面可配，只能 SQL 手改；改错的表现是请求 403，而排查「为什么 403」还得自己翻表。等 M3 管理端能配了再启用校验，届时 `internal/auth` 取出该列、比对请求体顶层 `model`。
 
@@ -682,6 +692,26 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 
 **没做**：给 `call_logs` 加上游响应 id 列。它会让这条决策的第二条依据失效（「响应体是唯一关联句柄」），但那是另一个范围的事，真需要时再单独提。
 
+### 7.5 渠道并发上限（口径层 v0.49~v0.52，实现未排期）
+
+口径层已裁：渠道级 in-flight 并发上限，手填正整数、空/0 = 不限（默认）；只做并发不做 RPM/TPM；粒度只到渠道级；与全局令牌桶（§7.2）保留并存；闸满走网关侧有界排队，队满/超时回 429（v0.50）；拥塞期在此之外**不加机制**——无熔断、无自动探活恢复、重试逻辑不动（v0.51）。实现侧已定的形态：
+
+- **数据模型**：`channels` 加 `max_concurrency INTEGER NOT NULL DEFAULT 0`（0 = 不限），老库走 `store.migrate` 的既有 ALTER 模式，默认值保证存量渠道行为零变化。
+- **挂点**：in-flight 计数是**内存态**（按 channel id 一只计数器/信号量，重启归零，与「不落库的时间态状态」无涉），挂在 `upstream.Client.Do`（`internal/upstream/upstream.go`）——它是唯一的上游出口，透传/转换两条路径都过这里。
+- **持有区间**：「向上游发出 → 响应体读完/流结束」；一次 `Do` 内的同凭证重试与换凭证都在同一次持有内，不重复计数也不中途释放——重试打的是同一个上游，占的是同一份容量。
+- **与全局桶的先后**：全局桶在入口限速率、本闸在出口限存量，一个请求先过桶后占闸，互不感知、互不替代。
+- **排队（v0.50）**：闸满时在信号量获取处等待，带两个界——队列上限（默认 = 并发上限 ×1）与等待超时（默认 30s），都是 config.yaml 全局项，**不进渠道表**；配置项名与形态（倍数还是绝对值）实现时定，语义按「默认 ×1 / 30s」。等待用带 ctx 的获取：**客户端断连即出队释放**，不转发也不占位；不承诺严格 FIFO（Go 信号量等待者的唤醒序即可，个人网关无公平性诉求）。排队发生在向上游转发之前、任何字节写回客户端之前，SSE 无关。
+- **队满/超时的 429**：复用「按入口协议原生格式回错」的既有路径，文案我方固定词表（如「渠道并发已满」），`Retry-After` 固定默认 10s（config 可调）。这个 429 是网关自产的，与上游透传的 429 在流水里要分得开——归因字段随观测票落。
+- **ttft 不动**：`rec.start` 在 callLog 中间件（请求到达）就打了，排队时间天然计入 `ttft_ms` 与 `total_ms`，这正是 v0.50 要的体感语义，一行代码都不用改；「纯上游耗时」等观测票加排队时长字段后相减。
+- **拥塞期零改动（v0.51）**：熔断/探活/重试收敛都不做，`retry.go` 一行不动。支撑这个「零」的三个既有事实，改到任何一个都要回头复核 v0.51 的立论：①`Transport.ResponseHeaderTimeout = 120s`（`upstream.go:53`）是「卡死请求最多占闸坑 120s」的兜底——若调大或删掉，拥塞期闸坑可能被永久占满；②超时不重试（`retry.go:59`）是「拥塞无重试放大」的前提；③重试在同一闸坑内（本节「持有区间」条）是「503 重试放大被闸封顶」的前提。
+
+**观测与验收（v0.52，口径已收敛，本节可整体开工）**：
+
+- `call_logs` 加 `queue_wait_ms INTEGER NOT NULL DEFAULT 0`——过闸请求都记（没闸/没等为 0），等到超时被拒的行记实际等待（≈30000）；老库 ALTER 补列，老行的 0 语义无损。流式非流式都记：`ttft_ms`「只记流式」的限制（v0.28 变更）是因为非流式的它约等于总耗时，排队时长没有这个问题。
+- error 固定词表加两词：`queue_full`（队满即拒）/ `queue_timeout`（等到超时）。**不加 outcome 列**（#22 的判断复核仍成立：收场词短且可枚举，error 列承载够用）。三种 429 的归因从此齐了：`rate_limited` = 全局桶、`queue_full`/`queue_timeout` = 渠道闸、status 429 且 error 列空 = 上游透传（透传成功行 error 留空，v0.28 变更注记的既有纪律；`upstream_error` 只在拿不到上游响应时落，`server.go` 的 502 路径）。
+- 管理端零改动：不做实时 in-flight/拒绝率展示（内存态，要新开接口读信号量，后加成本低），不拉上游 Prometheus 指标（口径层 §3 非目标）。
+- 验收（Go 集成测试，§9 既有形式，httptest 假上游 + 可阻塞的 handler）四条断言：①并发打超过上限的请求，假上游观察到的最大同时 in-flight ≤ 上限；②队满立即 429，流水 error = `queue_full`；③等待超时 429，error = `queue_timeout` 且 `queue_wait_ms` ≈ 超时值；④排队中客户端断连即出队、不向上游转发。不往仓库放压测脚本；**真机对照是部署检查项**（#53 标定并设上限后，压测看 `sglang:num_running_reqs` 是否被压在上限内），不属于本仓库的测试。
+
 ## 8. 最小管理接口
 
 - `GET /healthz`
@@ -721,7 +751,7 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 
 - **能保存下去的配置，一定是能启动的配置**：每个写接口都在**同一个事务里**跑一遍 `store.Validate`，不过就回滚并把校验原文原样回给前端（400）。这要求 `Validate` 及其全部子检查收 `store.Queryer`（`*sql.DB` 与 `*sql.Tx` 的公共只读面）而不是 `*sql.DB`——连接池是 1，事务开着时再拿 `*sql.DB` 查会等一条永远回不来的连接，**自锁不报错**，表现是保存请求直接挂住。
 - **接入点与它的候选一起建**：分两个接口意味着中间必然存在一个「零候选」的瞬间，而那个瞬间会被上面的校验判为非法，于是第一步永远保存不了。
-- ~~**凭证先删后插**，不用 UPDATE~~：立论是临时闸的「恰好 1 份启用凭证」，**该闸已于口径层 v0.38 放开，此条随之作废**。改为**逐条 CRUD**（加 / 删 / 停用 / 启用），另给一个语义为**追加**的批量粘贴入口。整把替换在多凭证下讲不清楚：凭证只写不回读 ⇒ 页面上无法把贴进来的这堆与库里已有的对齐；且覆盖会连带清掉已停用的凭证，而那是 401 摘除的现场。列表只回名字、状态、创建时间、停用原因与时刻，**不回凭证值**（v0.28 不破）。
+- ~~**凭证先删后插**，不用 UPDATE~~：立论是临时闸的「恰好 1 份启用凭证」，**该闸已于口径层 v0.38 放开，此条随之作废**。改为**逐条 CRUD**（加 / 删 / 停用 / 启用），另给一个语义为**追加**的批量粘贴入口。整把替换在多凭证下讲不清楚：覆盖会连带清掉已停用的凭证，而那是 401 摘除的现场。列表回名字、**凭证值**、状态、创建时间、停用原因与时刻——值自口径层 v0.47 起回读（推翻 v0.28），页面上默认掩码、给「显示」与「复制」；原立论里「值不回读 ⇒ 页面上对不齐」那半条随之作废，摘除现场那半条仍然成立。
 
 ## 9. Golden 测试方案
 
