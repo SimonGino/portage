@@ -77,10 +77,18 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 export function Dialog({
   title,
   onClose,
+  wide,
+  guard,
   children,
 }: {
   title: string
   onClose: () => void
+  /** wide：内容是列表而不是表单时放宽（模型挑选面板）。表单不该跟着变宽——
+   *  一行输入框拉到 900px 只会让标签和输入内容离得老远。 */
+  wide?: boolean
+  /** guard：框里攒着还没提交的东西（比如勾了一半的模型），点遮罩不关。
+   *  Esc 不受影响——那是明确的按键，而遮罩点击多半是想点框边上的东西点歪了。 */
+  guard?: boolean
   children: ReactNode
 }) {
   // Esc 关闭。表单填错了想退出去，第一反应是按 Esc 而不是找那个叉。
@@ -93,9 +101,12 @@ export function Dialog({
   }, [onClose])
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div className="overlay" onMouseDown={guard ? undefined : onClose}>
       {/* 阻止冒泡：在框里面按下鼠标不该关掉框（选文本时很容易拖到框外） */}
-      <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className={'dialog' + (wide ? ' dialog-wide' : '')}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <header className="dialog-head">
           <h3>{title}</h3>
           <button className="icon" onClick={onClose} aria-label="关闭">

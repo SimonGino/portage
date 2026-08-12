@@ -742,6 +742,11 @@ select:focus {
   max-width: 470px;
 }
 
+/* 装列表的框才放宽。表单不跟着变宽：一行输入框拉到 900px，标签和光标离得老远。 */
+.dialog-wide {
+  max-width: 720px;
+}
+
 .dialog-head {
   display: flex;
   align-items: center;
@@ -764,6 +769,129 @@ select:focus {
   border-radius: var(--radius-sm);
   word-break: break-all;
   user-select: all;
+}
+
+/* ── 模型挑选面板 ──────────────────────────────────────────────────── */
+
+.mpick {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.mpick-note {
+  font-size: 12px;
+}
+
+.mpick-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mpick-search {
+  /* 搜索框吃掉主要宽度：两百多个名字里，搜是最短的那条路。 */
+  flex: 1;
+  min-width: 0;
+}
+
+.mpick-bar .btn {
+  flex-shrink: 0;
+}
+
+/* 列表自己滚，不让整个模态框长到底下去——底部那两颗按钮必须一直看得见。 */
+.mpick-list {
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.mpick-group + .mpick-group {
+  border-top: 1px solid var(--line-soft);
+}
+
+.mpick-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  /* 组标题跟着滚到顶上钉住：族里有八十个成员时，滚到一半就不知道在看哪一族了。 */
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mpick-group-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mpick-caret {
+  color: var(--muted);
+  font-size: 11px;
+  width: 11px;
+  text-align: center;
+}
+
+.mpick-rows {
+  padding: 2px 0;
+}
+
+.mpick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 3px 26px;
+  cursor: pointer;
+}
+
+/* 全局 input 带 width:100%（表单里的输入框要占满一行），复选框得挣脱它，
+   否则一个勾选框会把整行撑开、模型名被挤成 0 宽。同 .check input 那条。 */
+.mpick-row input {
+  width: auto;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.mpick-row:hover {
+  background: var(--hover);
+}
+
+/* 已纳管的照常列出来（核对「加过没有」要靠它），只是勾不动、整行降灰。 */
+.mpick-row.is-off {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mpick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mpick .form-actions {
+  align-items: center;
+}
+
+/* 计数靠左，按钮留在右边 */
+.mpick .form-actions .muted {
+  margin-right: auto;
 }
 
 /* ── 开关 ──────────────────────────────────────────────────────────── */
