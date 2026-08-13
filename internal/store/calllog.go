@@ -26,7 +26,7 @@ type CallLog struct {
 	// 那类行没走到那一步——「不知道」与「同步」不是一回事。
 	IsStream sql.NullBool
 	TTFTMs   sql.NullInt64
-	TotalMs        int64
+	TotalMs  int64
 	// QueueWaitMs 是并发闸排队耗时（口径层 v0.52）。**不是** NullInt64：没排队就是
 	// 0，这一列上「没排」与「排了 0ms」没有语义差别，不像 ttft 那样要区分「没有」。
 	QueueWaitMs      int64
@@ -35,6 +35,9 @@ type CallLog struct {
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
 	Error            sql.NullString
+	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#37），
+	// 拿去找上游对账用。没走到上游、或上游没回这个头时是空串——这一列上两者同档。
+	UpstreamRequestID string
 	// ErrorDetail 是上游错误原文的前 2KB（口径层 v0.53），只在失败时有值。
 	//
 	// 与 Error 分列：Error 是网关的固定词表（可枚举、可 group by），这一列是上游
@@ -61,11 +64,13 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 			api_key_name, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
-			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail,
+			upstream_request_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.APIKeyName, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
-		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error, l.ErrorDetail)
+		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error, l.ErrorDetail,
+		l.UpstreamRequestID)
 	return err
 }

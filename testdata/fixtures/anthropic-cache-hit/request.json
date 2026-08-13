@@ -1,0 +1,1 @@
+{"model":"claude-sonnet-4-5","max_tokens":1024,"stream":false,"system":[{"type":"text","text":"<<< 这里放一段超过最小可缓存长度的固定前缀；真录时用 docs/MVP设计草案.md §9 的采集脚本填 >>>","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"In one short sentence, explain why the sky appears blue."}]}

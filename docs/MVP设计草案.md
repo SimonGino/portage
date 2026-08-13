@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.52
+> 状态：草案 v0.53
+> v0.53 变更（口径层 v0.56 落地：request-id 落流水 + 构造样本另立一档，2026-08-13）：#37 缩范围那一半的实现，该票**不关**——两条要官方直连实测的验收原样挂着。①`call_logs` 加 `upstream_request_id`（TEXT NOT NULL DEFAULT ''，§7 DDL）：取头走 `upstream.RequestID`（官方 `request-id` 优先、`x-request-id` 兜底），在 `resp` 到手处取、透传与转换两条路都记，slog 同名字段只在非空时打（同 retries 的规矩）。**不可空与 `error_detail` 的可空是两种取舍**：那一列要分开「没存」与「上游回了 4xx 但体是空」，这一列上「没走到上游」与「上游没回这个头」都读作「没有可用的 id」，前者看 status 就知道。②§6.1 响应头那段补落地形态：回传是构造性成立的（`CopyResponseHeaders` copy-all，不是白名单），官方文档列出的整套头钉进 `gatewaytest.AnthropicResponseHeaders`，任何一处退化成白名单当场红；原文并列的 `x-request-id / request-id` 收敛成官方名优先。③`testdata/fixtures/` 立档（§9）：`anthropic-cache-hit` 与 `anthropic-stream-cache-hit` 从对应真实转录派生、只改 usage 数字，闸门是 `synthetic: true`（与 golden 的 `verified: true` 反着开，防构造样本改名冒充转录），驱动 Tap 的净值语义与 `decode_response.go` 的毛值归一——缓存两项的 Anthropic 侧解析路径此前没有任何样本走到。用例：`internal/upstream/headers_test.go`、`internal/server/requestid_test.go`、`internal/store/requestid_internal_test.go`、`internal/protocol/cachehit_fixture_test.go`。修改人 jinpenga。
 > v0.52 变更（用量图改按天、统计窗口改自然日，2026-08-13）：口径层 v0.55 与 DESIGN v0.14 的落地。①**窗口表达式收进 `store.windowStart(days)`**：`datetime('now','localtime','start of day','-(days-1) days','utc')`。边界在本地日历上算完折回 UTC 再比，而不是写成 `date(created_at,'localtime') >= …`——后者一样对，但整列要过一遍函数，`idx_call_logs_created_at` 就用不上了。`UsageBy` 的 WHERE 换成它，与按天分桶共用同一个下界（同一张卡上两个数必须对得上）。②**新增 `store.UsageDaily` 与 `GET /admin/api/usage/daily?days=N`**：`GROUP BY date(created_at,'localtime')`，**在 Go 里补齐空天**恒返回 days 行（SQL 只吐有行的日子，照那份结果画图会让空着的几天从横轴上消失、剩下的柱子挤在一起）。补齐用 `time.Now()` 的本地日期，与 SQL 里那个 `'localtime'` 同源。**与 `/usage` 分成两个端点**：分桶只跟 days 有关、与聚合维度无关，合在一起每切一次维度都要重算。③Web `UsageChart` 重写：入参从 `UsageRow[]` 换成 `DailyUsage[]`，`CHART_TOP`/`tokensOf` 退场；没有调用那天高度真为 0（有调用但没报 token 的仍留 0.6% 一线），标签隔着摆（`AXIS_LABELS = 8`）而柱子一根不少。CSS 一行没改——`.usage-chart` 那套本来就只关心「几根柱子、各多高」。④卡片标题改「概览」「调用记录」。⑤测试 `logsquery_test.go` 加 `TestUsageDailyBuckets`（恒 days 行、最后一行是本地今天、空天为 0）。修改人 jinpenga。
 > v0.51 变更（用量页下拉与流水翻页，2026-08-13）：PO 两条裁决的落地，后端一行未动（DESIGN v0.13 记设计侧立论）。①**模型筛选换 `Picker`**（`fields.tsx` 既有控件），`.select-inline` 随之删除，全站不再有原生 `<select>`。补了一处原生下拉本来就在撒谎的地方：选中的模型不在当前选项集里时（天数从 7 天切到 1 天，这段时间没出现过它，而筛选条件还生效着），补一项带「这段时间没有」注记的选项回去，不让触发器显示成「全部模型」。②**流水的「加载更多」换成上一页/下一页 + 当前页码**：`useLogFeed` 从「增量追加」改成**游标栈**——before 游标没有逆向形式，上一页的起点算不出来，只能是来时压栈的那一个；翻页只留 `go(nextStack)` 一个入口（页码与请求必须同时改），筛选变更与「刷新」都回第一页（时间序的表，最新那批只可能在第一页）。每次多要一条（`limit = LOG_PAGE + 1`，后端 `maxLogLimit` 500 兜得住）专门用来判「还有没有下一页」，多的那条不显示、也不做游标：拿「这页正好拉满」当判据的话，总行数是整页倍数时「下一页」会翻进一页空表。`.load-more` 更名 `.pager`。修改人 jinpenga。
 > v0.50 变更（用量页最近调用列改版，2026-08-13）：①`call_logs` 加 `is_stream`（可空 INTEGER，§7 DDL）——同步/流式落库。可空因为 stream 是解析请求体那一步才知道的（与 `model_requested` 同一行赋值），鉴权失败那类行与存量老行停在 NULL 读作「不知道」，给 0 默认值会把它们全说成同步；`store.migrate` 走既有 ALTER 模式，落库判据借 `requestedModel != ""`（两者同源）。②Web 用量页「最近调用」三处列改版：「链路」改「端点」，入站/上游上下排布、每行自带标注（原箭头式单行把同协议折叠成一枚芯片，省宽度但哪枚是哪边靠箭头方向猜，`.route-arrow` 样式随之删除）；API 密钥从时间列的次行独立成列；新增「类型」列显示同步/流式（NULL 显示 —）。`/admin/api/logs` 响应随之多 `is_stream` 字段（`*bool`）。测试 `callrow_test.go` 钉三态（非流式 0 / 流式 1 / 没解析到请求体 NULL）。修改人 jinpenga。
@@ -492,7 +493,13 @@ logging：无论成败异步落 call_logs
 >
 > **`count_tokens` 的调用时机随 harness 版本变**：`testdata/golden/README.md` 记的 2026-08-07 那版 Claude Code 是每轮先打一次，而 08-11 这版跑完一整轮工具调用一次都没打。两条都是当时的实测，都不作废——网关这侧的结论是它**不能被当作启动必经的一步**（M0 起就实现了该端点，两种时机都跑得通）。
 
-**响应头（上游 → 客户端）**：除 `Content-Length` 外原样回传（流式下无意义，非流式由 Go 按实际写入量重设），状态码原样。上游 `x-request-id` / `request-id` 既回传客户端也记日志——个人自用场景下能拿它去找上游对账，比藏起来有用。
+**响应头（上游 → 客户端）**：除 `Content-Length` 外原样回传（流式下无意义，非流式由 Go 按实际写入量重设），状态码原样。上游 `request-id` 既回传客户端也记日志——个人自用场景下能拿它去找上游对账，比藏起来有用。
+
+> **落地形态（v0.56，#37 缩范围那一半）**：回传这半边是**构造性**的——`upstream.CopyResponseHeaders` 是 copy-all（只跳 `Content-Length`），不是白名单，所以不存在「漏了某个头」的可能；`anthropic-ratelimit-*` 一族与 `request-id` 随之原样过去。记日志这半边此前**根本没做**（表里没有这一列），v0.55 补 `call_logs.upstream_request_id` + slog `upstream_request_id`，透传与转换两条路都记（转换路径不回传上游响应头，但对账与走哪条路无关）。
+>
+> 头名以官方文档为准：`request-id`（platform.claude.com/docs/en/api/errors §Request ID，值形如 `req_018Ee…`，错误体里的 `request_id` 字段同值），兜底 `x-request-id` 给中转与自建上游。原文的 `x-request-id / request-id` 并列因此收敛成「官方名优先、x- 名兜底」——两个都在时取官方那个，中转给自己编的号不是要找的那个。
+>
+> 用例（`internal/upstream/headers_test.go`、`internal/server/requestid_test.go`）把官方文档列出的整套头钉死在 `gatewaytest.AnthropicResponseHeaders` 里，任何一处退化成白名单转发当场红。**但它验的是「网关有没有改动」，不是「官方真的这么发」**——后者仍要拿官方 key 实测，是 #37 剩下的那半。
 
 **流式转发按字节块复制，永不按帧切分**：循环 `Read`（32KB 量级）→ `Write` → `Flush` 直到 EOF。不用 `bufio.Scanner` 按行读再重组——会引入换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。SSE 帧解析**只发生在 Tap 内**，Tap 从 `io.TeeReader` 拿同一份字节自组帧、自管缓冲上限（MB 级，并行工具调用的 JSON 参数单帧可以很大），**超限即放弃解析并降级**：Tap 的上限只影响日志字段完整性，绝不截断转发字节。（new-api 按行 Scanner 读、靠把 token 上限调到 64MB 躲大参数帧截断，本设计不取该路径。）
 
@@ -642,11 +649,16 @@ CREATE TABLE call_logs (
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
   error TEXT,                          -- 网关自己的**固定词表**（可枚举、可 group by）
-  error_detail TEXT                    -- 上游错误原文前 2KB（口径层 v0.53），只在失败时写，其余为 NULL。
+  error_detail TEXT,                   -- 上游错误原文前 2KB（口径层 v0.53），只在失败时写，其余为 NULL。
                                        -- 与 error 不同步出现：上游透传 4xx 的 error 是空的（透传成功不算
                                        -- 网关侧错误，v0.28 纪律），detail 却有值——管理端「可展开」的判据
                                        -- 因此是 status >= 400。可空是为了分开「没存」与「上游回了 4xx 但
                                        -- 体是空的」（存空串），后者本身就是排障信息
+  upstream_request_id TEXT NOT NULL DEFAULT ''  -- 上游响应头 request-id 的原样快照（口径层 v0.56，#37）：
+                                       -- 拿它去找上游对账，官方文档报障时要的就是这个 id。取头名 `request-id`
+                                       -- （Anthropic 官方拼写），兜底 `x-request-id`（中转常用）。**不可空**：
+                                       -- 这一列上「没走到上游」与「上游没回这个头」都读作「没有可用的 id」，
+                                       -- 分开没有排障价值（前者看 status 就知道），与 error_detail 那条的取舍不同
 );
 CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 
@@ -811,6 +823,10 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 > **M0 必抓子集补齐（#7，2026-08-11）**：`anthropic-*` 六个入库，`golden_test.go` 12 个样本零 skip。采自**第三方 Anthropic 协议中转**而非官方直连（PO 2026-08-10 裁定可当真实上游用），依据是先核了透传：中转跑的是 `sub2api`，响应体按行原样回写、只旁路解析 usage，佐证是响应里的 `usage.iterations`、`inference_geo` 在它源码里根本不存在。采集时要绕的三个雷（假响应顶包、`session_` 前缀工具名被改写、请求体注入）与操作坑记在 `testdata/golden/README.md`，这里不抄第二份。
 >
 > 两处**样本与现实的出入**要跟着样本走：①**`InputTokens` 恒偏大 357**——中转往每个请求塞一段固定内容，两个不同长度的 prompt 差值一致。不影响样本作数（`golden_test.go` 只喂 `response.raw`，`request.json` 从不参与断言，数值前后自洽），但**别拿这批样本推请求体与 token 的关系**。②**cache 计数全 0**：`cc-*` 那批特意补过缓存命中，Anthropic 这侧还没有，`cache_read_input_tokens` 的解析路径目前只有 CC 样本走到。③**响应头保真度这里验不了**——中转有响应头白名单，`request-id`、`anthropic-ratelimit-*` 到不了，要验得等官方 key。
+
+> **构造样本另立一档（v0.56，#37 缩范围那一半）**：上面②那条缺口先补形状——`testdata/fixtures/anthropic-cache-hit`、`anthropic-stream-cache-hit` 从对应真实转录派生，**只改 usage 数字**，取值依据官方文档（`input_tokens` 只算最后一个缓存断点之后的量，与两项缓存互不相交）。它驱动两条此前无 Anthropic 样本走过的路：Tap 的原始语义（净值）与 canonical 的毛值归一（`decode_response.go` 那段加法，`internal/protocol/cachehit_fixture_test.go`）。
+>
+> **`fixtures/` 与 `golden/` 是两档，闸门也反着开**：golden 认 `verified: true`（人核过的真实转录，拦「没人核过就当事实源」），fixtures 认 `synthetic: true`（拦「构造样本改名搬进 golden 冒充转录」）。构造样本能证明「我们的解析对这个形状是对的」，证明不了「上游真的这么发」——后者仍是 #37 的验收，拿官方 key 按 `request.json` 里的形状打两遍、取第二遍，录进 `golden/`。对照表见 `testdata/fixtures/README.md`。
 
 **采集与存放（v0.13 落地）**：录制反代 `cmd/goldenrec`（刻意在 `internal/` 之外——它只为喂测试库存在）转发到真实上游并把每次调用的原始字节落盘。样本库在仓库根 `testdata/golden/<样本名>/`，含 `meta.json`（protocol / stream / endpoint / status / source / expect / verified）、`request.json`、`response.raw`；不放在某个包的 `testdata/` 下，是因为同一份样本到 P1 还要喂给 codec 的跨协议用例。
 

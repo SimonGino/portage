@@ -393,6 +393,9 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 		defer resp.Body.Close()
+		// 在写响应头之前取：之后 c.Writer.Header() 里也有同一个值，但从上游的
+		// resp.Header 拿才是「上游报的」，不受本地补头（X-Accel-Buffering）干扰。
+		rec.upstreamRequestID = upstream.RequestID(resp.Header)
 
 		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
 		// 转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。

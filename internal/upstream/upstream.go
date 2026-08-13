@@ -334,6 +334,21 @@ func applyHeaders(dst, client http.Header, p protocol.Protocol, credential strin
 	}
 }
 
+// RequestID 取上游响应里的请求 id，用于事后找上游对账（口径层 v0.56，#37）。
+//
+// 头名以 `request-id` 为准：Anthropic 官方文档「Request ID」一节的原文就是这个拼写
+// （值形如 req_018Ee…），错误响应体里的 `request_id` 字段是同一个值。兜底
+// `x-request-id` 是给中转与自建上游留的——它们多半按通用惯例发这个名字，两个都不给
+// 就是没有，回空串。
+//
+// 只读不改：这个头本身照 CopyResponseHeaders 原样回给客户端，这里取一份是为了落库。
+func RequestID(h http.Header) string {
+	if v := h.Get("request-id"); v != "" {
+		return v
+	}
+	return h.Get("x-request-id")
+}
+
 // CopyResponseHeaders mirrors the upstream response headers onto the client
 // response. Content-Length is dropped: it is meaningless once a stream starts,
 // and net/http recomputes it for buffered writes.

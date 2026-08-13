@@ -33,6 +33,34 @@ var client = &http.Client{
 	Transport: &http.Transport{ResponseHeaderTimeout: 5 * time.Second},
 }
 
+// AnthropicResponseHeaders 是 Anthropic 官方文档列出的、这一跳必须原样回给客户端
+// 的响应头（2026-08-13 核对 platform.claude.com/docs/en/api/rate-limits
+// §Response headers 与 .../api/errors §Request ID）。
+//
+// 写死整套而不是「随便挑两个」，是因为 #37 的原始症状就是**中转把它们吃了**：
+// 网关这边只要有一处退化成白名单转发，在中转下永远看不出区别，只有把整套头钉进
+// 用例里才会当场红。Claude Code 靠 anthropic-ratelimit-* 退避，靠 request-id 报障。
+//
+// 值取文档里的样例形状（req_ 前缀、RFC 3339 的 reset），不是真实调用采来的——这一
+// 层要验的是「网关有没有改动它们」，与值本身是不是真的无关。这**不构成** #37 那条
+// 「官方直连实测」的验收：真实头名/大小写/有没有漏发，仍得拿官方 key 跑一次才算数。
+var AnthropicResponseHeaders = map[string]string{
+	"request-id":                                  "req_018EeWyXxfu5pfWkrYcMdjWG",
+	"anthropic-organization-id":                   "org_01AbCdEfGhIjKlMnOpQrStUv",
+	"anthropic-ratelimit-requests-limit":          "1000",
+	"anthropic-ratelimit-requests-remaining":      "999",
+	"anthropic-ratelimit-requests-reset":          "2026-08-13T04:05:06Z",
+	"anthropic-ratelimit-tokens-limit":            "2400000",
+	"anthropic-ratelimit-tokens-remaining":        "2399000",
+	"anthropic-ratelimit-tokens-reset":            "2026-08-13T04:05:06Z",
+	"anthropic-ratelimit-input-tokens-limit":      "2000000",
+	"anthropic-ratelimit-input-tokens-remaining":  "1999000",
+	"anthropic-ratelimit-input-tokens-reset":      "2026-08-13T04:05:06Z",
+	"anthropic-ratelimit-output-tokens-limit":     "400000",
+	"anthropic-ratelimit-output-tokens-remaining": "399000",
+	"anthropic-ratelimit-output-tokens-reset":     "2026-08-13T04:05:06Z",
+}
+
 // Received is one request as the fake upstream saw it.
 //
 // Host 单独存：net/http 把它从 Header 提升到了 Request.Host，断言时别去 Header 里找。
@@ -249,6 +277,8 @@ type CallRow struct {
 	// ErrorDetail 是上游错误原文（口径层 v0.53）。可空——「没存过」与「存了空串」
 	// 要分得开：后者是上游回了 4xx 但响应体是空的。
 	ErrorDetail sql.NullString
+	// UpstreamRequestID 是上游 request-id 的快照（口径层 v0.56）。不可空，没有即空串。
+	UpstreamRequestID string
 }
 
 // LastCallRow returns the most recent call_logs row, waiting for it to land.
@@ -264,12 +294,14 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 			SELECT api_key_name, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
 			       status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
-			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
+			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail,
+			       upstream_request_id
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
 				&r.Status, &r.RetryCount, &r.IsStream, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
-				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error, &r.ErrorDetail)
+				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error, &r.ErrorDetail,
+				&r.UpstreamRequestID)
 		if err == nil {
 			return r
 		}

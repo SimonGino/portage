@@ -105,6 +105,9 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 		return
 	}
 	defer resp.Body.Close()
+	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
+	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#37）。
+	rec.upstreamRequestID = upstream.RequestID(resp.Header)
 
 	// Tap 与 body 记录挂在上游原始字节上，与透传路径一致：usage 要的是上游自己
 	// 报的数，不是网关重编出来的响应。

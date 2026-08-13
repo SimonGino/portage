@@ -87,7 +87,28 @@ func migrate(db *sql.DB) error {
 	if err := addIsStream(db); err != nil {
 		return err
 	}
-	return addSupportsCompaction(db)
+	if err := addSupportsCompaction(db); err != nil {
+		return err
+	}
+	return addUpstreamRequestID(db)
+}
+
+// addUpstreamRequestID 补 v0.56 的 call_logs.upstream_request_id（#37）。
+//
+// 不可空、默认空串：存量行一律读作「没有可用的 id」，与「上游没回这个头」同档——
+// 这一列上把两者分开没有排障价值，理由见 schema.sql 的列注释。
+func addUpstreamRequestID(db *sql.DB) error {
+	has, err := hasColumn(db, "call_logs", "upstream_request_id")
+	if err != nil {
+		return fmt.Errorf("检查 call_logs.upstream_request_id: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN upstream_request_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 call_logs.upstream_request_id: %w", err)
+	}
+	return nil
 }
 
 // addIsStream 补 call_logs.is_stream（同步/流式）。

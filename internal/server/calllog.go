@@ -87,6 +87,12 @@ type callRecord struct {
 	// 与 retries 同理，非 0 才进 slog；落库则恒落（列不可空，0 就是 0）。
 	queueWait time.Duration
 
+	// upstreamRequestID 是上游响应头里的 request-id（口径层 v0.56，#37）。它同时
+	// 原样回传给了客户端；留一份在流水里，是为了事后不用翻客户端日志就能对账。
+	//
+	// 不是凭证材料，进日志无碍：这是上游自己给这次调用编的号，报障时官方文档就要它。
+	upstreamRequestID string
+
 	summary     protocol.Summary
 	haveSummary bool
 
@@ -135,6 +141,11 @@ func (s *Server) logCall(rec *callRecord) {
 	}
 	if rec.queueWait > 0 {
 		attrs = append(attrs, "queue_wait_ms", rec.queueWait.Milliseconds())
+	}
+	// 与 retries 同理，只在有值时进 slog：上游不回这个头的部署（自建、部分中转）
+	// 每一行都背一个空字段没有意义。落库则恒落（列不可空，空串就是「没有」）。
+	if rec.upstreamRequestID != "" {
+		attrs = append(attrs, "upstream_request_id", rec.upstreamRequestID)
 	}
 	if !rec.firstByte.IsZero() {
 		attrs = append(attrs, "ttfb_ms", rec.firstByte.Sub(rec.start).Milliseconds())
@@ -186,8 +197,10 @@ func (s *Server) persistCall(rec *callRecord) {
 		ChannelKeyName:   rec.channelKey,
 		Status:           rec.status,
 		RetryCount:       rec.retries,
-		TotalMs:          time.Since(rec.start).Milliseconds(),
-		QueueWaitMs:      rec.queueWait.Milliseconds(),
+		// 上游没回这个头、或根本没走到上游时是空串（口径层 v0.56）。
+		UpstreamRequestID: rec.upstreamRequestID,
+		TotalMs:           time.Since(rec.start).Milliseconds(),
+		QueueWaitMs:       rec.queueWait.Milliseconds(),
 	}
 	// stream 是解析请求体那一步才知道的（server.go 里与 requestedModel 同一行赋值），
 	// 没走到那一步的行（鉴权失败、body 不是合法 JSON）留 NULL——落一个 false 会把

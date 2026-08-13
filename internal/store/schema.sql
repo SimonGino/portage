@@ -129,7 +129,15 @@ CREATE TABLE IF NOT EXISTS call_logs (
   --
   -- 注意一个新组合：上游透传 4xx 的 error 列**是空的**（透传成功不算网关侧错误，
   -- v0.28 纪律），但会有 error_detail。管理端的「可展开」判据因此是 status >= 400。
-  error_detail TEXT
+  error_detail TEXT,
+  -- 上游响应头 request-id 的原样快照（口径层 v0.56，#37）。个人自用场景下拿它去
+  -- 找上游对账：官方文档要求报障时附这个 id。取头名 `request-id`（Anthropic 官方
+  -- 文档 §Request ID 的拼写），兜底 `x-request-id`（中转常用）。
+  --
+  -- 不可空、默认空串：这一列上「没走到上游」与「上游没回这个头」都读作「没有可用
+  -- 的 id」，分开没有排障价值——前者看 status 就知道。它同时也回传给客户端（响应头
+  -- 原样透传，见 upstream.CopyResponseHeaders），这里只是留一份可查询的副本。
+  upstream_request_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_logs_created_at ON call_logs(created_at);
