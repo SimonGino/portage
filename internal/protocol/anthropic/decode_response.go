@@ -142,8 +142,18 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 		}
 	}
 
+	// Truncated 与流式那半边同判据（emitDone）：非流式的 stop_reason 缺失不是「流断
+	// 了」——包解得开——而是「上游没声明这轮是怎么收的」，对压缩合成是同一个失格理由
+	// （openairesponses 的 compactionNoItem）。这一位不置，一份没声明收尾的响应会被
+	// 当成完整摘要装回 Codex 的历史。
+	//
+	// 这里没走 emitDone 是因为非流式不经 respState（没有 channel、没有跨帧状态），
+	// 但两处的 EvDone 必须同形——上面那句「两条路径只有一处解析」管的是内容块，收尾
+	// 这一处是手搓的，加字段时两边都要改。
 	return append(events, protocol.Event{
-		Type: protocol.EvDone, StopReason: canonicalStopReason(payload.StopReason),
+		Type:       protocol.EvDone,
+		StopReason: canonicalStopReason(payload.StopReason),
+		Truncated:  payload.StopReason == "",
 	}), nil
 }
 
@@ -333,7 +343,14 @@ func (st *respState) emitDone(out chan<- protocol.Event) {
 		return
 	}
 	st.done = true
-	out <- protocol.Event{Type: protocol.EvDone, StopReason: canonicalStopReason(st.stop)}
+	// st.stop 空 = message_delta 里那个 stop_reason 一次都没到，这个收尾纯是上面
+	// finish 兜出来的。StopReason 照旧兜成 stop（下游要一个合法取值），另开
+	// Truncated 把「上游没说话就断了」这件事带下去。
+	out <- protocol.Event{
+		Type:       protocol.EvDone,
+		StopReason: canonicalStopReason(st.stop),
+		Truncated:  st.stop == "",
+	}
 }
 
 // canonicalStopReason 把 Anthropic 的 stop_reason 映到 canonical 取值。

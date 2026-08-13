@@ -22,15 +22,23 @@ import (
 // codec 毫无用处。超限宁可整条报错，也不静默截半——半截样本看起来是合法 JSON 才是坑。
 const inboundBodyLimit = 32 << 20
 
-// recordedHeaders 是入站样本会留档的请求头白名单：只收**影响转换语义**的那几个。
+// recordedHeaders 是入站样本会留档的请求头白名单：只收**影响转换语义或上游档位**的
+// 那几个。
 //
 // 白名单而非黑名单，因为两侧代价不对等：漏掉一个指纹头（user-agent、x-stainless-*、
 // installation id 之类）意味着客户端身份跟着样本进 git，漏掉一个语义头只是转换时少条
 // 线索。凭证头（authorization / x-api-key）在任何模式下都不落盘。
+//
+// `x-codex-beta-features` 收的是**档位**不是语义（#73）：Codex remote compaction 有
+// v2 内联 trigger 与 legacy `POST /v1/responses/compact` 两档，wire 不同形，而中转按
+// 这个头里有没有 `remote_compaction_v2` 分流（sub2api 的
+// `isOpenAIRemoteCompactionV2Request`，不带就把路径改写去 `/compact`）。样本不记它，
+// 将来对不上号时分不清这份转录出自哪一档。它不是指纹：值是特性名列表，与账号无关。
 var recordedHeaders = []string{
 	"anthropic-beta",
 	"anthropic-version",
 	"openai-beta",
+	"x-codex-beta-features",
 	"content-type",
 }
 

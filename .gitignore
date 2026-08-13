@@ -31,6 +31,9 @@ internal/webui/dist/
 .idea/
 .vscode/
 /testdata/golden/raw/
+# agent 的本机工作区（.claude/worktrees/ 下是一个个内嵌 git 仓库，git add -A 会
+# 把它们当子模块加进来）
+.claude/
 
 # tsc -b 的增量缓存，机器本地状态
 web/tsconfig.tsbuildinfo

@@ -694,8 +694,8 @@ type CallLogRow struct {
 	RetryCount       int    `json:"retry_count"`
 	// IsStream：同步/流式。指针而不是 bool：NULL 是「不知道」（鉴权失败那类行没
 	// 解析到请求体，迁移前的老行同），false 才是「同步」，两者不能抹成一个。
-	IsStream *bool  `json:"is_stream"`
-	TTFTMs   *int64 `json:"ttft_ms"`
+	IsStream         *bool  `json:"is_stream"`
+	TTFTMs           *int64 `json:"ttft_ms"`
 	TotalMs          int64  `json:"total_ms"`
 	InputTokens      *int64 `json:"input_tokens"`
 	OutputTokens     *int64 `json:"output_tokens"`

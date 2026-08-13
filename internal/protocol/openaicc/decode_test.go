@@ -256,6 +256,37 @@ func TestDecodeStreamMapsStopReason(t *testing.T) {
 	}
 }
 
+// finish_reason 一次都没到时，兜底收尾会把 StopReason 填成 stop——wire 上与正常收尾
+// 同形。Truncated 是唯一分得开的那一位，压缩合成靠它判「这段摘要写完了没有」
+// （openairesponses 的 compactionNoItem）。
+func TestDecodeStreamMarksTruncatedWhenUpstreamNeverFinished(t *testing.T) {
+	withReason := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}` + "\n\n"
+	noReason := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"hi"}}]}` + "\n\n"
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"上游说了为什么停", withReason, false},
+		{"上游没说就断了", noReason, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := decodeStream(t, []byte(tc.raw))
+			last := events[len(events)-1]
+			if last.Type != protocol.EvDone {
+				t.Fatalf("末事件不是 EvDone: %v", last.Type)
+			}
+			if last.StopReason != "stop" {
+				t.Errorf("StopReason 该兜成 stop（下游要一个合法取值），得到 %q", last.StopReason)
+			}
+			if last.Truncated != tc.want {
+				t.Errorf("Truncated = %v，期望 %v", last.Truncated, tc.want)
+			}
+		})
+	}
+}
+
 type toolCall struct{ id, name, args string }
 
 // gatherToolCalls 把事件流里的工具调用还原成「一个调用一条记录」，顺带断言事件

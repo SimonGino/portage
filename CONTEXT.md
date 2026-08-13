@@ -39,8 +39,8 @@ _Avoid_: key 池（v0.17 泛化后的旧称）、API 密钥（指这一段时）
 _Avoid_: 渠道限流（笼统，易与 RPM/配额混）、QPS（并发是存量不是速率）
 
 **渠道 compaction 能力位**：
-渠道上的布尔位（`supports_compaction`，v0.54），语义只有一句：**这个渠道的上游认不认 Codex 的 `compaction_trigger`**，默认否（PO 于 2026-08-13 裁定，存量渠道随迁移落否）。它保护的是**透传**那条路——Responses 形状的 wire 不等于支持压缩，不认 trigger 的上游会把它当无关字段忽略、照回 0 个 compaction item，而 Codex 收到 0 个即 Fatal。为否时压缩 turn 明确拒绝（400 + 流水词 `compaction_unsupported`）；转换路径不看这个位，无条件拒。界面上叫「Codex 压缩（remote compaction）」。
-_Avoid_: 压缩开关（听着像网关能压缩，网关侧本地合成是 #74）、Responses 透传总开关（它只管压缩 turn，普通 turn 不受影响）
+渠道上的布尔位（`supports_compaction`，v0.54），语义只有一句：**这个渠道的上游认不认 Codex 的 `compaction_trigger`**，默认否（PO 于 2026-08-13 裁定，存量渠道随迁移落否）。它保护的是**透传**那条路——Responses 形状的 wire 不等于支持压缩，不认 trigger 的上游会把它当无关字段忽略、照回 0 个 compaction item，而 Codex 收到 0 个即 Fatal。为否时压缩 turn 明确拒绝（400 + 流水词 `compaction_unsupported`）；转换路径不看这个位——它走**本地合成**，自己产得出那个 item。界面上叫「Codex 压缩（remote compaction）」。
+_Avoid_: 压缩开关（听着像网关能压缩，网关侧那件事叫本地合成）、Responses 透传总开关（它只管压缩 turn，普通 turn 不受影响）
 
 **API Key**：
 网关下发给客户端的鉴权 key（前缀 `sk-ptg-`），与上游凭证严格两回事。界面上叫「API Key」（PO 于 2026-08-12 裁定改名，原称「网关 key」）；散文里指代上游那份时必须写全「上游凭证」，不能简称 api key。用量维度同理写全称——「按 API Key」与「按上游凭证」是两个维度，只写「按凭证」两边都像（v0.53 就是这么被看混的）。
@@ -68,6 +68,10 @@ _Avoid_: 代理、转发（指透传时）
 **毛值 input**：
 canonical `Usage.InputTokens` 的口径——**含**缓存读写，缓存两项是它的明细而非另外两笔（#72）。CC/Responses 的 input 本就是毛值；Anthropic 的是**净值**（与缓存互不相交），解码加回、出口减回。
 _Avoid_: 净值（那是 Anthropic 线上的形态）；Tap 的 `Summary` 不归一，保留上游原样
+
+**本地合成**：
+转换路径（R→A / R→CC）上让 Codex 压缩可用的做法（v0.54，#74）：把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封当成**恰好一个** compaction item 发回去，下一轮 Codex 回带时再拆开还原成 user 消息。上游没有 compact 端点可转发，这是唯一路子（与 opencodex 同构）。信封是 `ptg1:` + base64(摘要)，**透明不加密**，且前缀是长期兼容约束。
+_Avoid_: 远程压缩（那是 Codex 侧的叫法，指的是「让服务端压」这件事）、加密摘要（信封谁都解得开）
 
 **临时闸**：
 某项实现落地前的配置校验限制，非 v1 边界。两半各自独立放开：凭证那半已于 v0.38（M3）放开，单候选那半仍在（M4 放开）。

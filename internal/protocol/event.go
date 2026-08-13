@@ -157,6 +157,15 @@ type Event struct {
 	// 未知一律 stop（Anthropic 非流式不接受空 stop_reason，见 §5 坑清单）。
 	StopReason string
 
+	// EvDone：这个收尾是**解码侧兜底合成**的——上游流断在它声明 stop reason 之前
+	// （Anthropic 的 message_delta、CC 的 finish_reason 都没等到）。
+	//
+	// 单开一位而不是让 StopReason 留空：留空这条路被上面那个兜底堵死了，而「上游
+	// 说它停了」与「上游没说话就没了」在压缩合成上是生死之别——半截摘要会被 Codex
+	// 当作**替换历史**装回去（openairesponses 的 finishCompaction）。普通路径不读
+	// 这一位，读它的今天只有压缩。
+	Truncated bool
+
 	// EvError
 	Status  int
 	Message string

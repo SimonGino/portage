@@ -79,13 +79,18 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		}
 		req.ToolChoice = choice
 	}
+	c.compaction, c.compactionDrops = false, nil
 	if raw, ok := root["input"]; ok {
-		if err := decodeInput(raw, req); err != nil {
+		if err := c.decodeInput(raw, req); err != nil {
 			return nil, err
 		}
 	}
 
 	req.Extras = collectExtras(root, topLevelKnown)
+
+	if c.compaction {
+		rewriteAsSummarizer(req)
+	}
 
 	// 记下这次请求里哪些工具是 custom 形态。编码响应时要靠它决定发
 	// custom_tool_call 还是 function_call，并把 CC 侧合成的 JSON 包装对称拆回来
@@ -107,7 +112,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 // 消息序列。
 //
 // input 可以是纯字符串（协议允许 `"input": "hello"`），退化为一条 user 消息。
-func decodeInput(raw json.RawMessage, req *protocol.Request) error {
+func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		req.Messages = append(req.Messages, protocol.Message{
@@ -205,6 +210,40 @@ func decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			// 的摆法（结果在 user 消息的块里）。CC 出口会再把它拆成 role=tool 消息。
 			add(protocol.RoleUser, protocol.Block{Kind: protocol.BlockToolResult, ToolResult: result})
 
+		case ItemCompactionTrigger:
+			// 压缩 turn 的触发器。只置标志，item 本身不进消息序列——它在协议上不是内容，
+			// 是一句「这一轮请你总结」。改写成 summarizer 的动作在 DecodeRequest 收尾时
+			// 统一做（那时 tools 才收齐，additional_tools 也提升完了）。
+			c.compaction = true
+
+		case itemCompaction, itemCompactionSummary, itemContextCompaction:
+			// G2 回带还原（#74）。Codex 把上一轮压缩产出的 item 原样放回 input 尾部，
+			// 而上游（Anthropic / CC）没有任何位置装得下它——静默跳过的后果是整段历史
+			// 凭空消失，表现成模型忽然失忆。
+			var encrypted string
+			if err := unmarshalIf(item, "encrypted_content", &encrypted); err != nil {
+				return fmt.Errorf("openairesponses: input[%d]: %w", i, err)
+			}
+			if kind == itemContextCompaction && encrypted == "" {
+				// codex-rs **本地**压缩留下的标记，可以不带密文。那种形态里没有摘要
+				// 可还原，占位也没有意义（历史该有的内容就在同一份 input 的前面）。
+				continue
+			}
+			text, restored := compactionItemText(encrypted)
+			if !restored {
+				// 登记而不是静默降级：解不开只有两种来路——先经透传渠道压缩成功后混路
+				// 到转换渠道，或这段历史是别的网关压的。两种都值得在流水/日志里留一行，
+				// 否则「模型好像忘了前半段」这类反馈永远查不到根。
+				c.compactionDrops = append(c.compactionDrops, kind)
+			}
+			// 挂 user：摘要在 Codex 的原生流程里就是一条 user 消息（summaryPrefix 是它的
+			// 引导语）。
+			//
+			// 不需要像 opencodex 那样在这里清悬挂的 pendingReasoning：那边 reasoning item
+			// 要攒着等后面的工具调用来配对，压缩边界会让它错挂；这边 reasoning 在自己那一
+			// 支就地变成块了，没有跨 item 的待配对状态可挂错。
+			add(protocol.RoleUser, protocol.Block{Kind: protocol.BlockText, Text: text})
+
 		default:
 			// 认不得的 item 类型：跳过，不报错（decode 必须是全函数）。
 			//
@@ -215,16 +254,50 @@ func decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			// 也不 flush：跳过的东西不该在消息序列上留下疤。收口会把它前后两条同侧
 			// item 劈成两条同 role 消息，而严格的 CC 上游正是拒这个。
 			//
-			// compaction_trigger 曾经也落在这一支，静默跳过的后果不是「丢个字段」而是
-			// 长会话砖死（见 compaction.go）。它现在**在进 codec 之前**就被
-			// server.relay 拦下并明确拒绝（口径层 v0.54，#71），所以这里不再需要为它
-			// 破例——这条注释是留给下一个来读这一支的人的：跳过的代价要按 item 逐个
-			// 想，不是所有未知 item 都只值一行日志。
+			// compaction_trigger 曾经落在这一支，静默跳过的后果不是「丢个字段」而是长
+			// 会话砖死（见 compaction.go）；它和压缩产物 item 现在各有自己的分支。这条
+			// 注释是留给下一个来读这一支的人的：跳过的代价要按 item 逐个想，不是所有
+			// 未知 item 都只值一行日志。
 		}
 	}
 	flush()
 	return nil
 }
+
+// rewriteAsSummarizer 把一个压缩 turn 改写成纯总结请求（#74 范围 2）。
+//
+// 剥掉的三样东西各有各的必须：
+//
+//   - tools / tool_choice：留着上游多半会去调工具，而这一轮的产物必须是一段文本摘要。
+//     一个工具调用回来，合成侧攒到的正文就是空的。
+//   - text（Responses 的输出格式位，结构化输出与 verbosity 都在里面）：它会把回答按
+//     schema 约束住，而我们要的是自由文本。
+//
+// 图片不用剥：canonical 目前没有承载图片数据的字段（protocol.BlockImage 是占位，#33），
+// 到不了这里。
+//
+// 摘要指令追加成**最后一条 user 消息**，与 sub2api 的 Grok 支同一个摆法——上游看到的
+// 就是「一段历史 + 一句请你总结」，不需要它认得任何压缩概念。
+func rewriteAsSummarizer(req *protocol.Request) {
+	req.Tools = nil
+	req.ToolChoice = protocol.ToolChoice{}
+	delete(req.Extras, "text")
+	req.Messages = append(req.Messages, protocol.Message{
+		Role:    protocol.RoleUser,
+		Content: []protocol.Block{{Kind: protocol.BlockText, Text: compactPrompt}},
+	})
+}
+
+// CompactionTurn 报告 DecodeRequest 刚解的那个请求是不是 Codex 压缩 turn。
+//
+// 编码侧靠它切到合成模式（encode.go），server 侧靠它决定要不要开静默期心跳与打日志。
+// 与 customTools 同一个理由挂在实例上：这是解码侧才知道、编码侧必须知道的事，而
+// Codec 接口的 EncodeStream 只看得见事件流。
+func (c *Codec) CompactionTurn() bool { return c.compaction }
+
+// CompactionDrops 列出解码时没能还原的回带压缩 item 的 type，供调用方打丢弃日志
+// （口径层 §2.6：跨协议丢弃要有日志警告，不静默）。codec 是纯函数、不持有 logger。
+func (c *Codec) CompactionDrops() []string { return c.compactionDrops }
 
 // normalizeRole 把 Responses 的角色归一到 canonical。
 //

@@ -35,7 +35,7 @@ type Flusher interface{ Flush() }
 
 // EncodeStream 把事件流编成 Responses SSE 下发。
 func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
-	enc := &streamEncoder{w: w, customTools: c.customTools}
+	enc := c.newStreamEncoder(w)
 	for ev := range events {
 		if err := enc.event(ev); err != nil {
 			return err
@@ -44,11 +44,33 @@ func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
 	return enc.finish()
 }
 
+// newStreamEncoder 把每请求状态从 codec 实例搬到编码器上，两条编码入口共用。
+func (c *Codec) newStreamEncoder(w io.Writer) *streamEncoder {
+	return &streamEncoder{
+		w:           w,
+		customTools: c.customTools,
+		compaction:  c.compaction,
+		now:         time.Now,
+		beatEvery:   heartbeatInterval,
+	}
+}
+
 type streamEncoder struct {
 	w io.Writer
 
 	// customTools 来自同一个 codec 实例的 DecodeRequest（见 codec.go 的实例约定）。
 	customTools map[string]bool
+
+	// compaction 打开本地合成模式（#74）：正常 output item 一个不发，assistant 正文
+	// 攒起来，收尾时合成恰好一个 compaction item。同样来自 DecodeRequest。
+	compaction     bool
+	compactionText strings.Builder
+
+	// now / beatEvery 只服务静默期心跳。now 可注入是为了让心跳节奏能被测——它是
+	// 这台编码器里唯一与真实时间有关的行为。
+	now       func() time.Time
+	beatEvery time.Duration
+	lastBeat  time.Time
 
 	seq         int
 	started     bool
@@ -65,10 +87,16 @@ type streamEncoder struct {
 	// done 是已经收口的 output item，终帧的 response.output 要照原样列一遍。
 	done []any
 
-	usage      protocol.Usage
-	stop       string
+	usage protocol.Usage
+	stop  string
+	// truncated 记 EvDone 是不是解码侧兜底合成的（上游没声明 stop reason 就断了）。
+	// 只有合成模式读它。
+	truncated  bool
 	finished   bool
 	sawErrored bool
+	// finalStatus 是终帧用的 status，由 finish 定；非流式那条路要用同一个判断，
+	// 各算一遍必然漂移。
+	finalStatus string
 }
 
 type toolPending struct {
@@ -79,6 +107,32 @@ type toolPending struct {
 }
 
 func (e *streamEncoder) event(ev protocol.Event) error {
+	if e.compaction {
+		switch ev.Type {
+		case protocol.EvTextDelta:
+			// 摘要正文只进缓冲，不上线。发成普通 assistant 消息的话，Codex 会同时收到
+			// 「一段摘要文本」和「一个装着同一段摘要的 compaction item」，而后者是要被
+			// 当成**替换历史**装回去的——重复一份等于把摘要写进历史两次。
+			e.compactionText.WriteString(ev.Text)
+			if err := e.ensureStarted(); err != nil {
+				return err
+			}
+			return e.heartbeat()
+		case protocol.EvThinkingDelta, protocol.EvToolCallStart, protocol.EvToolArgsDelta, protocol.EvToolCallEnd:
+			// summarizer turn 已经把 tools 剥了（decode.go 的 rewriteAsSummarizer），
+			// 上游还是调了工具的话，那次调用对压缩没有意义，也不能占用 output——
+			// 一个工具 item 混进去，「恰好一个 compaction item」就不成立了。
+			//
+			// 吞掉归吞掉，心跳照发：rewriteAsSummarizer **有意留着 reasoning**，开思考
+			// 的上游会先想上几十秒再写第一个摘要 token，那段静默是 summarizer turn 的
+			// 常态而不是边角。
+			if err := e.ensureStarted(); err != nil {
+				return err
+			}
+			return e.heartbeat()
+		}
+		// 其余事件（message_start / usage / done / error）照常走下面那台状态机。
+	}
 	switch ev.Type {
 	case protocol.EvMessageStart:
 		e.id, e.model = ev.ID, ev.Model
@@ -135,6 +189,7 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 
 	case protocol.EvDone:
 		e.stop = ev.StopReason
+		e.truncated = ev.Truncated
 		return nil
 
 	case protocol.EvError:
@@ -304,6 +359,9 @@ func (e *streamEncoder) ensureStarted() error {
 	if e.id == "" {
 		e.id = fallbackResponseID()
 	}
+	// 心跳的计时从「流真的开了」起算：created/in_progress 两帧本身就是新鲜字节，
+	// 紧接着再补一行注释没有意义。
+	e.lastBeat = e.now()
 	// created 与 in_progress 载的是同一个 response 对象（实采转录里两帧逐字节相同，
 	// 只差 sequence_number）。两帧都发是因为 Codex 按 in_progress 判定「上游真的开工
 	// 了」，只发 created 会让它一直等。
@@ -326,6 +384,9 @@ func (e *streamEncoder) finish() error {
 	if err := e.ensureStarted(); err != nil {
 		return err
 	}
+	if e.compaction {
+		return e.finishCompaction()
+	}
 	// 上游流断在半截（没等到 EvToolCallEnd）时，攒着的那个调用照样放出去。
 	if e.pending != nil {
 		if err := e.flushTool(e.pending.index); err != nil {
@@ -342,8 +403,142 @@ func (e *streamEncoder) finish() error {
 		// 被截断的回答看上去就是「模型说完了」。
 		status, event = "incomplete", "response.incomplete"
 	}
+	e.finalStatus = status
 	return e.frame(event, map[string]any{
 		"type": event, "response": e.responseBody(status, e.done, true),
+	})
+}
+
+// heartbeatInterval 是静默期心跳的最小间隔。取 15 秒：要显著小于常见反代的空闲超时
+// （nginx proxy_read_timeout 默认 60 秒），又不至于把一条流灌满注释行。
+const heartbeatInterval = 15 * time.Second
+
+// heartbeat 在合成期的静默里发一行 SSE 注释（#74 范围 5）。
+//
+// 合成模式下从 response.in_progress 到终帧之间下行零字节——上游正在写摘要，可能是几十
+// 秒。portage 没有 wire keepalive 层（writeDeadline 只管「写出去要多久」，它不发字节），
+// 中间那道反代会按空闲超时把连接掐了，客户端看到的是一次莫名其妙的断流。
+//
+// 注释行（`:` 开头）是 SSE 规范里的合法帧，任何合规解析器都忽略它，因此不会被误当成
+// 事件、也不进 sequence_number 的连号。
+//
+// **能盖住的只有「增量在流、但被我们吞掉」这一种静默**——正文增量与思考增量都算
+// （思考那段往往是最长的一截，见 event 里的吞掉分支）。上游整体卡住时它不发：那种
+// 情况本来就该由上游超时接管，不该由一条假装还活着的心跳掩盖。
+func (e *streamEncoder) heartbeat() error {
+	now := e.now()
+	if now.Sub(e.lastBeat) < e.beatEvery {
+		return nil
+	}
+	e.lastBeat = now
+	if _, err := io.WriteString(e.w, ": portage compaction in progress\n\n"); err != nil {
+		return err
+	}
+	if f, ok := e.w.(Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
+// compactionFailure 说明这次压缩 turn 为什么产不出 item。
+//
+// 两个字段分得开是有用的：wireReason 非空时它是 Responses 线格
+// `incomplete_details.reason` 的**合法取值**，终帧走 response.incomplete；为空则线格上
+// 没有对得上的取值，只能走 response.failed，把 message 那句给人看。混成一个 string 的
+// 话，`empty_summary` 这种自造哨兵会混进线格字段冒充 reason 码。
+type compactionFailure struct {
+	wireReason string
+	message    string
+}
+
+// compactionNoItem 判这次压缩 turn 能不能产 item；能产返回 nil。
+//
+// 五种不能产，共用一条理由：compaction item 会被 Codex 当作**替换历史**装回去，把一份
+// 残缺或空白的摘要装进去，等于永久删掉了这段会话的前半程。宁可让这次压缩明着失败。
+//
+// 前四支合起来对 canonical 的停因全集（stop / length / content_filter / tool_calls）
+// 是完备的：只有 `stop` 能往下走到产 item 那一步。这不是凑数——漏掉任何一个非 stop
+// 停因，都等于把「上游没写完」当成「上游写完了」。
+//
+// content_filter 单列一条不是多余的：正常路径把它并进 completed（见 finish），而合成
+// 模式下「completed + 零个 item」正是 #71 要杀的那个静默 Fatal 形态。
+//
+// truncated 那条是这里唯一**看不出**破绽的一种：解码侧为了给下游一个合法取值，会把
+// 断流兜成 `stop`，wire 上与真正的收尾一模一样，只有 EvDone 的 Truncated 位分得开。
+// 光看 e.stop 的话，一段写到一半的摘要会带着 completed 装回历史里。
+func (e *streamEncoder) compactionNoItem() *compactionFailure {
+	switch {
+	case e.stop == "length":
+		return &compactionFailure{wireReason: "max_output_tokens", message: "压缩未完成：摘要被上游截断"}
+	case e.stop == "content_filter":
+		return &compactionFailure{wireReason: "content_filter", message: "压缩未完成：摘要被上游内容过滤拦下"}
+	case e.stop == "tool_calls":
+		// rewriteAsSummarizer 剥了 tools，合规上游到不了这里；但 event() 那条吞工具
+		// 事件的分支已经承认「上游照调不误」是可能的（兼容网关自带服务端工具），而
+		// 挡住事件却收下停在工具调用前的半截正文，等于那道防线只修了一半。
+		//
+		// 没有对得上的 incomplete_details.reason，所以留空走 response.failed。
+		return &compactionFailure{message: "压缩未完成：上游改去调工具了，摘要停在半截"}
+	case e.truncated || e.stop == "":
+		// e.stop 空是给直接喂事件的调用方留的余量——今天两个解码器都会兜成 stop，
+		// 兜不着的路径（将来的解码器、测试直喂）不该因此漏过去。
+		return &compactionFailure{message: "压缩未完成：上游流在摘要收尾前断了"}
+	case e.compactionText.Len() == 0:
+		return &compactionFailure{message: "压缩未完成：上游没有产出摘要正文"}
+	}
+	return nil
+}
+
+// finishCompaction 收合成模式的尾：合成恰好一个 compaction item + response.completed，
+// 或者一个 item 都不产、发一个明着失败的终帧。
+//
+// 只发 output_item.done，不发配套的 output_item.added——与 opencodex
+// （`src/bridge.ts` 的合成分支）一致。这个 item 不是逐步生成出来的，added 描述的那个
+// 「开始了」的时刻并不存在。
+func (e *streamEncoder) finishCompaction() error {
+	fail := e.compactionNoItem()
+	if fail == nil {
+		item := map[string]any{
+			"id":                "cmp_" + rand.Text(),
+			"type":              itemCompaction,
+			"encrypted_content": encodeCompactionSummary(e.compactionText.String()),
+		}
+		if err := e.frame("response.output_item.done", map[string]any{
+			"type": "response.output_item.done", "output_index": e.outputIndex, "item": item,
+		}); err != nil {
+			return err
+		}
+		e.done = append(e.done, item)
+		e.outputIndex++
+		e.finalStatus = "completed"
+		return e.frame("response.completed", map[string]any{
+			"type": "response.completed", "response": e.responseBody("completed", e.done, true),
+		})
+	}
+
+	if fail.wireReason == "" {
+		// 线格上没有对得上的 incomplete_details 取值（上游正常收尾却一个字没写、或者
+		// 流断在收尾之前），而 completed + 零 item 又恰恰是要避免的那个形态——发
+		// response.failed，把话说清楚。
+		e.finalStatus = "failed"
+		body := e.responseBody("failed", e.done, true)
+		body["error"] = map[string]any{
+			"code":    "server_error",
+			"message": fail.message,
+		}
+		e.sawErrored = true
+		return e.frame("response.failed", map[string]any{
+			"type": "response.failed", "response": body,
+		})
+	}
+
+	e.finalStatus = "incomplete"
+	body := e.responseBody("incomplete", e.done, true)
+	// responseBody 对 incomplete 默认写 max_output_tokens（正常路径只有截断一种）；
+	// 合成模式下 content_filter 也走 incomplete，所以这里按真实理由覆盖掉。
+	body["incomplete_details"] = map[string]any{"reason": fail.wireReason}
+	return e.frame("response.incomplete", map[string]any{
+		"type": "response.incomplete", "response": body,
 	})
 }
 
@@ -370,6 +565,8 @@ func (e *streamEncoder) responseBody(status string, output []any, withUsage bool
 		"tools":                []any{},
 	}
 	if status == "incomplete" {
+		// 正常路径上 incomplete 只有截断一种成因（见 finish）。合成模式还会因内容过滤
+		// 走到 incomplete，那条由 finishCompaction 覆盖这一项。
 		body["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
 	}
 	if withUsage {
@@ -429,7 +626,7 @@ func (e *streamEncoder) frame(event string, payload map[string]any) error {
 // 把 done 列表和 usage 攒齐。两套聚合逻辑各写一遍必然漂移——非流式路径的样本远比
 // 流式少，漂了也不容易发现。
 func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
-	enc := &streamEncoder{w: io.Discard, customTools: c.customTools}
+	enc := c.newStreamEncoder(io.Discard)
 	for _, ev := range events {
 		if ev.Type == protocol.EvError {
 			return nil, fmt.Errorf("openairesponses: 上游响应错误: %s", ev.Message)
@@ -441,11 +638,17 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 	if err := enc.finish(); err != nil {
 		return nil, err
 	}
-	status := "completed"
-	if enc.stop == "length" {
-		status = "incomplete"
+	if c.compaction && len(enc.done) == 0 {
+		// 非流式压缩 turn 没能产出 item。回一份「completed 但空 output」的响应就是
+		// #71 要杀的静默 Fatal，所以这里报错让调用方按上游错误处理（转换路径会回一个
+		// 带原因的 5xx，客户端至少看得见出了事）。
+		msg := "上游没有产出摘要正文"
+		if fail := enc.compactionNoItem(); fail != nil {
+			msg = fail.message
+		}
+		return nil, fmt.Errorf("openairesponses: 压缩 turn 未产出 compaction item: %s", msg)
 	}
-	return marshal(enc.responseBody(status, enc.done, true))
+	return marshal(enc.responseBody(enc.finalStatus, enc.done, true))
 }
 
 // usageBody 按 Responses 的 usage 形状写计数。

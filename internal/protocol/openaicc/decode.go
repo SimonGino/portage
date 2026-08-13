@@ -264,12 +264,16 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 	}
 	st.flushTools(out)
 	stop := st.stop
-	if stop == "" {
+	truncated := stop == ""
+	if truncated {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
+		//
+		// 兜底会抹掉「上游根本没发 finish_reason 就断了」这个事实，所以另开
+		// Truncated 单独带下去（protocol.Event 的字段注释）。
 		stop = "stop"
 	}
-	out <- protocol.Event{Type: protocol.EvDone, StopReason: stop}
+	out <- protocol.Event{Type: protocol.EvDone, StopReason: stop, Truncated: truncated}
 }
 
 // flushTools 按**首次出现的次序**放出每个工具调用的 Start / ArgsDelta / End。

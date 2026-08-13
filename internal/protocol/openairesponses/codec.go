@@ -38,6 +38,11 @@ var _ protocol.Codec = (*Codec)(nil)
 type Codec struct {
 	// customTools 是本次请求声明为 custom 的工具名，由 DecodeRequest 填。
 	customTools map[string]bool
+
+	// compaction 记「本次是 Codex 压缩 turn」，compactionDrops 记回带时没能还原的
+	// 压缩 item。两个都由 DecodeRequest 填，消费方见 CompactionTurn / CompactionDrops。
+	compaction      bool
+	compactionDrops []string
 }
 
 func NewCodec() *Codec { return &Codec{} }

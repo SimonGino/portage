@@ -9,6 +9,7 @@ import (
 
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/codecs"
+	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 	"github.com/SimonGino/portage/internal/protocol/taps"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
@@ -74,6 +75,24 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// 接入点对外模型名 → 纳管模型名。透传路径靠 RewriteModel 做字节级 splice，
 	// 转换路径本来就要重编码，改字段即可。
 	req.Model = cand.UpstreamModel
+
+	// Codex 压缩 turn 走本地合成（#74）。日志在这里打而不是在 codec 里：codec 是纯
+	// 函数、不持有 logger，同「跨协议转换丢弃字段」那条的分工。
+	if rc, ok := inCodec.(*openairesponses.Codec); ok {
+		if rc.CompactionTurn() {
+			s.log.Info("Codex 压缩 turn 本地合成",
+				"channel", cand.ChannelName, "channel_protocol", cand.Protocol)
+		}
+		// 丢弃日志**不能**罩在压缩 turn 里面：回带解不开发生在压缩之后的**普通**请求上
+		// （那一轮没有 trigger，CompactionTurn 为假——见 decode 侧的还原用例），而混路
+		// 场景恰恰是它要诊断的头一次。罩着的话最该归因的那次静默无声。
+		if drops := rc.CompactionDrops(); len(drops) > 0 {
+			// 回带的压缩摘要解不开、降级成了占位：这一段历史对上游是失忆的，
+			// 「模型好像忘了前半段」这类反馈只能靠这行日志归因。
+			s.log.Warn("回带的压缩摘要解不开，已降级为占位",
+				"channel", cand.ChannelName, "items", drops)
+		}
+	}
 
 	outBody, dropped, err := encodeRequest(outCodec, req, stream)
 	if err != nil {

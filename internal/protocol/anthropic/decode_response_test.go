@@ -268,6 +268,13 @@ func TestDecodeStreamAlwaysTerminates(t *testing.T) {
 	if len(events) == 0 || events[len(events)-1].Type != protocol.EvDone {
 		t.Fatalf("截断的流没有以 EvDone 收尾: %v", types(events))
 	}
+	last := events[len(events)-1]
+	// stop_reason 一次都没到，兜底收尾把它填成了 stop——wire 上与正常收尾同形。
+	// Truncated 是唯一分得开的那一位，压缩合成靠它判「这段摘要写完了没有」
+	// （openairesponses 的 compactionNoItem）。
+	if last.StopReason != "stop" || !last.Truncated {
+		t.Errorf("兜底收尾没标成截断: %+v", last)
+	}
 }
 
 // stop_reason 已经在 message_delta 里给过，流却断在 message_stop 之前——兜底收尾
@@ -278,6 +285,10 @@ func TestDecodeStreamKeepsStopReasonOnTruncation(t *testing.T) {
 	last := events[len(events)-1]
 	if last.Type != protocol.EvDone || last.StopReason != "tool_calls" {
 		t.Errorf("兜底收尾丢了 stop_reason: %+v", last)
+	}
+	// 上游把「为什么停」说清楚了，只是没走完收尾帧——不算截断。
+	if last.Truncated {
+		t.Error("上游已经声明过 stop_reason，不该标成截断")
 	}
 }
 
@@ -400,6 +411,42 @@ func TestDecodeFullBodyMirrorsStream(t *testing.T) {
 	// 非流式同样走毛值归一：10 + 缓存读 5。
 	if u := events[1].Usage; u == nil || u.InputTokens != 15 || u.CacheReadTokens != 5 {
 		t.Errorf("usage = %+v, 期望毛值 input 15 / cache_read 5", u)
+	}
+}
+
+// 非流式的 stop_reason 缺失同样要置 Truncated：包解得开，所以它不是「流断了」，
+// 而是「上游没声明这轮是怎么收的」——对压缩合成是同一个失格理由，一份没声明收尾的
+// 响应不该被当成完整摘要装回 Codex 的历史（openairesponses 的 compactionNoItem）。
+//
+// 这条盯的是两条路径的对称：流式那半边由 emitDone 置位，非流式的 EvDone 是手搓的。
+func TestDecodeFullBodyMarksMissingStopReasonTruncated(t *testing.T) {
+	head := `{"id":"msg_1","model":"claude-sonnet-5","type":"message","role":"assistant",` +
+		`"content":[{"type":"text","text":"写了一半"}]`
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"上游说了为什么停", head + `,"stop_reason":"end_turn"}`, false},
+		{"stop_reason 缺失", head + `}`, true},
+		{"stop_reason 是 null", head + `,"stop_reason":null}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events, err := NewCodec().DecodeFullBody([]byte(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			last := events[len(events)-1]
+			if last.Type != protocol.EvDone {
+				t.Fatalf("末事件不是 EvDone: %v", last.Type)
+			}
+			if last.StopReason != "stop" {
+				t.Errorf("StopReason 该兜成 stop（下游要一个合法取值），得到 %q", last.StopReason)
+			}
+			if last.Truncated != tc.want {
+				t.Errorf("Truncated = %v, 期望 %v", last.Truncated, tc.want)
+			}
+		})
 	}
 }
 
