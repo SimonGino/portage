@@ -55,6 +55,44 @@ make build          # 前端产物 embed 进 bin/portage
 
 公网暴露：容器端口保持只发布给本机，前面挂 nginx 收 TLS 并只放行 `/v1`，样例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)。**nginx 对 SSE 的几个默认值必须显式改**，漏了不报错，只表现为卡住或断流。
 
+## 接 Codex CLI
+
+把 portage 配成 Codex 的 custom provider（`~/.codex/config.toml`）：
+
+```toml
+model_provider = "portage"
+
+[model_providers.portage]
+name = "Portage"
+base_url = "http://127.0.0.1:8317/v1"
+wire_api = "responses"          # 走 /v1/responses，网关按渠道决定要不要转成别的协议
+env_key = "PORTAGE_API_KEY"     # 值是网关 key（sk-ptg-…），不是上游 key
+
+# 每个真会用到的接入点各来一份 profile，窗口按**上游真实窗口**写
+[profiles.sonnet]
+model = "gw-sonnet"
+model_provider = "portage"
+model_context_window = 200000
+# 可选：想更早开始压缩就显式设它；不设则由 Codex 按窗口比例自己算触发点
+model_auto_compact_token_limit = 160000
+```
+
+**`model_context_window` 必须自己设**，这是网关侧无法代劳的一件事：Codex 不读网关的
+`/v1/models` 去取窗口，它认的是自己内置的模型目录。接入点名沿用 Codex 认得的真名
+（`gpt-5.1-codex` 这类）时目录里的元数据自然对得上；起了 `gw-sonnet` 这种自定义名字，
+或者真实上游窗口比同名模型小，Codex 就会吃 fallback 的 272k、把自动压缩的触发点摆在
+约 245k 上——上游真窗口更小的话，请求会先撞上游的 400，压根轮不到压缩。
+
+**压缩（remote compaction）能不能用要看渠道**：Codex 到点会发一个 input 尾部带
+`compaction_trigger` 的请求，并要求响应里恰好一个 compaction item，收不到就当场 Fatal
+且不重试。所以网关只在**上游自己认得这个 trigger 的 Responses 渠道**上放行它——在管理端
+渠道页把「Codex 压缩」勾成「支持」。没勾、或者这个模型路由到的是需要跨协议转换的渠道
+（Responses → Anthropic / Chat Completions），压缩请求会被明确拒绝（400，文案说明原因），
+而不是转发出去让 Codex 收到一个空的压缩结果。网关侧的本地合成尚未实现
+（[#74](https://github.com/SimonGino/portage/issues/74)），在那之前把窗口设小、让压缩晚点
+来，或者把 Codex 挂在支持压缩的 Responses 渠道上。legacy 的 `POST /v1/responses/compact`
+不实现，回 501。
+
 ## 管理端
 
 `/admin` 下的 React 界面覆盖日常运营的全部动作：渠道（协议集、base_url、凭证池、模型纳管、连通性探测、拉上游模型列表）、接入点（候选与权重）、网关 key、用量与最近调用。

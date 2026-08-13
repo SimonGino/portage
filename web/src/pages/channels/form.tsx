@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON } from '../../api'
 import type { Channel, Protocol } from '../../api'
 import { ErrorBar, Field } from '../../ui'
-import { SegmentedMulti } from '../../fields'
+import { Segmented, SegmentedMulti } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 
 const PROTOCOLS: Protocol[] = ['anthropic', 'openai', 'openai_responses']
@@ -47,6 +47,9 @@ export function ChannelForm({
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
   // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
   const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
+  // compaction 能力位（口径层 v0.54）。只在勾了 Responses 时露出来：它问的是「这个
+  // 上游认不认 compaction_trigger」，而只有 Responses 透传那条路会去问。
+  const [compaction, setCompaction] = useState(channel?.supports_compaction ?? false)
   // 凭证只在**新建**时出现在这张表单里。编辑走凭证池，这样「改个名字」不可能顺手把
   // 凭证清空——后端的修改接口本来就不看这个字段。
   const [credential, setCredential] = useState('')
@@ -65,11 +68,17 @@ export function ChannelForm({
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
   const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
 
+  // 能力位只在 Responses 渠道上有意义，所以只有勾了它才露、也只有露着才传（不传 =
+  // 那一列不动，同 key_mode 的整体覆盖陷阱）。取消勾 Responses 之后不去清那一列：
+  // 清了也读不到，而勾回来时人还得再想一遍这个上游支不支持压缩。
+  const showCompaction = protos.includes('openai_responses')
+
   const dirty =
     channel !== null &&
     (name !== channel.name ||
       baseURL !== channel.base_url ||
       maxConcValue !== channel.max_concurrency ||
+      (showCompaction && compaction !== channel.supports_compaction) ||
       protos.join(',') !== (channel.protocols ?? []).join(','))
 
   async function submit(e: React.FormEvent) {
@@ -88,6 +97,7 @@ export function ChannelForm({
         protocols: protos,
         base_url: baseURL,
         max_concurrency: maxConcValue,
+        ...(showCompaction ? { supports_compaction: compaction } : {}),
         disabled: channel?.disabled ?? false,
       }
       if (channel) {
@@ -176,6 +186,23 @@ export function ChannelForm({
           />
         </Field>
       </div>
+      {/* Codex 压缩能力位（口径层 v0.54）。默认「不支持」，得人明确勾——上游认不认
+          compaction_trigger 网关探不出来，而猜错的代价是 Codex 在长会话里直接 Fatal。 */}
+      {showCompaction && (
+        <Field
+          label="Codex 压缩（remote compaction）"
+          hint="这个上游认不认 Responses 请求里的 compaction_trigger。说「不支持」时，压缩请求会被网关明确拒绝，而不是转发出去让 Codex 收到空压缩结果后当场失败"
+        >
+          <Segmented
+            value={compaction ? 'yes' : 'no'}
+            options={[
+              { value: 'yes', label: '支持' },
+              { value: 'no', label: '不支持' },
+            ]}
+            onChange={(v) => setCompaction(v === 'yes')}
+          />
+        </Field>
+      )}
       {/* 边填边把拼出来的完整地址摆出来。这是 base_url 那个必踩的坑唯一说得清的
           方式——上面那句提示写了「不带 /v1」，但人是照着上游文档粘的，粘进来的多半
           就带；只有把 `…/v1/v1/chat/completions` 摆在眼前，那句提示才真的被读到。 */}

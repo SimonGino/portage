@@ -11,6 +11,12 @@ CREATE TABLE IF NOT EXISTS channels (
   -- 渠道级最大并发（in-flight）上限（口径层 v0.49）：0 = 不限（默认）。闸在网关
   -- 内存态（upstream.Client），这一列只是配置来源；有界排队与 429 见口径层 v0.50。
   max_concurrency INTEGER NOT NULL DEFAULT 0,
+  -- 这个渠道的上游认不认 Codex 的 `compaction_trigger`（口径层 v0.54）：0 = 不认
+  -- （默认，PO 2026-08-13 裁定）。它**保护的是透传路径**——Responses 形状的 wire
+  -- 不等于支持压缩，把一个不认 trigger 的兼容网关配成透传渠道，trigger 原样过去、
+  -- 上游回 0 个 compaction item，Codex 照样 Fatal。为否时压缩 turn 明确拒绝。
+  -- 转换路径（R→A / R→CC）与这一列无关：那条路上 trigger 根本到不了上游，一律拒。
+  supports_compaction INTEGER NOT NULL DEFAULT 0,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

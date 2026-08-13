@@ -214,6 +214,12 @@ func decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			//
 			// 也不 flush：跳过的东西不该在消息序列上留下疤。收口会把它前后两条同侧
 			// item 劈成两条同 role 消息，而严格的 CC 上游正是拒这个。
+			//
+			// compaction_trigger 曾经也落在这一支，静默跳过的后果不是「丢个字段」而是
+			// 长会话砖死（见 compaction.go）。它现在**在进 codec 之前**就被
+			// server.relay 拦下并明确拒绝（口径层 v0.54，#71），所以这里不再需要为它
+			// 破例——这条注释是留给下一个来读这一支的人的：跳过的代价要按 item 逐个
+			// 想，不是所有未知 item 都只值一行日志。
 		}
 	}
 	flush()

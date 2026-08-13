@@ -160,12 +160,13 @@ func TestConfigPasswordDoesNotOverrideChangedOne(t *testing.T) {
 // ── 配置 CRUD ───────────────────────────────────────────────────────────
 
 type adminChannel struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	KeyMode      string `json:"key_mode"`
-	EnabledKeys  int    `json:"enabled_keys"`
-	DisabledKeys int    `json:"disabled_keys"`
-	Models       []struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	KeyMode            string `json:"key_mode"`
+	SupportsCompaction bool   `json:"supports_compaction"`
+	EnabledKeys        int    `json:"enabled_keys"`
+	DisabledKeys       int    `json:"disabled_keys"`
+	Models             []struct {
 		ID            int64  `json:"id"`
 		UpstreamModel string `json:"upstream_model"`
 	} `json:"models"`
@@ -275,6 +276,53 @@ func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
 	if channels[0].KeyMode != "polling" {
 		t.Errorf("显式改成 polling 没生效：%+v", channels)
+	}
+}
+
+// compaction 能力位（口径层 v0.54）与 key_mode 同一个整体覆盖陷阱，但更险：它的哨兵
+// 是 nil 而不是零值——false 是**有意义的默认取值**，缺省当 false 处理与「不动那一列」
+// 在页面上长得一模一样，而后果是一个勾过的渠道在别处保存一次就被静默关掉压缩。
+func TestUpdateChannelKeepsCompactionBitWhenAbsent(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"resp","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"credential":"sk-x"}`, &created)
+
+	var channels []adminChannel
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if len(channels) != 1 || channels[0].SupportsCompaction {
+		t.Fatalf("新建渠道的能力位默认该是否（PO 2026-08-13 裁定）：%+v", channels)
+	}
+
+	id := itoa(created.ID)
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"supports_compaction":true}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if !channels[0].SupportsCompaction {
+		t.Fatalf("显式勾上没生效：%+v", channels)
+	}
+
+	// 一次只改名字的保存，请求体里没有这个字段。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp-renamed","protocols":["openai_responses"],"base_url":"https://api.example.com"}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if !channels[0].SupportsCompaction {
+		t.Errorf("能力位被静默关掉了：%+v", channels)
+	}
+
+	// 显式取消仍然要生效，否则「不动」就变成了「关不掉」。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp-renamed","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"supports_compaction":false}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if channels[0].SupportsCompaction {
+		t.Errorf("显式取消没生效：%+v", channels)
 	}
 }
 

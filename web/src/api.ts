@@ -183,6 +183,12 @@ export interface Channel {
   key_mode: KeyMode
   /** 渠道级并发上限（口径层 v0.49）：0 = 不限。 */
   max_concurrency: number
+  /**
+   * 这个渠道的上游认不认 Codex 的 `compaction_trigger`（口径层 v0.54）：默认否。
+   * 为否时 Responses 透传对压缩 turn 明确拒绝——Responses 形状的 wire 不等于支持
+   * 压缩，原样透传只会让 Codex 收到 0 个 compaction item 然后 Fatal。
+   */
+  supports_compaction: boolean
   disabled: boolean
   /**
    * 可用/停用凭证计数（口径层 v0.38）。这里只有计数，没有凭证值——值由凭证池那一个

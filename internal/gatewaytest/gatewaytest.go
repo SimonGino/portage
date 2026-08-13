@@ -439,6 +439,20 @@ func SetChannelConcurrency(t *testing.T, db *sql.DB, channelID int64, limit int)
 	}
 }
 
+// SetChannelCompaction 设渠道的 compaction 能力位（口径层 v0.54）。库里的默认是
+// false，所以只有「上游确实认得 compaction_trigger」的用例需要调它。
+func SetChannelCompaction(t *testing.T, db *sql.DB, channelID int64, supports bool) {
+	t.Helper()
+	v := 0
+	if supports {
+		v = 1
+	}
+	if _, err := db.Exec(
+		`UPDATE channels SET supports_compaction = ? WHERE id = ?`, v, channelID); err != nil {
+		t.Fatalf("设渠道 compaction 能力位失败: %v", err)
+	}
+}
+
 // SeedCredential 往渠道的凭证池里追加一份，名字自动给 `凭证 N`（渠道内唯一，
 // 口径层 v0.38）。要指定名字（按凭证归因的用例要）用 SeedNamedCredential。
 func SeedCredential(t *testing.T, db *sql.DB, channelID int64, credential string) {

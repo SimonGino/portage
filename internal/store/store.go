@@ -81,7 +81,30 @@ func migrate(db *sql.DB) error {
 	if err := addConcurrencyColumns(db); err != nil {
 		return err
 	}
-	return addErrorDetail(db)
+	if err := addErrorDetail(db); err != nil {
+		return err
+	}
+	return addSupportsCompaction(db)
+}
+
+// addSupportsCompaction 补 v0.54 的 channels.supports_compaction。
+//
+// 默认 0（不支持），存量行一律停在 0 上——这是本批唯一一处**行为会变**的迁移：一个
+// 今天真的支持压缩的 Responses 透传渠道，迁移后要到管理端把这一位勾上，压缩 turn 才
+// 继续放行。选默认否是 PO 2026-08-13 的裁定，理由是代价不对称：位错成否 = 一条点名
+// 「去渠道页勾上」的 400，位错成是 = 复现本票要杀掉的那个静默 Fatal。
+func addSupportsCompaction(db *sql.DB) error {
+	has, err := hasColumn(db, "channels", "supports_compaction")
+	if err != nil {
+		return fmt.Errorf("检查 channels.supports_compaction: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN supports_compaction INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("迁移 channels.supports_compaction: %w", err)
+	}
+	return nil
 }
 
 // addErrorDetail 补 v0.53 的 call_logs.error_detail。
@@ -256,6 +279,10 @@ type Candidate struct {
 	ChannelName string
 	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
 	MaxConcurrency int
+	// SupportsCompaction 记这个渠道的上游认不认 Codex 的 compaction_trigger
+	// （口径层 v0.54）。只在 Responses 透传那条路上被问到——转换路径上 trigger 到不了
+	// 上游，与渠道能力无关。
+	SupportsCompaction bool
 	// Protocol 是**这次请求**选定的上游协议，不是渠道的全部能力——渠道支持协议集
 	// （口径层 v0.33）在解析时就按入站协议收成了一个（见 pickProtocol）。下游拿它
 	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
@@ -387,7 +414,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	c := Candidate{RequestedModel: model}
 	var protocols, modelProtocols string
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
@@ -395,7 +422,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
@@ -451,7 +478,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 	c := Candidate{RequestedModel: model, Direct: true}
 	var protocols, modelProtocols string
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
@@ -459,7 +486,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction)
 	if err == nil {
 		if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 			return Candidate{}, err

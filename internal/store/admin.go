@@ -110,8 +110,10 @@ type Channel struct {
 	BaseURL   string       `json:"base_url"`
 	KeyMode   string       `json:"key_mode"`
 	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
-	MaxConcurrency int  `json:"max_concurrency"`
-	Disabled       bool `json:"disabled"`
+	MaxConcurrency int `json:"max_concurrency"`
+	// SupportsCompaction 记上游认不认 Codex 的 compaction_trigger（口径层 v0.54）。
+	SupportsCompaction bool `json:"supports_compaction"`
+	Disabled           bool `json:"disabled"`
 	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
 	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
 	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
@@ -125,7 +127,8 @@ type Channel struct {
 // 纳管模型清单。
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.disabled,
+		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.max_concurrency,
+		       ch.supports_compaction, ch.disabled,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
 		FROM channels ch ORDER BY ch.id`)
@@ -139,8 +142,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	for rows.Next() {
 		var c Channel
 		var protocols string
-		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.Disabled,
-			&c.EnabledKeys, &c.DisabledKeys); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency,
+			&c.SupportsCompaction, &c.Disabled, &c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
 		}
 		// 解不动就留空数组交给页面显示，不让整张列表 500：这一列可以是手写 SQL
@@ -201,7 +204,11 @@ type ChannelInput struct {
 	// 闸批才露到表单上的，老请求体里没有，缺省时那一列不动；0 在这里是有意义的
 	// 取值（不限），所以哨兵只能是 nil，不能再借零值。
 	MaxConcurrency *int `json:"max_concurrency"`
-	Disabled       bool `json:"disabled"`
+	// SupportsCompaction 是渠道 compaction 能力位（口径层 v0.54）：上游认不认
+	// compaction_trigger。指针同 MaxConcurrency——nil = 「没提这个字段」，那一列不动；
+	// false 在这里是有意义的取值（默认值就是它），所以哨兵不能借零值。
+	SupportsCompaction *bool `json:"supports_compaction"`
+	Disabled           bool  `json:"disabled"`
 }
 
 // normalized 校验并归一化支持协议集：去空格、去重、保序，空集合直接拒。
@@ -267,9 +274,16 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if maxConc != nil {
 		conc = *maxConc
 	}
+	// 新建渠道的能力位默认否（PO 2026-08-13 裁定）：勾错成否只是一条明确的 400，
+	// 勾错成是会让 Codex 在长会话里静默 Fatal。
+	compaction := false
+	if in.SupportsCompaction != nil {
+		compaction = *in.SupportsCompaction
+	}
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO channels (name, protocols, base_url, key_mode, max_concurrency, disabled) VALUES (?, ?, ?, ?, ?, ?)`,
-		in.Name, protocols, in.BaseURL, mode, conc, boolInt(in.Disabled))
+		INSERT INTO channels (name, protocols, base_url, key_mode, max_concurrency, supports_compaction, disabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, protocols, in.BaseURL, mode, conc, boolInt(compaction), boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
 	}
@@ -303,6 +317,10 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if maxConc != nil {
 		sets += `, max_concurrency = ?`
 		args = append(args, *maxConc)
+	}
+	if in.SupportsCompaction != nil {
+		sets += `, supports_compaction = ?`
+		args = append(args, boolInt(*in.SupportsCompaction))
 	}
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)

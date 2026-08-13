@@ -209,6 +209,8 @@ func (s *Server) Engine() *gin.Engine {
 		// 理由见 rateLimit 的注释。
 		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.rateLimit(ep), s.relay(ep))
 	}
+	// legacy 的 v1 compact 明确回 501（口径层 v0.54），不落到 SPA 的 NoRoute 上去。
+	r.POST("/v1/responses/compact", compactUnsupported)
 	// 管理面自己挂自己的路由与鉴权（cookie 会话），与上面这套 key 鉴权互不相干。
 	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
 	admin.New(s.db, s.log).Mount(r)
@@ -348,6 +350,13 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 
 		rec.channel, rec.channelProto, rec.upstreamModel = cand.ChannelName, cand.Protocol, cand.UpstreamModel
+
+		// Codex 压缩闸（口径层 v0.54，#71）：拦在选完渠道之后、分岔之前——判据要同时
+		// 用到「渠道说哪个协议」与「它认不认 compaction_trigger」，而两条路的收场是
+		// 同一句拒绝，没有理由在分岔两侧各写一遍。见 compaction.go。
+		if s.rejectCompaction(c, rec, ep, cand, body) {
+			return
+		}
 
 		// 临时闸：逐格放开（#9）。已放开的走转换路径，其余仍报「尚未实现」。
 		if cand.Protocol != ep.Proto {

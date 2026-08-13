@@ -38,6 +38,10 @@ _Avoid_: key 池（v0.17 泛化后的旧称）、API 密钥（指这一段时）
 渠道级 in-flight 请求数上限，空/0 = 不限（v0.49）；保护自部署上游不被排队堆死。限的是「同时在上游跑的存量」，与全局 QPS 桶（限入口速率、保护网关自身）两回事。闸满走网关侧**有界排队**（队列 ×1 / 超时 30s，全局默认），队满/超时回 429（v0.50）；拥塞期在此之外不加机制——无熔断、无探活恢复、重试不动（v0.51）；观测走流水一列两词——`queue_wait_ms` + error 词表加 `queue_full`/`queue_timeout`（v0.52）。
 _Avoid_: 渠道限流（笼统，易与 RPM/配额混）、QPS（并发是存量不是速率）
 
+**渠道 compaction 能力位**：
+渠道上的布尔位（`supports_compaction`，v0.54），语义只有一句：**这个渠道的上游认不认 Codex 的 `compaction_trigger`**，默认否（PO 于 2026-08-13 裁定，存量渠道随迁移落否）。它保护的是**透传**那条路——Responses 形状的 wire 不等于支持压缩，不认 trigger 的上游会把它当无关字段忽略、照回 0 个 compaction item，而 Codex 收到 0 个即 Fatal。为否时压缩 turn 明确拒绝（400 + 流水词 `compaction_unsupported`）；转换路径不看这个位，无条件拒。界面上叫「Codex 压缩（remote compaction）」。
+_Avoid_: 压缩开关（听着像网关能压缩，网关侧本地合成是 #74）、Responses 透传总开关（它只管压缩 turn，普通 turn 不受影响）
+
 **API Key**：
 网关下发给客户端的鉴权 key（前缀 `sk-ptg-`），与上游凭证严格两回事。界面上叫「API Key」（PO 于 2026-08-12 裁定改名，原称「网关 key」）；散文里指代上游那份时必须写全「上游凭证」，不能简称 api key。用量维度同理写全称——「按 API Key」与「按上游凭证」是两个维度，只写「按凭证」两边都像（v0.53 就是这么被看混的）。
 _Avoid_: 网关 key（旧称）、api key（指上游凭证时）、按凭证（作为用量维度时）

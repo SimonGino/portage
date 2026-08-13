@@ -177,9 +177,12 @@ type channelInput struct {
 	KeyMode string `json:"key_mode"`
 	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针留 nil 表示
 	// 「请求体没提」，缺省不动库里那一列（同 KeyMode 的整体覆盖陷阱）。
-	MaxConcurrency *int   `json:"max_concurrency"`
-	Disabled       bool   `json:"disabled"`
-	Credential     string `json:"credential"`
+	MaxConcurrency *int `json:"max_concurrency"`
+	// SupportsCompaction 是 compaction 能力位（口径层 v0.54）：上游认不认 Codex 的
+	// compaction_trigger。指针的 nil 同 MaxConcurrency——缺省不动那一列。
+	SupportsCompaction *bool  `json:"supports_compaction"`
+	Disabled           bool   `json:"disabled"`
+	Credential         string `json:"credential"`
 }
 
 func (in channelInput) toStore() store.ChannelInput {
@@ -188,12 +191,13 @@ func (in channelInput) toStore() store.ChannelInput {
 		set = append(set, protocol.Protocol(strings.TrimSpace(p)))
 	}
 	return store.ChannelInput{
-		Name:           strings.TrimSpace(in.Name),
-		Protocols:      set,
-		BaseURL:        strings.TrimSpace(in.BaseURL),
-		KeyMode:        strings.TrimSpace(in.KeyMode),
-		MaxConcurrency: in.MaxConcurrency,
-		Disabled:       in.Disabled,
+		Name:               strings.TrimSpace(in.Name),
+		Protocols:          set,
+		BaseURL:            strings.TrimSpace(in.BaseURL),
+		KeyMode:            strings.TrimSpace(in.KeyMode),
+		MaxConcurrency:     in.MaxConcurrency,
+		SupportsCompaction: in.SupportsCompaction,
+		Disabled:           in.Disabled,
 	}
 }
 

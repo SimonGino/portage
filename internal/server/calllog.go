@@ -204,7 +204,8 @@ func (s *Server) persistCall(rec *callRecord) {
 	// 表里没有 outcome 列（#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表（upstream_error /
 	// stream_aborted / unauthorized / rejected，并发闸批加 queue_full /
-	// queue_timeout / queue_abandoned，口径层 v0.52），不是上游原文——上游错误
+	// queue_timeout / queue_abandoned，口径层 v0.52；压缩止血批加
+	// compaction_unsupported，口径层 v0.54），不是上游原文——上游错误
 	// 文案里可能带 base_url。
 	if rec.outcome != "ok" {
 		row.Error = sql.NullString{String: rec.outcome, Valid: true}
