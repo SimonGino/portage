@@ -361,8 +361,10 @@ func TestR2ANonStreamAggregates(t *testing.T) {
 		out.Output[0].Content[0].Text != "读好了" {
 		t.Errorf("正文没聚合出来: %s", body)
 	}
-	if out.Usage.InputTokens != 88 || out.Usage.OutputTokens != 12 {
-		t.Errorf("usage 没带过来: %+v", out.Usage)
+	// Responses 的 input_tokens 是毛值：上游净值 88 + 缓存读 40 = 128。Codex 按
+	// total_tokens 判压缩触发点，低估会让它撞上游 400（protocol.Usage 的约定，#72）。
+	if out.Usage.InputTokens != 128 || out.Usage.OutputTokens != 12 {
+		t.Errorf("usage 没带过来: %+v，期望毛值 input 128", out.Usage)
 	}
 	if out.Usage.InputTokensDetails.CachedTokens != 40 {
 		t.Errorf("缓存命中数没带过来: %+v", out.Usage)

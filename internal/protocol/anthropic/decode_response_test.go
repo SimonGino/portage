@@ -98,6 +98,9 @@ func TestDecodeStreamText(t *testing.T) {
 
 // usage 在一条流里出现两次，语义是**累计快照**而非两笔加数（protocol/event.go）。
 // 消费方按后者覆盖前者处理，所以两帧都得原样放出来。
+//
+// 同时钉住归一：canonical 的 InputTokens 是**毛值**（含缓存两项），Anthropic 的
+// 净值 input_tokens 在解码时就得把缓存加回去（protocol.Usage 的约定）。
 func TestDecodeStreamEmitsUsageTwiceAsSnapshots(t *testing.T) {
 	var usages []protocol.Usage
 	for _, ev := range collect(t, respTextStream) {
@@ -109,14 +112,52 @@ func TestDecodeStreamEmitsUsageTwiceAsSnapshots(t *testing.T) {
 		t.Fatalf("放出了 %d 次 usage, 期望 2（message_start + message_delta）", len(usages))
 	}
 	for i, u := range usages {
-		if u.InputTokens != 2 {
-			t.Errorf("第 %d 次 usage 的 input_tokens = %d, 期望 2", i, u.InputTokens)
+		if u.InputTokens != 2+67805 {
+			t.Errorf("第 %d 次 usage 的 input_tokens = %d, 期望毛值 2+67805", i, u.InputTokens)
 		}
-		// Anthropic 的 input_tokens 不含缓存命中，缓存是另外两笔——不在此归一
-		// （protocol.Usage 的约定）。
+		// 缓存两项本身照留：毛值是总量，明细还得能拆出来（计费/排障都要）。
 		if u.CacheWriteTokens != 67805 {
 			t.Errorf("第 %d 次 usage 的 cache_creation 丢了: %+v", i, u)
 		}
+	}
+}
+
+// 兼容上游的 message_delta 可能只带 output_tokens（不重复 input 与缓存两项）。
+// 那一帧解出来 InputTokens 必然是 0——消费方靠「非零字段覆盖」不把 message_start
+// 的毛值清掉，两件事必须一起成立才不会低估 total（#72）。
+func TestDecodeStreamPartialUsageDeltaKeepsZeroInput(t *testing.T) {
+	const stream = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":1}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	var usages []protocol.Usage
+	for _, ev := range collect(t, stream) {
+		if ev.Type == protocol.EvUsage {
+			usages = append(usages, *ev.Usage)
+		}
+	}
+	if len(usages) != 2 {
+		t.Fatalf("放出了 %d 次 usage, 期望 2", len(usages))
+	}
+	if usages[0].InputTokens != 100 {
+		t.Errorf("message_start 的毛值 input = %d, 期望 10+90", usages[0].InputTokens)
+	}
+	if usages[1].InputTokens != 0 || usages[1].OutputTokens != 42 {
+		t.Errorf("只带 output 的 message_delta 不该凭空造 input: %+v", usages[1])
+	}
+
+	var merged protocol.Usage
+	for _, u := range usages {
+		merged.MergeSnapshot(u)
+	}
+	if merged.InputTokens != 100 || merged.OutputTokens != 42 {
+		t.Errorf("按非零字段合并后 = %+v, 期望 input 100 / output 42", merged)
 	}
 }
 
@@ -355,6 +396,10 @@ func TestDecodeFullBodyMirrorsStream(t *testing.T) {
 	}
 	if events[len(events)-1].StopReason != "tool_calls" {
 		t.Errorf("stop = %q", events[len(events)-1].StopReason)
+	}
+	// 非流式同样走毛值归一：10 + 缓存读 5。
+	if u := events[1].Usage; u == nil || u.InputTokens != 15 || u.CacheReadTokens != 5 {
+		t.Errorf("usage = %+v, 期望毛值 input 15 / cache_read 5", u)
 	}
 }
 

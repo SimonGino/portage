@@ -125,12 +125,42 @@ func TestEncodeStreamTextWireFormat(t *testing.T) {
 	if usage["input_tokens"] != float64(14444) || usage["output_tokens"] != float64(5) {
 		t.Errorf("usage 对不上: %v", usage)
 	}
+	// canonical 的 input 是毛值，Responses 的 input_tokens 也是毛值，直映；
+	// total = 毛值 + 输出，Codex 拿它判压缩触发点。
+	if usage["total_tokens"] != float64(14449) {
+		t.Errorf("total_tokens = %v, 期望 14444+5", usage["total_tokens"])
+	}
 	details := usage["input_tokens_details"].(map[string]any)
 	if details["cached_tokens"] != float64(3840) {
 		t.Errorf("cached_tokens = %v, 期望 3840", details["cached_tokens"])
 	}
 	if len(final["output"].([]any)) != 1 {
 		t.Errorf("终帧的 output 没列出正文 item: %v", final["output"])
+	}
+}
+
+// 后来的 usage 快照按**非零字段**覆盖（protocol/event.go 的 EvUsage 约定）：某些
+// 兼容上游末帧只报 `{"output_tokens":N}`，整结构体覆盖会把 input 清零，total 随之
+// 低估，Codex 的压缩触发点被推后、先撞上游 400（#72）。
+func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		protocol.Event{Type: protocol.EvUsage, Usage: &protocol.Usage{InputTokens: 14444, CacheReadTokens: 3840}},
+		protocol.Event{Type: protocol.EvTextDelta, Text: "pong"},
+		protocol.Event{Type: protocol.EvUsage, Usage: &protocol.Usage{OutputTokens: 5}},
+		protocol.Event{Type: protocol.EvDone, StopReason: "stop"},
+	)
+	final := frames[len(frames)-1].data["response"].(map[string]any)
+	usage := final["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(14444) || usage["output_tokens"] != float64(5) {
+		t.Errorf("usage = %v, 期望 input 14444 / output 5", usage)
+	}
+	if usage["total_tokens"] != float64(14449) {
+		t.Errorf("total_tokens = %v, 期望 14449", usage["total_tokens"])
+	}
+	details := usage["input_tokens_details"].(map[string]any)
+	if details["cached_tokens"] != float64(3840) {
+		t.Errorf("cached_tokens 被后一份快照清掉了: %v", details)
 	}
 }
 

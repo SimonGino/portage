@@ -42,7 +42,7 @@ const (
 	//
 	// 可在一条流里出现多次：Anthropic 在 message_start 给 input_tokens、在
 	// message_delta 给 output_tokens。语义是**累计快照**，后来者的非零字段覆盖
-	// 先前值，消费方不做加法。
+	// 先前值，消费方不做加法——用 Usage.MergeSnapshot 兑现，别写整结构体赋值。
 	EvUsage
 	// EvDone：响应结束。取 StopReason（保留映射后的 canonical 取值）。
 	EvDone
@@ -68,13 +68,57 @@ const (
 	ThinkingSignature ThinkingChannel = "signature"
 )
 
-// Usage 是 token 计数。语义与 Summary 一致：**保留各协议原始语义，不在此归一**
-// （Anthropic 的 input_tokens 不含缓存命中，OpenAI 的 prompt_tokens 含）。
+// Usage 是 token 计数。这里**归一**各协议的口径，与 Summary（保留上游原始语义的
+// 排障线索）分工不同：
+//
+//   - InputTokens 定死为**毛值**——含缓存命中与缓存写入，即「这一轮上游一共读了
+//     多少输入 token」。OpenAI 的 prompt_tokens / Responses 的 input_tokens 本就是
+//     毛值直映；Anthropic 的 input_tokens 是净值，解码时加回缓存两项、编码时减回去。
+//   - CacheReadTokens / CacheWriteTokens 是毛值的**明细**而非另外两笔加数，不许再
+//     加到 InputTokens 上。
+//
+// 归一放在 canonical 而不是各出口：不归一的话 total_tokens（= input + output）在
+// 缓存非零时低估，Codex 按它判压缩触发点，会被推后到先撞上游 400（#72）。
 type Usage struct {
 	InputTokens      int
 	OutputTokens     int
 	CacheReadTokens  int
 	CacheWriteTokens int
+}
+
+// NetInput 是毛值减掉缓存两项后的**净输入**，即 Anthropic 线上的 `input_tokens`
+// 口径（它与两项缓存互不相交，客户端自己相加）。A 出口编码时用它减回去，与
+// anthropic 解码侧那个加回缓存的加法互为逆向。
+//
+// 钳到 0：上游报的缓存数大于毛值（口径不一致的兼容上游）时，负的 input_tokens 不是
+// 合法 Anthropic 响应，客户端多半直接算崩。
+//
+// 钳零**不登记日志**，与 codec 的丢块登记（openaicc 的 DropVendorContent）不同档：
+// 那边是我们主动丢掉了客户端本该看到的东西，这边没丢任何信息——毛值与两项明细都
+// 照原样在别的字段里。而且两个解码侧都构造性地保证毛值 ≥ 缓存之和，真钳到说明上游
+// 自己报的数就自相矛盾，那是排障要看 Tap.Summary（保留上游原样）的场景。
+func (u Usage) NetInput() int {
+	return max(0, u.InputTokens-u.CacheReadTokens-u.CacheWriteTokens)
+}
+
+// MergeSnapshot 把一份新的累计快照并进 u：**非零字段覆盖**，零值当「这一帧没报」
+// 而非「上游说是 0」（EvUsage 的约定）。
+//
+// 必须逐字段而非整结构体赋值：部分兼容上游的末帧只带 output_tokens，整体覆盖会把
+// 先前那份 input 与缓存明细一起清零。
+func (u *Usage) MergeSnapshot(next Usage) {
+	if next.InputTokens != 0 {
+		u.InputTokens = next.InputTokens
+	}
+	if next.OutputTokens != 0 {
+		u.OutputTokens = next.OutputTokens
+	}
+	if next.CacheReadTokens != 0 {
+		u.CacheReadTokens = next.CacheReadTokens
+	}
+	if next.CacheWriteTokens != 0 {
+		u.CacheWriteTokens = next.CacheWriteTokens
+	}
 }
 
 // Event 是一个 canonical 事件。

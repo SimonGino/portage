@@ -235,21 +235,18 @@ func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
 // observeUsage 放出一条 usage 快照。
 //
 // 语义是累计快照而非增量（protocol/event.go）：非零字段覆盖先前值，消费方不做加法。
-// CC 的 prompt_tokens 含缓存命中，这里**不归一**——各协议原始语义保留，与 Tap 一致。
+// CC 的 prompt_tokens 本就是**毛值**（含缓存命中），与 canonical 的口径一致，直映即可
+// （protocol.Usage 的约定）；cached_tokens 是它的明细，不再往 InputTokens 上加。
 func (st *streamState) observeUsage(u *usagePayload, out chan<- protocol.Event) {
 	if st.usage == nil {
 		st.usage = &protocol.Usage{}
 	}
-	if u.PromptTokens != 0 {
-		st.usage.InputTokens = u.PromptTokens
-	}
-	if u.CompletionTokens != 0 {
-		st.usage.OutputTokens = u.CompletionTokens
-	}
+	next := protocol.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
 	// CC 只有缓存命中（读）的概念，没有缓存写入，CacheWriteTokens 恒零。
-	if d := u.PromptTokensDetails; d != nil && d.CachedTokens != 0 {
-		st.usage.CacheReadTokens = d.CachedTokens
+	if d := u.PromptTokensDetails; d != nil {
+		next.CacheReadTokens = d.CachedTokens
 	}
+	st.usage.MergeSnapshot(next)
 	snapshot := *st.usage
 	out <- protocol.Event{Type: protocol.EvUsage, Usage: &snapshot}
 }

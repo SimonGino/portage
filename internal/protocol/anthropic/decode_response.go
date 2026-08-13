@@ -20,12 +20,16 @@ import (
 //     字节做相等比较。
 //   - usage 出现两次且语义不同：message_start 给 input / cache 计数与一个几乎没用
 //     的 output_tokens=1，message_delta 给最终 output_tokens。canonical 的
-//     EvUsage 是累计快照（protocol/event.go），照发两次即可，消费方后者覆盖前者。
+//     EvUsage 是累计快照（protocol/event.go），照发两次即可，消费方按**非零字段**
+//     覆盖（Usage.MergeSnapshot）——五份转录里两帧都带全套 usage，但只报
+//     output_tokens 的兼容上游存在，整体覆盖会把 input 清零。
 //   - thinking 块的正文可能整段为空、只有 signature（anthropic-tool-turn1 实测）。
 //   - 工具入参走 input_json_delta 分片，**恒是 JSON**，故 ArgsIsJSON 为 true。
 //
-// 没有实测覆盖的只有一处：`error` 帧。五份转录里一次都没出现（都是 200 正常流），
-// 只能照协议文档实现，用例是手写的——§9 缺口清单里记着这条。
+// 没有实测覆盖的有两处，用例都是手写的——§9 缺口清单里记着：①`error` 帧，五份转录里
+// 一次都没出现（都是 200 正常流），只能照协议文档实现；②**只带 output_tokens 的
+// message_delta**，五份转录的两帧都是完整快照，这一形态来自「兼容上游可能这么发」的
+// 推断（#72），用例钉的是「解出 InputTokens=0 而非凭空造数」这半边行为。
 
 // DecodeStream 把上游 SSE 解成 canonical 事件流。
 func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
@@ -153,14 +157,23 @@ type usagePayload struct {
 
 // canonical 把 usage 转成 canonical 形态；全零或缺失时给 nil（没什么可报的）。
 //
-// 不在此归一各协议的 token 语义（protocol.Usage 的约定）：Anthropic 的 input_tokens
-// **不含**缓存命中，照搬即可，缓存两项是另外两笔。
+// 归一在这一侧做（protocol.Usage 的约定）：Anthropic 的 input_tokens **不含**缓存，
+// canonical 的 InputTokens 是毛值，所以把缓存两项加回去；明细仍照原样留着。加法按帧
+// 做而不是跨帧累加——message_start 与 message_delta 各是一份完整快照，实采两帧都带
+// 全套缓存字段；只带 output_tokens 的兼容上游那一帧解出 InputTokens=0，靠消费方的
+// MergeSnapshot（非零字段覆盖）保住先前的毛值。
+//
+// 明知的残留窄口：某个兼容上游若在 message_delta 里给了净 input_tokens **却省掉**
+// 缓存两项，这里算出的毛值偏小且非零，会盖掉 message_start 那份对的（而缓存明细靠
+// 非零合并留着，于是 A 出口再减一次、多半钳到 0）。不为它加
+// 「只在缓存两项都在时才覆盖」的启发式——那要拿一条猜出来的规则去改所有正常上游的
+// 路径，而真实转录（testdata/golden/raw/anthropic-stream-*）两帧都是完整快照。
 func (u *usagePayload) canonical() *protocol.Usage {
 	if u == nil {
 		return nil
 	}
 	out := protocol.Usage{
-		InputTokens:      u.InputTokens,
+		InputTokens:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
 		OutputTokens:     u.OutputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,

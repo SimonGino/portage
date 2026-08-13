@@ -361,12 +361,76 @@ func TestEncodeFullBodyAggregates(t *testing.T) {
 	if out.StopReason != "tool_use" {
 		t.Errorf("stop_reason = %q", out.StopReason)
 	}
-	if out.Usage.InputTokens != 12 || out.Usage.OutputTokens != 34 || out.Usage.CacheReadTokens != 5 {
-		t.Errorf("usage = %+v", out.Usage)
+	// canonical 的 input 是毛值，A 上游契约是净值——出口减回缓存两项：12-5=7。
+	if out.Usage.InputTokens != 7 || out.Usage.OutputTokens != 34 || out.Usage.CacheReadTokens != 5 {
+		t.Errorf("usage = %+v，期望 input 7（毛值 12 减掉缓存读 5）", out.Usage)
 	}
 	// 缓存写入侧 CC 没有对应概念，恒零——但键必须在，Claude Code 缺键与 0 不当一回事。
 	if !strings.Contains(string(body), "cache_creation_input_tokens") {
 		t.Error("usage 缺 cache_creation_input_tokens 键")
+	}
+}
+
+// A 出口把毛值减回净值：canonical 的 InputTokens 含缓存两项，而 Anthropic 客户端
+// 按「input_tokens + 两项缓存 = 总输入」算，不减回去等于把缓存重复计一遍（#72）。
+func TestEncodeStreamSubtractsCacheFromInputTokens(t *testing.T) {
+	frames, _ := encodeStream(t, []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
+		{Type: protocol.EvTextDelta, Text: "嗯"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{
+			InputTokens: 1000, OutputTokens: 7, CacheReadTokens: 800, CacheWriteTokens: 150,
+		}},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	})
+	usage := frames[len(frames)-2].data["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(50) {
+		t.Errorf("input_tokens = %v, 期望 1000-800-150=50", usage["input_tokens"])
+	}
+	if usage["cache_read_input_tokens"] != float64(800) || usage["cache_creation_input_tokens"] != float64(150) {
+		t.Errorf("缓存两项应原样写出: %+v", usage)
+	}
+}
+
+// 上游报的缓存数大于毛值（口径不一致的兼容上游）时钳到 0：负的 input_tokens 不是
+// 合法 Anthropic 响应，客户端多半直接算崩。
+func TestEncodeFullBodyClampsNegativeInputTokens(t *testing.T) {
+	body, err := anthropic.NewCodec().EncodeFullBody([]protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
+		{Type: protocol.EvTextDelta, Text: "嗯"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{InputTokens: 10, OutputTokens: 3, CacheReadTokens: 99}},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Usage struct {
+			InputTokens int `json:"input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Usage.InputTokens != 0 {
+		t.Errorf("input_tokens = %d, 期望钳到 0", out.Usage.InputTokens)
+	}
+}
+
+// 兼容上游只在末帧报 output_tokens 时，先前那份 input 不许被清零（#72）。
+func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
+	frames, _ := encodeStream(t, []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{InputTokens: 500, CacheReadTokens: 100}},
+		{Type: protocol.EvTextDelta, Text: "嗯"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{OutputTokens: 42}},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	})
+	usage := frames[len(frames)-2].data["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(400) || usage["output_tokens"] != float64(42) {
+		t.Errorf("usage = %+v, 期望 input 500-100=400 / output 42", usage)
+	}
+	if usage["cache_read_input_tokens"] != float64(100) {
+		t.Errorf("缓存读被后一份快照清掉了: %+v", usage)
 	}
 }
 

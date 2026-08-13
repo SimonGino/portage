@@ -195,6 +195,31 @@ func TestEncodeStreamTextFrameSequence(t *testing.T) {
 	}
 }
 
+// 后来的 usage 快照按**非零字段**覆盖（protocol/event.go 的 EvUsage 约定）：只报
+// output_tokens 的末帧不许把 prompt_tokens 清零，否则 total 低估（#72）。
+func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
+	_, chunks := encodeStream(t, streamingRequest, []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{InputTokens: 4221, CacheReadTokens: 3840}},
+		{Type: protocol.EvTextDelta, Text: "hi"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{OutputTokens: 37}},
+		{Type: protocol.EvDone, StopReason: "stop"},
+	})
+	last := chunks[len(chunks)-1]
+	if last.Usage == nil {
+		t.Fatal("要过 include_usage 就得有 usage 帧")
+	}
+	if last.Usage.PromptTokens != 4221 || last.Usage.CompletionTokens != 37 {
+		t.Errorf("usage = %+v, 期望 prompt 4221 / completion 37", last.Usage)
+	}
+	if last.Usage.TotalTokens != 4258 {
+		t.Errorf("total_tokens = %d, 期望 4258", last.Usage.TotalTokens)
+	}
+	if last.Usage.PromptTokensDetails.CachedTokens != 3840 {
+		t.Errorf("cached_tokens 被后一份快照清掉了: %+v", last.Usage)
+	}
+}
+
 // 没要过 include_usage 就不发那一帧：CC 的默认行为就是不发，凭空补一帧会让严格按
 // SDK 写的客户端多解一个它没预期的结构。
 func TestEncodeStreamOmitsUsageFrameUnlessAsked(t *testing.T) {

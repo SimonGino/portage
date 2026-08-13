@@ -111,8 +111,9 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
-			// 累计快照语义：后来者覆盖，不做加法（protocol/event.go）。
-			e.usage, e.sawUsage = *ev.Usage, true
+			// 累计快照语义：后来者的非零字段覆盖，不做加法（protocol/event.go）。
+			e.usage.MergeSnapshot(*ev.Usage)
+			e.sawUsage = true
 		}
 		return nil
 
@@ -277,7 +278,7 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 			buf.args = append(buf.args, ev.Text)
 		case protocol.EvUsage:
 			if ev.Usage != nil {
-				usage = *ev.Usage
+				usage.MergeSnapshot(*ev.Usage)
 			}
 		case protocol.EvDone:
 			stop = ev.StopReason
@@ -340,6 +341,9 @@ type toolAccum struct {
 }
 
 // usageBody 按 CC 的形态写 usage。
+//
+// prompt_tokens 直映 canonical 的 InputTokens：两边同为**毛值**（含缓存命中，见
+// protocol.Usage），cached_tokens 是它的明细而非另一笔。
 //
 // total_tokens 由我们相加而不是等上游给：canonical 没有这个字段（它是冗余的），
 // 而 CC 客户端普遍读它。prompt_tokens_details.cached_tokens 恒写出来（哪怕是 0），

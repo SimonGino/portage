@@ -102,8 +102,8 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
-			// 累计快照语义：后来者覆盖，不做加法（protocol/event.go）。
-			e.usage = *ev.Usage
+			// 累计快照语义：后来者的非零字段覆盖，不做加法（protocol/event.go）。
+			e.usage.MergeSnapshot(*ev.Usage)
 		}
 		return nil
 
@@ -347,7 +347,7 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 			buf.args = append(buf.args, ev.Text)
 		case protocol.EvUsage:
 			if ev.Usage != nil {
-				usage = *ev.Usage
+				usage.MergeSnapshot(*ev.Usage)
 			}
 		case protocol.EvDone:
 			stop = ev.StopReason
@@ -427,12 +427,16 @@ func decodeToolInput(args string) (any, error) {
 
 // usageBody 按 Anthropic 的形态写 usage。
 //
+// input_tokens 要**减回净值**（`Usage.NetInput`，钳零理由记在那里）：canonical 的
+// InputTokens 是毛值（含缓存两项，见 protocol.Usage），而 Anthropic 的契约是
+// input_tokens 与两项缓存互不相交、客户端自己相加。不减等于把缓存重复计一遍。
+//
 // cache_creation_input_tokens / cache_read_input_tokens 恒写出来（哪怕是 0）：
 // Claude Code 读这两个字段算缓存命中率，缺键与 0 在它那里不是一回事。CC 出口只有
 // 缓存读没有缓存写，所以写入侧恒 0——这是协议差异，不是漏填。
 func usageBody(u protocol.Usage) map[string]any {
 	return map[string]any{
-		"input_tokens":                u.InputTokens,
+		"input_tokens":                u.NetInput(),
 		"output_tokens":               u.OutputTokens,
 		"cache_creation_input_tokens": u.CacheWriteTokens,
 		"cache_read_input_tokens":     u.CacheReadTokens,

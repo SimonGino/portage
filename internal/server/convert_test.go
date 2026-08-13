@@ -216,9 +216,14 @@ func TestConvertedStreamIsAnthropicWireFormat(t *testing.T) {
 	if !strings.Contains(body, `"input_json_delta"`) {
 		t.Errorf("工具参数没走 input_json_delta: %s", body)
 	}
-	// usage 在 message_delta 里补齐——CC 的 usage 要到流末才来。
-	if !strings.Contains(body, `"input_tokens":69`) || !strings.Contains(body, `"output_tokens":74`) {
-		t.Errorf("message_delta 没带上游报的 usage: %s", body)
+	// usage 在 message_delta 里补齐——CC 的 usage 要到流末才来。A 出口的 input_tokens
+	// 是**净值**：上游毛值 69 减掉缓存读 11 = 58，缓存那 11 另占一个字段，客户端自己
+	// 相加（protocol.Usage 的约定，#72）。
+	if !strings.Contains(body, `"input_tokens":58`) || !strings.Contains(body, `"output_tokens":74`) {
+		t.Errorf("message_delta 没带上游报的 usage，或没减回净值: %s", body)
+	}
+	if !strings.Contains(body, `"cache_read_input_tokens":11`) {
+		t.Errorf("缓存读没带下来: %s", body)
 	}
 	// 响应 id 原样透上游的（chatcmpl-1），不重新编一个 msg_xxx：网关日志、上游账单
 	// 与客户端看到的 id 因此是同一个，排障时能对上。Anthropic 客户端不校验 id 形态，

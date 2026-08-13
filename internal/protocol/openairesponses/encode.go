@@ -128,8 +128,8 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
-			// 累计快照语义：后来者覆盖，不做加法（protocol/event.go）。
-			e.usage = *ev.Usage
+			// 累计快照语义：后来者的非零字段覆盖，不做加法（protocol/event.go）。
+			e.usage.MergeSnapshot(*ev.Usage)
 		}
 		return nil
 
@@ -450,8 +450,9 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 
 // usageBody 按 Responses 的 usage 形状写计数。
 //
-// 不在这里归一各协议的 token 语义（protocol.Usage 的约定）：CC 的 prompt_tokens 含
-// 缓存命中，照搬进 input_tokens 即可，cached_tokens 是它的**明细**而非另一笔。
+// 直映即可：canonical 的 InputTokens 与 Responses 的 input_tokens 同为**毛值**
+// （protocol.Usage 的约定），cached_tokens 是它的**明细**而非另一笔，不再相加。
+// total_tokens 因此不会低估——Codex 拿它判自动压缩的触发点。
 func usageBody(u protocol.Usage) map[string]any {
 	return map[string]any{
 		"input_tokens": u.InputTokens,

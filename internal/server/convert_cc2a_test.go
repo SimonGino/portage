@@ -265,9 +265,10 @@ data: {"type":"message_stop"}
 	if !strings.Contains(body, "notes.md") {
 		t.Errorf("工具入参丢了:\n%s", body)
 	}
-	// 样本要过 stream_options.include_usage，那 usage 帧就得补上。
-	if !strings.Contains(body, `"prompt_tokens":88`) {
-		t.Errorf("要过 include_usage 却没有 usage 帧:\n%s", body)
+	// 样本要过 stream_options.include_usage，那 usage 帧就得补上。CC 的 prompt_tokens
+	// 是毛值：上游净值 88 + 缓存读 40 = 128（protocol.Usage 的约定，#72）。
+	if !strings.Contains(body, `"prompt_tokens":128`) {
+		t.Errorf("要过 include_usage 却没有 usage 帧，或 prompt_tokens 不是毛值:\n%s", body)
 	}
 	// 上游 id 原样透传（口径层 v0.31），不该被换成网关补的 chatcmpl-。
 	if !strings.Contains(body, "msg_up1") {
@@ -340,9 +341,9 @@ func TestCC2ABufferedResponseIsChatCompletion(t *testing.T) {
 	if out.Choices[0].FinishReason != "tool_calls" {
 		t.Errorf("finish_reason = %q，Anthropic 的 tool_use 应映成 tool_calls", out.Choices[0].FinishReason)
 	}
-	// 非流式恒带 usage，与 include_usage 无关。
-	if out.Usage.PromptTokens != 10 || out.Usage.TotalTokens != 15 {
-		t.Errorf("usage 没对上: %+v", out.Usage)
+	// 非流式恒带 usage，与 include_usage 无关。prompt_tokens 是毛值：10 + 缓存读 4。
+	if out.Usage.PromptTokens != 14 || out.Usage.TotalTokens != 19 {
+		t.Errorf("usage 没对上: %+v，期望毛值 prompt 14 / total 19", out.Usage)
 	}
 	if out.Usage.PromptTokensDetails.CachedTokens != 4 {
 		t.Errorf("cache_read 没映成 cached_tokens: %+v", out.Usage)
