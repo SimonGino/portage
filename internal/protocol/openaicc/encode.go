@@ -26,6 +26,7 @@ const (
 	DropServerTool    = "server_tool"    // 上游服务端工具声明（advisor_20260301 一类）
 	DropVendorRequest = "vendor_request" // 其余入口协议独有的顶层字段
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
+	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
 )
 
 // EncodeRequest 把 canonical 编成 Chat Completions 请求体。
@@ -297,8 +298,9 @@ func encodeToolChoice(choice protocol.ToolChoice, declared map[string]bool) (any
 // 用换行连接——原本它们在 Anthropic 侧是并列的独立块，不加分隔会把两段正文粘成
 // 一个词。
 //
-// 顺带登记丢弃：thinking 块整块丢（含 signature），cache_control 断点丢。两者都是
-// 「装得下但转不过去」，登记在案由 relay 打警告。
+// 顺带登记丢弃：thinking 块整块丢（含 signature），cache_control 断点丢，其余认不得
+// 的块类型走 default 登记 vendor_content。三者都是「装得下但转不过去」，登记在案由
+// relay 打警告。
 func joinBlocks(blocks []protocol.Block, drop func(string)) string {
 	var parts []string
 	for _, b := range blocks {
@@ -307,11 +309,29 @@ func joinBlocks(blocks []protocol.Block, drop func(string)) string {
 		}
 		switch b.Kind {
 		case protocol.BlockText:
+			// 空串不算丢内容：那是「这块没话说」，不是「这块被我扔了」。
 			if b.Text != "" {
 				parts = append(parts, b.Text)
 			}
 		case protocol.BlockThinking:
 			drop(DropThinking)
+		case protocol.BlockToolUse, protocol.BlockToolResult:
+			// 这两种块不在这里落地，也不是在这里丢的：tool_use 由调用方编成
+			// assistant 的 tool_calls，tool_result 由调用方编成独立的 role=tool
+			// 消息。拼纯文本时跳过它们是分工，不是丢弃，所以不登记。
+
+		default:
+			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，
+			// 装得下没见过的形态（A 入口的 image 块就是这么留住的），但 CC 的
+			// content 这里已经被压成纯文本，这些块无处安放。
+			//
+			// 不登记就是静默改写语义：客户端发了张图，上游收到一个被改成纯文本的
+			// 请求，还照样 200 回来，日志里一个字都没有——比直接拒还糟。thinking
+			// 那一格是**口径**定的必然丢弃，这一格不同，它是「我不认识这个东西」，
+			// 恰恰是需要看见的那种。
+			//
+			// #33 真做图片转换时，这一支会被图片那一路缩小到「真的没对等形态的那些」。
+			drop(DropVendorContent)
 		}
 	}
 	return strings.Join(parts, "\n")

@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.45
+> 状态：草案 v0.46
+> v0.46 变更（#41 CC 出口丢块补登记，2026-08-13）：一处实现层止血，**行为不变**，口径不变（口径层 §2.6 早就写着「丢弃 + 日志警告」，这里是实现没兑现）。`openaicc` 的丢弃常量表补 `DropVendorContent`，`joinBlocks` 补 `default` 分支登记它——原来只 `case` 了 `BlockText` 与 `BlockThinking`，其余块落空即丢，于是 Anthropic 入口发一张图路由到 CC 上游，图在编码时无声消失、上游收到一个被改写成纯文本的请求、还照样 200 回来，正是 #32 在 Anthropic 出口判过「不行」的同一形态漏在另半边。`BlockToolUse` / `BlockToolResult` 显式排除在 `default` 之外并单独用例钉住：它们由调用方各自编成 `tool_calls` 与 `role=tool` 消息，不是在这里丢的，混进去会让每个工具轮都报一条「未知内容块」、这张表就再没人看。§4.6 现状表 ③ 划掉。图片真做转换仍是 #33（还挂着格式白名单与 PDF 两条待裁），届时这一支被图片那一路缩小到「真的没对等形态的那些」。修改人 jinpenga。
 > v0.45 变更（口径层 v0.53 落地：用量与观测第二轮 #62，2026-08-13）：①`call_logs` 加 `error_detail`（可空 TEXT，§7 DDL）——上游错误原文前 2KB，三个来源：透传路径在 `status >= 400` 时挂一个限长旁路 observer（不先读后转，那条链路上响应字节属于客户端）、转换路径由 `writeUpstreamError` 顺手交出已读到的原始字节、传输错误那一支存 `upstream.Redact(err)`（没有响应体，不落的话「连不上/握手失败/读超时」这半边恰好永远是空）。**新出现的列组合**：上游透传 4xx 的 `error` 列是空的（v0.28 纪律）而 `error_detail` 有值，故管理端「详情」按钮按 `status >= 400` 出、不按 error 非空——`captureWriter` 因此从写死 64KiB 改为构造时给 limit。②`/admin/api/logs` 加 `model` / `key` / `only=bad` 筛选与 `before=<id>` 游标（§8.1）：筛选下推后端，前端在已拉回的一页里过滤筛出的是「这一页里的失败」；翻页取游标而非 offset，流水新行插在头部，offset 第二页必错位（`offset` 参数保留，无 `before` 时生效）。③`UsageBy` 加 `key` 维度（按 `api_key_name`，空归「(未鉴权)」）。④Web：用量页维度三档（按模型 / 按 API Key / 按上游凭证，末档写全称消歧）、模型下拉单独按模型维度拉一次（维度切走时选项不该跟着变空）、「加载更多」增量追加、失败行可展开摊开上游原文；渠道页凭证行名字定宽 10em、掩码吃掉剩余（DESIGN.md v0.12）。⑤测试落 `internal/server/errordetail_test.go`（两条路径 + 2KB 截断 + 传输错误不带 base_url + 成功行为 NULL）与 `logsquery_test.go`（筛选叠加、游标翻页不重不漏、`by=key`）。修改人 jinpenga。
 > v0.44 变更（§7.5 实现落地 #60，2026-08-13）：渠道并发闸按 §7.5 原样实现，本条只记实现时补定的三件事。①配置项名与形态定案：`concurrency_queue` 块下 `factor`（倍数形态：队列上限 = 并发上限 × factor，显式 0 = 不排队，零值陷阱同 `max_retries`）/ `wait: 30s` / `retry_after: 10s`（两个时长兜底、factor 不兜），§7 样例已列。②error 词表补第三词 `queue_abandoned`：排队途中客户端断连，status 记 499、不写错误体——不混进 `upstream_error`（没碰过上游）也不占 v0.52 的两词（那两个是网关拒的，这个是客户端走的）。③信号量手写移交式（`internal/upstream/gate.go`）而非现成库：上限每次获取时从渠道配置带入，改配置即时生效、缩小时自然排空。管理端渠道表单加「并发上限」一栏（`max_concurrency`，PUT 缺省不动列，防 v0.35⑸ 整体覆盖陷阱——0 有意义，哨兵用 null 不用零值）。四断言验收测试照 §7.5 原文落在 `internal/server/concurrency_test.go`。§6 时序与两处 DDL 注记的「实现未排期」字样一并清扫。修改人 jinpenga。
 > v0.43 变更（口径层 v0.45~v0.48 落地补记：渠道页两栏与凭证可回读，2026-08-12）：该批同日落地且早于 v0.42 的内容，头部条目当时漏了，终审（#58）点出后补记。界面侧落点（主从两栏、右栏三段、启停开关、地址预览、左栏搜索）在 DESIGN.md v0.5~v0.10 版本记录，本文档动的只有凭证可回读那半（口径层 v0.47/v0.48）：①`api_keys` 加 `key_plain` 列——明文与哈希各存一列，存量行空串读作「原值没存过」，界面提示删了重建、不摆假掩码；鉴权仍走 `key_hash` 唯一索引，与这一列无关。②`key_hash` 裸 SHA-256 的立论加注：「明文只在创建那一个响应里存在过」的前提自 v0.47 不成立，结论不变且更无所谓——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。③§8.1「凭证先删后插作废」条随 v0.47 改写：去掉「值不回读 ⇒ 页面对不齐」那半条立论（已不成立），列表改回名字、凭证值、状态等。④散文两处旧称「网关 key」改「API Key」（v0.48 术语：网关侧一律 API Key，上游侧写全「上游凭证」）。修改人 jinpenga。
@@ -318,10 +319,10 @@ const (
 | ② | `anthropic/decode.go:146` | `image` 块 → `Kind="image"`，`source` 整块进 Extras（**字节在**） |
 | ② | `openaicc/decode_request.go:244` | `image_url` part → `Kind="image_url"`，全字段进 Extras（**字节在**） |
 | ② | `openairesponses/decode.go:240` | **所有 part 一律造成 `BlockText`**，不看 `type`——`input_image` 进来之后连「这原本是张图」都不知道了 |
-| ③ | `openaicc/encode.go:302` `joinBlocks` | 只认 `BlockText` / `BlockThinking`，**其余落空且不登记** |
+| ③ | `openaicc/encode.go` `joinBlocks` | ~~只认 `BlockText` / `BlockThinking`，其余落空且不登记~~ **已止血**（#41，v0.46）：补了 `default` 登记 `DropVendorContent`；**块仍然丢**，只是这次出声 |
 | ④ | `openairesponses/codec.go:45` | `EncodeRequest` 仍 `ErrNotImplemented` |
 
-③ 是**当下就在发生的静默丢弃**：Anthropic 入口带图打到 CC 上游，图无声消失。#32 补的 `DropVendorContent` 只落在 `anthropic/encode_request.go:254` 那一侧，CC 出口这半边漏了——正是本项目判过「不行」的那种失败模式，在自己代码里。它不必等图片转换整体落地，补一句登记就能先止血。
+③ 曾是**当下就在发生的静默丢弃**：Anthropic 入口带图打到 CC 上游，图无声消失。#32 补的 `DropVendorContent` 只落在 `anthropic/encode_request.go:254` 那一侧，CC 出口这半边漏了——正是本项目判过「不行」的那种失败模式，在自己代码里。#41 单独补了这句登记，行为不变；真做转换时这一支会被图片那一路缩小到「真的没对等形态的那些」。
 
 ② 的三行不一致也要一并抹平：三个入口对同一件事给出三种 `Kind`，其中 Responses 那行连判别式都丢了，是三者里最难补的。
 

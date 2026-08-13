@@ -383,6 +383,71 @@ func TestEncodeRequestWrapsNonJSONToolArgs(t *testing.T) {
 	}
 }
 
+// 认不得的内容块要**登记**再丢。这是 #32 在 Anthropic 出口判过「不行」的同一形态，
+// CC 出口这半边原来漏了：joinBlocks 只 case 了 text 与 thinking，其余落空即丢。
+//
+// 后果是客户端从 Anthropic 入口发一张图、路由到 CC 上游，图在编码时无声消失，上游
+// 收到一个被改写成纯文本的请求，还照样 200 回来——人看日志看不出发生过任何事。
+//
+// 本票只补登记、不改行为：图仍然丢，只是这次它出声了。真做转换是 #33。
+func TestEncodeRequestReportsImageBlocks(t *testing.T) {
+	req := decodeAnthropic(t, `{
+		"model": "claude-sonnet-4", "max_tokens": 64,
+		"messages": [{"role": "user", "content": [
+			{"type": "text", "text": "这张图里是什么"},
+			{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2VieXRlcw=="}}
+		]}]
+	}`)
+	body, dropped, out := encode(t, req, false)
+
+	if !contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("图片块被丢了却没登记: %v", dropped)
+	}
+	// 行为不变：正文照旧拼成纯文本，图片的载荷一个字节都不该混进请求里。
+	if len(out.Messages) != 1 || string(out.Messages[0].Content) != `"这张图里是什么"` {
+		t.Errorf("正文被改写了: %s", body)
+	}
+	if strings.Contains(string(body), "aW1hZ2VieXRlcw==") || strings.Contains(string(body), "image") {
+		t.Errorf("图片载荷漏进了 CC 请求: %s", body)
+	}
+}
+
+// 反过来钉住 default 分支的边界：tool_use 与 tool_result 不是在 joinBlocks 里丢的，
+// 它们由调用方各自编成 tool_calls 与 role=tool 消息。把它们一并算进 vendor_content，
+// 每个工具轮都会报一条「未知内容块」，这张表就再也没人看了。
+func TestEncodeRequestDoesNotReportToolBlocksAsUnknown(t *testing.T) {
+	req := decodeSample(t, "in-anthropic-tool-turn2")
+	_, dropped, out := encode(t, req, false)
+
+	if contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("工具块被当成了未知内容块: %v", dropped)
+	}
+	var calls, results int
+	for _, m := range out.Messages {
+		calls += len(m.ToolCalls)
+		if m.Role == "tool" {
+			results++
+		}
+	}
+	if calls == 0 || results == 0 {
+		t.Fatalf("样本里没有工具轮，这条用例钉不住东西（tool_calls=%d role=tool=%d）", calls, results)
+	}
+}
+
+// decodeAnthropic 把一段手写的 Anthropic 请求体解成 canonical。
+//
+// 与 decodeSample 分工：真实样本里没有图片轮（现有 harness 转录都是纯文本与工具），
+// 而这条链路的入口形态必须是真的 Anthropic JSON——手搭 canonical 的话，image 块长
+// 成什么样就成了我说了算，decode 侧哪天改了 Kind 的取值这里也照样绿。
+func decodeAnthropic(t *testing.T, body string) *protocol.Request {
+	t.Helper()
+	req, err := anthropic.NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatalf("解码失败: %v", err)
+	}
+	return req
+}
+
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {
