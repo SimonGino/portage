@@ -267,6 +267,8 @@ export interface CallLog {
   channel_key_name: string
   status: number
   retry_count: number
+  /** 同步(false)/流式(true)。null = 不知道：没解析到请求体的行（鉴权失败那类）与老流水。 */
+  is_stream: boolean | null
   ttft_ms: number | null
   total_ms: number
   input_tokens: number | null
@@ -285,6 +287,20 @@ export interface CallLog {
    * 这一列却有值——所以「能展开」的判据是 status >= 400，不是 error 非空。
    */
   error_detail: string | null
+}
+
+/**
+ * 用量图上的一根柱子：一个自然日。
+ *
+ * 恒有 days 根（后端补齐空天，见 store.UsageDaily）——缺天会让剩下的柱子挤在一起，
+ * 看起来像是一直在用。最后一根是今天，它天然只走了一半。
+ */
+export interface DailyUsage {
+  /** 本地时区的 YYYY-MM-DD。 */
+  day: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
 }
 
 /** 用量汇总的一行。label 按聚合维度取值：模型名 / 网关 key 名 / 上游凭证名。 */

@@ -189,6 +189,12 @@ func (s *Server) persistCall(rec *callRecord) {
 		TotalMs:          time.Since(rec.start).Milliseconds(),
 		QueueWaitMs:      rec.queueWait.Milliseconds(),
 	}
+	// stream 是解析请求体那一步才知道的（server.go 里与 requestedModel 同一行赋值），
+	// 没走到那一步的行（鉴权失败、body 不是合法 JSON）留 NULL——落一个 false 会把
+	// 「不知道」说成「同步」。判据借 requestedModel：两者同源，空串即没解析到。
+	if rec.requestedModel != "" {
+		row.IsStream = sql.NullBool{Bool: rec.stream, Valid: true}
+	}
 	// 只记流式（展开层 §7 该列原文「首字节耗时（流式）」）。非流式也填的话它约等于
 	// 总耗时，混合流量下「平均首字延迟」就成了一个没有意义的数。非流式的首字节耗时
 	// 仍在 slog 的 ttfb_ms 里，没有丢。

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
@@ -132,5 +133,41 @@ func TestUsageByGatewayKey(t *testing.T) {
 	}
 	if len(usage.Rows) != 1 || usage.Rows[0].Label != "test-default" || usage.Rows[0].Calls != 1 {
 		t.Fatalf("按 key 聚合的结果是 %+v, 期望 test-default 一行一次", usage.Rows)
+	}
+}
+
+// 按天分桶恒返回 days 行、最后一行是**本地时区的今天**（口径层 v0.55）。
+//
+// 两件事一起钉：①没有调用的那天也占一格——只吐有行的日子的话，空着的几天会从横轴上
+// 消失、剩下的柱子挤在一起，看起来像是一直在用。②桶按本地日历切，而 created_at 存的
+// 是 UTC；UTC+8 下这两者差 8 小时，照 UTC 分桶的话「今天」要到本地早上八点才开始。
+func TestUsageDailyBuckets(t *testing.T) {
+	gw, _ := seedTwoModelGateway(t)
+	postModel(t, gw, "model-a")
+	gw.WaitCallRows(t, 1)
+
+	var daily struct {
+		Days int `json:"days"`
+		Rows []struct {
+			Day          string `json:"day"`
+			Calls        int64  `json:"calls"`
+			OutputTokens int64  `json:"output_tokens"`
+		} `json:"rows"`
+	}
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage/daily?days=7", "", &daily)
+	if len(daily.Rows) != 7 {
+		t.Fatalf("回了 %d 行, 「7 天」恒是 7 行", len(daily.Rows))
+	}
+	last := daily.Rows[6]
+	if today := time.Now().Format("2006-01-02"); last.Day != today {
+		t.Errorf("最后一行是 %q, 期望本地时区的今天 %q", last.Day, today)
+	}
+	if last.Calls != 1 {
+		t.Errorf("今天这一桶 = %d 次调用, 期望 1", last.Calls)
+	}
+	for _, r := range daily.Rows[:6] {
+		if r.Calls != 0 {
+			t.Errorf("%s 这一桶有 %d 次调用, 这几天本该是空的", r.Day, r.Calls)
+		}
 	}
 }

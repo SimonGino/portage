@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -691,7 +692,10 @@ type CallLogRow struct {
 	ChannelKeyName   string `json:"channel_key_name"`
 	Status           int    `json:"status"`
 	RetryCount       int    `json:"retry_count"`
-	TTFTMs           *int64 `json:"ttft_ms"`
+	// IsStream：同步/流式。指针而不是 bool：NULL 是「不知道」（鉴权失败那类行没
+	// 解析到请求体，迁移前的老行同），false 才是「同步」，两者不能抹成一个。
+	IsStream *bool  `json:"is_stream"`
+	TTFTMs   *int64 `json:"ttft_ms"`
 	TotalMs          int64  `json:"total_ms"`
 	InputTokens      *int64 `json:"input_tokens"`
 	OutputTokens     *int64 `json:"output_tokens"`
@@ -752,7 +756,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, created_at, api_key_name, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
-		       ttft_ms, total_ms, input_tokens, output_tokens,
+		       is_stream, ttft_ms, total_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, COALESCE(error, ''), error_detail
 		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -763,14 +767,16 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	for rows.Next() {
 		var r CallLogRow
 		var ttft, in, outTok, cr, cw sql.NullInt64
+		var stream sql.NullBool
 		var detail sql.NullString
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
-			&ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &r.Error, &detail); err != nil {
+			&stream, &ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &r.Error, &detail); err != nil {
 			return nil, err
 		}
 		r.TTFTMs, r.InputTokens, r.OutputTokens = nullable(ttft), nullable(in), nullable(outTok)
 		r.CacheReadTokens, r.CacheWriteTokens = nullable(cr), nullable(cw)
+		r.IsStream = nullableBool(stream)
 		r.ErrorDetail = nullableStr(detail)
 		out = append(out, r)
 	}
@@ -795,7 +801,7 @@ const (
 	UsageByCredential = "credential"
 )
 
-// UsageBy 汇总最近 days 天的用量，按 dim 指定的维度聚合。
+// UsageBy 汇总最近 days 天（本地自然日，见 windowStart）的用量，按 dim 指定的维度聚合。
 //
 // 按凭证聚合是 v0.38 加的：「这个号跑了多少、还剩多少」是个聚合问题，只给逐行的
 // 日志表等于把 group by 留给人的肉眼做。凭证名为空串的行不丢掉——藏起来会让两个维度
@@ -811,6 +817,69 @@ const (
 // 按网关 key 聚合是 v0.53 加的：PO 想问的「我在网关新建的这把 key 跑了多少」，此前
 // 唯一沾边的维度是**上游**凭证——名字像、含义完全是另一件事。空 key 名归「(未鉴权)」：
 // 鉴权失败的请求也落流水（口径层 §2.5），把它们混进某把 key 的账里是错的。
+// windowStart 拼出「近 days 天」的下界表达式：**本地时区的 days 个自然日，今天算一天**
+// （口径层 v0.55）。原先是滚动的 days×24 小时，用量页把这段时间画成按天的柱子之后
+// 那个口径藏不住了——最老的那根只覆盖大半天，每次看都矮一截，而那是窗口切得巧，
+// 不是那天真的少。
+//
+// `created_at` 存的是 UTC（`CURRENT_TIMESTAMP`），所以边界在本地日历上算完再折回 UTC
+// 去比：写成 `date(created_at,'localtime') >= …` 一样对，但那样整列都要过一遍函数，
+// `idx_call_logs_created_at` 就用不上了。
+func windowStart(days int) string {
+	return fmt.Sprintf("datetime('now', 'localtime', 'start of day', '-%d days', 'utc')", days-1)
+}
+
+// DailyUsage 是用量图上的一根柱子：某个自然日的调用数与 token。
+type DailyUsage struct {
+	// Day 是本地时区的 YYYY-MM-DD。
+	Day          string `json:"day"`
+	Calls        int64  `json:"calls"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+}
+
+// UsageDaily 把最近 days 天按本地自然日分桶，恒返回 days 行（口径层 v0.55）。
+//
+// 没有调用的那天也给一行零值：SQL 的 GROUP BY 只会吐出有行的日子，照那份结果画图，
+// 空着的那几天会从横轴上消失、剩下的柱子挤在一起，看起来像是一直在用——那几天空着
+// 才是实话，而「什么时候没在用」正是这张图要回答的问题之一。
+func UsageDaily(ctx context.Context, db Queryer, days int) ([]DailyUsage, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT date(created_at, 'localtime') AS day,
+		       COUNT(*),
+		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		FROM call_logs
+		WHERE created_at >= `+windowStart(days)+`
+		GROUP BY day ORDER BY day`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	got := map[string]DailyUsage{}
+	for rows.Next() {
+		var u DailyUsage
+		if err := rows.Scan(&u.Day, &u.Calls, &u.InputTokens, &u.OutputTokens); err != nil {
+			return nil, err
+		}
+		got[u.Day] = u
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 补齐用 time.Now() 的本地日期，与 SQL 里那个 'localtime' 同源（都取进程所在时区）。
+	out := make([]DailyUsage, 0, days)
+	today := time.Now()
+	for i := days - 1; i >= 0; i-- {
+		day := today.AddDate(0, 0, -i).Format("2006-01-02")
+		if u, ok := got[day]; ok {
+			out = append(out, u)
+			continue
+		}
+		out = append(out, DailyUsage{Day: day})
+	}
+	return out, nil
+}
+
 func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow, error) {
 	label := `model_requested`
 	if dim == UsageByKey {
@@ -830,8 +899,8 @@ func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow,
 		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
 		FROM call_logs
-		WHERE created_at >= datetime('now', '-%d days')
-		GROUP BY label ORDER BY COUNT(*) DESC`, label, days))
+		WHERE created_at >= %s
+		GROUP BY label ORDER BY COUNT(*) DESC`, label, windowStart(days)))
 	if err != nil {
 		return nil, err
 	}
@@ -869,6 +938,15 @@ func nullableStr(n sql.NullString) *string {
 		return nil
 	}
 	v := n.String
+	return &v
+}
+
+// nullableBool 同上——is_stream 的 null 是「不知道」，false 是「同步」，不能抹成一个。
+func nullableBool(n sql.NullBool) *bool {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Bool
 	return &v
 }
 

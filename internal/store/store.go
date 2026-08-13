@@ -84,7 +84,28 @@ func migrate(db *sql.DB) error {
 	if err := addErrorDetail(db); err != nil {
 		return err
 	}
+	if err := addIsStream(db); err != nil {
+		return err
+	}
 	return addSupportsCompaction(db)
+}
+
+// addIsStream 补 call_logs.is_stream（同步/流式）。
+//
+// 可空、不给默认值：stream 是解析请求体才知道的，存量行和鉴权失败那类行都停在
+// NULL 上，读作「不知道」——补一个 0 默认值会把老流水全部说成同步。
+func addIsStream(db *sql.DB) error {
+	has, err := hasColumn(db, "call_logs", "is_stream")
+	if err != nil {
+		return fmt.Errorf("检查 call_logs.is_stream: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN is_stream INTEGER`); err != nil {
+		return fmt.Errorf("迁移 call_logs.is_stream: %w", err)
+	}
+	return nil
 }
 
 // addSupportsCompaction 补 v0.54 的 channels.supports_compaction。

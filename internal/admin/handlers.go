@@ -804,6 +804,21 @@ func (h *Handler) usage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"days": days, "by": dim, "rows": rows})
 }
 
+// usageDaily 把最近 days 天按本地自然日分桶，用量图用它。
+//
+// 与 usage 分成两个端点而不是塞进同一份回包：分桶只跟 days 有关、与聚合维度无关，
+// 合在一起的话每切一次「按模型 / 按 API Key / 按上游凭证」都得把它重算一遍。
+func (h *Handler) usageDaily(c *gin.Context) {
+	days := clampQuery(c, "days", 7, 1, 365)
+	rows, err := store.UsageDaily(c.Request.Context(), h.db, days)
+	if err != nil {
+		h.log.Error("按天汇总用量失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"days": days, "rows": rows})
+}
+
 // ── 小工具 ──────────────────────────────────────────────────────────────
 
 // pathID 解析 :id。解析不出就自己回 400 并返回 false——调用方直接 return。

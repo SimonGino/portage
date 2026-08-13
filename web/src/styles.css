@@ -2005,8 +2005,8 @@ select:focus {
   color: var(--err-text);
 }
 
-/* 链路：同协议透传时只有一枚芯片，转换时才出现箭头和第二枚——
-   「这一次走没走转码」靠形状就能看出来，不用读字。 */
+/* 端点：入站/上游各占一行（原「链路」是箭头式单行、同协议折叠成一枚芯片，
+   省宽度但哪枚是哪边全靠箭头方向猜；改上下排布后每行自带「入站/上游」标注）。 */
 .route {
   display: inline-flex;
   align-items: center;
@@ -2021,10 +2021,6 @@ select:focus {
   border-radius: 4px;
   background: var(--sunken);
   border: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.route-arrow {
   color: var(--muted);
 }
 
@@ -2079,18 +2075,34 @@ select:focus {
   word-break: break-word;
 }
 
-/* 「加载更多」在表下面居中一颗：它是这张表的下一页，不是页面级动作，
-   所以不跟标题栏那排按钮混在一起。 */
-.load-more {
+/* 翻页在表下面居中一排：它是这张表的下一页，不是页面级动作，所以不跟标题栏那排
+   按钮混在一起（DESIGN v0.12 的「加载更多」居中一颗同理，v0.13 换成页码后位置不变）。 */
+.pager {
   justify-content: center;
   margin-top: 10px;
 }
 
-/* 标题栏里的下拉：与 Segmented 同高、同字号，不然那一排会高低不齐。 */
-.select-inline {
+/* 「第 N 页」夹在两颗按钮中间，是状态不是动作，所以退成次要色、不做成按钮的样子。 */
+.pager-at {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 标题栏里的 Picker：与 Segmented 同高、同字号，不然那一排会高低不齐。
+   弹层朝右对齐并自带最小宽度——触发器按内容收窄之后，跟着触发器同宽的弹层
+   装不下模型全名，而它偏偏贴在卡片右缘，向左展开才不会顶出去。 */
+.picker-inline .picker-trigger {
   width: auto;
   max-width: 14em;
-  padding: 3px 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.picker-inline .picker-pop {
+  left: auto;
+  right: 0;
+  min-width: 20em;
   font-size: 13px;
 }
 

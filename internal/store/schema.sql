@@ -111,6 +111,9 @@ CREATE TABLE IF NOT EXISTS call_logs (
   channel_key_name TEXT NOT NULL DEFAULT '',
   status INTEGER NOT NULL,
   retry_count INTEGER NOT NULL DEFAULT 0,
+  -- 同步/流式（0/1）。可空：stream 是解析请求体才知道的，鉴权失败、body 不是合法
+  -- JSON 那些行根本没走到那一步——「不知道」与「同步」不是一回事，迁移前的老行同。
+  is_stream INTEGER,
   ttft_ms INTEGER,
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,

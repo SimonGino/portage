@@ -64,6 +64,40 @@ func TestTTFTOnlyRecordedForStreaming(t *testing.T) {
 	})
 }
 
+// is_stream 三态：0/1 是解析过请求体的行，NULL 是没走到那一步的行（鉴权失败那类，
+// 迁移前的老行同）——落 false 会把「不知道」说成「同步」。
+func TestStreamFlagRecorded(t *testing.T) {
+	t.Run("非流式记 0", func(t *testing.T) {
+		gw, _ := newAnthropicGateway(t)
+		gw.Post(t, "/v1/messages", anthropicRequest, nil)
+		row := gw.LastCallRow(t)
+		if !row.IsStream.Valid || row.IsStream.Bool {
+			t.Errorf("is_stream = %+v, 非流式请求期望 0", row.IsStream)
+		}
+	})
+
+	t.Run("流式记 1", func(t *testing.T) {
+		gw, up := newAnthropicGateway(t)
+		up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "text/event-stream"},
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		resp := gw.Post(t, "/v1/messages",
+			strings.Replace(anthropicRequest, `"stream":false`, `"stream":true`, 1), nil)
+		gatewaytest.ReadBody(t, resp)
+		row := gw.LastCallRow(t)
+		if !row.IsStream.Valid || !row.IsStream.Bool {
+			t.Errorf("is_stream = %+v, 流式请求期望 1", row.IsStream)
+		}
+	})
+
+	t.Run("没解析到请求体留 NULL", func(t *testing.T) {
+		gw, _ := newAnthropicGateway(t)
+		gw.Post(t, "/v1/messages", anthropicRequest, map[string]string{"x-api-key": ""})
+		if row := gw.LastCallRow(t); row.IsStream.Valid {
+			t.Errorf("is_stream = %v, 鉴权失败的行不知道类型，期望 NULL", row.IsStream.Bool)
+		}
+	})
+}
+
 // 鉴权失败也要落一行，否则被刷的时候表里什么都看不到（#22）。
 func TestUnauthorizedCallLandsInCallLogs(t *testing.T) {
 	gw, _ := newAnthropicGateway(t)

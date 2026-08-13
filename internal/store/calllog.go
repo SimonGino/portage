@@ -22,7 +22,10 @@ type CallLog struct {
 	ChannelKeyName string
 	Status         int
 	RetryCount     int
-	TTFTMs         sql.NullInt64
+	// IsStream 记这次是同步还是流式。可空：stream 是解析请求体才知道的，鉴权失败
+	// 那类行没走到那一步——「不知道」与「同步」不是一回事。
+	IsStream sql.NullBool
+	TTFTMs   sql.NullInt64
 	TotalMs        int64
 	// QueueWaitMs 是并发闸排队耗时（口径层 v0.52）。**不是** NullInt64：没排队就是
 	// 0，这一列上「没排」与「排了 0ms」没有语义差别，不像 ttft 那样要区分「没有」。
@@ -57,12 +60,12 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 		INSERT INTO call_logs (
 			api_key_name, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
-			status, retry_count, ttft_ms, total_ms, queue_wait_ms,
+			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.APIKeyName, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
-		l.Status, l.RetryCount, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
+		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error, l.ErrorDetail)
 	return err
 }

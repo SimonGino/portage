@@ -237,6 +237,7 @@ type CallRow struct {
 	ChannelKeyName   string
 	Status           int
 	RetryCount       int
+	IsStream         sql.NullBool
 	TTFTMs           sql.NullInt64
 	TotalMs          int64
 	QueueWaitMs      int64
@@ -262,12 +263,12 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 		err := g.DB.QueryRow(`
 			SELECT api_key_name, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
-			       status, retry_count, ttft_ms, total_ms, queue_wait_ms,
+			       status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
-				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
+				&r.Status, &r.RetryCount, &r.IsStream, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
 				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error, &r.ErrorDetail)
 		if err == nil {
 			return r

@@ -117,6 +117,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 
 	auth.GET("/logs", h.listLogs)
 	auth.GET("/usage", h.usage)
+	auth.GET("/usage/daily", h.usageDaily)
 
 	h.mountUI(r)
 }
