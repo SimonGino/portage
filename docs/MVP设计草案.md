@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.44
+> 状态：草案 v0.45
+> v0.45 变更（口径层 v0.53 落地：用量与观测第二轮 #62，2026-08-13）：①`call_logs` 加 `error_detail`（可空 TEXT，§7 DDL）——上游错误原文前 2KB，三个来源：透传路径在 `status >= 400` 时挂一个限长旁路 observer（不先读后转，那条链路上响应字节属于客户端）、转换路径由 `writeUpstreamError` 顺手交出已读到的原始字节、传输错误那一支存 `upstream.Redact(err)`（没有响应体，不落的话「连不上/握手失败/读超时」这半边恰好永远是空）。**新出现的列组合**：上游透传 4xx 的 `error` 列是空的（v0.28 纪律）而 `error_detail` 有值，故管理端「详情」按钮按 `status >= 400` 出、不按 error 非空——`captureWriter` 因此从写死 64KiB 改为构造时给 limit。②`/admin/api/logs` 加 `model` / `key` / `only=bad` 筛选与 `before=<id>` 游标（§8.1）：筛选下推后端，前端在已拉回的一页里过滤筛出的是「这一页里的失败」；翻页取游标而非 offset，流水新行插在头部，offset 第二页必错位（`offset` 参数保留，无 `before` 时生效）。③`UsageBy` 加 `key` 维度（按 `api_key_name`，空归「(未鉴权)」）。④Web：用量页维度三档（按模型 / 按 API Key / 按上游凭证，末档写全称消歧）、模型下拉单独按模型维度拉一次（维度切走时选项不该跟着变空）、「加载更多」增量追加、失败行可展开摊开上游原文；渠道页凭证行名字定宽 10em、掩码吃掉剩余（DESIGN.md v0.12）。⑤测试落 `internal/server/errordetail_test.go`（两条路径 + 2KB 截断 + 传输错误不带 base_url + 成功行为 NULL）与 `logsquery_test.go`（筛选叠加、游标翻页不重不漏、`by=key`）。修改人 jinpenga。
 > v0.44 变更（§7.5 实现落地 #60，2026-08-13）：渠道并发闸按 §7.5 原样实现，本条只记实现时补定的三件事。①配置项名与形态定案：`concurrency_queue` 块下 `factor`（倍数形态：队列上限 = 并发上限 × factor，显式 0 = 不排队，零值陷阱同 `max_retries`）/ `wait: 30s` / `retry_after: 10s`（两个时长兜底、factor 不兜），§7 样例已列。②error 词表补第三词 `queue_abandoned`：排队途中客户端断连，status 记 499、不写错误体——不混进 `upstream_error`（没碰过上游）也不占 v0.52 的两词（那两个是网关拒的，这个是客户端走的）。③信号量手写移交式（`internal/upstream/gate.go`）而非现成库：上限每次获取时从渠道配置带入，改配置即时生效、缩小时自然排空。管理端渠道表单加「并发上限」一栏（`max_concurrency`，PUT 缺省不动列，防 v0.35⑸ 整体覆盖陷阱——0 有意义，哨兵用 null 不用零值）。四断言验收测试照 §7.5 原文落在 `internal/server/concurrency_test.go`。§6 时序与两处 DDL 注记的「实现未排期」字样一并清扫。修改人 jinpenga。
 > v0.43 变更（口径层 v0.45~v0.48 落地补记：渠道页两栏与凭证可回读，2026-08-12）：该批同日落地且早于 v0.42 的内容，头部条目当时漏了，终审（#58）点出后补记。界面侧落点（主从两栏、右栏三段、启停开关、地址预览、左栏搜索）在 DESIGN.md v0.5~v0.10 版本记录，本文档动的只有凭证可回读那半（口径层 v0.47/v0.48）：①`api_keys` 加 `key_plain` 列——明文与哈希各存一列，存量行空串读作「原值没存过」，界面提示删了重建、不摆假掩码；鉴权仍走 `key_hash` 唯一索引，与这一列无关。②`key_hash` 裸 SHA-256 的立论加注：「明文只在创建那一个响应里存在过」的前提自 v0.47 不成立，结论不变且更无所谓——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。③§8.1「凭证先删后插作废」条随 v0.47 改写：去掉「值不回读 ⇒ 页面对不齐」那半条立论（已不成立），列表改回名字、凭证值、状态等。④散文两处旧称「网关 key」改「API Key」（v0.48 术语：网关侧一律 API Key，上游侧写全「上游凭证」）。修改人 jinpenga。
 > v0.42 变更（口径层 v0.49~v0.52 落地：渠道并发上限设计，2026-08-12）：只落设计，实现未排期。①新增 §7.5：数据模型（`channels.max_concurrency`，0 = 不限）、挂点（`upstream.Client.Do`，内存态信号量）、持有区间（一次 `Do` 内重试与换凭证共占一个闸坑）、排队（队列 ×1 / 超时 30s，config.yaml 全局项，客户端断连即出队）、队满/超时 429、拥塞期零改动（含三个「改到要回头复核 v0.51」的既有事实锚点）、观测与验收（`queue_wait_ms` 一列 + error 词表 `queue_full`/`queue_timeout` 两词、Go 集成测试四断言）。②§7 DDL 两处注记：`channels.max_concurrency` 与 `call_logs.queue_wait_ms`。③§6 时序补渠道并发闸一行。排队两个界与 `Retry-After` 的配置项名与形态实现时定（§7.5），启动配置样例暂不列。修改人 jinpenga。
@@ -626,7 +627,12 @@ CREATE TABLE call_logs (
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
-  error TEXT                           -- 截断后的错误摘要
+  error TEXT,                          -- 网关自己的**固定词表**（可枚举、可 group by）
+  error_detail TEXT                    -- 上游错误原文前 2KB（口径层 v0.53），只在失败时写，其余为 NULL。
+                                       -- 与 error 不同步出现：上游透传 4xx 的 error 是空的（透传成功不算
+                                       -- 网关侧错误，v0.28 纪律），detail 却有值——管理端「可展开」的判据
+                                       -- 因此是 status >= 400。可空是为了分开「没存」与「上游回了 4xx 但
+                                       -- 体是空的」（存空串），后者本身就是排障信息
 );
 CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 
@@ -749,8 +755,8 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 | POST | `/admin/api/channels/:id/fetch-models` | 拉上游 `/v1/models` 给表单做预勾选（v0.38）。**POST 而非 GET**：它朝上游发真请求、花上游的配额，不该被浏览器或中间层当可缓存的读操作重放。回一组 `{protocols, models, status, detail}`，**不落库、不进路由** |
 | GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
 | GET POST | `/admin/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
-| GET | `/admin/api/logs?limit=&offset=` | 近期流水，limit 上限 500 |
-| GET | `/admin/api/usage?days=&by=model\|credential` | 汇总，`by` 选维度：按接入点（默认）或按上游凭证（v0.35） |
+| GET | `/admin/api/logs?limit=&before=&model=&key=&only=bad` | 近期流水，limit 上限 500。筛选**全在后端**（v0.53）：前端在已拉回的一页里过滤，筛出的是「这一页里的失败」。翻页用 `before=<id>` 游标而非 `offset`——流水是时间序、新行插在头部，offset 翻到第二页就已错位（`offset` 参数仍在，无 `before` 时生效） |
+| GET | `/admin/api/usage?days=&by=model\|key\|credential` | 汇总，`by` 选维度：按模型（默认）、按**网关 API Key**（v0.53）或按**上游凭证**（v0.35）。后两者是两件事，标签写全称——只写「按凭证」两边都像 |
 
 三条实现口径：
 

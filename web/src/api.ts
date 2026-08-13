@@ -267,10 +267,21 @@ export interface CallLog {
   output_tokens: number | null
   cache_read_tokens: number | null
   cache_write_tokens: number | null
+  /** 网关自己的固定词表（upstream_error / queue_full / stream_aborted…），可枚举。 */
   error: string
+  /**
+   * 上游错误原文的前 2KB（口径层 v0.53）。
+   *
+   * 三态：null = 没存过；空串 = 上游回了错但响应体本身是空的（这也是排障信息）；
+   * 有文本 = 上游原文。别把 null 与空串当同一件事。
+   *
+   * 与 error 不同步出现：上游透传 4xx 的 error 是空的（透传成功不算网关侧错误），
+   * 这一列却有值——所以「能展开」的判据是 status >= 400，不是 error 非空。
+   */
+  error_detail: string | null
 }
 
-/** 用量汇总的一行。label 按聚合维度取值：接入点名，或上游凭证名。 */
+/** 用量汇总的一行。label 按聚合维度取值：模型名 / 网关 key 名 / 上游凭证名。 */
 export interface UsageRow {
   label: string
   calls: number

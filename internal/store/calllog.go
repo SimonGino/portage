@@ -32,6 +32,12 @@ type CallLog struct {
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
 	Error            sql.NullString
+	// ErrorDetail 是上游错误原文的前 2KB（口径层 v0.53），只在失败时有值。
+	//
+	// 与 Error 分列：Error 是网关的固定词表（可枚举、可 group by），这一列是上游
+	// 自己说的那段话，不可控、只给人看。可空是为了分开「没存」与「上游回了 4xx 但
+	// 体是空的」——后者本身就是排障信息。
+	ErrorDetail sql.NullString
 }
 
 // CountAPIKeys 数启用中的网关 key。启动时用它警告空表——那种库下每个转发请求都
@@ -52,11 +58,11 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 			api_key_name, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, ttft_ms, total_ms, queue_wait_ms,
-			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.APIKeyName, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
-		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error)
+		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens, l.Error, l.ErrorDetail)
 	return err
 }

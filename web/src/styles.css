@@ -1791,14 +1791,16 @@ select:focus {
   opacity: 0.65;
 }
 
-/* 名字与密钥各占一段，密钥那段宽一些——掩码本身就有十八九个字符，再挤两颗按钮。 */
+/* 名字定宽、密钥吃掉剩下的（v0.12）：这一行的主语是 key，名字只是给它起的代号
+   ——「凭证 1」这种四五个字的东西占掉三分之一行宽，眼睛会先读到那个代号，而人扫
+   这一行是在找「我贴的是哪一把」。10em 装得下十来个汉字，起长名字的照样能读全。 */
 .cred-name {
-  flex: 2;
+  flex: 0 0 10em;
   min-width: 0;
 }
 
 .cred .secret {
-  flex: 3;
+  flex: 1;
   min-width: 0;
 }
 
@@ -2045,6 +2047,51 @@ select:focus {
   white-space: nowrap;
   color: var(--err-text);
   font-size: 12px;
+}
+
+/* 「详情」按钮跟着状态右对齐，压成一枚小字：一行里已经有状态、重试、错误词三行
+   信息，它不该再抢一次注意力，只在人真的要看时才被找到。 */
+.log-detail-toggle {
+  margin: 2px -6px 0 auto;
+  display: block;
+  font-size: 12px;
+  padding: 0 6px;
+}
+
+/* 展开的那一行整行让给上游原文，不塞进某一格：原文是几百字节的自由文本，
+   挤在「状态」那一列里只会把整张表撑变形。 */
+.log-detail-row > td {
+  padding-top: 0;
+}
+
+.log-detail {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 18em;
+  overflow: auto;
+  background: var(--sunken);
+  border-left: 2px solid var(--err-text);
+  border-radius: 0 4px 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  /* 原文里的换行照留、长行照折：上游的错误体常是一整行 JSON，不折就得横向拖。 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 「加载更多」在表下面居中一颗：它是这张表的下一页，不是页面级动作，
+   所以不跟标题栏那排按钮混在一起。 */
+.load-more {
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/* 标题栏里的下拉：与 Segmented 同高、同字号，不然那一排会高低不齐。 */
+.select-inline {
+  width: auto;
+  max-width: 14em;
+  padding: 3px 6px;
+  font-size: 13px;
 }
 
 .tnum {

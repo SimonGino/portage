@@ -78,7 +78,28 @@ func migrate(db *sql.DB) error {
 	if err := addKeyPlain(db); err != nil {
 		return err
 	}
-	return addConcurrencyColumns(db)
+	if err := addConcurrencyColumns(db); err != nil {
+		return err
+	}
+	return addErrorDetail(db)
+}
+
+// addErrorDetail 补 v0.53 的 call_logs.error_detail。
+//
+// 可空、不给默认值：存量行停在 NULL 上，读作「这行没存过原文」——它与「上游回了
+// 4xx 但响应体是空的」（存空串）是两件事，补一个空串默认值会把这两件事抹平。
+func addErrorDetail(db *sql.DB) error {
+	has, err := hasColumn(db, "call_logs", "error_detail")
+	if err != nil {
+		return fmt.Errorf("检查 call_logs.error_detail: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN error_detail TEXT`); err != nil {
+		return fmt.Errorf("迁移 call_logs.error_detail: %w", err)
+	}
+	return nil
 }
 
 // addConcurrencyColumns 补渠道限流批（口径层 v0.49/v0.52）的两列：

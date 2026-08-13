@@ -13,15 +13,26 @@ import (
 // 不是为了留档；一条长流的完整响应进日志只会把日志冲垮。
 const bodyCaptureLimit = 64 << 10
 
-// captureWriter 是 log_bodies 打开时挂在旁路上的定量收集器。和 Tap 一样：永不报错，
-// 否则 io.MultiWriter 会把错误变成读错误、打断转发。
+// errorDetailLimit 是落库的上游错误原文上限（口径层 v0.53）。比 body 那个小两个
+// 数量级：错误体是给人读的一段话，2KB 之后基本只剩上游自己的请求快照与堆栈；而
+// 这一列每条失败流水都占一份，长期躺在库里。
+const errorDetailLimit = 2 << 10
+
+// captureWriter 是挂在旁路上的定量收集器。和 Tap 一样：永不报错，否则 io.MultiWriter
+// 会把错误变成读错误、打断转发。
+//
+// limit 由构造处给，因为两种用途的合理上限差两个数量级（见 bodyCaptureLimit 与
+// errorDetailLimit）。
 type captureWriter struct {
+	limit     int
 	buf       []byte
 	truncated bool
 }
 
+func newCapture(limit int) *captureWriter { return &captureWriter{limit: limit} }
+
 func (c *captureWriter) Write(p []byte) (int, error) {
-	if room := bodyCaptureLimit - len(c.buf); room > 0 {
+	if room := c.limit - len(c.buf); room > 0 {
 		if len(p) > room {
 			c.buf = append(c.buf, p[:room]...)
 			c.truncated = true
@@ -81,6 +92,23 @@ type callRecord struct {
 
 	requestBody  *captureWriter
 	responseBody *captureWriter
+
+	// errorDetail 是上游错误原文（口径层 v0.53），只在失败时有值、截前 2KB。
+	//
+	// 是 *captureWriter 而不是 string，因为透传路径上它得挂在旁路上边转发边收——
+	// 那条链路不允许为了记一份错误体把响应先读进内存再转出去。另外两个来源（转换
+	// 路径已经读到的原始字节、传输错误的 Redact 文本）用 setErrorDetail 写进来。
+	errorDetail *captureWriter
+}
+
+// setErrorDetail 记下一段已经拿在手里的错误原文。**不覆盖已有的**：透传路径的旁路
+// 收集器先挂上，之后的收尾分支不该把它抹成一句概括。
+func (r *callRecord) setErrorDetail(s string) {
+	if r.errorDetail != nil || s == "" {
+		return
+	}
+	r.errorDetail = newCapture(errorDetailLimit)
+	_, _ = r.errorDetail.Write([]byte(s))
 }
 
 func (s *Server) logCall(rec *callRecord) {
@@ -180,6 +208,12 @@ func (s *Server) persistCall(rec *callRecord) {
 	// 文案里可能带 base_url。
 	if rec.outcome != "ok" {
 		row.Error = sql.NullString{String: rec.outcome, Valid: true}
+	}
+	// 上游原文另落一列（口径层 v0.53）。它与 error 列是两件事，也不同步出现：上游
+	// 透传 4xx 的 error 列是空的（透传成功不算网关侧错误，v0.28 纪律），detail 却有
+	// 值——「可展开」的判据因此是 status >= 400，不是 error 非空。
+	if rec.errorDetail != nil {
+		row.ErrorDetail = sql.NullString{String: rec.errorDetail.String(), Valid: true}
 	}
 
 	if err := store.InsertCallLog(ctx, s.db, row); err != nil {

@@ -112,7 +112,15 @@ CREATE TABLE IF NOT EXISTS call_logs (
   -- 并发闸排队耗时（口径层 v0.52）：没排队就是 0，不可空——「没排」与「排了 0ms」
   -- 在这一列上就是一回事。排队被拒的行靠 error 归因（queue_full / queue_timeout）。
   queue_wait_ms INTEGER NOT NULL DEFAULT 0,
-  error TEXT
+  error TEXT,
+  -- 上游错误原文（口径层 v0.53），截前 2KB，只在失败时写，其余行为 NULL。
+  -- 与 error 是两件事：error 是网关的**固定词表**（可枚举、可 group by），这一列
+  -- 是上游自己说的那段话（不可控文本，只给人看）。可空正因为「没存」与「存了空串」
+  -- 要分得开——上游回 4xx 但响应体是空的，也是一条排障信息。
+  --
+  -- 注意一个新组合：上游透传 4xx 的 error 列**是空的**（透传成功不算网关侧错误，
+  -- v0.28 纪律），但会有 error_detail。管理端的「可展开」判据因此是 status >= 400。
+  error_detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_logs_created_at ON call_logs(created_at);

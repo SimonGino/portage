@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { CallLog, UsageRow } from '../api'
 import { Card, Empty, ErrorBar, fmtInt, fmtTime, useList } from '../ui'
@@ -11,17 +11,26 @@ const DAY_OPTIONS = [
   { value: '30' as const, label: '30 天' },
 ]
 
-// 聚合维度（口径层 v0.38）：按凭证是「这个号跑了多少」的答案，只给逐行的流水表
-// 等于把 group by 留给人的肉眼做。
+// 聚合维度（v0.38 加了上游凭证，v0.53 加了 API Key）。
+//
+// 「按上游凭证」写全称：它聚合的是渠道下那些上游 key 的名字，跟你在这个网关里新建的
+// API Key 是两回事，只写「按凭证」两边都像。
 const DIM_OPTIONS = [
   { value: 'model' as const, label: '按模型' },
-  { value: 'credential' as const, label: '按凭证' },
+  { value: 'key' as const, label: '按 API Key' },
+  { value: 'credential' as const, label: '按上游凭证' },
 ]
+
+/** 一行行数按维度换个量词，别让「3 个模型」和「3 份凭证」长成同一句。 */
+const DIM_UNIT: Record<string, string> = { model: '个模型', key: '把 API Key', credential: '份上游凭证' }
 
 const LOG_FILTERS = [
   { value: 'all' as const, label: '全部' },
   { value: 'bad' as const, label: '只看失败' },
 ]
+
+/** 一次拉多少条流水。翻页靠 before 游标，不是 offset——见 store.CallLogFilter。 */
+const LOG_PAGE = 50
 
 /** 大数缩写成 12.3k / 4.5M：指标条上要的是量级，精确值在下面的明细表里。 */
 function fmtCompact(n: number) {
@@ -108,19 +117,75 @@ function upstreamOf(l: CallLog) {
   return l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'
 }
 
+/**
+ * 流水的取数：筛选下推后端、翻页用 before 游标增量追加。
+ *
+ * 不用 useList：它每次都整块换掉 data，而这里要的是「在已有的后面接一段」。筛选变了
+ * 才从头拉——筛选和分页搅在一起时，前端在本页里过滤只会筛出「这一页里的失败」，
+ * 而人问的是「这段时间的失败」。
+ */
+function useLogFeed(only: string, model: string) {
+  const [rows, setRows] = useState<CallLog[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  // more 只在「上一次正好拉满一页」时为真。少于一页说明后面没有了，不必再多问一次
+  // 才发现是空的。
+  const [more, setMore] = useState(false)
+
+  const load = useCallback(
+    async (before?: number) => {
+      const q = new URLSearchParams({ limit: String(LOG_PAGE) })
+      if (only === 'bad') q.set('only', 'bad')
+      if (model) q.set('model', model)
+      if (before) q.set('before', String(before))
+      setLoading(true)
+      try {
+        const page = (await api.get<CallLog[] | null>(`/logs?${q}`)) ?? []
+        setRows((prev) => (before ? [...prev, ...page] : page))
+        setMore(page.length === LOG_PAGE)
+        setError('')
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [only, model],
+  )
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const loadMore = () => {
+    const last = rows[rows.length - 1]
+    if (last) void load(last.id)
+  }
+  return { rows, error, loading, more, reload: () => void load(), loadMore }
+}
+
 export default function Usage() {
   const [days, setDays] = useState('7')
   const [dim, setDim] = useState('model')
   const [filter, setFilter] = useState('all')
+  const [model, setModel] = useState('')
+  // 展开看上游原文的那些行（口径层 v0.53）。默认全收起：这一列是不可控的上游文本，
+  // 摊开在表里会把每一行撑成一屏。
+  const [opened, setOpened] = useState<number[]>([])
   const usage = useList(
     () => api.get<{ days: number; rows: UsageRow[] | null }>(`/usage?days=${days}&by=${dim}`),
     [days, dim], // 天数或维度一变就重拉
   )
-  const logs = useList(() => api.get<CallLog[] | null>('/logs?limit=100'))
+  // 模型下拉的选项单独按模型维度拉一次：它要的是「这段时间出现过哪些模型」，
+  // 与上面那份按当前维度聚合的数据是两个问题，维度切到 API Key 时不该跟着变空。
+  const models = useList(
+    () => api.get<{ rows: UsageRow[] | null }>(`/usage?days=${days}&by=model`),
+    [days],
+  )
+  const logs = useLogFeed(filter, model)
 
   const rows = usage.data?.rows ?? []
-  const list = logs.data ?? []
-  const shown = filter === 'bad' ? list.filter((l) => l.status >= 400) : list
+  const shown = logs.rows
 
   // 指标条是这几行的合计，后端没有单独的汇总接口，前端加一遍就够——行数是模型数量级。
   const total = useMemo(
@@ -160,7 +225,7 @@ export default function Usage() {
           <div className="stat-lead">
             <span className="stat-lead-value">{fmtInt(total.calls)}</span>
             <span className="stat-lead-label">
-              次调用 · {rows.length} {dim === 'credential' ? '份凭证' : '个模型'}
+              次调用 · {rows.length} {DIM_UNIT[dim] ?? '个模型'}
             </span>
           </div>
           <div className={'stat-side' + (total.errors > 0 ? ' is-bad' : '')}>
@@ -187,7 +252,7 @@ export default function Usage() {
             <table className="table table-plain table-usage">
               <thead>
                 <tr>
-                  <th>{dim === 'credential' ? '上游凭证' : '模型'}</th>
+                  <th>{DIM_OPTIONS.find((o) => o.value === dim)?.label.slice(1) ?? '模型'}</th>
                   <th className="num">调用</th>
                   <th className="num">失败</th>
                   <th className="num">输入</th>
@@ -201,9 +266,9 @@ export default function Usage() {
                   <tr key={r.label}>
                     <td className="model-cell">
                       <span className="icon-row">
-                        {/* 凭证维度不画模型图标：那个图标是从模型名猜厂商猜出来的，
-                            套在人自己起的凭证名上只会猜出一堆无意义的首字母块。 */}
-                        {dim === 'credential' ? null : <ModelIcon model={r.label} size={16} />}
+                        {/* 只有模型维度画图标：那个图标是从模型名猜厂商猜出来的，
+                            套在人自己起的凭证名/key 名上只会猜出一堆无意义的首字母块。 */}
+                        {dim === 'model' ? <ModelIcon model={r.label} size={16} /> : null}
                         <code>{r.label}</code>
                       </span>
                     </td>
@@ -231,15 +296,36 @@ export default function Usage() {
         title="最近调用"
         action={
           <div className="row-actions">
+            {/* 模型筛选与「只看失败」都下推后端（v0.53）：在已拉回的那一页里过滤，
+                筛出的是「这一页里的失败」，而人问的是「这段时间的失败」。 */}
+            <select
+              className="input select-inline"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              title="按请求的模型名筛选"
+            >
+              <option value="">全部模型</option>
+              {(models.data?.rows ?? []).map((r) => (
+                <option key={r.label} value={r.label}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
             <Segmented value={filter} options={LOG_FILTERS} onChange={setFilter} />
-            <button className="btn btn-quiet" onClick={() => void logs.reload()}>
+            <button className="btn btn-quiet" onClick={logs.reload}>
               刷新
             </button>
           </div>
         }
       >
         {shown.length === 0 ? (
-          <Empty>{filter === 'bad' && list.length > 0 ? '这一百条里没有失败。' : '还没有流水。'}</Empty>
+          <Empty>
+            {logs.loading
+              ? '读取中…'
+              : filter === 'bad'
+                ? '这些条件下没有失败。'
+                : '还没有流水。'}
+          </Empty>
         ) : (
           <div className="scroll-x">
             <table className="table table-plain table-logs">
@@ -248,7 +334,7 @@ export default function Usage() {
                   <th>时间</th>
                   <th>模型</th>
                   <th>链路</th>
-                  <th>凭证</th>
+                  <th>上游凭证</th>
                   <th className="num">状态</th>
                   <th className="num">耗时</th>
                   <th className="num">in / out</th>
@@ -256,7 +342,8 @@ export default function Usage() {
               </thead>
               <tbody>
                 {shown.map((l) => (
-                  <tr key={l.id}>
+                  <Fragment key={l.id}>
+                    <tr>
                     <td className="nowrap">
                       {fmtTime(l.created_at)}
                       <div className="sub">{l.api_key_name || '—'}</div>
@@ -301,6 +388,24 @@ export default function Usage() {
                           {l.error}
                         </div>
                       )}
+                      {/* 判据是状态码，不是 error 非空：上游透传 4xx 的 error 列
+                          本就是空的（透传成功不算网关侧错误），而那正是最想点开
+                          看上游到底说了什么的一种行。 */}
+                      {l.status >= 400 && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost log-detail-toggle"
+                          onClick={() =>
+                            setOpened((prev) =>
+                              prev.includes(l.id)
+                                ? prev.filter((id) => id !== l.id)
+                                : [...prev, l.id],
+                            )
+                          }
+                        >
+                          {opened.includes(l.id) ? '收起' : '详情'}
+                        </button>
+                      )}
                     </td>
                     <td className="num nowrap tnum">
                       {fmtMs(l.total_ms)}
@@ -320,10 +425,36 @@ export default function Usage() {
                         </div>
                       ) : null}
                     </td>
-                  </tr>
+                    </tr>
+                    {opened.includes(l.id) && (
+                      <tr className="log-detail-row">
+                        <td colSpan={7}>
+                          {/* 上游原文原样摊开，不解析不美化：它是不可控文本，
+                              我们对它唯一的加工是截到 2KB。
+                              null 与空串分开说——「没存」与「上游一个字都没回」是两条不同的线索。 */}
+                          <pre className={l.error_detail ? 'log-detail' : 'log-detail muted'}>
+                            {l.error_detail === null
+                              ? '这一行没有存下上游原文（v0.53 之前的老流水，或失败发生在拿到响应体之前）。'
+                              : l.error_detail === ''
+                                ? '上游没有返回任何响应体。'
+                                : l.error_detail}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {/* 「加载更多」而不是页码：流水是时间序，新行不断插到头部，页码翻到第二页
+            时早就错位了（后端为此走 before 游标）。 */}
+        {logs.more && (
+          <div className="row-actions load-more">
+            <button className="btn btn-quiet" disabled={logs.loading} onClick={logs.loadMore}>
+              {logs.loading ? '加载中…' : '加载更多'}
+            </button>
           </div>
         )}
       </Card>

@@ -680,16 +680,63 @@ type CallLogRow struct {
 	CacheReadTokens  *int64 `json:"cache_read_tokens"`
 	CacheWriteTokens *int64 `json:"cache_write_tokens"`
 	Error            string `json:"error"`
+	// ErrorDetail 是上游错误原文（口径层 v0.53），只在失败行有值。
+	//
+	// 指针而不是 string：null 是「没存过」，空串是「上游回了 4xx 但响应体是空的」
+	// ——后者本身就是排障信息（某些 LB 就这么干），COALESCE 成空串会把这两件事
+	// 抹平，而这一列可空的全部理由就是要分开它们。
+	//
+	// **只走管理端接口**：它是不可控的上游文本，转发路径回给客户端的永远是我方的
+	// 固定词表与 error.message 一句。
+	ErrorDetail *string `json:"error_detail"`
+}
+
+// CallLogFilter 是流水列表的筛选与翻页条件。
+//
+// 翻页取 **Before 游标**而非 offset：流水是时间序、新行不断插到头部，翻到第二页时
+// offset 已经被新写入的行推着往后错位，同一条会出现两次。游标按 id 定位，插多少
+// 新行都不影响「比这条更早的下一批」这个语义。老的 Offset 保留，无 Before 时生效。
+type CallLogFilter struct {
+	Limit  int
+	Offset int
+	// Before 只取 id 严格小于它的行；0 = 从最新一条开始。
+	Before int64
+	// Model 精确匹配 model_requested（客户端请求的那个名，不是上游模型名）。
+	Model string
+	// APIKeyName 精确匹配网关 key 的名字快照。
+	APIKeyName string
+	// FailedOnly 只留 status >= 400 的行。判据是状态码而非 error 列非空——上游透传
+	// 4xx 的 error 列是空的（v0.28 纪律），漏掉它「只看失败」就名不副实。
+	FailedOnly bool
 }
 
 // ListCallLogs 返回最近的调用流水，最新在前。limit 由调用方兜上限。
-func ListCallLogs(ctx context.Context, db Queryer, limit, offset int) ([]CallLogRow, error) {
+func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRow, error) {
+	where, args := []string{}, []any{}
+	if f.Before > 0 {
+		where, args = append(where, "id < ?"), append(args, f.Before)
+	}
+	if f.Model != "" {
+		where, args = append(where, "model_requested = ?"), append(args, f.Model)
+	}
+	if f.APIKeyName != "" {
+		where, args = append(where, "api_key_name = ?"), append(args, f.APIKeyName)
+	}
+	if f.FailedOnly {
+		where = append(where, "status >= 400")
+	}
+	clause := ""
+	if len(where) > 0 {
+		clause = " WHERE " + strings.Join(where, " AND ")
+	}
+	args = append(args, f.Limit, f.Offset)
+
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, created_at, api_key_name, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       ttft_ms, total_ms, input_tokens, output_tokens,
-		       cache_read_tokens, cache_write_tokens, COALESCE(error, '')
-		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
+		       cache_read_tokens, cache_write_tokens, COALESCE(error, ''), error_detail
+		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,13 +745,15 @@ func ListCallLogs(ctx context.Context, db Queryer, limit, offset int) ([]CallLog
 	for rows.Next() {
 		var r CallLogRow
 		var ttft, in, outTok, cr, cw sql.NullInt64
+		var detail sql.NullString
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
-			&ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &r.Error); err != nil {
+			&ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &r.Error, &detail); err != nil {
 			return nil, err
 		}
 		r.TTFTMs, r.InputTokens, r.OutputTokens = nullable(ttft), nullable(in), nullable(outTok)
 		r.CacheReadTokens, r.CacheWriteTokens = nullable(cr), nullable(cw)
+		r.ErrorDetail = nullableStr(detail)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -721,9 +770,10 @@ type UsageRow struct {
 	CacheWrite   int64  `json:"cache_write_tokens"`
 }
 
-// 用量聚合的两个维度（口径层 v0.38 给用量页加了按凭证那一个）。
+// 用量聚合的三个维度（v0.38 加了按上游凭证，v0.53 加了按网关 key）。
 const (
 	UsageByModel      = "model"
+	UsageByKey        = "key"
 	UsageByCredential = "credential"
 )
 
@@ -740,8 +790,14 @@ const (
 //
 // Errors 数的是 status >= 400 的行，包括上游自己回的 4xx——用量页要回答的是
 // 「有多少次调用没拿到东西」，而不是「网关有没有出错」，两者对使用者是一回事。
+// 按网关 key 聚合是 v0.53 加的：PO 想问的「我在网关新建的这把 key 跑了多少」，此前
+// 唯一沾边的维度是**上游**凭证——名字像、含义完全是另一件事。空 key 名归「(未鉴权)」：
+// 鉴权失败的请求也落流水（口径层 §2.5），把它们混进某把 key 的账里是错的。
 func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow, error) {
 	label := `model_requested`
+	if dim == UsageByKey {
+		label = `CASE WHEN api_key_name <> '' THEN api_key_name ELSE '(未鉴权)' END`
+	}
 	if dim == UsageByCredential {
 		label = `CASE
 		           WHEN channel_key_name <> '' THEN channel_key_name
@@ -786,6 +842,15 @@ func nullable(n sql.NullInt64) *int64 {
 		return nil
 	}
 	v := n.Int64
+	return &v
+}
+
+// nullableStr 同上，给那些**空串本身有含义**的列用——JSON 里 null 与 "" 得是两个答案。
+func nullableStr(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	v := n.String
 	return &v
 }
 

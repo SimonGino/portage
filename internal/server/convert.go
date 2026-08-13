@@ -98,6 +98,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 			return
 		}
 		rec.outcome = "upstream_error"
+		// 与透传路径同：这一支没有响应体，落库的原文就是传输错误本身（v0.53）。
+		rec.setErrorDetail(upstream.Redact(err).Error())
 		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
 		return
@@ -112,7 +114,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 		defer func() { rec.summary, rec.haveSummary = tap.Summary(), true }()
 	}
 	if s.cfg.LogBodies {
-		rec.responseBody = &captureWriter{}
+		rec.responseBody = newCapture(bodyCaptureLimit)
 		observers = append(observers, rec.responseBody)
 	}
 	src := io.Reader(resp.Body)
@@ -122,7 +124,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		rec.outcome = "upstream_error"
-		s.writeUpstreamError(c, ep, resp.StatusCode, src)
+		s.writeUpstreamError(c, rec, ep, resp.StatusCode, src)
 		return
 	}
 
@@ -151,8 +153,11 @@ const upstreamErrorLimit = 64 << 10
 // 转换路径不能像透传那样把上游字节原样递出去：客户端等的是 Anthropic 形状的错误，
 // 收到一个 OpenAI 形状的 error 对象会解不动。状态码原样保留——它是客户端退避与
 // 重试决策的依据。
-func (s *Server) writeUpstreamError(c *gin.Context, ep protocol.Endpoint, status int, body io.Reader) {
+// 回给客户端的只有 error.message 一句，但**落库落全**（截到 2KB，口径层 v0.53）：
+// 客户端拿到的是我们的错误契约，排障要的是上游到底说了什么，两者不该是同一份文本。
+func (s *Server) writeUpstreamError(c *gin.Context, rec *callRecord, ep protocol.Endpoint, status int, body io.Reader) {
 	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))
+	rec.setErrorDetail(string(raw))
 	msg := upstreamErrorMessage(raw)
 	if msg == "" {
 		msg = "上游返回 " + http.StatusText(status)

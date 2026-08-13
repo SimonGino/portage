@@ -753,10 +753,22 @@ func normalizeAllowed(raw string) string {
 // 一起拖住——连接池是 1，那期间所有转发请求都在排队。
 const maxLogLimit = 500
 
+// listLogs 列流水。筛选与翻页都在后端做（口径层 v0.53）——此前「只看失败」是前端
+// 在已经拉回来的那 100 条里过滤，翻页一上来就会露馅：筛的是当前这一页，不是流水。
+//
+// 认不得的参数一律忽略、不报错：同 usage 的立论，展示参数写错不该让页面打不开。
 func (h *Handler) listLogs(c *gin.Context) {
-	limit := clampQuery(c, "limit", 100, 1, maxLogLimit)
-	offset := clampQuery(c, "offset", 0, 0, 1<<20)
-	rows, err := store.ListCallLogs(c.Request.Context(), h.db, limit, offset)
+	f := store.CallLogFilter{
+		Limit:  clampQuery(c, "limit", 100, 1, maxLogLimit),
+		Offset: clampQuery(c, "offset", 0, 0, 1<<20),
+		// 上限取 int32 上界而不是更大的数：clampQuery 收的是 int，写死一个 64 位常量
+		// 会让 32 位目标（树莓派那类）编译不过，而流水 id 到不了二十亿。
+		Before:     int64(clampQuery(c, "before", 0, 0, 1<<31-1)),
+		Model:      c.Query("model"),
+		APIKeyName: c.Query("key"),
+		FailedOnly: c.Query("only") == "bad",
+	}
+	rows, err := store.ListCallLogs(c.Request.Context(), h.db, f)
 	if err != nil {
 		h.log.Error("列调用流水失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")
@@ -765,14 +777,18 @@ func (h *Handler) listLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, rows)
 }
 
-// usage 汇总用量。by=model（默认，按接入点）/ by=credential（按上游凭证，v0.38）。
+// usage 汇总用量。by=model（默认，按请求的模型）/ by=key（按网关 API Key，v0.53）/
+// by=credential（按上游凭证，v0.38）。
 //
 // 认不得的 by 当默认处理而不是报错：这是个只影响展示的查询参数，写错了不该让整个
 // 页面打不开（同 clampQuery 的立论）。
 func (h *Handler) usage(c *gin.Context) {
 	days := clampQuery(c, "days", 7, 1, 365)
 	dim := store.UsageByModel
-	if c.Query("by") == store.UsageByCredential {
+	switch c.Query("by") {
+	case store.UsageByKey:
+		dim = store.UsageByKey
+	case store.UsageByCredential:
 		dim = store.UsageByCredential
 	}
 	rows, err := store.UsageBy(c.Request.Context(), h.db, days, dim)

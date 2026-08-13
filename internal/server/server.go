@@ -299,7 +299,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 		if s.cfg.LogBodies {
-			rec.requestBody = &captureWriter{}
+			rec.requestBody = newCapture(bodyCaptureLimit)
 			_, _ = rec.requestBody.Write(body)
 		}
 
@@ -376,6 +376,9 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			}
 			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
 			rec.outcome = "upstream_error"
+			// 这一支没有响应体可截，落库的原文就是这条传输错误本身（口径层 v0.53）。
+			// 不落的话，最想看细节的那半边——连不上、握手失败、读超时——恰好永远是空。
+			rec.setErrorDetail(upstream.Redact(err).Error())
 			s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 			ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
 			return
@@ -392,8 +395,15 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			}()
 		}
 		if s.cfg.LogBodies {
-			rec.responseBody = &captureWriter{}
+			rec.responseBody = newCapture(bodyCaptureLimit)
 			observers = append(observers, rec.responseBody)
+		}
+		// 上游说不行时，把它说的话截一段落库（口径层 v0.53）。挂旁路而不是先读后转：
+		// 透传路径上响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
+		// 判据是状态码而非 error 列——透传 4xx 的 error 列是空的（v0.28 纪律）。
+		if resp.StatusCode >= 400 {
+			rec.errorDetail = newCapture(errorDetailLimit)
+			observers = append(observers, rec.errorDetail)
 		}
 		src := io.Reader(resp.Body)
 		if len(observers) > 0 {

@@ -245,6 +245,9 @@ type CallRow struct {
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
 	Error            sql.NullString
+	// ErrorDetail 是上游错误原文（口径层 v0.53）。可空——「没存过」与「存了空串」
+	// 要分得开：后者是上游回了 4xx 但响应体是空的。
+	ErrorDetail sql.NullString
 }
 
 // LastCallRow returns the most recent call_logs row, waiting for it to land.
@@ -260,12 +263,12 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 			SELECT api_key_name, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
 			       status, retry_count, ttft_ms, total_ms, queue_wait_ms,
-			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error
+			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, error, error_detail
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
 				&r.Status, &r.RetryCount, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
-				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error)
+				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.Error, &r.ErrorDetail)
 		if err == nil {
 			return r
 		}
