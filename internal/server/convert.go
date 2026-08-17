@@ -118,7 +118,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	rec.upstreamEndpoint = outEp.Path
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
 	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。portage-legacy#20 定的
-	//「整串照抄」管的是同协议透传那条路（那是旧仓的编号，与上一段的 #20 不是同一张票）。
+	//「整串照抄」管的是同协议透传那条路（那是拆库前的编号，与上一段的 #20 无关）。
 	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
 	rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 	if err != nil {
