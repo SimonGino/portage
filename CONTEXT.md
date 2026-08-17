@@ -78,15 +78,15 @@ _Avoid_: 代理、转发（指透传时）
 三协议统一归一的内部事件序列；非流式 = 完整序列一次性回放。
 
 **毛值 input**：
-canonical `Usage.InputTokens` 的口径——**含**缓存读写，缓存两项是它的明细而非另外两笔（#72）。CC/Responses 的 input 本就是毛值；Anthropic 的是**净值**（与缓存互不相交），解码加回、出口减回。**流水 `input_tokens` 列同属这个口径**（v0.71）：落库前按 `upstream_protocol` 归一，Anthropic 行加回缓存两项，跨协议求和才是构造上可加的。
+canonical `Usage.InputTokens` 的口径——**含**缓存读写，缓存两项是它的明细而非另外两笔。CC/Responses 的 input 本就是毛值；Anthropic 的是**净值**（与缓存互不相交），解码加回、出口减回。**流水 `input_tokens` 列同属这个口径**（v0.71）：落库前按 `upstream_protocol` 归一，Anthropic 行加回缓存两项，跨协议求和才是构造上可加的。
 _Avoid_: 净值（那是 Anthropic 线上的形态）；Tap 的 `Summary` 不归一，保留上游原样——**不归一的是 `Summary` 这个中间物，不是流水那一列**，两者不是一回事
 
 **思考 token**：
-usage 里的 reasoning token（v0.66，#97）——是 **output token 的明细而非另一笔加数**（`total = input + output` 恒成立，思考不进这个加法），同 `毛值 input` 下缓存两项与 input 的关系。流水那一列**三档**：正数 = 思考了这么多，`0` = 上游报了、这次没思考，`NULL` = 上游根本不报（Anthropic 一路、非推理模型、v0.66 之前的老行）。
+usage 里的 reasoning token（v0.66）——是 **output token 的明细而非另一笔加数**（`total = input + output` 恒成立，思考不进这个加法），同 `毛值 input` 下缓存两项与 input 的关系。流水那一列**三档**：正数 = 思考了这么多，`0` = 上游报了、这次没思考，`NULL` = 上游根本不报（Anthropic 一路、非推理模型、v0.66 之前的老行）。
 _Avoid_: 把它加进 total 或从 output 里减掉；把 NULL 抹成 0（那是在说「确凿零思考成本」）
 
 **本地合成**：
-转换路径（R→A / R→CC）上让 Codex 压缩可用的做法（v0.54，#74）：把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封当成**恰好一个** compaction item 发回去，下一轮 Codex 回带时再拆开还原成 user 消息。上游没有 compact 端点可转发，这是唯一路子（与 opencodex 同构）。信封是 `ptg1:` + base64(摘要)，**透明不加密**，且前缀是长期兼容约束。
+转换路径（R→A / R→CC）上让 Codex 压缩可用的做法（v0.54）：把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封当成**恰好一个** compaction item 发回去，下一轮 Codex 回带时再拆开还原成 user 消息。上游没有 compact 端点可转发，这是唯一路子（与 opencodex 同构）。信封是 `ptg1:` + base64(摘要)，**透明不加密**，且前缀是长期兼容约束。
 _Avoid_: 远程压缩（那是 Codex 侧的叫法，指的是「让服务端压」这件事）、加密摘要（信封谁都解得开）
 
 **临时闸**：
