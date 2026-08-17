@@ -81,6 +81,9 @@ var coverage = map[string]disposition{
 	"messages[].content[].source.data":       dField,
 	"messages[].content[].image_url":         dField, // CC image_url 对象
 	"messages[].content[].image_url.url":     dField,
+	// detail 在 CC 上住在 image_url 对象**里面**，Responses 上是 part 顶层的兄弟
+	// （见下面 input[].content[].detail）——同一个语义、两种形状，别写反。
+	"messages[].content[].image_url.detail": dField, // → Image.Detail（口径层 v0.78）
 
 	// tool_result 里的图（#1）。容器形状三协议不一样，是本项目此前没记过的一条
 	// 转换约束：Anthropic 的 tool_result.content 收 text+image 数组，CC 的
@@ -146,6 +149,7 @@ var coverage = map[string]disposition{
 	"input[].content[].type":      dField, // input_text / input_image
 	"input[].content[].text":      dField,
 	"input[].content[].image_url": dField, // Responses 上是字符串，不是对象
+	"input[].content[].detail":    dField, // → Image.Detail；顶层，不在 image_url 里
 
 	"input[].call_id":       dField, // ToolCall.ID / ToolResult.ToolCallID
 	"input[].name":          dField, // ToolCall.Name

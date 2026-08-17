@@ -277,19 +277,24 @@ func decodePart(item map[string]json.RawMessage) (protocol.Block, error) {
 }
 
 // parseCCImage 解 image_url 对象。omitted=true 表示空载荷，整块跳过。
+//
+// detail 住在 image_url 对象**里面**——Responses 那边它是 image_url 的同级兄弟，在
+// part 顶层，两边形状不对称，最容易写反的就是这一处。它必须在这里解出来：外层
+// collectExtras 把整个 image_url 排除了，不解就连 Extras 都留不下（口径层 v0.78 ①）。
 func parseCCImage(item map[string]json.RawMessage) (img *protocol.Image, omitted bool) {
 	raw, ok := item["image_url"]
 	if !ok {
 		return nil, false
 	}
 	var obj struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		Detail string `json:"detail"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, false
 	}
 	if mt, data, ok := protocol.ParseDataURI(obj.URL); ok {
-		return &protocol.Image{MediaType: mt, Data: data}, false
+		return &protocol.Image{MediaType: mt, Data: data, Detail: obj.Detail}, false
 	}
 	if strings.HasPrefix(obj.URL, "data:") {
 		return nil, true
@@ -297,7 +302,7 @@ func parseCCImage(item map[string]json.RawMessage) (img *protocol.Image, omitted
 	if strings.TrimSpace(obj.URL) == "" {
 		return nil, true
 	}
-	return &protocol.Image{URL: obj.URL}, false
+	return &protocol.Image{URL: obj.URL, Detail: obj.Detail}, false
 }
 
 func omittedImage(b protocol.Block) bool {

@@ -352,9 +352,16 @@ func encodeImagePart(img *protocol.Image, drop func(string)) (map[string]any, bo
 	default:
 		return nil, false
 	}
+	obj := map[string]any{"url": url}
+	// detail 在 CC 上归 image_url 对象**里面**（Responses 那边在 part 顶层）。原样
+	// 转发、含 "auto"，不设白名单也不把 auto 当「等于没指定」抹掉——口径层 v0.78 ②。
+	// 空值不发这一格：「没指定」与「指定了 auto」在上游那边不是一回事。
+	if img.Detail != "" {
+		obj["detail"] = img.Detail
+	}
 	return map[string]any{
 		"type":      "image_url",
-		"image_url": map[string]any{"url": url},
+		"image_url": obj,
 	}, true
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -106,6 +107,8 @@ type sentCCPart struct {
 	Text     string `json:"text"`
 	ImageURL struct {
 		URL string `json:"url"`
+		// detail 在 CC 上住在 image_url 对象里面；Responses 那边它在 part 顶层。
+		Detail string `json:"detail"`
 	} `json:"image_url"`
 }
 
@@ -126,6 +129,8 @@ type sentResponsesItem struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
 		ImageURL string `json:"image_url"`
+		// Responses 的 detail 与 image_url 平级，不在它里面（CC 正相反）。
+		Detail string `json:"detail"`
 	} `json:"content"`
 }
 
@@ -372,6 +377,86 @@ func TestR2CCImageReachesUpstreamAsImageURL(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("图没到上游: %s", up.Last(t).Body)
+	}
+}
+
+// ---- image_url.detail：CC 与 Responses 之间要过河，到 Anthropic 是丢弃项 ----
+//
+// 这三条走全链路而不是单测，理由同本文件开头：detail 的形状**两边不对称**（CC 在
+// image_url 对象里面，Responses 在 part 顶层），两个半边各自「对」的写法拼起来照样
+// 可能对不上。而它此前是丢在中间那一环上的——CC 入口明着丢，Responses 入口看着进了
+// Extras，其实 Extras 永不外带，到出口一样死（口径层 v0.78 ①）。
+
+// CC→R：`image_url.detail` 要落到 part 顶层的 `detail`。
+func TestCC2RImageDetailReachesUpstream(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
+
+	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+
+	var sent sentResponsesRequest
+	decodeSent(t, up.Last(t).Body, &sent)
+
+	found := false
+	for _, item := range sent.Input {
+		for _, part := range item.Content {
+			if part.Type != "input_image" {
+				continue
+			}
+			found = true
+			if part.Detail != "high" {
+				t.Errorf("input_image.detail = %q，期望 high——detail 没过河: %s",
+					part.Detail, up.Last(t).Body)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("图没到上游: %s", up.Last(t).Body)
+	}
+}
+
+// R→CC：part 顶层的 `detail` 要落回 `image_url` 对象**里面**。
+func TestR2CCImageDetailReachesUpstream(t *testing.T) {
+	gw, up := newResponsesConvertGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"},
+		`{"id":"chatcmpl-9","model":"`+ccUpstreamModel+`","choices":[{"index":0,`+
+			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
+			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+
+	gw.Post(t, "/v1/responses", imageFixtureBody(t, "in-responses-image"), nil)
+
+	var sent sentCCRequest
+	decodeSent(t, up.Last(t).Body, &sent)
+
+	found := false
+	for _, m := range sent.Messages {
+		for _, part := range parseCCParts(t, m.Content) {
+			if part.Type != "image_url" {
+				continue
+			}
+			found = true
+			if part.ImageURL.Detail != "high" {
+				t.Errorf("image_url.detail = %q，期望 high——detail 没过河: %s",
+					part.ImageURL.Detail, up.Last(t).Body)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("图没到上游: %s", up.Last(t).Body)
+	}
+}
+
+// CC→A：Anthropic 没有对等的一格，detail 不许出现在请求体里（丢弃由 codec 登记
+// image_detail，那一层归 anthropic 包的单测钉）。
+func TestCC2AImageDetailIsNotSentToAnthropic(t *testing.T) {
+	gw, up := newCC2AGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, anthropicOKBody)
+
+	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+
+	body := string(up.Last(t).Body)
+	if strings.Contains(body, "detail") {
+		t.Errorf("detail 混进了 Anthropic 请求体: %s", body)
 	}
 }
 

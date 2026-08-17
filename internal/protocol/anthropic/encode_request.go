@@ -35,6 +35,9 @@ const (
 	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
+	// DropImageDetail 只此一家：CC 与 Responses 都原生有 detail 这一格，那两个出口
+	// 没有「丢弃」这回事，不必像 image_file_id 那样在三个 codec 里各镜像一份。
+	DropImageDetail = "image_detail" // CC / Responses 的图片精度提示，Anthropic 无对应的一格
 )
 
 // EncodeRequest 把 canonical 编成 Anthropic Messages 请求体。
@@ -302,9 +305,18 @@ func encodeToolUse(call *protocol.ToolCall) map[string]any {
 }
 
 // encodeImage 编一个 image 块。FileID-only 登记后跳过；空 Data 当没有图。
+//
+// detail 跟着图一起没了：Anthropic 没有对应的一格，图真发出去时单独登记 image_detail
+// （口径层 v0.78 ③）。CarrierFile 那一档**不重复登记**——图整个都没发，再报一句
+// 「detail 也丢了」是噪声，看日志的人会以为两张图出了两种问题。
+//
+// encodeToolResult 里的图也走这里，所以一处登记覆盖 Anthropic 的全部图片出口。
 func encodeImage(img *protocol.Image, drop func(string)) (map[string]any, bool) {
 	switch img.Carrier() {
 	case protocol.CarrierData:
+		if img.Detail != "" {
+			drop(DropImageDetail)
+		}
 		return map[string]any{
 			"type": "image",
 			"source": map[string]any{
@@ -314,6 +326,9 @@ func encodeImage(img *protocol.Image, drop func(string)) (map[string]any, bool) 
 			},
 		}, true
 	case protocol.CarrierURL:
+		if img.Detail != "" {
+			drop(DropImageDetail)
+		}
 		return map[string]any{
 			"type":   "image",
 			"source": map[string]any{"type": "url", "url": img.URL},

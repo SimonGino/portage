@@ -388,7 +388,14 @@ func encodeOutImage(img *protocol.Image, drop func(string)) (map[string]any, boo
 	default:
 		return nil, false
 	}
-	return map[string]any{"type": "input_image", "image_url": url}, true
+	part := map[string]any{"type": "input_image", "image_url": url}
+	// detail 在 Responses 上与 image_url **平级**，在 part 顶层（CC 那边在 image_url
+	// 对象里面）。原样转发、含 "auto"，不设白名单也不把 auto 当「等于没指定」抹掉
+	// ——口径层 v0.78 ②。空值不发这一格：「没指定」与「指定了 auto」不是一回事。
+	if img.Detail != "" {
+		part["detail"] = img.Detail
+	}
+	return part, true
 }
 
 // liftOutImageParts 挑出 tool_result 里的图，编成 part 数组交给调用方。

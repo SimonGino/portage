@@ -325,6 +325,39 @@ func TestDecodeRequestInputImage(t *testing.T) {
 	}
 }
 
+// detail 在 Responses 上是 image_url / file_id 的**同级兄弟**，住在 part 顶层
+// （CC 那边在 image_url 对象里面，形状不对称，别写反）。
+//
+// 顺带钉住「不双份存」：它进了 Image.Detail 就不能再留在 Extras 里——同一个值两处
+// 表示，改一处漏一处。何况 Extras 永不外带，留在那儿也只是看着像留住了（v0.78 ①）。
+func TestDecodeRequestInputImageDetail(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_image","image_url":"data:image/png;base64,` + tinyPNG + `","detail":"high"},
+		{"type":"input_image","image_url":"https://example.com/a.png","detail":"auto"},
+		{"type":"input_image","file_id":"file-xxx","detail":"low"}
+	]}]}`
+	req, err := NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 3 {
+		t.Fatalf("块数 = %d，期望 3", len(blocks))
+	}
+	want := []string{"high", "auto", "low"}
+	for i, w := range want {
+		if blocks[i].Image == nil {
+			t.Fatalf("blocks[%d] 没解成图: %+v", i, blocks[i])
+		}
+		if blocks[i].Image.Detail != w {
+			t.Errorf("blocks[%d].Image.Detail = %q，期望 %q", i, blocks[i].Image.Detail, w)
+		}
+		if _, ok := blocks[i].Extras["detail"]; ok {
+			t.Errorf("blocks[%d] 的 detail 同时留在 Extras 里，是双重表示: %+v", i, blocks[i].Extras)
+		}
+	}
+}
+
 func TestDecodeRequestUnknownContentStaysUnknown(t *testing.T) {
 	body := `{"model":"m","input":[{"type":"message","role":"user","content":[
 		{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}

@@ -304,6 +304,35 @@ func TestDecodeRequestImageDataURI(t *testing.T) {
 	}
 }
 
+// detail 住在 image_url 对象**里面**（Responses 那边是 part 顶层的兄弟，形状不对称），
+// 三种来源都得解出来；不解就是静默丢——外层 collectExtras 把整个 image_url 排除了，
+// 连 Extras 都留不下（口径层 v0.78 ①）。
+func TestDecodeRequestImageDetail(t *testing.T) {
+	cases := map[string]struct{ urlField, want string }{
+		"data URI": {`"data:image/png;base64,` + tinyPNG + `"`, "high"},
+		"远程 URL":   {`"https://example.com/a.png"`, "low"},
+		// auto 不是「等于没指定」，照样解出来（v0.78 ②）。
+		"auto 原样": {`"https://example.com/a.png"`, "auto"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"m","messages":[{"role":"user","content":[` +
+				`{"type":"image_url","image_url":{"url":` + c.urlField + `,"detail":"` + c.want + `"}}]}]}`
+			req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+			if err != nil {
+				t.Fatalf("解不动: %v", err)
+			}
+			blocks := req.Messages[0].Content
+			if len(blocks) != 1 || blocks[0].Image == nil {
+				t.Fatalf("没解成 BlockImage: %+v", blocks)
+			}
+			if blocks[0].Image.Detail != c.want {
+				t.Errorf("Image.Detail = %q，期望 %q", blocks[0].Image.Detail, c.want)
+			}
+		})
+	}
+}
+
 // input_audio 仍是未知块 + Extras，不落成图片。
 func TestDecodeRequestKeepsUnknownAudioParts(t *testing.T) {
 	body := `{"model":"m","messages":[{"role":"user","content":[` +

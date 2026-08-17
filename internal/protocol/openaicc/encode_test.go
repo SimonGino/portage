@@ -495,6 +495,55 @@ func TestEncodeRequestImageURLPart(t *testing.T) {
 	}
 }
 
+// detail 编回 image_url 对象**里面**（口径层 v0.78）。空 detail 不许凭空造出这一格：
+// 「客户端没指定」与「客户端指定了 auto」在 CC 那边不是一回事。
+func TestEncodeRequestImageDetail(t *testing.T) {
+	imagePart := func(t *testing.T, img *protocol.Image) map[string]any {
+		t.Helper()
+		_, _, out := encode(t, &protocol.Request{
+			Model: "m",
+			Messages: []protocol.Message{{
+				Role:    protocol.RoleUser,
+				Content: []protocol.Block{{Kind: protocol.BlockImage, Image: img}},
+			}},
+		}, false)
+		var parts []map[string]any
+		if err := json.Unmarshal(out.Messages[0].Content, &parts); err != nil {
+			t.Fatalf("带图 content 应是数组: %s", out.Messages[0].Content)
+		}
+		if len(parts) != 1 {
+			t.Fatalf("parts = %v", parts)
+		}
+		obj, _ := parts[0]["image_url"].(map[string]any)
+		return obj
+	}
+
+	t.Run("data 图带 detail", func(t *testing.T) {
+		obj := imagePart(t, &protocol.Image{MediaType: "image/png", Data: tinyPNG, Detail: "high"})
+		if obj["detail"] != "high" {
+			t.Errorf("image_url.detail = %v，期望 high", obj["detail"])
+		}
+	})
+	t.Run("url 图带 detail", func(t *testing.T) {
+		obj := imagePart(t, &protocol.Image{URL: "https://example.com/a.png", Detail: "low"})
+		if obj["detail"] != "low" {
+			t.Errorf("image_url.detail = %v，期望 low", obj["detail"])
+		}
+	})
+	t.Run("auto 照发", func(t *testing.T) {
+		obj := imagePart(t, &protocol.Image{URL: "https://example.com/a.png", Detail: "auto"})
+		if obj["detail"] != "auto" {
+			t.Errorf("auto 不是「等于没指定」，应原样发出，实得 %v", obj["detail"])
+		}
+	})
+	t.Run("空 detail 不发这一格", func(t *testing.T) {
+		obj := imagePart(t, &protocol.Image{URL: "https://example.com/a.png"})
+		if _, ok := obj["detail"]; ok {
+			t.Errorf("客户端没指定就不该有 detail 键: %v", obj)
+		}
+	})
+}
+
 func TestEncodeRequestLiftsToolResultImages(t *testing.T) {
 	_, dropped, out := encode(t, &protocol.Request{
 		Model: "m",
@@ -642,7 +691,9 @@ func TestEncodeRequestLiftsImagesAfterAllToolMessages(t *testing.T) {
 				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
 					ToolCallID: "call_1",
 					Content: []protocol.Block{
-						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+						{Kind: protocol.BlockImage, Image: &protocol.Image{
+							URL: "https://a.example/1.png", Detail: "high",
+						}},
 					},
 				}},
 				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
@@ -665,5 +716,18 @@ func TestEncodeRequestLiftsImagesAfterAllToolMessages(t *testing.T) {
 		if roles[i] != want[i] {
 			t.Fatalf("角色序列 = %v，期望 %v——抬出来的图夹进了两条 tool 中间", roles, want)
 		}
+	}
+
+	// 抬图与普通图走同一个 part 编码器，detail 本该顺带就过去了——但「本该」不是断言。
+	var parts []map[string]any
+	if err := json.Unmarshal(out.Messages[3].Content, &parts); err != nil {
+		t.Fatalf("抬出来的 user content 应是数组: %s", out.Messages[3].Content)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("抬出来的 parts = %v", parts)
+	}
+	obj, _ := parts[0]["image_url"].(map[string]any)
+	if obj["detail"] != "high" {
+		t.Errorf("抬出来的图丢了 detail: %v", obj)
 	}
 }

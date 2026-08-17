@@ -258,6 +258,59 @@ func TestEncodeRequestDropsImageFileID(t *testing.T) {
 	}
 }
 
+// Anthropic 没有 detail 这一格，丢了要说得出口，所以单开 image_detail 登记
+// （口径层 v0.78 ③，理由同 v0.39 ③ 给 file_id 单开一档）。
+//
+// 反过来，file_id 那一格**不重复登记**：图整个都没发出去，再报一句「detail 也丢了」
+// 是噪声，看日志的人会以为有两张图出了两种问题。
+func TestEncodeRequestDropsImageDetail(t *testing.T) {
+	cases := map[string]struct {
+		img        *protocol.Image
+		wantDetail bool
+		wantFileID bool
+	}{
+		"base64 图带 detail": {
+			img:        &protocol.Image{MediaType: "image/png", Data: tinyPNG, Detail: "high"},
+			wantDetail: true,
+		},
+		"url 图带 detail": {
+			img:        &protocol.Image{URL: "https://example.com/a.png", Detail: "auto"},
+			wantDetail: true,
+		},
+		"没 detail 就不登记": {
+			img: &protocol.Image{MediaType: "image/png", Data: tinyPNG},
+		},
+		"file_id 图只登记 file_id": {
+			img:        &protocol.Image{FileID: "file_xxx", Detail: "high"},
+			wantFileID: true,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
+				&protocol.Request{
+					Model: "m", MaxTokens: 16,
+					Messages: []protocol.Message{{
+						Role:    protocol.RoleUser,
+						Content: []protocol.Block{{Kind: protocol.BlockImage, Image: c.img}},
+					}},
+				}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hasDrop(dropped, DropImageDetail); got != c.wantDetail {
+				t.Errorf("登记 %s = %v，期望 %v：%v", DropImageDetail, got, c.wantDetail, dropped)
+			}
+			if got := hasDrop(dropped, DropImageFileID); got != c.wantFileID {
+				t.Errorf("登记 %s = %v，期望 %v：%v", DropImageFileID, got, c.wantFileID, dropped)
+			}
+			if strings.Contains(string(body), "detail") {
+				t.Errorf("Anthropic 请求体里不该有 detail: %s", body)
+			}
+		})
+	}
+}
+
 func TestEncodeRequestKeepsToolResultImagesInPlace(t *testing.T) {
 	out := encodeReq(t, &protocol.Request{
 		Model: "m", MaxTokens: 16,

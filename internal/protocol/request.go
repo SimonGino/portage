@@ -80,6 +80,17 @@ type Image struct {
 	Data      string // 裸 base64，无 "data:" 前缀
 	URL       string // https://... ；网关不代下载
 	FileID    string // 上游作用域句柄；转换路径丢弃
+
+	// Detail 是 CC / Responses 的图片精度提示（auto / low / high），空表示客户端
+	// 没指定。Anthropic 没有对应的一格，那个出口登记 image_detail 后丢。
+	//
+	// 必须是一等字段而不是进 Extras：Extras 永不外带（三个出口只放行 cache_control
+	// 与 metadata），放那里等于在 encode 处再死一次——CC↔Responses 这两个原生都支持
+	// 它的协议之间照样过不去（口径层 v0.78 ①）。
+	//
+	// 取值原样转发、含 "auto"，不设白名单也不把 auto 解释成「等于没指定」而抹掉：
+	// 同 v0.77 对 media_type 的裁定，网关不替上游校验，认不得让它自己 400。
+	Detail string
 }
 
 // ToolCall 是一次工具调用的请求侧回带（assistant 历史里的 tool_use）。

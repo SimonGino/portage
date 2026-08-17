@@ -353,9 +353,13 @@ func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 				continue
 			}
 			blocks = append(blocks, protocol.Block{
-				Kind:   protocol.BlockImage,
-				Image:  img,
-				Extras: collectExtras(p, map[string]bool{"type": true, "image_url": true, "file_id": true}),
+				Kind:  protocol.BlockImage,
+				Image: img,
+				// detail 已经进了 Image.Detail，这里排掉：同一个值两处表示，改一处
+				// 漏一处；何况 Extras 永不外带，留在那儿只是看着像留住了（v0.78 ①）。
+				Extras: collectExtras(p, map[string]bool{
+					"type": true, "image_url": true, "file_id": true, "detail": true,
+				}),
 			})
 		default:
 			blocks = append(blocks, protocol.Block{
@@ -368,25 +372,31 @@ func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 }
 
 // parseResponsesImage 解 input_image。image_url 在 Responses 上是字符串，不是对象。
+//
+// detail 是 image_url / file_id 的**同级兄弟**，在 part 顶层——CC 那边它在 image_url
+// 对象里面，两边形状不对称，最容易写反的就是这一处。
 func parseResponsesImage(p map[string]json.RawMessage) *protocol.Image {
-	var url, fileID string
+	var url, fileID, detail string
 	if err := unmarshalIf(p, "image_url", &url); err != nil {
 		return nil
 	}
 	if err := unmarshalIf(p, "file_id", &fileID); err != nil {
 		return nil
 	}
+	if err := unmarshalIf(p, "detail", &detail); err != nil {
+		return nil
+	}
 	if mt, data, ok := protocol.ParseDataURI(url); ok {
-		return &protocol.Image{MediaType: mt, Data: data}
+		return &protocol.Image{MediaType: mt, Data: data, Detail: detail}
 	}
 	if strings.HasPrefix(url, "data:") {
 		return nil
 	}
 	if strings.TrimSpace(url) != "" {
-		return &protocol.Image{URL: url}
+		return &protocol.Image{URL: url, Detail: detail}
 	}
 	if strings.TrimSpace(fileID) != "" {
-		return &protocol.Image{FileID: fileID}
+		return &protocol.Image{FileID: fileID, Detail: detail}
 	}
 	return nil
 }
