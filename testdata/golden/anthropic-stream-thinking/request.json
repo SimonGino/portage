@@ -1,0 +1,14 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 2048,
+  "stream": true,
+  "output_config": {
+    "effort": "high"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "一个农夫要把狼、羊、白菜运过河，船每次只能带一样。请给出完整步骤并说明为什么不能先运狼。"
+    }
+  ]
+}

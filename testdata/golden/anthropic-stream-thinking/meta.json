@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": true,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "expect": {
+    "Model": "claude-sonnet-5",
+    "InputTokens": 564,
+    "OutputTokens": 875,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": false,
+    "StopReason": "end_turn",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "pollo-sub2api 渠道真机采，claude-sonnet-5，2026-08-15（口径层 v0.72 那批探针的副产品，#99/#4）。请求只带 output_config.effort=high、**没有 thinking 键**——档位单发就触发了思考。expect 用 python 直接扫帧独立重算（Anthropic 的 input_tokens 是净值，这份缓存两项都是 0，毛值等于净值 564）。\n\n**这份样本的 thinking 正文整段为空**：content_block_start 是 {\"thinking\":\"\",\"signature\":\"\"}，唯一那条 thinking_delta 的 thinking 也是空串，真内容只有 signature_delta 里那串 1 KB 签名。所以它钉的是「effort-only → 空正文 + 有签名」这个形态与「签名不许外漏」，**钉不住**「推理正文要到得了客户端」——A 源侧带正文的真机转录本库仍然没有，那一半由手写帧覆盖（anthropic/decode_response_test.go 与 server 的 CC2A/R2A 用例）。\n\nsignature 原样保留、不脱敏，理由同 responses-* 那批的 encrypted_content：它是这份样本的存在理由——「签名一个字节都不许漏进下行」这条断言得有真的签名才验得动。它是上游侧的完整性凭据，不含个人信息。请求体是自造的探针（狼羊白菜过河），没有 harness 指纹；scripts/redact-inbound-anthropic.jq 跑过，它唯一的改动是把这条自造 user 提示按 mid-conversation-system 换掉——那是误判（这份请求根本没有 harness 文本要脱），故请求体按原样入库。\n\n**已知偏差**：上游在 message_delta 的 usage 里报了 output_tokens_details.thinking_tokens=249，而 Anthropic 侧的 Tap 目前不解这一格（Summary 的 ReasoningTokens 只从 CC 的 completion_tokens_details 与 Responses 的 output_tokens_details 取）。所以 expect 记的是 0/false，与当前实现一致；口径层 v0.66 那批（思考 token 账本）落地时这份 expect 要跟着改成 249/true。"
+}

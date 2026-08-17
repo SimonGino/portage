@@ -61,6 +61,14 @@ var reasoningSamples = []string{
 	"cc-stream-reasoning-tool-turn2",
 	"responses-stream-reasoning-turn1",
 	"responses-stream-reasoning-replay",
+	// Anthropic 源侧那两份（2026-08-15 采，#4 入库）。它们补的是 A→CC / A→R 的**源**
+	// 半边——此前这一侧只有手写帧。
+	//
+	// 两份都是 output_config.effort=high 单发触发的思考，**thinking 正文整段为空、
+	// 只有 signature**（见各自 meta.json 的 source）。所以它们钉的是「effort-only →
+	// 空正文 + 有签名」这个形态，A 源侧带正文的真机转录仍然没有。
+	"anthropic-stream-thinking",
+	"anthropic-thinking-high",
 }
 
 // responsesUpstreamSamples 是 Responses 出口半边的基础转录（#79）。

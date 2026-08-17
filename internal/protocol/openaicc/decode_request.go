@@ -29,6 +29,9 @@ var topLevelKnown = map[string]bool{
 	"max_tokens": true, "max_completion_tokens": true,
 	"messages": true, "tools": true, "tool_choice": true,
 	"temperature": true, "stop": true,
+	// reasoning_effort 有专属字段（Request.Effort），所以它进这张表——留在 Extras
+	// 里会被出口当作「入口协议独有字段」登记一次丢弃，而它其实是转发出去了的。
+	"reasoning_effort": true,
 }
 
 func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, error) {
@@ -51,6 +54,11 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		return nil, err
 	}
 	if err := unmarshalIf(root, "temperature", &req.Temperature); err != nil {
+		return nil, err
+	}
+	// 思考档位（口径层 v0.65）。CC 侧它就是顶层一个字符串，不像另两个协议那样嵌一层。
+	// **不校验域**：域外值原样带走（protocol.Request.Effort）。
+	if err := unmarshalIf(root, "reasoning_effort", &req.Effort); err != nil {
 		return nil, err
 	}
 	if raw, ok := root["stop"]; ok {

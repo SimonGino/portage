@@ -241,22 +241,99 @@ func TestEncodeStreamSerializesParallelToolBlocks(t *testing.T) {
 	}
 }
 
-// thinking 跨协议丢弃、不做伪映射（口径层 §2.6）：伪造的 thinking 块要连 signature
-// 一起造，而那是上游侧凭据，造出来的块回带给上游会被拒。
-func TestEncodeStreamDropsThinking(t *testing.T) {
-	frames, _ := encodeStream(t, []protocol.Event{
+// thinkingEvents 是推理合成的公共输入：正文 + 摘要 + 签名 + 一段回答。
+//
+// 摘要与正文都在里面是因为 A 出口对两条通道的落点相同（口径层 §2.6 矩阵）：R→A 上
+// 摘要落进 thinking 块是它唯一的去处，§9.4 已明确不算「摘要冒充正文」。
+func thinkingEvents() []protocol.Event {
+	return []protocol.Event{
 		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
-		{Type: protocol.EvThinkingDelta, Text: "推理正文"},
-		{Type: protocol.EvThinkingDelta, Text: "签名", Channel: protocol.ThinkingSignature},
+		{Type: protocol.EvThinkingDelta, Text: "推理", Channel: protocol.ThinkingBody},
+		{Type: protocol.EvThinkingDelta, Text: "正文", Channel: protocol.ThinkingBody},
+		{Type: protocol.EvThinkingDelta, Text: "摘要", Channel: protocol.ThinkingSummary},
+		{Type: protocol.EvThinkingDelta, Text: "EroYBCkQIBxgCIkAcNVaZ7t+签名密文", Channel: protocol.ThinkingSignature},
+		{Type: protocol.EvThinkingDelta, Text: "", Channel: protocol.ThinkingBody},
 		{Type: protocol.EvTextDelta, Text: "答案"},
 		{Type: protocol.EvDone, StopReason: "stop"},
-	})
+	}
+}
+
+// assertThinkingSynthesized 是**流式与非流式共用的一份断言**（口径层 v0.62 ①：两条路
+// 共用同一台判定，不是两套判断）：推理文本按到达次序进 thinking，签名一个字节都不许
+// 出现，thinking 块上不许有 signature 键。
+func assertThinkingSynthesized(t *testing.T, path, wire, thinking string) {
+	t.Helper()
+	if want := "推理正文摘要"; thinking != want {
+		t.Errorf("%s: thinking 正文 = %q，期望 %q（正文与摘要都进，空串不进）", path, thinking, want)
+	}
+	if strings.Contains(wire, "签名密文") || strings.Contains(wire, "EroYBCkQIBxgCIkAcNVaZ7t+") {
+		t.Errorf("%s: signature 漏进了下行字节:\n%s", path, wire)
+	}
+	// 「不发字段、不发空串、不伪造」（口径层 v0.62 ②）：客户端会把 signature:"" 原样
+	// 回带，上游直接 400（#94）。
+	if strings.Contains(wire, "signature") {
+		t.Errorf("%s: 下行字节里出现了 signature 键:\n%s", path, wire)
+	}
+}
+
+// TestEncodeStreamSynthesizesThinking：流式的 thinking 块合成。
+func TestEncodeStreamSynthesizesThinking(t *testing.T) {
+	frames, _ := encodeStream(t, thinkingEvents())
+
+	var wire strings.Builder
+	var thinking strings.Builder
+	sawStart := false
 	for _, f := range frames {
 		raw, _ := json.Marshal(f.data)
-		if strings.Contains(string(raw), "thinking") || strings.Contains(string(raw), "signature") {
-			t.Errorf("thinking 漏进了下行流: %s", raw)
+		wire.Write(raw)
+		switch f.event {
+		case "content_block_start":
+			cb, _ := f.data["content_block"].(map[string]any)
+			if cb["type"] == "thinking" {
+				sawStart = true
+				if cb["thinking"] != "" {
+					t.Errorf("thinking 块起始的正文该是空串，实得 %v", cb["thinking"])
+				}
+			}
+		case "content_block_delta":
+			d, _ := f.data["delta"].(map[string]any)
+			if d["type"] == "thinking_delta" {
+				thinking.WriteString(d["thinking"].(string))
+			}
 		}
 	}
+	if !sawStart {
+		t.Fatalf("没有开出 thinking 块，事件序列: %v", eventNames(frames))
+	}
+	assertThinkingSynthesized(t, "流式", wire.String(), thinking.String())
+
+	// 块边界纪律：thinking 与 text 不许同时开着，且 thinking 排在正文之前。
+	names := eventNames(frames)
+	if got := strings.Join(names, ","); !strings.Contains(got,
+		"content_block_start,content_block_delta,content_block_delta,content_block_delta,content_block_stop,content_block_start") {
+		t.Errorf("块边界不对（thinking 该先收口再开正文块）: %v", names)
+	}
+}
+
+// TestEncodeFullBodySynthesizesThinking：非流式跑同一份断言。
+func TestEncodeFullBodySynthesizesThinking(t *testing.T) {
+	body, err := anthropic.NewCodec().EncodeFullBody(thinkingEvents())
+	if err != nil {
+		t.Fatalf("EncodeFullBody 失败: %v", err)
+	}
+	var out struct {
+		Content []map[string]any `json:"content"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Content) != 2 || out.Content[0]["type"] != "thinking" || out.Content[1]["type"] != "text" {
+		t.Fatalf("content 该是 thinking + text 两块，实得 %s", body)
+	}
+	if _, ok := out.Content[0]["signature"]; ok {
+		t.Error("thinking 块上带了 signature 键")
+	}
+	assertThinkingSynthesized(t, "非流式", string(body), out.Content[0]["thinking"].(string))
 }
 
 // stop_reason 映射表，以及**不允许空**这条硬约束：客户端按它决定要不要继续下一轮，

@@ -393,3 +393,73 @@ func TestCC2ADeveloperBecomesSystem(t *testing.T) {
 		t.Errorf("系统提示被并进了 user 消息: %s", raw)
 	}
 }
+
+// 上游的 thinking 要合成成 CC 的 delta.reasoning_content（口径层 v0.62），signature
+// 一个字节都不许漏——它是一串 base64，漏了客户端会当回答渲染。
+//
+// 手搭上游帧而不是用 golden：本库唯一两份带 thinking 的真实 Anthropic 转录
+// （anthropic-{stream-thinking,thinking-high}）都是 effort-only 采的，thinking 正文
+// **整段为空**、只有 signature，钉不住「正文要到得了客户端」这一半。空正文那一半由
+// 那两份样本在 protocol 层钉（golden_test 的 thinkingSamples）。
+func TestCC2AThinkingBecomesReasoningContent(t *testing.T) {
+	gw, up := newCC2AGateway(t)
+	streamUpstream(t, up,
+		`event: message_start
+data: {"type":"message_start","message":{"id":"msg_up1","model":"`+cc2aUpstreamModel+`"}}
+
+`,
+		`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+`,
+		`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先读文件"}}
+
+`,
+		`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EuwDCokBCBAYAipA"}}
+
+`,
+		`event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+`,
+		`event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+`,
+		`event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"读好了"}}
+
+`,
+		`event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+`,
+		`event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":6}}
+
+`,
+		`event: message_stop
+data: {"type":"message_stop"}
+
+`,
+	)()
+
+	resp := gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", true), nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	if !strings.Contains(body, `"reasoning_content":"先读文件"`) {
+		t.Errorf("推理没合成成 reasoning_content:\n%s", body)
+	}
+	if strings.Contains(body, "EuwDCokBCBAYAipA") || strings.Contains(body, "signature") {
+		t.Errorf("signature 漏进了下行流:\n%s", body)
+	}
+	// 推理不许混进 content：客户端把两格分开渲染。
+	if strings.Contains(body, `"content":"先读文件"`) {
+		t.Errorf("推理混进了正文:\n%s", body)
+	}
+	if !strings.Contains(body, `"content":"读好了"`) {
+		t.Errorf("正文丢了:\n%s", body)
+	}
+}

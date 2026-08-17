@@ -40,8 +40,16 @@ type chunkPayload struct {
 }
 
 type choiceBody struct {
-	Content   string `json:"content"`
-	ToolCalls []struct {
+	Content string `json:"content"`
+	// ReasoningContent 是 CC 侧承接推理正文的**事实标准**字段：DeepSeek 起头，
+	// 兼容上游普遍跟随（sub2api 的 CC↔Anthropic bridge 也认它）。流式在
+	// choices[].delta.reasoning_content，非流式在 choices[].message.reasoning_content，
+	// 两者同名同义，所以这一格与 Content 一样两条路共用。
+	//
+	// 官方 OpenAI 不发它——官方模型的推理过程根本不出上游。所以它只在兼容上游上
+	// 有值，零值即「这一帧没有推理正文」。
+	ReasoningContent string `json:"reasoning_content"`
+	ToolCalls        []struct {
 		Index    *int   `json:"index"`
 		ID       string `json:"id"`
 		Function *struct {
@@ -207,6 +215,14 @@ func (st *streamState) payload(payload *chunkPayload, out chan<- protocol.Event)
 }
 
 func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
+	// 推理正文先于正文放出：兼容上游是先流完 reasoning_content 再流 content，
+	// 顺序照原样保留，出口那边才能按同样的顺序开块。
+	//
+	// 通道取 ThinkingBody 而非 ThinkingSummary：reasoning_content 是推理正文本身，
+	// 不是面向展示的摘要（Responses 的 reasoning_summary_* 才是）。
+	if body.ReasoningContent != "" {
+		out <- protocol.Event{Type: protocol.EvThinkingDelta, Text: body.ReasoningContent, Channel: protocol.ThinkingBody}
+	}
 	if body.Content != "" {
 		out <- protocol.Event{Type: protocol.EvTextDelta, Text: body.Content}
 	}

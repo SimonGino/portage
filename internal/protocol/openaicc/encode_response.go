@@ -76,9 +76,20 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return e.chunk(map[string]any{"content": ev.Text}, nil)
 
 	case protocol.EvThinkingDelta:
-		// 跨协议丢弃，不做伪映射（口径层 §2.6）。CC 没有 thinking 的位置——塞进
-		// content 会把推理过程混进正文，客户端分不出来。
-		return nil
+		// 推理内容写 delta.reasoning_content（口径层 v0.62）。CC 协议里推理确实没有
+		// 官方位置，但有事实标准：DeepSeek 起头的 reasoning_content，兼容客户端普遍
+		// 认它，而且它与 content 分开，客户端分得出来——不是「塞进正文」。
+		//
+		// 丢弃判定与另两个出口共用一处（protocol.OutboundThinkingText）：signature
+		// 通道与空文本都不写。
+		text, ok := protocol.OutboundThinkingText(ev)
+		if !ok {
+			return nil
+		}
+		if err := e.ensureStarted(); err != nil {
+			return err
+		}
+		return e.chunk(map[string]any{"reasoning_content": text}, nil)
 
 	case protocol.EvToolCallStart:
 		if err := e.ensureStarted(); err != nil {
@@ -251,6 +262,7 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		stop      string
 		usage     protocol.Usage
 		text      strings.Builder
+		thinking  strings.Builder
 		calls     = map[int]*toolAccum{}
 		order     []int
 		errEvent  *protocol.Event
@@ -263,6 +275,11 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 			id, model = ev.ID, ev.Model
 		case protocol.EvTextDelta:
 			text.WriteString(ev.Text)
+		case protocol.EvThinkingDelta:
+			// 与流式共用同一处丢弃判定（signature 通道与空文本都不写）。
+			if t, ok := protocol.OutboundThinkingText(ev); ok {
+				thinking.WriteString(t)
+			}
 		case protocol.EvToolCallStart:
 			if _, ok := calls[ev.Index]; !ok {
 				order = append(order, ev.Index)
@@ -295,6 +312,11 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 	// content 恒写出来（哪怕是空串）：OpenAI SDK 读 message.content 时缺键与空串不是
 	// 一回事，纯工具调用轮实采里给的就是空串。tool_calls 反过来，没有就整键省略。
 	message["content"] = text.String()
+	// reasoning_content 反过来「有数才写」（同 usageBody 对 completion_tokens_details
+	// 的处置）：它不是官方字段，凭空写个空串等于告诉客户端「这轮想过但想了个空」。
+	if s := thinking.String(); s != "" {
+		message["reasoning_content"] = s
+	}
 	if len(order) > 0 {
 		list := make([]map[string]any, 0, len(order))
 		for _, idx := range order {

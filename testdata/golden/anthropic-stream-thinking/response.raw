@@ -1,0 +1,69 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011Ce2vkEWshNjYvJF6o45Nd","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":564,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Eq4GCokBCBAYAipARBglv6eKinlU3n8/jQD+ZqFD8iZASyU9GrFYmu5EaXNAleXhVzthaowv1BL72giQYf1esm3fWuHCoxusbkpnyzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ5NTZlOWYxNy02ZTY3LTRlOTktOWJlZC0yN2NkODAwZTY3YjkSDLdnOx2Xagh/zXaotBoMd/GWPJAsaWhqHrgEIjAjPfZrjAWXhbWRf3WRVj6MJ00I4G2/bvBjbVfr/ZEHvoj+CshbG1WwsqVyjic+KLYq0QSq4qFtQ5HAq1DftTQYAY7jBUQPWM3oms6LgaLPXC8k+r+cyJH/310GbcJZzG3fk4ovS7uyjLst/gn8//AESu34iCCUWL6I59Kva9XLiDDPpgdXIrR5DeAjZgj41v/RU/leD+1chL3wkLHJd819FmetYtTkOu5HXfYnHYuQY2Eh894pOt7YJ1yljB+AeYFVb+HFQfZV6jPIMVYJmtTFDF7MAjizXVoPN9kTZOAn+TO2D6zux0Ooxl4IZGzpR7Xc5bj6j2xm7yEzheLx1YTsza2YOxPtmBPX69coyPAtpm6R+7osLCQG1v+cHgtmJXcMJYEGFFTnWbz3fl6ZZExtFSEZGtNNjPPNtgB3mIOtcAgaOOw4k1lDdGqLKiU3vmFSpZR+mWghHasctxG6dKWntCFZEFUaneGDsHLo31y/fOSdyMfBLsOhlqNILTUVkcwyPxBfse7Qin7TmqrX6nkjliRcvAw/007WoGwYJn09aNmO2b8PrZb0hrz4CAAiQ/o+PN4bDoUIieVAFERjJWtiIbbAxfTCZILPy/tAwl/Rg7j+Lze8wHXaID6AaQlr873tK8Ej4Xh2LUfaJw9lMuM68qeZPPVAfzpRhk6eBYag3xfqxAbs8dyjnELmrBCjhrDbUt6IwpcDujbVfdmf10fzB3d5EqVYvY9s8GRLaBAQQJY7A9r1mLWk/IIHoB5DX93ZEfMY06XRzBJxbbtOG+bl/K4y2DzS38swvvwZHv1IdbShjWrgEmHQ4vNeJB/NATzhLLC7lWsRJsOSdKiD98PCOp/r8hgB"}      }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0   }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"## 解题步骤\n\n**约束条件：**\n- "}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"狼和羊单独在一起 → 狼吃羊\n- 羊和白菜单独在一起 → 羊吃白菜\n- 农夫不在场时，上"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"述情况绝对不能发生\n\n**正确步骤（共7步）：**\n\n| 步骤 | 农夫携带 | 河这岸剩余 "}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"| 河对岸 |\n|------|---------|-----------|--------|\n| 起始 | - | 狼、羊、白菜 | 无 |\n| 1 "}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"| 羊 → | 狼、白菜 | 羊 |\n| 2 | 空手 ← | 狼、白菜 | 羊 |\n| 3 | 狼 → | 白菜 | "}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"羊、狼 |\n| 4 | 羊 ← | 白菜、羊 | 狼 |\n| 5 | 白菜 → | 羊 | 狼、白菜 |\n| 6 | 空手 ← | 羊 | "}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"狼、白菜 |\n| 7 | 羊 → | 无 | 狼、羊、白菜 |\n\n## 为什么不能先运狼？\n\n如果第一步先运狼过河，此时河这岸只"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"剩下 **羊和白菜**，且农夫不在场——**羊会吃掉白菜**，导致失败。\n\n**关键逻辑：**\n-"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 羊是唯一\"双面威胁\"角色：既会被狼吃，又会吃白菜\n- 因此必须**第一个"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"运走羊**，才能保证留在原岸的狼和白菜互不"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"侵犯（狼不吃白菜）\n- 这也是第4步要把羊运回来的原因：先送"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"狼过去后，若不把羊带回，河对岸就会剩下\"狼+羊\"，狼会吃羊\n\n**核"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"心策略：** 始终确保\"羊\"不与\"狼\"或\"白菜\"在无人看管的情况下独处。"}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1        }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":564,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":875,"output_tokens_details":{"thinking_tokens":249}},"context_management":{"applied_edits":[]}               }
+
+event: message_stop
+data: {"type":"message_stop"           }
+

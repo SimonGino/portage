@@ -60,6 +60,15 @@ func decodeStream(t *testing.T, raw []byte) []protocol.Event {
 	return collect(t, events)
 }
 
+func decodeFull(t *testing.T, body []byte) []protocol.Event {
+	t.Helper()
+	events, err := openaicc.NewCodec().DecodeFullBody(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
 // choppyReader 每次只吐一小段，逼出跨块帧重组的路径。
 type choppyReader struct {
 	data  []byte

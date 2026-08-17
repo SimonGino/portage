@@ -79,6 +79,10 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	}
 
 	req.Extras = collectExtras(root, topLevelKnown)
+	// 思考档位提成一等字段（口径层 v0.65）：Anthropic 侧它在 output_config.effort。
+	// 不提就等于留在 Extras 里死掉——Extras 永不外带，客户端点的 high 会在出口静默
+	// 丢失。**不校验域**：域外值原样带走（protocol.Request.Effort）。
+	req.Effort = protocol.LiftNestedEffort(req.Extras, "output_config")
 	return req, nil
 }
 

@@ -28,6 +28,11 @@ const (
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
 	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
+	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
+	// （内容块）不是一档：住户是思考开关本身（thinking.type / budget_tokens /
+	// display）、reasoning.summary、各家的数值预算。effort 不在这一档——它现在原样
+	// 直传成 reasoning_effort（protocol.Request.Effort）。
+	DropThinkingParam = "thinking_param"
 )
 
 // EncodeRequest 把 canonical 编成 Chat Completions 请求体。
@@ -93,14 +98,25 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		out["stream_options"] = map[string]any{"include_usage": true}
 	}
 
+	// 思考档位原样直传（口径层 v0.65）：CC 侧就是顶层 reasoning_effort 一个字符串。
+	// 不校验域、域外值照发，客户端没发就不加（理由同 anthropic 出口那处注释）。
+	if req.Effort != "" {
+		out["reasoning_effort"] = req.Effort
+	}
+
 	// 入口协议独有的顶层字段一律不带过去。它们对 CC 上游没有意义，而严格中转会
 	// 因为一个不认识的顶层键整体拒收——metadata / thinking / context_management /
-	// output_config 都在此列。丢在明处：登记进 dropped，由 relay 打警告。
-	if len(req.Extras) > 0 {
-		if _, ok := req.Extras["metadata"]; ok {
-			drop(DropMetadata)
+	// output_config 都在此列。丢在明处：登记进 dropped，由 relay 打警告，且**按档
+	// 分类**（思考参数单列一档，表在 protocol.IsThinkingParamKey）。
+	if _, ok := req.Extras["metadata"]; ok {
+		drop(DropMetadata)
+	}
+	for k := range req.Extras {
+		if protocol.IsThinkingParamKey(k) {
+			drop(DropThinkingParam)
+		} else {
+			drop(DropVendorRequest)
 		}
-		drop(DropVendorRequest)
 	}
 
 	body, err := marshal(out)

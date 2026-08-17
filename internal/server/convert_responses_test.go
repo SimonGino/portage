@@ -171,13 +171,24 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 	}
 
 	// Responses 独有字段一个都不许漏进 CC 请求：那边不认，严格上游直接 400。
+	//
+	// `reasoning` 查的是**整个键**（带引号和冒号）而不是子串：CC 侧合法的
+	// reasoning_effort 就以它开头，按子串查会把档位直传误判成泄漏（口径层 v0.65）。
 	for _, forbidden := range []string{
 		"input_text", "custom_tool_call", "additional_tools",
-		"encrypted_content", "prompt_cache_key", "client_metadata", "reasoning",
+		"encrypted_content", "prompt_cache_key", "client_metadata", `"reasoning":`,
 	} {
 		if strings.Contains(string(req.Body), forbidden) {
 			t.Errorf("Responses 侧字段 %q 漏进了 CC 请求体", forbidden)
 		}
+	}
+	// 档位反过来必须同域直传（样本带 reasoning.effort）。
+	var sentKeys map[string]json.RawMessage
+	if err := json.Unmarshal(req.Body, &sentKeys); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sentKeys["reasoning_effort"]); got != `"high"` {
+		t.Errorf("reasoning_effort = %s，期望 \"high\"（档位直传）", got)
 	}
 }
 
@@ -240,6 +251,39 @@ func TestResponsesStreamIsResponsesWireFormat(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("CC 侧字段 %q 漏进了 Responses 下行流", forbidden)
 		}
+	}
+}
+
+// 上游的 reasoning_content 要合成成 Responses 的推理摘要（口径层 v0.62 出向合成、
+// v0.73 ② 补上的 R→CC 这一格）。用真实 CC 转录喂，不手搭。
+//
+// 帧序不是装饰：Codex 靠 reasoning_summary_part.added 立起 summary[0] 槽位，缺了它后续
+// delta 索引到不存在的 part（同正文侧 content_part.added 那个坑）。
+func TestResponsesReasoningSummaryReachesCodexClient(t *testing.T) {
+	gw, up := newResponsesConvertGateway(t)
+	respondWithGolden(t, up, "cc-stream-reasoning-text")
+
+	resp := gw.Post(t, "/v1/responses", convertResponsesRequest, nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	for _, want := range []string{
+		"response.reasoning_summary_part.added",
+		"response.reasoning_summary_text.delta",
+		"response.reasoning_summary_text.done",
+		"response.reasoning_summary_part.done",
+		"Planning Chinese explanation",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("下行流里缺 %q（出向合成没生效或帧序不全）:\n%s", want, body)
+		}
+	}
+	// 合成的 reasoning 项不写密文——我们手里没有封装，空串等于声称「有一个空封装」。
+	if strings.Contains(body, "encrypted_content") {
+		t.Errorf("合成的 reasoning 项里冒出了 encrypted_content:\n%s", body)
+	}
+	// CC 侧的字段名不许漏进 Responses 下行流。
+	if strings.Contains(body, "reasoning_content") {
+		t.Errorf("CC 的 reasoning_content 原样漏给了 Codex:\n%s", body)
 	}
 }
 

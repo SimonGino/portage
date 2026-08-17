@@ -68,6 +68,28 @@ const (
 	ThinkingSignature ThinkingChannel = "signature"
 )
 
+// OutboundThinkingText 判定一条 EvThinkingDelta 在**跨协议出口**上要不要合成，返回
+// 要写出去的文本。三个出口共用这一处判定（口径层 v0.62），流式与非流式也共用它。
+//
+// 丢弃条件下沉到 Channel == ThinkingSignature，不再是整类 EvThinkingDelta 一刀切：
+// 签名是一段 base64 凭据，当正文写给客户端就是把密文当散文渲染；正文与摘要则必须
+// 写出去——「已发生的成本不得静默吞没」。ThinkingBody 与 ThinkingSummary 在三个出口
+// 上的落点完全相同（口径层 §2.6 的通道×出口矩阵），所以这里不区分它们：R→A 是摘要
+// 落到 thinking 块的唯一实例，§9.4 已明确不算「摘要冒充正文」。
+//
+// 出口侧**不设开关**：thinking.display / reasoning.summary 只是请求侧参数，登记后
+// 即丢，不回来影响这里该不该写（口径层 v0.62 ③）。
+//
+// 空文本一并跳过，与 EvTextDelta 的处理一致：只带 output_config.effort 的 Anthropic
+// 上游会发正文整段为空、只有 signature 的 thinking 块（实测见
+// testdata/golden/anthropic-stream-thinking），照写会凭空开出一个空推理块。
+func OutboundThinkingText(e Event) (string, bool) {
+	if e.Channel == ThinkingSignature || e.Text == "" {
+		return "", false
+	}
+	return e.Text, true
+}
+
 // Usage 是 token 计数。这里**归一**各协议的口径，与 Summary（保留上游原始语义的
 // 排障线索）分工不同：
 //

@@ -38,6 +38,16 @@ const (
 	// DropImageDetail 只此一家：CC 与 Responses 都原生有 detail 这一格，那两个出口
 	// 没有「丢弃」这回事，不必像 image_file_id 那样在三个 codec 里各镜像一份。
 	DropImageDetail = "image_detail" // CC / Responses 的图片精度提示，Anthropic 无对应的一格
+	// DropThinking 是回带方向的 thinking 块（客户端把上一轮的推理原样发回来）。
+	// 这一格**必须登记**（口径层 v0.62 ④，#94）：客户端回放的是我们合成出来的、
+	// 没有 signature 的 thinking 块，多数客户端会补一个 `signature:""` 再发回来，
+	// 而 Anthropic 见空签名直接 400——第二轮就崩。丢是对的，但要看得见。
+	DropThinking = "thinking" // 回带方向的 thinking 块正文与 signature
+	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
+	// （内容块）和 DropVendorRequest（其余顶层字段）都不是一档：住户是思考开关本身
+	// （type / budget_tokens / display）、reasoning.summary、各家的数值预算。
+	// effort 已经不在这一档了——它现在原样直传（protocol.Request.Effort）。
+	DropThinkingParam = "thinking_param"
 )
 
 // EncodeRequest 把 canonical 编成 Anthropic Messages 请求体。
@@ -103,10 +113,25 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		out["stream"] = true
 	}
 
-	// 入口协议独有的顶层字段不带过去：Responses 的 reasoning / store / include /
-	// prompt_cache_key 之类，Anthropic 一个都不认。丢在明处。
-	if len(req.Extras) > 0 {
-		drop(DropVendorRequest)
+	// 思考档位原样直传（口径层 v0.65）：只写 output_config.effort 这一个键。
+	//
+	// **不顺手写 thinking**：`thinking:{type:adaptive}` 等于替客户端开思考（v0.65 ④
+	// 明令不许），旧式 `thinking:{type:enabled,budget_tokens}` 更是替它猜了个预算。
+	// 域也不校验：low|medium|high|xhigh|max 之外的值照发——上游一个看得见的 400 好过
+	// 网关静默降档（v0.65 ⑤）。客户端没发就一个字节都不加（v0.65 ⑥）。
+	if req.Effort != "" {
+		out["output_config"] = map[string]any{"effort": req.Effort}
+	}
+
+	// 入口协议独有的顶层字段不带过去：Responses 的 store / include / prompt_cache_key
+	// 之类，Anthropic 一个都不认。丢在明处，且**按档分类**——思考参数与「不认识的字段」
+	// 混成一条日志的话，「客户端点了思考被丢掉」这件事就看不见了。
+	for k := range req.Extras {
+		if protocol.IsThinkingParamKey(k) {
+			drop(DropThinkingParam)
+		} else {
+			drop(DropVendorRequest)
+		}
 	}
 
 	body, err := json.Marshal(out)
@@ -233,10 +258,14 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			out = append(out, map[string]any{"type": "text", "text": b.Text})
 
 		case protocol.BlockThinking:
-			// 跨协议丢弃（口径层 §2.6，§5 坑清单）。这里**不登记 drop**：thinking
-			// 在 A→A 方向不经过 codec，能走到这儿的只有 R→A，而 Responses 侧的
-			// reasoning 块本来就只有一段谁也解不开的密文（encrypted_content），
-			// canonical 里的 Text 恒为空。丢一个空块不值得报警。
+			// 回带方向一律丢弃（口径层 §2.6），但**要登记**（v0.62 ④）。
+			//
+			// 原先这里不登记，理由是「能走到这儿的只有 R→A，而 Responses 的 reasoning
+			// 块只有一段密文、Text 恒为空，丢个空块不值得报警」。v0.62 之后这条理由
+			// 站不住了：出口现在会把推理内容合成给客户端看，客户端下一轮就会把它**带着
+			// 文本**原样发回来（多数客户端还会补一个 `signature:""`，Anthropic 见空签名
+			// 直接 400，#94）。丢的不再是空块，而是一段客户端以为送到了的推理——必须留痕。
+			drop(DropThinking)
 			continue
 
 		case protocol.BlockToolUse:

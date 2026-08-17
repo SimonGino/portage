@@ -190,14 +190,76 @@ type Request struct {
 	Stop        []string
 	Stream      bool
 
+	// Effort 是思考档位，三协议同域直传（口径层 v0.65）：Anthropic 的
+	// output_config.effort、CC 的 reasoning_effort、Responses 的 reasoning.effort
+	// 都落这一格。Anthropic 官方域为 low|medium|high|xhigh|max。
+	//
+	// 必须是一等字段而不是留在 Extras（与 Image.Detail 同理）：Extras 永不外带，
+	// 留在那里等于每个出口都拿不到它，客户端点了 high 却被静默降级成默认档。
+	//
+	// **不做域校验、不钳值**：域外取值原样带给上游（口径层 v0.65 ⑤）——上游一个能看见
+	// 的 400 好过网关静默把 max 改成 high。零值即「客户端没发」，出口一个字节都不加：
+	// 网关不替客户端开思考（v0.65 ④/⑥）。
+	//
+	// 数值预算（Qwen 系的 thinking_budget）**不换算**进这里：参考实现之间的映射表互相
+	// 矛盾（new-api high=4096 vs CLIProxyAPI high=24576），换算等于我们替客户端瞎猜。
+	// 它走 DropThinkingParam 登记后丢。
+	Effort string
+
 	// Extras 存顶层的协议独有字段，同协议透传时原样取回。已知住户：
 	//   Anthropic: metadata（上游据此判定是否官方 Claude Code，重序列化丢了会被
 	//              降级成第三方 app，见 §5 坑清单）、thinking、context_management、
-	//              output_config
-	//   Responses: reasoning、store、include、prompt_cache_key、client_metadata、
-	//              text、parallel_tool_calls
+	//              output_config（effort 已提成一等字段 Effort，剩余键才留这儿）
+	//   Responses: reasoning（同上）、store、include、prompt_cache_key、
+	//              client_metadata、text、parallel_tool_calls
 	Extras map[string]any
 }
+
+// LiftNestedEffort 把 extras[parent] 这个对象里的 effort 提出来，**并从 extras 里
+// 删掉**（parent 被掏空后连它一起删），返回提到的档位；没有则返回空串。
+//
+// Anthropic 的 output_config.effort 与 Responses 的 reasoning.effort 共用这一处，
+// 两个解码侧的删法必须一样。
+//
+// 「提完就删」是硬要求而不是清理癖：留着的话出口那边会因为「Extras 还有住户」登记一次
+// DropVendorRequest——而这一格其实已经原样转发给上游了，账本就说了假话（口径层 v0.65 ⑦
+// 要的正是账本可信）。
+func LiftNestedEffort(extras map[string]any, parent string) string {
+	obj, ok := extras[parent].(map[string]any)
+	if !ok {
+		return ""
+	}
+	effort, _ := obj["effort"].(string)
+	if effort == "" {
+		// 非字符串或空串：不认它，留在 Extras 里按思考参数登记后丢——总比把一个
+		// 解不出来的值当档位发给上游好。
+		return ""
+	}
+	delete(obj, "effort")
+	if len(obj) == 0 {
+		delete(extras, parent)
+	}
+	return effort
+}
+
+// thinkingParamKeys 是 Extras 里属于「思考参数」这一档（各出口的 DropThinkingParam）的顶层键。
+//
+// 单列一档而不是笼统归进 vendor_request：客户端点了思考却被丢掉，与它多发了一个我们不认识
+// 的字段，排障时是两件完全不同的事（口径层 v0.65 ⑤）。
+//
+// 表住在 protocol 而不是各出口各存一份：三个出口的分类规则必须字字一样，而镜像三份的代价
+// 已经付过一次——`output_config` 三份表一份都没写进去，于是解不出档位的 effort 在三个出口
+// 全记成了 vendor_request，正好是这一档要防的那件事；补一次要改三处，漏一处就还是同一个洞。
+// 收在这里之后新键不可能半落地。DropXxx 常量仍各包一份（那是名字，不是规则）。
+var thinkingParamKeys = map[string]bool{
+	"thinking":        true, // Anthropic 的思考开关本身：type / budget_tokens / display
+	"thinking_budget": true, // Qwen 系数值预算：不换算成档位，理由见 Request.Effort
+	"reasoning":       true, // Responses 的 reasoning 余下部分（summary 等），effort 已提走
+	"output_config":   true, // Anthropic 的 effort 载体余下部分：LiftNestedEffort 解不出档位时整个留这儿
+}
+
+// IsThinkingParamKey 答「Extras 里这个顶层键该记 DropThinkingParam 还是 DropVendorRequest」。
+func IsThinkingParamKey(key string) bool { return thinkingParamKeys[key] }
 
 // Message 是一条消息。
 type Message struct {

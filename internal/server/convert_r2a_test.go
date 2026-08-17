@@ -253,10 +253,11 @@ func TestR2AStreamIsResponsesWireFormat(t *testing.T) {
 	}
 }
 
-// 上游的 thinking / signature 在这条路上必然丢弃：Responses 侧没有真实的 reasoning
-// delta 转录可依（§9.1 缺口）。要钉的是**丢了不炸**，且那串 signature 不许漏进正文
-// ——漏了，Codex 会把一串 base64 当回答渲染出来。
-func TestR2AThinkingIsDroppedNotLeaked(t *testing.T) {
+// 上游的 thinking 在这条路上**合成**成 reasoning item 交给 Codex（口径层 v0.62，
+// 推翻原先「Responses 侧没有真实 reasoning 转录可依，只能丢」的口径——
+// responses-stream-reasoning-turn1 把生命周期录全了）。signature 照旧一个字节都不许
+// 漏：漏了 Codex 会把一串 base64 当回答渲染出来。
+func TestR2AThinkingIsSynthesizedSignatureNeverLeaks(t *testing.T) {
 	gw, up := newR2AGateway(t)
 	streamUpstream(t, up,
 		`event: message_start
@@ -310,11 +311,25 @@ data: {"type":"message_stop"}
 	if !strings.Contains(body, "读好了") || !strings.Contains(body, "response.completed") {
 		t.Errorf("正文没转过来:\n%s", body)
 	}
-	if strings.Contains(body, "EuwDCokBCBAYAipA") {
+	if strings.Contains(body, "EuwDCokBCBAYAipA") || strings.Contains(body, "signature") {
 		t.Errorf("signature 漏进了下行流，Codex 会把 base64 当回答渲染:\n%s", body)
 	}
-	if strings.Contains(body, "先读文件") {
-		t.Errorf("推理正文漏进了下行流（本路径应当丢弃）:\n%s", body)
+	// 推理正文必须到得了 Codex，且走的是 reasoning 那条线（不是混进 output_text）。
+	if !strings.Contains(body, "response.reasoning_summary_text.delta") ||
+		!strings.Contains(body, `"delta":"先读文件"`) {
+		t.Errorf("推理没合成成 reasoning item:\n%s", body)
+	}
+	// 正文增量帧里不许出现推理：混进去 Codex 会把推理当回答显示。终帧不查——它按契约
+	// 列全 output item，reasoning item 与 message item 本来就都在里面。
+	for _, frame := range strings.Split(body, "\n\n") {
+		if strings.Contains(frame, "response.output_text.delta") && strings.Contains(frame, "先读文件") {
+			t.Errorf("推理混进了正文帧:\n%s", frame)
+		}
+	}
+	// reasoning item 上不许有 encrypted_content：那是上游侧密文，我们手里没有，
+	// 写个空串等于声称「有一个空封装」。
+	if strings.Contains(body, "encrypted_content") {
+		t.Errorf("合成的 reasoning item 带了 encrypted_content:\n%s", body)
 	}
 }
 

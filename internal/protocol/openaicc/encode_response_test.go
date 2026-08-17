@@ -41,9 +41,11 @@ type ccChunk struct {
 
 // ccDelta 是一帧里的增量。
 type ccDelta struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	ToolCalls []struct {
+	Role string `json:"role"`
+	// Content / ReasoningContent 是正文与推理正文两格，客户端分开渲染（口径层 v0.62）。
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	ToolCalls        []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id"`
 		Type     string `json:"type"`
@@ -356,6 +358,8 @@ type ccBody struct {
 			Role      string           `json:"role"`
 			Content   *string          `json:"content"`
 			ToolCalls []map[string]any `json:"tool_calls"`
+			// ReasoningContent 是推理正文那一格（口径层 v0.62），有数才写。
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -368,6 +372,14 @@ type ccBody struct {
 
 func encodeFull(t *testing.T, events []protocol.Event) ccBody {
 	t.Helper()
+	_, body := encodeFullRaw(t, events)
+	return body
+}
+
+// encodeFullRaw 与 encodeFull 同源，另外交出原始字节——「某个字段一个字节都不许出现」
+// 这类断言只能对着字节查，解析后的结构看不见「键省没省」。
+func encodeFullRaw(t *testing.T, events []protocol.Event) (string, ccBody) {
+	t.Helper()
 	raw, err := openaicc.NewCodec().EncodeFullBody(events)
 	if err != nil {
 		t.Fatalf("编码失败: %v", err)
@@ -376,7 +388,7 @@ func encodeFull(t *testing.T, events []protocol.Event) ccBody {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("编出来的不是合法 JSON: %v\n%s", err, raw)
 	}
-	return body
+	return string(raw), body
 }
 
 // 非流式纯文本，对照 cc-text 的真实响应。

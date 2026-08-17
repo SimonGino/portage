@@ -75,8 +75,11 @@ func TestDecodeCompactionTurnRewritesToSummarizer(t *testing.T) {
 	if _, ok := req.Extras["text"]; ok {
 		t.Error("text（结构化输出/verbosity）没剥掉，摘要会被格式约束住")
 	}
-	if _, ok := req.Extras["reasoning"]; !ok {
-		t.Error("reasoning 被误剥了：压缩 turn 照样要推理，剥的只有工具与输出格式")
+	// 推理不剥：压缩 turn 照样要推理，剥的只有工具与输出格式。档位从 v0.65 起提成
+	// 一等字段 Request.Effort（reasoning 只剩 effort 时整个键被提空删掉），所以这里
+	// 查的是那一格而不是 Extras。
+	if req.Effort != "high" {
+		t.Errorf("思考档位被误剥了: Effort=%q Extras[reasoning]=%v", req.Effort, req.Extras["reasoning"])
 	}
 	last := req.Messages[len(req.Messages)-1]
 	if last.Role != protocol.RoleUser || last.Content[0].Text != compactPrompt {

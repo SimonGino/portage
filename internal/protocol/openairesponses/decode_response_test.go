@@ -273,13 +273,14 @@ func TestGoldenDecodeParallelTurn2(t *testing.T) {
 	}
 }
 
-// TestGoldenDecodeReasoningSummaryNeverLeaks：带 reasoning_summary_* 四种帧的那份
-// 转录里，摘要正文一个字都不该出现在事件流里。
+// TestGoldenDecodeReasoningSummaryBecomesThinking：带 reasoning_summary_* 四种帧的那份
+// 转录里，摘要正文**必须**变成 EvThinkingDelta（口径层 v0.62 推翻了原先 v0.10 的
+// 「一律丢」），而 encrypted_content 一个字节都不许进事件流。
 //
-// 单列一条是因为它与 tool-turn1 那份不是同一件事：那边的 reasoning item 只有密文，
-// 这边上游**真的发了人读得懂的摘要**。把它转成 EvThinkingDelta 到 A 出口会被物化成
-// thinking 块，等于拿摘要冒充推理正文（口径层 v0.10 明令只能丢）。
-func TestGoldenDecodeReasoningSummaryNeverLeaks(t *testing.T) {
+// 「恰好一次」是这条断言的重点：同一段摘要在上游流里出现三遍——summary_text.delta 的
+// delta、summary_text.done 的 text、output_item.done 里那份 summary[]。三处都收就会把
+// 摘要发三遍，到出口物化成三段重复的推理内容。
+func TestGoldenDecodeReasoningSummaryBecomesThinking(t *testing.T) {
 	const sample = "responses-stream-reasoning-turn1"
 	raw := readGoldenResponse(t, sample)
 
@@ -306,13 +307,92 @@ func TestGoldenDecodeReasoningSummaryNeverLeaks(t *testing.T) {
 		t.Skip("样本里的摘要增量为空")
 	}
 
+	var thinking []protocol.Event
 	for i, ev := range collect(t, raw) {
 		if ev.Type == protocol.EvThinkingDelta {
-			t.Fatalf("事件 %d 是 ThinkingDelta", i)
+			thinking = append(thinking, ev)
+			continue
 		}
 		if strings.Contains(ev.Text, summary) {
-			t.Fatalf("事件 %d 的正文里混进了推理摘要: %.60q", i, ev.Text)
+			t.Fatalf("事件 %d 是 %v，正文里却混进了推理摘要: %.60q", i, ev.Type, ev.Text)
 		}
+	}
+
+	if len(thinking) != 1 {
+		t.Fatalf("摘要该恰好产 1 条 ThinkingDelta，实得 %d 条", len(thinking))
+	}
+	if thinking[0].Text != summary {
+		t.Errorf("ThinkingDelta 正文 = %.60q，样本里的摘要增量 = %.60q", thinking[0].Text, summary)
+	}
+	if thinking[0].Channel != protocol.ThinkingSummary {
+		t.Errorf("通道 = %q，摘要帧该走 ThinkingSummary", thinking[0].Channel)
+	}
+
+	// 密文封装（reasoning item 的 encrypted_content）不许出现在任何事件的正文里。
+	for i, ev := range collect(t, raw) {
+		if strings.Contains(ev.Text, "gAAAAAB") {
+			t.Fatalf("事件 %d 的正文里混进了 encrypted_content 密文: %.60q", i, ev.Text)
+		}
+	}
+}
+
+// TestDecodeReasoningTextStreamIsBody：reasoning_text.delta（推理**正文**流）走
+// ThinkingBody 通道，与摘要流分开。
+//
+// 手搭 fixture：九份真实转录里一次都没出现过这种帧（线上两条 R 上游只回摘要）。
+func TestDecodeReasoningTextStreamIsBody(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5"}}`,
+		`data: {"type":"response.reasoning_text.delta","output_index":0,"delta":"正文推理"}`,
+		`data: {"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"摘要"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5","status":"completed","output":[]}}`,
+	)
+
+	var got []protocol.Event
+	for _, ev := range collect(t, raw) {
+		if ev.Type == protocol.EvThinkingDelta {
+			got = append(got, ev)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("该产 2 条 ThinkingDelta，实得 %d 条", len(got))
+	}
+	if got[0].Text != "正文推理" || got[0].Channel != protocol.ThinkingBody {
+		t.Errorf("正文流 = %q/%q，期望 \"正文推理\"/ThinkingBody", got[0].Text, got[0].Channel)
+	}
+	if got[1].Text != "摘要" || got[1].Channel != protocol.ThinkingSummary {
+		t.Errorf("摘要流 = %q/%q，期望 \"摘要\"/ThinkingSummary", got[1].Text, got[1].Channel)
+	}
+}
+
+// TestDecodeFullBodyReasoningSummary：非流式的推理文本只能从 output 里的 reasoning
+// 项的 summary[] 拿，多段逐段放出。
+func TestDecodeFullBodyReasoningSummary(t *testing.T) {
+	body := []byte(`{"id":"resp_1","model":"gpt-5","status":"completed","output":[
+		{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAABsecret","summary":[
+			{"type":"summary_text","text":"**第一段**"},
+			{"type":"summary_text","text":"**第二段**"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"答案"}]}]}`)
+
+	events, err := (&Codec{}).DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+
+	var thinking []string
+	for _, ev := range events {
+		if ev.Type == protocol.EvThinkingDelta {
+			if ev.Channel != protocol.ThinkingSummary {
+				t.Errorf("通道 = %q，期望 ThinkingSummary", ev.Channel)
+			}
+			thinking = append(thinking, ev.Text)
+		}
+		if strings.Contains(ev.Text, "gAAAAAB") {
+			t.Fatalf("密文漏进了事件正文: %.60q", ev.Text)
+		}
+	}
+	if len(thinking) != 2 || thinking[0] != "**第一段**" || thinking[1] != "**第二段**" {
+		t.Fatalf("推理段落 = %q，期望两段", thinking)
 	}
 }
 

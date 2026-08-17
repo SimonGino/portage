@@ -24,11 +24,15 @@ import (
 //
 // 事实来源：testdata/golden/responses-stream-* 九份真实上游转录。
 //
-// **reasoning 一律不产事件**（口径层 v0.10）：跨协议的推理只能丢、不得伪造。上游
-// reasoning item 里只有 encrypted_content——那是上游侧密文，对 CC/A 客户端毫无意义；
-// reasoning_summary_* 那四种帧是面向展示的摘要，转成 EvThinkingDelta 会在 A 出口被
-// 物化成 thinking 块，等于拿摘要冒充推理正文。思考量由 usage.reasoning_tokens 带走。
-// 代价是 CC→R / A→R 上的客户端看不到推理过程（§9.4 缺口①）。
+// **reasoning 分两半处理**（口径层 v0.62 收敛，推翻此处原先的 v0.10 口径）：
+//   - reasoning_summary_text.delta（以及 reasoning_text.delta）的文本产
+//     EvThinkingDelta，出口那边物化成推理内容。摘要落到 A 出口的 thinking 块是
+//     R→A 上摘要唯一的落点，§9.4 已明确**不算**「摘要冒充正文」——已经花掉的思考
+//     成本不得静默吞没。
+//   - encrypted_content 仍然一个字节都不产：那是上游侧密文，跨协议无人解得开，
+//     写给客户端就是把密文当散文渲染（同 Anthropic 的 signature）。
+//
+// 思考量另由 usage.reasoning_tokens 带走，与文本两不相干。
 
 // respFrame 是 SSE 帧的公共形态。Responses 的每种事件只用其中几个字段，合成一个
 // struct 解是因为帧类型判别在 `type` 上，先解出来才知道该看哪几个字段。
@@ -57,6 +61,13 @@ type respItem struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	// Summary 是 reasoning 项的摘要段落。非流式只有这一处能拿到推理文本（流式那边
+	// 走 reasoning_summary_text.delta）。**不解 encrypted_content**：解出来也只能丢，
+	// 不给它留字段就少一次误外带的机会。
+	Summary []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"summary"`
 }
 
 // respPayload 是终帧里那个 response 对象。字段取舍与 tap.go 的 response 一致，
@@ -207,6 +218,23 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
 		}
 
+	case "response.reasoning_summary_text.delta":
+		// 只认 .delta，不认 .done：done 帧带的是这一段的**全文**（实采见
+		// responses-stream-reasoning-turn1 的 text 字段），两个都收会把摘要发两遍。
+		// output_item.done 里那份 summary[] 同理不收。
+		if f.Delta != "" {
+			st.start(out)
+			out <- protocol.Event{Type: protocol.EvThinkingDelta, Text: f.Delta, Channel: protocol.ThinkingSummary, Index: f.OutputIndex}
+		}
+
+	case "response.reasoning_text.delta":
+		// 推理**正文**流。九份 responses-stream-* 转录里一次都没出现过（线上两条
+		// R 上游都只回摘要），所以这条分支只保形态完备，覆盖靠构造帧。
+		if f.Delta != "" {
+			st.start(out)
+			out <- protocol.Event{Type: protocol.EvThinkingDelta, Text: f.Delta, Channel: protocol.ThinkingBody, Index: f.OutputIndex}
+		}
+
 	case "response.function_call_arguments.delta":
 		// function 形态的入参按契约就是 JSON 字符串，分片原样转发，上游的节奏保住。
 		if f.Delta != "" {
@@ -247,8 +275,8 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		st.emitError(msg, out)
 	}
 	// 其余帧（in_progress / content_part.added|done / output_text.done /
-	// reasoning_summary_* / …）一律跳过：要么是 canonical 里没有的结构信号，要么是
-	// 上面那段注释说的推理摘要。
+	// reasoning_summary_part.added|done / reasoning_summary_text.done / …）一律跳过：
+	// 要么是 canonical 里没有的结构信号，要么是上面说的「同一段文本的第二份拷贝」。
 }
 
 // start 放出 EvMessageStart，幂等。
@@ -500,8 +528,18 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 				},
 				protocol.Event{Type: protocol.EvToolCallEnd, Index: i},
 			)
+		case "reasoning":
+			// 摘要段落逐段放出，段间不补分隔符：canonical 是增量流，出口按到达顺序
+			// 拼进同一个推理块（与 message 项逐 part 放 EvTextDelta 同理）。
+			for _, s := range item.Summary {
+				if s.Text != "" {
+					events = append(events, protocol.Event{
+						Type: protocol.EvThinkingDelta, Text: s.Text,
+						Channel: protocol.ThinkingSummary, Index: i,
+					})
+				}
+			}
 		}
-		// reasoning 项跳过，理由同流式。
 	}
 
 	if payload.Usage != nil {

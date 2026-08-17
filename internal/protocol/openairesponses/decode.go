@@ -88,6 +88,9 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	}
 
 	req.Extras = collectExtras(root, topLevelKnown)
+	// 同 anthropic 侧：思考档位提成一等字段，Responses 侧它在 reasoning.effort。
+	// reasoning 里剩下的 summary 之类留在 Extras，出口按思考参数登记后丢。
+	req.Effort = protocol.LiftNestedEffort(req.Extras, "reasoning")
 
 	if c.compaction {
 		rewriteAsSummarizer(req)

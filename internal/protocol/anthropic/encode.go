@@ -48,9 +48,12 @@ type streamEncoder struct {
 	model     string
 	nextIndex int
 	textOpen  bool
-	stop      string
-	usage     protocol.Usage
-	finished  bool
+	// thinkingOpen：正在写的 thinking 块。与 textOpen 互斥（Anthropic 同一时刻只能
+	// 开一个内容块），谁要开新块谁负责先收掉另一个。
+	thinkingOpen bool
+	stop         string
+	usage        protocol.Usage
+	finished     bool
 	// sawErrored：流内已经发过 error 帧，后面不再补 message_delta/message_stop——
 	// 那会让客户端以为响应正常收尾了。
 	sawErrored bool
@@ -72,6 +75,10 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 			return err
 		}
 		if !e.textOpen {
+			// 推理块先收：thinking 与 text 都是内容块，Anthropic 只允许一个开着。
+			if err := e.closeThinking(); err != nil {
+				return err
+			}
 			if err := e.frame("content_block_start", map[string]any{
 				"type":          "content_block_start",
 				"index":         e.nextIndex,
@@ -88,9 +95,38 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		})
 
 	case protocol.EvThinkingDelta:
-		// 跨协议丢弃，不做伪映射（口径层 §2.6）。伪造 thinking 块要连 signature
-		// 一起造，而 signature 是上游侧凭据——造出来的块回带给上游会被拒。
-		return nil
+		// 推理内容合成 thinking 块（口径层 v0.62，推翻原先「整类丢」）。丢弃条件下沉到
+		// 通道判别，由 protocol.OutboundThinkingText 单点持有——三个出口和非流式那半边
+		// 共用它，免得哪天只改一处。
+		text, ok := protocol.OutboundThinkingText(ev)
+		if !ok {
+			return nil
+		}
+		if err := e.ensureStarted(); err != nil {
+			return err
+		}
+		if !e.thinkingOpen {
+			// 正文块先收：Anthropic 同一时刻只能开一个块，而推理在正文之后到达的
+			// 情形（工具轮之间又想了一次）真实存在。
+			if err := e.closeText(); err != nil {
+				return err
+			}
+			// **不带 signature 字段**：不发空串、不伪造（口径层 v0.62 ②）。空串比缺字段
+			// 更糟——客户端会把 `signature:""` 原样回带，上游直接 400（#94）。
+			if err := e.frame("content_block_start", map[string]any{
+				"type":          "content_block_start",
+				"index":         e.nextIndex,
+				"content_block": map[string]any{"type": "thinking", "thinking": ""},
+			}); err != nil {
+				return err
+			}
+			e.thinkingOpen = true
+		}
+		return e.frame("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": e.nextIndex,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": text},
+		})
 
 	case protocol.EvToolCallStart, protocol.EvToolArgsDelta:
 		// 攒着，等 EvToolCallEnd 一次整块放出。解码侧已保证同一 index 的
@@ -158,7 +194,7 @@ func (e *streamEncoder) flushTool(index int) error {
 	if err := e.ensureStarted(); err != nil {
 		return err
 	}
-	if err := e.closeText(); err != nil {
+	if err := e.closeBlocks(); err != nil {
 		return err
 	}
 	if err := e.frame("content_block_start", map[string]any{
@@ -213,6 +249,32 @@ func (e *streamEncoder) closeText() error {
 	return nil
 }
 
+// closeThinking 收掉开着的 thinking 块。
+//
+// 收尾**不补 signature_delta**：签名是上游侧凭据，我们手里没有（跨协议来的推理本就
+// 没有），造一个假的会让客户端下一轮回带时被上游拒（口径层 v0.62 ②）。
+func (e *streamEncoder) closeThinking() error {
+	if !e.thinkingOpen {
+		return nil
+	}
+	if err := e.frame("content_block_stop", map[string]any{
+		"type": "content_block_stop", "index": e.nextIndex,
+	}); err != nil {
+		return err
+	}
+	e.thinkingOpen = false
+	e.nextIndex++
+	return nil
+}
+
+// closeBlocks 收掉当前开着的内容块，不管是哪一种。
+func (e *streamEncoder) closeBlocks() error {
+	if err := e.closeText(); err != nil {
+		return err
+	}
+	return e.closeThinking()
+}
+
 func (e *streamEncoder) ensureStarted() error {
 	if e.started {
 		return nil
@@ -255,7 +317,7 @@ func (e *streamEncoder) finish() error {
 			return err
 		}
 	}
-	if err := e.closeText(); err != nil {
+	if err := e.closeBlocks(); err != nil {
 		return err
 	}
 	if err := e.frame("message_delta", map[string]any{
@@ -319,6 +381,7 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		stop      string
 		usage     protocol.Usage
 		text      strings.Builder
+		thinking  strings.Builder
 		content   []any
 		tools     = map[int]*toolPending{}
 		order     []int
@@ -332,6 +395,11 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 			id, model = ev.ID, ev.Model
 		case protocol.EvTextDelta:
 			text.WriteString(ev.Text)
+		case protocol.EvThinkingDelta:
+			// 与流式共用同一处丢弃判定（signature 通道与空文本都不写）。
+			if t, ok := protocol.OutboundThinkingText(ev); ok {
+				thinking.WriteString(t)
+			}
 		case protocol.EvToolCallStart:
 			if _, ok := tools[ev.Index]; !ok {
 				order = append(order, ev.Index)
@@ -360,6 +428,14 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 		return nil, fmt.Errorf("anthropic: 上游响应错误: %s", errEvent.Message)
 	}
 
+	// thinking 块排在正文之前：Anthropic 自己的响应就是这个次序（实采五份转录），
+	// 客户端按次序渲染。非流式本就把多段正文压成单块（EvTextDelta 的块边界丢失），
+	// 所以「推理夹在两段正文之间」这种交错在这条路上无从表达，一律前置。
+	//
+	// **不带 signature 字段**，与流式那半边同一条理由（closeThinking）。
+	if s := thinking.String(); s != "" {
+		content = append(content, map[string]any{"type": "thinking", "thinking": s})
+	}
 	if s := text.String(); s != "" {
 		content = append(content, map[string]any{"type": "text", "text": s})
 	}

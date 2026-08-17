@@ -96,11 +96,16 @@ func TestA2RRequestReachesUpstreamAsResponses(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"system", "messages", "max_tokens", "temperature", "top_p", "stop_sequences",
-		"metadata", "thinking", "instructions", "reasoning", "previous_response_id",
+		"metadata", "thinking", "instructions", "previous_response_id",
 	} {
 		if _, ok := keys[forbidden]; ok {
 			t.Errorf("顶层字段 %q 漏进了 Responses 请求体", forbidden)
 		}
+	}
+	// reasoning 反过来**必须有**：样本带 output_config.effort=high，档位同域直传
+	// （口径层 v0.65）。thinking 仍在上面的禁发表里——写它等于替客户端开思考。
+	if got := string(keys["reasoning"]); got != `{"effort":"high"}` {
+		t.Errorf("reasoning = %s，期望 {\"effort\":\"high\"}（档位直传）", got)
 	}
 }
 
@@ -159,7 +164,8 @@ func TestA2RToolResultBecomesTopLevelOutput(t *testing.T) {
 	}
 }
 
-// thinking 块只能丢，不得伪造成 reasoning 项（口径层 v0.10）。
+// **回带方向**的 thinking 块只能丢，不得伪造成 reasoning 项（口径层 v0.62 ④：响应侧
+// 合成，回带侧照旧丢弃 + 登记）。它与下行合成不矛盾——我们造不出上游侧的密文封装。
 //
 // 走全链而不是单测：Anthropic 解码侧产的是带正文与 signature 的 thinking 块，
 // 出口侧丢它——两边分开看都「对」，错的是它们之间那一环。
@@ -242,8 +248,12 @@ func TestA2RToolStreamGivesValidJSONInput(t *testing.T) {
 	if !strings.Contains(body, `"stop_reason":"tool_use"`) {
 		t.Errorf("stop_reason 没映成 tool_use，Claude Code 不会去跑工具:\n%s", body)
 	}
-	// 上游那段 reasoning 密文与摘要一个字都不许漏——Claude Code 会把它当正文渲染。
-	for _, leaked := range []string{"encrypted_content", "gAAAAAB", "reasoning", "thinking_delta"} {
+	// 上游 reasoning item 里那段密文一个字节都不许漏——Claude Code 会把它当正文渲染。
+	//
+	// **thinking_delta 不再在这张表里**（口径层 v0.62）：推理摘要现在合成成 thinking 块，
+	// 是要给客户端看的。这份样本恰好没有 reasoning_summary 帧（只有密文），所以这里不会
+	// 合成出任何 thinking——摘要合成那条路由 TestA2RReasoningSummaryBecomesThinking 钉。
+	for _, leaked := range []string{"encrypted_content", "gAAAAAB", "reasoning"} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("推理相关的 %q 漏给了 Anthropic 客户端:\n%s", leaked, body)
 		}
@@ -374,5 +384,38 @@ func TestA2RGateIsOpen(t *testing.T) {
 	}
 	if up.Count() == 0 {
 		t.Error("上游一次都没被打到")
+	}
+}
+
+// 真实推理转录：Responses 上游的 reasoning_summary 摘要要合成成 Anthropic 的 thinking
+// 块交给 Claude Code（口径层 v0.62），而同一个 item 上那段 1.3 KB 的 encrypted_content
+// 一个字节都不许跟着漏——它是上游侧密文，客户端会把它当正文渲染出来。
+func TestA2RReasoningSummaryBecomesThinking(t *testing.T) {
+	gw, up := newA2RGateway(t)
+	respondWithGolden(t, up, "responses-stream-reasoning-turn1")
+
+	resp := gw.Post(t, "/v1/messages", ccSampleBody(t, "in-anthropic-tool-turn1", true), nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	// 样本里的摘要正文（meta 记的那一段）。
+	const summary = "**Planning file reading command**"
+	if !strings.Contains(body, `"type":"thinking"`) || !strings.Contains(body, `"thinking_delta"`) {
+		t.Errorf("推理摘要没合成成 thinking 块:\n%s", body)
+	}
+	if !strings.Contains(body, summary) {
+		t.Errorf("摘要正文没送到客户端（已经花掉的思考成本被静默吞没了）:\n%s", body)
+	}
+	// 密文与 Responses 侧的字段名都不许出现。signature 尤其不许——不发字段、不发空串、
+	// 不伪造（口径层 v0.62 ②）：客户端会把 signature:"" 原样回带，上游直接 400（#94）。
+	for _, leaked := range []string{"encrypted_content", "gAAAAAB", "reasoning", "signature", "summary_index"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("%q 漏给了 Anthropic 客户端:\n%s", leaked, body)
+		}
+	}
+	// thinking 块必须在正文块之前收口：块边界串了，客户端渲染会错位。
+	iThinking := strings.Index(body, `"thinking_delta"`)
+	iText := strings.Index(body, `"text_delta"`)
+	if iThinking < 0 || iText < 0 || iThinking > iText {
+		t.Errorf("thinking 该排在正文之前（thinking@%d text@%d）:\n%s", iThinking, iText, body)
 	}
 }

@@ -383,10 +383,15 @@ func imageSource(t *testing.T, out map[string]any) map[string]any {
 	return nil
 }
 
-// thinking 那一格反过来：它是口径定的必然丢弃，每次都丢，登记等于每请求一条噪声。
-// 这条用例钉的是「两者不同」，免得日后有人顺手把 thinking 也塞进 default 分支。
-func TestEncodeRequestDoesNotReportThinking(t *testing.T) {
-	_, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
+// 回带方向的 thinking 块：丢，但**要登记**（口径层 v0.62 ④，#94）。
+//
+// 原先这里断言的是「不登记」，理由是这一格恒为空、每请求一条噪声。v0.62 之后不成立了：
+// 出口现在会把推理合成给客户端看，客户端下一轮就带着文本原样发回来（还会补一个
+// signature:""，Anthropic 见空签名直接 400）。丢的是一段客户端以为送到了的推理，
+// 必须留痕。登记成 DropThinking 而不是 DropVendorContent——后者是「认不得的块」，
+// 这里是「认得但过不去」，排障时是两件事。
+func TestEncodeRequestReportsReplayedThinking(t *testing.T) {
+	body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
 		&protocol.Request{
 			Model: "m", MaxTokens: 16,
 			Messages: []protocol.Message{{
@@ -400,7 +405,16 @@ func TestEncodeRequestDoesNotReportThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !hasDrop(dropped, DropThinking) {
+		t.Errorf("回带的 thinking 被静默丢了: %v", dropped)
+	}
 	if hasDrop(dropped, DropVendorContent) {
 		t.Errorf("thinking 不该登记成未知块: %v", dropped)
+	}
+	// 丢就是真丢：正文与 signature 都不许出现在出向字节里。
+	for _, leaked := range []string{"让我想想", "thinking", "signature"} {
+		if strings.Contains(string(body), leaked) {
+			t.Errorf("回带的 %q 漏给了上游:\n%s", leaked, body)
+		}
 	}
 }

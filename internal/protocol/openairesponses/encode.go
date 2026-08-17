@@ -106,6 +106,12 @@ type streamEncoder struct {
 	textItem string
 	textBuf  strings.Builder
 
+	// reasoning item 与 message item 一样是 output 列表里的一项，同一时刻只能开一个
+	// （Responses 的 output_index 是顺序推进的），谁要开新 item 谁先收掉旧的。
+	reasoningOpen bool
+	reasoningItem string
+	reasoningBuf  strings.Builder
+
 	// pending 是正在攒的工具调用。攒而不是逐片转发，理由见 flushTool。
 	pending *toolPending
 	// done 是已经收口的 output item，终帧的 response.output 要照原样列一遍。
@@ -185,18 +191,35 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		})
 
 	case protocol.EvThinkingDelta:
-		// 丢弃——而且 #25（R→A）之后这条**真的会被走到**：Anthropic 解码侧产
-		// thinking_delta 与 signature_delta（五份真实转录实测）。写这条注释时它还是
-		// 死路（CC 解码侧不产推理事件），现在不是了。
+		// 合成 reasoning item（口径层 v0.62）。原先这里丢，理由是「没有真实转录来钉
+		// reasoning item 的生命周期」——那条理由已经过期：
+		// responses-stream-reasoning-turn1 把整套生命周期录全了
+		// （output_item.added → reasoning_summary_part.added →
+		// reasoning_summary_text.delta → .done → part.done → output_item.done）。
 		//
-		// 仍然丢，理由没变：Responses 确实有 response.reasoning_summary_text.delta
-		// 可以承接，但要写它得先有真实转录来钉 reasoning item 的生命周期——手上三份
-		// Responses 转录里的 reasoning item 只有 encrypted_content，一条 delta 都
-		// 没有。照文档猜着写一个会在流里凭空造 item 的分支，比明着丢更危险。
-		//
-		// 代价是 Codex 在 R→A 路径上看不到 Claude 的推理过程（§9.2 缺口）。signature
-		// 尤其不能漏进正文：那是一串 base64，漏了客户端会把它当回答渲染出来。
-		return nil
+		// signature 仍然一个字节都不写，判定与另两个出口共用一处
+		// （protocol.OutboundThinkingText）：那是一串 base64，漏进摘要客户端会当回答
+		// 渲染出来。
+		text, ok := protocol.OutboundThinkingText(ev)
+		if !ok {
+			return nil
+		}
+		if err := e.ensureStarted(); err != nil {
+			return err
+		}
+		if !e.reasoningOpen {
+			if err := e.openReasoning(); err != nil {
+				return err
+			}
+		}
+		e.reasoningBuf.WriteString(text)
+		return e.frame("response.reasoning_summary_text.delta", map[string]any{
+			"type":          "response.reasoning_summary_text.delta",
+			"item_id":       e.reasoningItem,
+			"output_index":  e.outputIndex,
+			"summary_index": 0,
+			"delta":         text,
+		})
 
 	case protocol.EvToolCallStart, protocol.EvToolArgsDelta:
 		return e.bufferTool(ev)
@@ -260,9 +283,9 @@ func (e *streamEncoder) flushTool(index int) error {
 	if err := e.ensureStarted(); err != nil {
 		return err
 	}
-	// 正文 item 先收口：Responses 的 output 是**有序 item 列表**，一个 item 没
+	// 已开的 item 先收口：Responses 的 output 是**有序 item 列表**，一个 item 没
 	// done 就开下一个，output_index 会对不上。
-	if err := e.closeText(); err != nil {
+	if err := e.closeOpenItem(); err != nil {
 		return err
 	}
 
@@ -317,7 +340,93 @@ func (e *streamEncoder) flushTool(index int) error {
 	return nil
 }
 
+// openReasoning 开一个 reasoning item：output_item.added + summary_part.added 两帧。
+//
+// 帧序与字段照 opencodex 的合成路径（Codex CLI 兼容的首要参考）与实采转录：
+// summary_part.added **必须发**，Codex 侧靠它把 summary[0] 这个槽位立起来，缺了它
+// 后面的 reasoning_summary_text.delta 会索引到一个不存在的 part 上（与正文那边
+// content_part.added 的道理相同，sub2api 在正文那侧踩过这个坑）。
+//
+// item 上**不带 encrypted_content**：那是上游侧密文，我们手里根本没有，写空串等于
+// 声称「有一个空封装」。opencodex 同样只在真的拿到封装时才写这一键。
+func (e *streamEncoder) openReasoning() error {
+	// 正文 item 先收口，理由同 flushTool：一个 item 没 done 就开下一个，
+	// output_index 会对不上。
+	if err := e.closeText(); err != nil {
+		return err
+	}
+	e.reasoningItem = "rs_" + rand.Text()
+	e.reasoningBuf.Reset()
+	if err := e.frame("response.output_item.added", map[string]any{
+		"type": "response.output_item.added", "output_index": e.outputIndex,
+		"item": map[string]any{
+			"id": e.reasoningItem, "type": "reasoning", "summary": []any{},
+		},
+	}); err != nil {
+		return err
+	}
+	if err := e.frame("response.reasoning_summary_part.added", map[string]any{
+		"type": "response.reasoning_summary_part.added", "item_id": e.reasoningItem,
+		"output_index": e.outputIndex, "summary_index": 0,
+		"part": summaryPart(""),
+	}); err != nil {
+		return err
+	}
+	e.reasoningOpen = true
+	return nil
+}
+
+// closeReasoning 收掉开着的 reasoning item：text.done → part.done → output_item.done。
+func (e *streamEncoder) closeReasoning() error {
+	if !e.reasoningOpen {
+		return nil
+	}
+	e.reasoningOpen = false
+	text := e.reasoningBuf.String()
+
+	if err := e.frame("response.reasoning_summary_text.done", map[string]any{
+		"type": "response.reasoning_summary_text.done", "item_id": e.reasoningItem,
+		"output_index": e.outputIndex, "summary_index": 0, "text": text,
+	}); err != nil {
+		return err
+	}
+	if err := e.frame("response.reasoning_summary_part.done", map[string]any{
+		"type": "response.reasoning_summary_part.done", "item_id": e.reasoningItem,
+		"output_index": e.outputIndex, "summary_index": 0,
+		"part": summaryPart(text),
+	}); err != nil {
+		return err
+	}
+	item := map[string]any{
+		"id": e.reasoningItem, "type": "reasoning",
+		"summary": []any{summaryPart(text)},
+	}
+	if err := e.frame("response.output_item.done", map[string]any{
+		"type": "response.output_item.done", "output_index": e.outputIndex, "item": item,
+	}); err != nil {
+		return err
+	}
+	e.done = append(e.done, item)
+	e.outputIndex++
+	return nil
+}
+
+// closeOpenItem 收掉当前开着的 output item，不管是哪一种（两者互斥）。
+//
+// 名字跟着 Responses 自己的域词走（item，不是块）——anthropic 那边叫 closeBlocks 是因为
+// 那个协议的域词就是 content block。
+func (e *streamEncoder) closeOpenItem() error {
+	if err := e.closeText(); err != nil {
+		return err
+	}
+	return e.closeReasoning()
+}
+
 func (e *streamEncoder) openText() error {
+	// 推理 item 先收口，同 openReasoning 的理由。
+	if err := e.closeReasoning(); err != nil {
+		return err
+	}
 	e.textItem = "msg_" + rand.Text()
 	e.textBuf.Reset()
 	if err := e.frame("response.output_item.added", map[string]any{
@@ -417,7 +526,7 @@ func (e *streamEncoder) finish() error {
 			return err
 		}
 	}
-	if err := e.closeText(); err != nil {
+	if err := e.closeOpenItem(); err != nil {
 		return err
 	}
 
@@ -698,6 +807,12 @@ func usageBody(u protocol.Usage) map[string]any {
 		"output_tokens_details": map[string]any{"reasoning_tokens": u.ReasoningTokens},
 		"total_tokens":          u.InputTokens + u.OutputTokens,
 	}
+}
+
+// summaryPart 是 reasoning item 的摘要段落形态（实采与 opencodex 一致：只有
+// type/text 两键，没有 annotations/logprobs 那套正文才有的附件）。
+func summaryPart(text string) map[string]any {
+	return map[string]any{"type": "summary_text", "text": text}
 }
 
 func textPart(text string) map[string]any {

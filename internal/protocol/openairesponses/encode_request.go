@@ -43,6 +43,9 @@ const (
 	DropOrphanResult  = "orphan_result"   // 找不到对应工具调用的结果
 	DropSampling      = "sampling_params" // temperature / top_p / stop，见文件头
 	DropImageFileID   = "image_file_id"   // file_id 是上游作用域句柄，跨协议搬不走
+	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
+	// （内容块）不是一档。effort 不在这一档——它现在原样直传成 reasoning.effort。
+	DropThinkingParam = "thinking_param"
 )
 
 // EncodeRequest 把 canonical 编成 Responses 请求体。
@@ -98,12 +101,26 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		drop(DropSampling)
 	}
 
-	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致）。
-	if len(req.Extras) > 0 {
-		if _, ok := req.Extras["metadata"]; ok {
-			drop(DropMetadata)
+	// 思考档位原样直传（口径层 v0.65）：Responses 侧写 reasoning.effort。
+	//
+	// **只写 effort 这一个子键**，不顺手加 summary——「思考多少」与「展不展示」是正交
+	// 两维（CLIProxyAPI 的 internal/thinking 也这么分），客户端只说了前者。代价记在
+	// 口径层：CC→R / A→R 上上游可能因此不回摘要，那条路的推理仍然看不见。
+	if req.Effort != "" {
+		out["reasoning"] = map[string]any{"effort": req.Effort}
+	}
+
+	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致），
+	// 且**按档分类**（思考参数单列一档，表在 protocol.IsThinkingParamKey）。
+	if _, ok := req.Extras["metadata"]; ok {
+		drop(DropMetadata)
+	}
+	for k := range req.Extras {
+		if protocol.IsThinkingParamKey(k) {
+			drop(DropThinkingParam)
+		} else {
+			drop(DropVendorRequest)
 		}
-		drop(DropVendorRequest)
 	}
 
 	body, err := marshal(out)
@@ -435,13 +452,14 @@ func joinOutBlocks(blocks []protocol.Block, drop func(string)) string {
 				parts = append(parts, b.Text)
 			}
 		case protocol.BlockThinking:
-			// 跨协议只能丢、不得伪造（口径层 v0.10）。这里**登记**，与 anthropic
-			// 出口那一处不同：那边能走到的只有 R→A，reasoning 块的 Text 恒为空，
-			// 丢个空块不值得报警；这里走到的是 A→R，Anthropic 解码侧产的是**有正文
-			// 的** thinking 块（五份真实转录实测），实打实丢掉了内容。
+			// 回带方向的思考一律丢 + 登记（口径层 v0.62 ③）。三个出口在这一格
+			// 现在一模一样——anthropic 那处此前不登记的理由（R→A 来的 reasoning
+			// 块正文恒空、丢个空块不值得报警）在出口开始合成之后就不成立了，已随本批
+			// 补齐，所以这里不再有「与那边不同」这回事。
 			//
-			// 不合成 reasoning 项：Responses 的 reasoning 靠 encrypted_content，
-			// 那是上游侧密文，我们既造不出也不该复用。
+			// 丢的是**内容**：Anthropic 解码侧产的是有正文的 thinking 块，客户端下一轮
+			// 会带着它回来。不改成合成 reasoning 项——那需要 encrypted_content，是上游
+			// 侧密文，我们既造不出也不该复用（出向合成那一侧同样不写它）。
 			drop(DropThinking)
 		case protocol.BlockToolUse, protocol.BlockToolResult:
 			// 这两种块由调用方编成独立的 item，跳过是分工不是丢弃，不登记。

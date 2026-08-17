@@ -374,6 +374,32 @@ func TestCC2RBufferedResponseIsChatCompletion(t *testing.T) {
 	}
 }
 
+// 上游的推理摘要要到得了 CC 客户端（口径层 v0.62 出向合成、v0.73 ② 补上的 CC→R 这一格）。
+//
+// 用真实转录喂：responses-stream-reasoning-turn1 里 reasoning_summary_text.delta 与
+// encrypted_content 同时在，正好一并钉住「摘要下来、密文不下来」。
+func TestCC2RReasoningSummaryReachesCCClient(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	respondWithGolden(t, up, "responses-stream-reasoning-turn1")
+
+	resp := gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", true), nil)
+	body := gatewaytest.ReadBody(t, resp)
+
+	if !strings.Contains(body, `"reasoning_content"`) {
+		t.Fatalf("CC 客户端没收到 reasoning_content（出向合成没生效）:\n%s", body)
+	}
+	// 正文得是上游那段摘要本身，不是空壳。
+	if !strings.Contains(body, "Planning file reading command") {
+		t.Errorf("reasoning_content 里没有上游那段摘要:\n%s", body)
+	}
+	// 密文与 Responses 线格式一个都不许漏。
+	for _, leaked := range []string{"encrypted_content", "gAAAAAB", "reasoning_summary", "event:"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("%q 漏给了 CC 客户端:\n%s", leaked, body)
+		}
+	}
+}
+
 // 闸门确实开着：这一格若还关着，回的是 501「没有对应的转换路径」。
 func TestCC2RGateIsOpen(t *testing.T) {
 	gw, up := newCC2RGateway(t)
