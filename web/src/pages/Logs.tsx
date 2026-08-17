@@ -12,6 +12,14 @@ const LOG_FILTERS = [
 ]
 
 /**
+ * 端点路径去掉 `/v1/` 前缀。四条路径全都以它开头，摆出来只是给每一行多四个等宽
+ * 字符的缩进——真要看全的，title 里挂着原样的那一条。
+ */
+function shortEndpoint(path: string) {
+  return path.startsWith('/v1/') ? path.slice(4) : path
+}
+
+/**
  * 端点筛选的选项（#17）。四条转发路径写死在这儿而不是从流水里聚合出来：它们是
  * 常量（protocol.Endpoint 那四个），不像模型名那样跟着配置长——照模型那套按窗口
  * 聚合的话，一个这段时间没被打过的端点就会从下拉里消失，而「这个端点最近一次
@@ -19,22 +27,20 @@ const LOG_FILTERS = [
  *
  * 没有「加列前的老流水」那一档：那些行确实没有这个信息，而本票要分的是
  * count_tokens 与 messages，不是把历史行挑出来看。
+ *
+ * label 一律由 shortEndpoint 算，跟表里那一列同源，不手抄第二遍。
  */
 const ENDPOINT_OPTIONS: Option<string>[] = [
   { value: '', label: '全部端点' },
-  { value: '/v1/messages', label: 'messages', hint: 'anthropic' },
-  { value: '/v1/messages/count_tokens', label: 'messages/count_tokens', hint: 'anthropic' },
-  { value: '/v1/chat/completions', label: 'chat/completions', hint: 'openai' },
-  { value: '/v1/responses', label: 'responses', hint: 'openai_responses' },
+  ...(
+    [
+      ['/v1/messages', 'anthropic'],
+      ['/v1/messages/count_tokens', 'anthropic'],
+      ['/v1/chat/completions', 'openai'],
+      ['/v1/responses', 'openai_responses'],
+    ] as const
+  ).map(([value, hint]) => ({ value, label: shortEndpoint(value), hint })),
 ]
-
-/**
- * 端点路径去掉 `/v1/` 前缀。四条路径全都以它开头，摆出来只是给每一行多四个等宽
- * 字符的缩进——真要看全的，title 里挂着原样的那一条。
- */
-function shortEndpoint(path: string) {
-  return path.startsWith('/v1/') ? path.slice(4) : path
-}
 
 /**
  * 一页显示多少条流水。它同时是页码的分母（总页数 = 总数 / 它），改这个数就是改页数。
