@@ -111,16 +111,12 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	}
 
 	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致），
-	// 且**按档分类**（思考参数单列一档，表在 protocol.IsThinkingParamKey）。
-	if _, ok := req.Extras["metadata"]; ok {
-		drop(DropMetadata)
-	}
+	// 且**按档分类**（分档规则在 protocol.ClassifyExtrasKey，三个出口共用一份）。
 	for k := range req.Extras {
-		switch {
-		case k == "metadata":
-			// 已单独登记成 DropMetadata，别让它再落进 default 记一次幻影
-			// DropVendorRequest（#15，与 openaicc 出口同改）。
-		case protocol.IsThinkingParamKey(k):
+		switch protocol.ClassifyExtrasKey(k) {
+		case protocol.ExtrasDropMetadata:
+			drop(DropMetadata)
+		case protocol.ExtrasDropThinkingParam:
 			drop(DropThinkingParam)
 		default:
 			drop(DropVendorRequest)

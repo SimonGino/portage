@@ -107,16 +107,12 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	// 入口协议独有的顶层字段一律不带过去。它们对 CC 上游没有意义，而严格中转会
 	// 因为一个不认识的顶层键整体拒收——metadata / thinking / context_management /
 	// output_config 都在此列。丢在明处：登记进 dropped，由 relay 打警告，且**按档
-	// 分类**（思考参数单列一档，表在 protocol.IsThinkingParamKey）。
-	if _, ok := req.Extras["metadata"]; ok {
-		drop(DropMetadata)
-	}
+	// 分类**（分档规则在 protocol.ClassifyExtrasKey，三个出口共用一份）。
 	for k := range req.Extras {
-		switch {
-		case k == "metadata":
-			// 上面已单独登记成 DropMetadata。不跳过的话它会再落进 else 记一次
-			// DropVendorRequest，日志就报了个客户端根本没发的幻影未知字段（#15）。
-		case protocol.IsThinkingParamKey(k):
+		switch protocol.ClassifyExtrasKey(k) {
+		case protocol.ExtrasDropMetadata:
+			drop(DropMetadata)
+		case protocol.ExtrasDropThinkingParam:
 			drop(DropThinkingParam)
 		default:
 			drop(DropVendorRequest)

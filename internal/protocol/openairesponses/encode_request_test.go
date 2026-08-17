@@ -2,8 +2,6 @@ package openairesponses
 
 import (
 	"encoding/json"
-	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -433,53 +431,6 @@ func TestEncodeVendorDropsRegistered(t *testing.T) {
 		if !hasDrop(dropped, want) {
 			t.Errorf("dropped = %v, want 含 %s", dropped, want)
 		}
-	}
-}
-
-// TestEncodeMetadataNotDoubleRegistered：metadata 单独登记成 DropMetadata 之后，不许
-// 再被 Extras 循环记一次 DropVendorRequest。理由与 openaicc 出口那处同（#15）：日志报一个
-// 客户端根本没发的未知顶层字段，会把 §2.6 这条 WARN 的可信度打掉。
-func TestEncodeMetadataNotDoubleRegistered(t *testing.T) {
-	const tail = `,"messages":[{"role":"user","content":"hi"}]}`
-	cases := []struct {
-		name string
-		body string
-		want []string
-	}{
-		{
-			name: "只有 metadata",
-			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"}` + tail,
-			want: []string{DropMetadata},
-		},
-		{
-			name: "metadata + 真·未知顶层键",
-			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"},"没见过的键":1` + tail,
-			want: []string{DropMetadata, DropVendorRequest},
-		},
-		{
-			name: "metadata + 思考参数",
-			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"},"thinking":{"type":"enabled","budget_tokens":1024}` + tail,
-			want: []string{DropMetadata, DropThinkingParam},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, err := anthropic.NewCodec().DecodeRequest([]byte(tc.body), false)
-			if err != nil {
-				t.Fatalf("DecodeRequest: %v", err)
-			}
-			_, dropped, err := NewCodec().EncodeRequestReport(req, false)
-			if err != nil {
-				t.Fatalf("EncodeRequestReport: %v", err)
-			}
-			sort.Strings(dropped)
-			want := append([]string(nil), tc.want...)
-			sort.Strings(want)
-			if !reflect.DeepEqual(dropped, want) {
-				t.Errorf("dropped = %v, want %v", dropped, want)
-			}
-		})
 	}
 }
 

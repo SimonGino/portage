@@ -258,8 +258,40 @@ var thinkingParamKeys = map[string]bool{
 	"output_config":   true, // Anthropic 的 effort 载体余下部分：LiftNestedEffort 解不出档位时整个留这儿
 }
 
-// IsThinkingParamKey 答「Extras 里这个顶层键该记 DropThinkingParam 还是 DropVendorRequest」。
+// IsThinkingParamKey 答「Extras 里这个顶层键属不属于思考参数这一档」。
 func IsThinkingParamKey(key string) bool { return thinkingParamKeys[key] }
+
+// ExtrasDropKind 是 Extras 里一个顶层键该记进哪一档丢弃。
+type ExtrasDropKind int
+
+const (
+	// ExtrasDropVendor：我们认不得的顶层字段，各出口记 DropVendorRequest。
+	ExtrasDropVendor ExtrasDropKind = iota
+	// ExtrasDropThinkingParam：思考参数，各出口记 DropThinkingParam。表见 thinkingParamKeys。
+	ExtrasDropThinkingParam
+	// ExtrasDropMetadata：客户端身份元数据，有这一档的出口记 DropMetadata。
+	ExtrasDropMetadata
+)
+
+// ClassifyExtrasKey 答「Extras 里这个顶层键该记进哪一档」。三个出口共用它。
+//
+// 分档逻辑收在这里，与 thinkingParamKeys 同一个理由（见那张表上方）：三个出口的分类
+// 必须字字一样，镜像出去就是「补一次要改三处，漏一处还是同一个洞」。DropXxx 常量仍
+// 各包一份——那是名字，不是规则。
+//
+// metadata 单列一档而不是让出口在循环外单独判一次：单独判过还得记得在循环里排除它，
+// 而 #15 正是两个出口都没排除，同一个键既记 metadata 又记了一次幻影 vendor_request。
+// 没有这一档的出口（anthropic）让它落进 ExtrasDropVendor 即可，行为与分档前一致。
+func ClassifyExtrasKey(key string) ExtrasDropKind {
+	switch {
+	case key == "metadata":
+		return ExtrasDropMetadata
+	case IsThinkingParamKey(key):
+		return ExtrasDropThinkingParam
+	default:
+		return ExtrasDropVendor
+	}
+}
 
 // Message 是一条消息。
 type Message struct {

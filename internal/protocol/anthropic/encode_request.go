@@ -126,10 +126,17 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	// 入口协议独有的顶层字段不带过去：Responses 的 store / include / prompt_cache_key
 	// 之类，Anthropic 一个都不认。丢在明处，且**按档分类**——思考参数与「不认识的字段」
 	// 混成一条日志的话，「客户端点了思考被丢掉」这件事就看不见了。
+	// 分档规则与另两个出口共用 protocol.ClassifyExtrasKey，形状也保持一样——下一个
+	// 「先在循环外单独登记、循环里忘了排除」的键就是 #15 的重演。
+	//
+	// 本出口没有 metadata 那一档（Anthropic 原生认这个字段），它落进 default 记
+	// vendor_request，与分档收口前的行为一致。CC / R 入口带来的 metadata 该转发还是
+	// 该另开一档，是 #15 之外的事，见 #19。
 	for k := range req.Extras {
-		if protocol.IsThinkingParamKey(k) {
+		switch protocol.ClassifyExtrasKey(k) {
+		case protocol.ExtrasDropThinkingParam:
 			drop(DropThinkingParam)
-		} else {
+		default:
 			drop(DropVendorRequest)
 		}
 	}
