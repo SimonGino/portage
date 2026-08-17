@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14545,
+    "OutputTokens": 179,
+    "CacheReadTokens": 3840,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 40,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（与 2026-08-13 压缩批同渠道），Codex CLI 0.147 codex exec 无头模式，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、developer 提示词换占位符、路径中性化）；`encrypted_content` 与各项 id 原样保留；expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **code-mode 并行的第一轮**：提示词诱导同时读两个文件，线上仍只有**一个** custom_tool_call——并行发生在工具入参那段 JS 的 `Promise.all` 里，不在 output item 层（107 片 `custom_tool_call_input.delta`）。这就是 §9 场景表说的 code-mode 并行形态；线级两个并行工具项由 in-responses-parallel-turn2 那个 stub 样本覆盖，真上游逼不出来。"
+}

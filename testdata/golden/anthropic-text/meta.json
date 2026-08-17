@@ -1,0 +1,18 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "source": "第三方 Anthropic 协议中转（sub2api 型），2026-08-11 照 §9 场景 curl 采集；input_tokens 恒含中转注入的 357",
+  "expect": {
+    "Model": "claude-sonnet-4-5",
+    "InputTokens": 376,
+    "OutputTokens": 27,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "StopReason": "end_turn",
+    "Degraded": false
+  },
+  "verified": true
+}

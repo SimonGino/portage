@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 路径写死在 /admin 下，不能省成 /portage-mark.svg，更不能用 /favicon.ico：
+         根路径不在 /admin 下，网关照规矩回 404，控制台里就多一条红字（这一行原先挂的
+         空 data URI 就是为了挡它）。文件放在 web/public/，Vite 原样拷进产物根，
+         由 internal/admin/webui.go 的 serveSPA 发出去（.svg 的 Content-Type 它认）。
+
+         注意这个文件名里没有内容 hash，而 serveSPA 对 index.html 之外的一切发的是
+         max-age=1y + immutable。改了标记就顺手改文件名，否则已经打开过管理端的浏览器
+         会抱着旧图标不放。 -->
+    <link rel="icon" type="image/svg+xml" href="/admin/portage-mark.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Portage 管理端</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

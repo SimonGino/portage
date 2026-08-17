@@ -1,0 +1,11 @@
+{
+  "direction": "inbound",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "stub": "01-parallel_tool_calls.sse",
+  "verified": true
+}

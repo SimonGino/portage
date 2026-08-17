@@ -1,0 +1,2628 @@
+{
+  "model": "claude-sonnet-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "[redacted system-reminder len=306]"
+        },
+        {
+          "type": "text",
+          "text": "Reply with exactly: ok"
+        }
+      ]
+    },
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "[redacted system-reminder len=9769]",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "system": [
+    {
+      "type": "text",
+      "text": "[redacted system-block len=74]"
+    },
+    {
+      "type": "text",
+      "text": "[redacted system-block len=62]",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "[redacted system-block len=29270]",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "Agent",
+      "description": "[redacted tool-desc len=6725]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "description": {
+            "description": "[redacted schema-desc len=42]",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "[redacted schema-desc len=33]",
+            "type": "string"
+          },
+          "subagent_type": {
+            "description": "[redacted schema-desc len=50]",
+            "type": "string"
+          },
+          "model": {
+            "description": "[redacted schema-desc len=254]",
+            "type": "string",
+            "enum": [
+              "sonnet",
+              "opus",
+              "haiku",
+              "fable"
+            ]
+          },
+          "run_in_background": {
+            "description": "[redacted schema-desc len=170]",
+            "type": "boolean"
+          },
+          "isolation": {
+            "description": "[redacted schema-desc len=221]",
+            "type": "string",
+            "enum": [
+              "worktree",
+              "remote"
+            ]
+          }
+        },
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Bash",
+      "description": "[redacted tool-desc len=9872]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "command": {
+            "description": "[redacted schema-desc len=22]",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "[redacted schema-desc len=45]",
+            "type": "number"
+          },
+          "description": {
+            "description": "[redacted schema-desc len=757]",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "[redacted schema-desc len=50]",
+            "type": "boolean"
+          },
+          "dangerouslyDisableSandbox": {
+            "description": "[redacted schema-desc len=90]",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "CronCreate",
+      "description": "[redacted tool-desc len=2595]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "cron": {
+            "description": "[redacted schema-desc len=151]",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "[redacted schema-desc len=40]",
+            "type": "string"
+          },
+          "recurring": {
+            "description": "[redacted schema-desc len=224]",
+            "type": "boolean"
+          },
+          "durable": {
+            "description": "[redacted schema-desc len=128]",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cron",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "CronDelete",
+      "description": "[redacted tool-desc len=100]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "[redacted schema-desc len=30]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "CronList",
+      "description": "[redacted tool-desc len=60]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "DesignSync",
+      "description": "[redacted tool-desc len=3724]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "list_projects",
+              "get_project",
+              "list_files",
+              "get_file",
+              "finalize_plan",
+              "write_files",
+              "delete_files",
+              "register_assets",
+              "unregister_assets",
+              "create_project",
+              "report_validate"
+            ]
+          },
+          "projectId": {
+            "description": "[redacted schema-desc len=64]",
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "description": "[redacted schema-desc len=27]",
+            "type": "string",
+            "minLength": 1
+          },
+          "writes": {
+            "description": "[redacted schema-desc len=286]",
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "deletes": {
+            "description": "[redacted schema-desc len=100]",
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "planId": {
+            "description": "[redacted schema-desc len=97]",
+            "type": "string",
+            "minLength": 1
+          },
+          "files": {
+            "description": "[redacted schema-desc len=134]",
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "description": "[redacted schema-desc len=58]",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "localPath": {
+                  "description": "[redacted schema-desc len=256]",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "description": "[redacted schema-desc len=160]",
+                  "type": "string"
+                },
+                "encoding": {
+                  "description": "[redacted schema-desc len=38]",
+                  "type": "string",
+                  "enum": [
+                    "base64"
+                  ]
+                },
+                "mimeType": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "paths": {
+            "description": "[redacted schema-desc len=189]",
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "name": {
+            "description": "[redacted schema-desc len=54]",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "assets": {
+            "description": "[redacted schema-desc len=152]",
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "[redacted schema-desc len=58]",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "path": {
+                  "description": "[redacted schema-desc len=64]",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "subtitle": {
+                  "description": "[redacted schema-desc len=55]",
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "viewport": {
+                  "description": "[redacted schema-desc len=41]",
+                  "type": "object",
+                  "properties": {
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "width"
+                  ],
+                  "additionalProperties": false
+                },
+                "group": {
+                  "description": "[redacted schema-desc len=348]",
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "name",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "localDir": {
+            "description": "[redacted schema-desc len=229]",
+            "type": "string",
+            "minLength": 1
+          },
+          "counts": {
+            "description": "[redacted schema-desc len=104]",
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "bad": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "thin": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "variantsIdentical": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "iterations": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "total",
+              "bad",
+              "thin",
+              "variantsIdentical",
+              "iterations"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "method"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Edit",
+      "description": "[redacted tool-desc len=1094]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "description": "[redacted schema-desc len=39]",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "[redacted schema-desc len=19]",
+            "type": "string"
+          },
+          "new_string": {
+            "description": "[redacted schema-desc len=63]",
+            "type": "string"
+          },
+          "replace_all": {
+            "description": "[redacted schema-desc len=53]",
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_path",
+          "old_string",
+          "new_string"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "EnterWorktree",
+      "description": "[redacted tool-desc len=3220]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "[redacted schema-desc len=221]",
+            "type": "string"
+          },
+          "path": {
+            "description": "[redacted schema-desc len=262]",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ExitWorktree",
+      "description": "[redacted tool-desc len=1923]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "[redacted schema-desc len=69]",
+            "type": "string",
+            "enum": [
+              "keep",
+              "remove"
+            ]
+          },
+          "discard_changes": {
+            "description": "[redacted schema-desc len=143]",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ListMcpResourcesTool",
+      "description": "[redacted tool-desc len=351]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "server": {
+            "description": "[redacted schema-desc len=43]",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Monitor",
+      "description": "[redacted tool-desc len=6132]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "description": {
+            "description": "[redacted schema-desc len=85]",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "description": "[redacted schema-desc len=103]",
+            "default": 300000,
+            "type": "number",
+            "minimum": 1000
+          },
+          "persistent": {
+            "description": "[redacted schema-desc len=133]",
+            "default": false,
+            "type": "boolean"
+          },
+          "command": {
+            "description": "[redacted schema-desc len=75]",
+            "type": "string"
+          },
+          "ws": {
+            "description": "[redacted schema-desc len=159]",
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "protocols": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                }
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "description",
+          "timeout_ms",
+          "persistent"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "NotebookEdit",
+      "description": "[redacted tool-desc len=619]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "notebook_path": {
+            "description": "[redacted schema-desc len=87]",
+            "type": "string"
+          },
+          "cell_id": {
+            "description": "[redacted schema-desc len=151]",
+            "type": "string"
+          },
+          "new_source": {
+            "description": "[redacted schema-desc len=27]",
+            "type": "string"
+          },
+          "cell_type": {
+            "description": "[redacted schema-desc len=141]",
+            "type": "string",
+            "enum": [
+              "code",
+              "markdown"
+            ]
+          },
+          "edit_mode": {
+            "description": "[redacted schema-desc len=72]",
+            "type": "string",
+            "enum": [
+              "replace",
+              "insert",
+              "delete"
+            ]
+          }
+        },
+        "required": [
+          "notebook_path",
+          "new_source"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "PushNotification",
+      "description": "[redacted tool-desc len=1362]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "message": {
+            "description": "[redacted schema-desc len=74]",
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "const": "proactive"
+          }
+        },
+        "required": [
+          "message",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Read",
+      "description": "[redacted tool-desc len=1782]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "description": "[redacted schema-desc len=37]",
+            "type": "string"
+          },
+          "offset": {
+            "description": "[redacted schema-desc len=92]",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "description": "[redacted schema-desc len=83]",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pages": {
+            "description": "[redacted schema-desc len=113]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ReadMcpResourceDirTool",
+      "description": "[redacted tool-desc len=513]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "server": {
+            "description": "[redacted schema-desc len=19]",
+            "type": "string"
+          },
+          "uri": {
+            "description": "[redacted schema-desc len=34]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ReadMcpResourceTool",
+      "description": "[redacted tool-desc len=234]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "server": {
+            "description": "[redacted schema-desc len=19]",
+            "type": "string"
+          },
+          "uri": {
+            "description": "[redacted schema-desc len=24]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ReportFindings",
+      "description": "[redacted tool-desc len=574]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "level": {
+            "description": "[redacted schema-desc len=30]",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "findings": {
+            "description": "[redacted schema-desc len=60]",
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "description": "[redacted schema-desc len=48]",
+                  "type": "string"
+                },
+                "line": {
+                  "description": "[redacted schema-desc len=37]",
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "summary": {
+                  "description": "[redacted schema-desc len=36]",
+                  "type": "string"
+                },
+                "short_summary": {
+                  "description": "[redacted schema-desc len=96]",
+                  "type": "string",
+                  "maxLength": 60
+                },
+                "failure_scenario": {
+                  "description": "[redacted schema-desc len=42]",
+                  "type": "string"
+                },
+                "category": {
+                  "description": "[redacted schema-desc len=110]",
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "verdict": {
+                  "description": "[redacted schema-desc len=57]",
+                  "type": "string",
+                  "enum": [
+                    "CONFIRMED",
+                    "PLAUSIBLE"
+                  ]
+                },
+                "outcome": {
+                  "description": "[redacted schema-desc len=78]",
+                  "type": "string",
+                  "enum": [
+                    "fixed",
+                    "skipped",
+                    "no_change_needed"
+                  ]
+                }
+              },
+              "required": [
+                "file",
+                "summary",
+                "failure_scenario"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ScheduleWakeup",
+      "description": "[redacted tool-desc len=2933]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "delaySeconds": {
+            "description": "[redacted schema-desc len=98]",
+            "type": "number"
+          },
+          "reason": {
+            "description": "[redacted schema-desc len=136]",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "[redacted schema-desc len=355]",
+            "type": "string"
+          },
+          "stop": {
+            "description": "[redacted schema-desc len=154]",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "SendMessage",
+      "description": "[redacted tool-desc len=778]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "to": {
+            "description": "[redacted schema-desc len=24]",
+            "type": "string",
+            "pattern": "^[^\\n\\r]{0,200}$"
+          },
+          "summary": {
+            "description": "[redacted schema-desc len=199]",
+            "type": "string",
+            "maxLength": 200
+          },
+          "message": {
+            "description": "[redacted schema-desc len=26]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Skill",
+      "description": "[redacted tool-desc len=1417]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "skill": {
+            "description": "[redacted schema-desc len=71]",
+            "type": "string"
+          },
+          "args": {
+            "description": "[redacted schema-desc len=32]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskCreate",
+      "description": "[redacted tool-desc len=2146]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "subject": {
+            "description": "[redacted schema-desc len=26]",
+            "type": "string"
+          },
+          "description": {
+            "description": "[redacted schema-desc len=21]",
+            "type": "string"
+          },
+          "activeForm": {
+            "description": "[redacted schema-desc len=81]",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "[redacted schema-desc len=40]",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "subject",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskGet",
+      "description": "[redacted tool-desc len=732]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "description": "[redacted schema-desc len=30]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskList",
+      "description": "[redacted tool-desc len=998]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskOutput",
+      "description": "[redacted tool-desc len=1049]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "[redacted schema-desc len=30]",
+            "type": "string"
+          },
+          "block": {
+            "description": "[redacted schema-desc len=30]",
+            "default": true,
+            "type": "boolean"
+          },
+          "timeout": {
+            "description": "[redacted schema-desc len=19]",
+            "default": 30000,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 600000
+          }
+        },
+        "required": [
+          "task_id",
+          "block",
+          "timeout"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskStop",
+      "description": "[redacted tool-desc len=378]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "[redacted schema-desc len=126]",
+            "type": "string"
+          },
+          "shell_id": {
+            "description": "[redacted schema-desc len=31]",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "TaskUpdate",
+      "description": "[redacted tool-desc len=2243]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "description": "[redacted schema-desc len=28]",
+            "type": "string"
+          },
+          "subject": {
+            "description": "[redacted schema-desc len=24]",
+            "type": "string"
+          },
+          "description": {
+            "description": "[redacted schema-desc len=28]",
+            "type": "string"
+          },
+          "activeForm": {
+            "description": "[redacted schema-desc len=81]",
+            "type": "string"
+          },
+          "status": {
+            "description": "[redacted schema-desc len=23]",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
+              },
+              {
+                "type": "string",
+                "const": "deleted"
+              }
+            ]
+          },
+          "addBlocks": {
+            "description": "[redacted schema-desc len=30]",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "addBlockedBy": {
+            "description": "[redacted schema-desc len=29]",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "owner": {
+            "description": "[redacted schema-desc len=22]",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "[redacted schema-desc len=69]",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "WebFetch",
+      "description": "[redacted tool-desc len=1479]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "url": {
+            "description": "[redacted schema-desc len=29]",
+            "type": "string",
+            "format": "uri"
+          },
+          "prompt": {
+            "description": "[redacted schema-desc len=40]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "WebSearch",
+      "description": "[redacted tool-desc len=1319]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "[redacted schema-desc len=23]",
+            "type": "string",
+            "minLength": 2
+          },
+          "allowed_domains": {
+            "description": "[redacted schema-desc len=46]",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocked_domains": {
+            "description": "[redacted schema-desc len=47]",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Workflow",
+      "description": "[redacted tool-desc len=19285]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "script": {
+            "description": "[redacted schema-desc len=207]",
+            "type": "string",
+            "maxLength": 524288
+          },
+          "name": {
+            "description": "[redacted schema-desc len=105]",
+            "type": "string"
+          },
+          "description": {
+            "description": "[redacted schema-desc len=68]",
+            "type": "string"
+          },
+          "title": {
+            "description": "[redacted schema-desc len=62]",
+            "type": "string"
+          },
+          "args": {
+            "description": "[redacted schema-desc len=280]"
+          },
+          "scriptPath": {
+            "description": "[redacted schema-desc len=329]",
+            "type": "string"
+          },
+          "resumeFromRunId": {
+            "description": "[redacted schema-desc len=251]",
+            "type": "string",
+            "pattern": "^wf_[a-z0-9-]{6,}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "Write",
+      "description": "[redacted tool-desc len=618]",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "description": "[redacted schema-desc len=71]",
+            "type": "string"
+          },
+          "content": {
+            "description": "[redacted schema-desc len=32]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mcp__brave__brave_image_search",
+      "description": "[redacted tool-desc len=315]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=87]"
+          },
+          "country": {
+            "default": "US",
+            "description": "[redacted schema-desc len=133]",
+            "type": "string"
+          },
+          "search_lang": {
+            "default": "en",
+            "description": "[redacted schema-desc len=108]",
+            "type": "string"
+          },
+          "count": {
+            "default": 50,
+            "description": "[redacted schema-desc len=103]",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "safesearch": {
+            "default": "strict",
+            "description": "[redacted schema-desc len=155]",
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "off"
+              },
+              {
+                "type": "string",
+                "const": "strict"
+              }
+            ]
+          },
+          "spellcheck": {
+            "default": true,
+            "description": "[redacted schema-desc len=37]",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_llm_context",
+      "description": "[redacted tool-desc len=887]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=106]"
+          },
+          "country": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AU",
+              "AT",
+              "BE",
+              "BR",
+              "CA",
+              "CL",
+              "DK",
+              "FI",
+              "FR",
+              "DE",
+              "GR",
+              "HK",
+              "IN",
+              "ID",
+              "IT",
+              "JP",
+              "KR",
+              "MY",
+              "MX",
+              "NL",
+              "NZ",
+              "NO",
+              "CN",
+              "PL",
+              "PT",
+              "PH",
+              "RU",
+              "SA",
+              "ZA",
+              "ES",
+              "SE",
+              "CH",
+              "TW",
+              "TR",
+              "GB",
+              "US",
+              "ALL"
+            ],
+            "description": "[redacted schema-desc len=137]"
+          },
+          "search_lang": {
+            "type": "string",
+            "enum": [
+              "ar",
+              "eu",
+              "bn",
+              "bg",
+              "ca",
+              "zh-hans",
+              "zh-hant",
+              "hr",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "en-gb",
+              "et",
+              "fi",
+              "fr",
+              "gl",
+              "de",
+              "el",
+              "gu",
+              "he",
+              "hi",
+              "hu",
+              "is",
+              "it",
+              "jp",
+              "kn",
+              "ko",
+              "lv",
+              "lt",
+              "ms",
+              "ml",
+              "mr",
+              "nb",
+              "pl",
+              "pt-br",
+              "pt-pt",
+              "pa",
+              "ro",
+              "ru",
+              "sr",
+              "sk",
+              "sl",
+              "es",
+              "sv",
+              "ta",
+              "te",
+              "th",
+              "tr",
+              "uk",
+              "vi"
+            ],
+            "description": "[redacted schema-desc len=112]"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "[redacted schema-desc len=120]"
+          },
+          "spellcheck": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=42]"
+          },
+          "maximum_number_of_urls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "[redacted schema-desc len=59]"
+          },
+          "maximum_number_of_tokens": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 32768,
+            "description": "[redacted schema-desc len=101]"
+          },
+          "maximum_number_of_snippets": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256,
+            "description": "[redacted schema-desc len=121]"
+          },
+          "context_threshold_mode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "strict",
+              "lenient",
+              "balanced"
+            ],
+            "description": "[redacted schema-desc len=97]"
+          },
+          "maximum_number_of_tokens_per_url": {
+            "type": "integer",
+            "minimum": 512,
+            "maximum": 8192,
+            "description": "[redacted schema-desc len=85]"
+          },
+          "maximum_number_of_snippets_per_url": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "[redacted schema-desc len=84]"
+          },
+          "goggles": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "[redacted schema-desc len=332]"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pd",
+                  "pw",
+                  "pm",
+                  "py"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}to\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ],
+            "description": "[redacted schema-desc len=374]"
+          },
+          "enable_local": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=143]"
+          },
+          "enable_source_metadata": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=96]"
+          },
+          "x-loc-lat": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "[redacted schema-desc len=198]"
+          },
+          "x-loc-long": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "[redacted schema-desc len=194]"
+          },
+          "x-loc-city": {
+            "type": "string",
+            "description": "[redacted schema-desc len=35]"
+          },
+          "x-loc-state": {
+            "type": "string",
+            "maxLength": 3,
+            "description": "[redacted schema-desc len=186]"
+          },
+          "x-loc-state-name": {
+            "type": "string",
+            "description": "[redacted schema-desc len=137]"
+          },
+          "x-loc-country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "[redacted schema-desc len=105]"
+          },
+          "x-loc-postal-code": {
+            "type": "string",
+            "description": "[redacted schema-desc len=24]"
+          },
+          "api-version": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "[redacted schema-desc len=212]"
+          },
+          "accept": {
+            "type": "string",
+            "enum": [
+              "application/json",
+              "*/*"
+            ],
+            "description": "[redacted schema-desc len=53]"
+          },
+          "cache-control": {
+            "type": "string",
+            "const": "no-cache",
+            "description": "[redacted schema-desc len=151]"
+          },
+          "user-agent": {
+            "type": "string",
+            "description": "[redacted schema-desc len=312]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_local_search",
+      "description": "[redacted tool-desc len=801]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=38]"
+          },
+          "country": {
+            "default": "US",
+            "description": "[redacted schema-desc len=133]",
+            "type": "string",
+            "enum": [
+              "ALL",
+              "AR",
+              "AU",
+              "AT",
+              "BE",
+              "BR",
+              "CA",
+              "CL",
+              "DK",
+              "FI",
+              "FR",
+              "DE",
+              "HK",
+              "IN",
+              "ID",
+              "IT",
+              "JP",
+              "KR",
+              "MY",
+              "MX",
+              "NL",
+              "NZ",
+              "NO",
+              "CN",
+              "PL",
+              "PT",
+              "PH",
+              "RU",
+              "SA",
+              "ZA",
+              "ES",
+              "SE",
+              "CH",
+              "TW",
+              "TR",
+              "GB",
+              "US"
+            ]
+          },
+          "search_lang": {
+            "default": "en",
+            "description": "[redacted schema-desc len=108]",
+            "type": "string",
+            "enum": [
+              "ar",
+              "eu",
+              "bn",
+              "bg",
+              "ca",
+              "zh-hans",
+              "zh-hant",
+              "hr",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "en-gb",
+              "et",
+              "fi",
+              "fr",
+              "gl",
+              "de",
+              "gu",
+              "he",
+              "hi",
+              "hu",
+              "is",
+              "it",
+              "jp",
+              "kn",
+              "ko",
+              "lv",
+              "lt",
+              "ms",
+              "ml",
+              "mr",
+              "nb",
+              "pl",
+              "pt-br",
+              "pt-pt",
+              "pa",
+              "ro",
+              "ru",
+              "sr",
+              "sk",
+              "sl",
+              "es",
+              "sv",
+              "ta",
+              "te",
+              "th",
+              "tr",
+              "uk",
+              "vi"
+            ]
+          },
+          "ui_lang": {
+            "default": "en-US",
+            "description": "[redacted schema-desc len=104]",
+            "type": "string",
+            "enum": [
+              "es-AR",
+              "en-AU",
+              "de-AT",
+              "nl-BE",
+              "fr-BE",
+              "pt-BR",
+              "en-CA",
+              "fr-CA",
+              "es-CL",
+              "da-DK",
+              "fi-FI",
+              "fr-FR",
+              "de-DE",
+              "zh-HK",
+              "en-IN",
+              "en-ID",
+              "it-IT",
+              "ja-JP",
+              "ko-KR",
+              "en-MY",
+              "es-MX",
+              "nl-NL",
+              "en-NZ",
+              "no-NO",
+              "zh-CN",
+              "pl-PL",
+              "en-PH",
+              "ru-RU",
+              "en-ZA",
+              "es-ES",
+              "sv-SE",
+              "fr-CH",
+              "de-CH",
+              "zh-TW",
+              "tr-TR",
+              "en-GB",
+              "en-US",
+              "es-US"
+            ]
+          },
+          "count": {
+            "default": 10,
+            "description": "[redacted schema-desc len=127]",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "offset": {
+            "default": 0,
+            "description": "[redacted schema-desc len=36]",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "safesearch": {
+            "default": "moderate",
+            "description": "[redacted schema-desc len=297]",
+            "type": "string",
+            "enum": [
+              "off",
+              "moderate",
+              "strict"
+            ]
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pd",
+                  "pw",
+                  "pm",
+                  "py"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}to\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ],
+            "description": "[redacted schema-desc len=374]"
+          },
+          "text_decorations": {
+            "default": true,
+            "description": "[redacted schema-desc len=112]",
+            "type": "boolean"
+          },
+          "spellcheck": {
+            "default": true,
+            "description": "[redacted schema-desc len=41]",
+            "type": "boolean"
+          },
+          "result_filter": {
+            "default": [
+              "web",
+              "query"
+            ],
+            "description": "[redacted schema-desc len=40]",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "discussions",
+                "faq",
+                "infobox",
+                "news",
+                "query",
+                "summarizer",
+                "videos",
+                "web",
+                "locations",
+                "rich"
+              ]
+            }
+          },
+          "goggles": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "[redacted schema-desc len=332]"
+          },
+          "units": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "metric"
+              },
+              {
+                "type": "string",
+                "const": "imperial"
+              }
+            ],
+            "description": "[redacted schema-desc len=78]"
+          },
+          "extra_snippets": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=232]"
+          },
+          "summary": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=115]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_news_search",
+      "description": "[redacted tool-desc len=1175]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=38]"
+          },
+          "country": {
+            "default": "US",
+            "description": "[redacted schema-desc len=133]",
+            "type": "string"
+          },
+          "search_lang": {
+            "default": "en",
+            "description": "[redacted schema-desc len=108]",
+            "type": "string"
+          },
+          "ui_lang": {
+            "default": "en-US",
+            "description": "[redacted schema-desc len=124]",
+            "type": "string"
+          },
+          "count": {
+            "default": 20,
+            "description": "[redacted schema-desc len=36]",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "offset": {
+            "default": 0,
+            "description": "[redacted schema-desc len=36]",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "spellcheck": {
+            "default": true,
+            "description": "[redacted schema-desc len=37]",
+            "type": "boolean"
+          },
+          "safesearch": {
+            "default": "moderate",
+            "description": "[redacted schema-desc len=229]",
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "off"
+              },
+              {
+                "type": "string",
+                "const": "moderate"
+              },
+              {
+                "type": "string",
+                "const": "strict"
+              }
+            ]
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pd",
+                  "pw",
+                  "pm",
+                  "py"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}to\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ],
+            "description": "[redacted schema-desc len=374]"
+          },
+          "extra_snippets": {
+            "default": false,
+            "description": "[redacted schema-desc len=232]",
+            "type": "boolean"
+          },
+          "goggles": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "[redacted schema-desc len=332]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_place_search",
+      "description": "[redacted tool-desc len=1390]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "[redacted schema-desc len=261]",
+            "type": "string",
+            "maxLength": 400
+          },
+          "radius": {
+            "type": "number",
+            "minimum": 0,
+            "description": "[redacted schema-desc len=180]"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "[redacted schema-desc len=58]"
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "[redacted schema-desc len=123]"
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "[redacted schema-desc len=125]"
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "description": "[redacted schema-desc len=336]"
+          },
+          "country": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AU",
+              "AT",
+              "BE",
+              "BR",
+              "CA",
+              "CL",
+              "DK",
+              "FI",
+              "FR",
+              "DE",
+              "GR",
+              "HK",
+              "IN",
+              "ID",
+              "IT",
+              "JP",
+              "KR",
+              "MY",
+              "MX",
+              "NL",
+              "NZ",
+              "NO",
+              "CN",
+              "PL",
+              "PT",
+              "PH",
+              "RU",
+              "SA",
+              "ZA",
+              "ES",
+              "SE",
+              "CH",
+              "TW",
+              "TR",
+              "GB",
+              "US"
+            ],
+            "description": "[redacted schema-desc len=88]"
+          },
+          "search_lang": {
+            "type": "string",
+            "enum": [
+              "ar",
+              "eu",
+              "bn",
+              "bg",
+              "ca",
+              "zh-hans",
+              "zh-hant",
+              "hr",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "en-gb",
+              "et",
+              "fi",
+              "fr",
+              "gl",
+              "de",
+              "el",
+              "gu",
+              "he",
+              "hi",
+              "hu",
+              "is",
+              "it",
+              "jp",
+              "kn",
+              "ko",
+              "lv",
+              "lt",
+              "ms",
+              "ml",
+              "mr",
+              "nb",
+              "pl",
+              "pt-br",
+              "pt-pt",
+              "pa",
+              "ro",
+              "ru",
+              "sr",
+              "sk",
+              "sl",
+              "es",
+              "sv",
+              "ta",
+              "te",
+              "th",
+              "tr",
+              "uk",
+              "vi"
+            ],
+            "description": "[redacted schema-desc len=50]"
+          },
+          "ui_lang": {
+            "type": "string",
+            "enum": [
+              "es-AR",
+              "en-AU",
+              "de-AT",
+              "nl-BE",
+              "fr-BE",
+              "pt-BR",
+              "en-CA",
+              "fr-CA",
+              "es-CL",
+              "da-DK",
+              "fi-FI",
+              "fr-FR",
+              "de-DE",
+              "zh-HK",
+              "en-IN",
+              "en-ID",
+              "it-IT",
+              "ja-JP",
+              "ko-KR",
+              "en-MY",
+              "es-MX",
+              "nl-NL",
+              "en-NZ",
+              "no-NO",
+              "zh-CN",
+              "pl-PL",
+              "en-PH",
+              "ru-RU",
+              "en-ZA",
+              "es-ES",
+              "sv-SE",
+              "fr-CH",
+              "de-CH",
+              "zh-TW",
+              "tr-TR",
+              "en-GB",
+              "en-US",
+              "es-US"
+            ],
+            "description": "[redacted schema-desc len=105]"
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "metric",
+              "imperial"
+            ],
+            "description": "[redacted schema-desc len=63]"
+          },
+          "safesearch": {
+            "type": "string",
+            "enum": [
+              "off",
+              "moderate",
+              "strict"
+            ],
+            "description": "[redacted schema-desc len=181]"
+          },
+          "spellcheck": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=74]"
+          },
+          "geoloc": {
+            "type": "string",
+            "description": "[redacted schema-desc len=50]"
+          },
+          "api-version": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "[redacted schema-desc len=212]"
+          },
+          "accept": {
+            "type": "string",
+            "enum": [
+              "application/json",
+              "*/*"
+            ],
+            "description": "[redacted schema-desc len=53]"
+          },
+          "cache-control": {
+            "type": "string",
+            "const": "no-cache",
+            "description": "[redacted schema-desc len=151]"
+          },
+          "user-agent": {
+            "type": "string",
+            "description": "[redacted schema-desc len=312]"
+          }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_summarizer",
+      "description": "[redacted tool-desc len=903]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "[redacted schema-desc len=80]"
+          },
+          "entity_info": {
+            "default": false,
+            "description": "[redacted schema-desc len=54]",
+            "type": "boolean"
+          },
+          "inline_references": {
+            "default": false,
+            "description": "[redacted schema-desc len=47]",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_video_search",
+      "description": "[redacted tool-desc len=441]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=87]"
+          },
+          "country": {
+            "default": "US",
+            "description": "[redacted schema-desc len=133]",
+            "type": "string"
+          },
+          "search_lang": {
+            "default": "en",
+            "description": "[redacted schema-desc len=108]",
+            "type": "string"
+          },
+          "ui_lang": {
+            "default": "en-US",
+            "description": "[redacted schema-desc len=124]",
+            "type": "string"
+          },
+          "count": {
+            "default": 20,
+            "description": "[redacted schema-desc len=102]",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "offset": {
+            "default": 0,
+            "description": "[redacted schema-desc len=101]",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "spellcheck": {
+            "default": true,
+            "type": "boolean",
+            "description": "[redacted schema-desc len=37]"
+          },
+          "safesearch": {
+            "default": "moderate",
+            "description": "[redacted schema-desc len=229]",
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "off"
+              },
+              {
+                "type": "string",
+                "const": "moderate"
+              },
+              {
+                "type": "string",
+                "const": "strict"
+              }
+            ]
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pd",
+                  "pw",
+                  "pm",
+                  "py"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}to\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ],
+            "description": "[redacted schema-desc len=378]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__brave__brave_web_search",
+      "description": "[redacted tool-desc len=682]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "[redacted schema-desc len=38]"
+          },
+          "country": {
+            "default": "US",
+            "description": "[redacted schema-desc len=133]",
+            "type": "string",
+            "enum": [
+              "ALL",
+              "AR",
+              "AU",
+              "AT",
+              "BE",
+              "BR",
+              "CA",
+              "CL",
+              "DK",
+              "FI",
+              "FR",
+              "DE",
+              "HK",
+              "IN",
+              "ID",
+              "IT",
+              "JP",
+              "KR",
+              "MY",
+              "MX",
+              "NL",
+              "NZ",
+              "NO",
+              "CN",
+              "PL",
+              "PT",
+              "PH",
+              "RU",
+              "SA",
+              "ZA",
+              "ES",
+              "SE",
+              "CH",
+              "TW",
+              "TR",
+              "GB",
+              "US"
+            ]
+          },
+          "search_lang": {
+            "default": "en",
+            "description": "[redacted schema-desc len=108]",
+            "type": "string",
+            "enum": [
+              "ar",
+              "eu",
+              "bn",
+              "bg",
+              "ca",
+              "zh-hans",
+              "zh-hant",
+              "hr",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "en-gb",
+              "et",
+              "fi",
+              "fr",
+              "gl",
+              "de",
+              "gu",
+              "he",
+              "hi",
+              "hu",
+              "is",
+              "it",
+              "jp",
+              "kn",
+              "ko",
+              "lv",
+              "lt",
+              "ms",
+              "ml",
+              "mr",
+              "nb",
+              "pl",
+              "pt-br",
+              "pt-pt",
+              "pa",
+              "ro",
+              "ru",
+              "sr",
+              "sk",
+              "sl",
+              "es",
+              "sv",
+              "ta",
+              "te",
+              "th",
+              "tr",
+              "uk",
+              "vi"
+            ]
+          },
+          "ui_lang": {
+            "default": "en-US",
+            "description": "[redacted schema-desc len=104]",
+            "type": "string",
+            "enum": [
+              "es-AR",
+              "en-AU",
+              "de-AT",
+              "nl-BE",
+              "fr-BE",
+              "pt-BR",
+              "en-CA",
+              "fr-CA",
+              "es-CL",
+              "da-DK",
+              "fi-FI",
+              "fr-FR",
+              "de-DE",
+              "zh-HK",
+              "en-IN",
+              "en-ID",
+              "it-IT",
+              "ja-JP",
+              "ko-KR",
+              "en-MY",
+              "es-MX",
+              "nl-NL",
+              "en-NZ",
+              "no-NO",
+              "zh-CN",
+              "pl-PL",
+              "en-PH",
+              "ru-RU",
+              "en-ZA",
+              "es-ES",
+              "sv-SE",
+              "fr-CH",
+              "de-CH",
+              "zh-TW",
+              "tr-TR",
+              "en-GB",
+              "en-US",
+              "es-US"
+            ]
+          },
+          "count": {
+            "default": 10,
+            "description": "[redacted schema-desc len=127]",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "offset": {
+            "default": 0,
+            "description": "[redacted schema-desc len=36]",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "safesearch": {
+            "default": "moderate",
+            "description": "[redacted schema-desc len=297]",
+            "type": "string",
+            "enum": [
+              "off",
+              "moderate",
+              "strict"
+            ]
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pd",
+                  "pw",
+                  "pm",
+                  "py"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}to\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ],
+            "description": "[redacted schema-desc len=374]"
+          },
+          "text_decorations": {
+            "default": true,
+            "description": "[redacted schema-desc len=112]",
+            "type": "boolean"
+          },
+          "spellcheck": {
+            "default": true,
+            "description": "[redacted schema-desc len=41]",
+            "type": "boolean"
+          },
+          "result_filter": {
+            "default": [
+              "web",
+              "query"
+            ],
+            "description": "[redacted schema-desc len=40]",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "discussions",
+                "faq",
+                "infobox",
+                "news",
+                "query",
+                "summarizer",
+                "videos",
+                "web",
+                "locations",
+                "rich"
+              ]
+            }
+          },
+          "goggles": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "[redacted schema-desc len=332]"
+          },
+          "units": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "metric"
+              },
+              {
+                "type": "string",
+                "const": "imperial"
+              }
+            ],
+            "description": "[redacted schema-desc len=78]"
+          },
+          "extra_snippets": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=232]"
+          },
+          "summary": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=115]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__Context7__query-docs",
+      "description": "[redacted tool-desc len=429]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "libraryId": {
+            "type": "string",
+            "description": "[redacted schema-desc len=258]"
+          },
+          "query": {
+            "type": "string",
+            "description": "[redacted schema-desc len=732]"
+          }
+        },
+        "required": [
+          "libraryId",
+          "query"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__Context7__resolve-library-id",
+      "description": "[redacted tool-desc len=2006]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "[redacted schema-desc len=342]"
+          },
+          "libraryName": {
+            "type": "string",
+            "description": "[redacted schema-desc len=238]"
+          }
+        },
+        "required": [
+          "query",
+          "libraryName"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "mcp__grep-app__searchGitHub",
+      "description": "[redacted tool-desc len=1537]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "[redacted schema-desc len=149]"
+          },
+          "matchCase": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=43]",
+            "default": false
+          },
+          "matchWholeWords": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=33]",
+            "default": false
+          },
+          "useRegexp": {
+            "type": "boolean",
+            "description": "[redacted schema-desc len=54]",
+            "default": false
+          },
+          "repo": {
+            "type": "string",
+            "description": "[redacted schema-desc len=195]"
+          },
+          "path": {
+            "type": "string",
+            "description": "[redacted schema-desc len=184]"
+          },
+          "language": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "[redacted schema-desc len=145]"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "type": "advisor_20260301",
+      "name": "advisor",
+      "model": "claude-fable-5",
+      "description": "[redacted tool-desc len=0]",
+      "input_schema": null
+    }
+  ],
+  "metadata": {
+    "user_id": "{\"device_id\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"account_uuid\":\"\",\"session_id\":\"00000000-0000-0000-0000-000000000000\"}"
+  },
+  "max_tokens": 64000,
+  "thinking": {
+    "type": "adaptive",
+    "display": "omitted"
+  },
+  "context_management": {
+    "edits": [
+      {
+        "type": "clear_thinking_20251015",
+        "keep": "all"
+      }
+    ]
+  },
+  "output_config": {
+    "effort": "high"
+  },
+  "stream": true
+}

@@ -1,0 +1,1881 @@
+<!--
+  方向 C · 仪器架
+  骨架：混音台 / 机架 / 舰桥仪器——薄顶条五颗带灯方键，模型是 1fr 机架模块，流水是磁带 specline，详情是右侧 inspector。
+  form 来自内容：渠道是槽位，纳管模型是插进去的模块；上游凭证是补丁板插孔；API Key 是钥匙槽的插上 / 拔出。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portage · 仪器架</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #1c1712;
+    --panel: #241e18;
+    --raised: #2b241c;
+    --well: #15110d;
+    --line: #3d342b;
+    --line-2: #524838;
+    --ink: #f0e6d4;
+    --ink-2: #c8bba6;
+    --ink-3: #9a8c78;
+    --cu: #d4a056;
+    --cu-dim: #8a6a34;
+    --moss: #7d9b6a;
+    --moss-dim: #4e6144;
+    --fail: #c45c48;
+    --fail-well: #2c1814;
+    --in: #c4a06a;
+    --out: #6e5a40;
+    --strip-h: 58px;
+    --font-mono: "Geist Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --font-display: "Syne", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--ink); }
+  html { color-scheme: dark; }
+  body {
+    min-height: 100vh;
+    font: 14px/1.5 var(--font-mono);
+    text-wrap: pretty;
+    letter-spacing: 0.01em;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; }
+  code { font-family: inherit; }
+
+  /* film grain + warm vignette — not glass, not neon */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 80;
+    opacity: 0.045;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 81;
+    background: radial-gradient(120% 90% at 50% 0%, transparent 40%, rgba(0,0,0,.35) 100%);
+  }
+
+  ::selection { background: #d4a05655; color: var(--ink); }
+
+  /* ── 顶条仪器带 ── */
+  .strip {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    height: var(--strip-h);
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 0 18px;
+    background:
+      linear-gradient(180deg, #2a231c 0%, #221c16 70%, #1a1510 100%);
+    border-bottom: 1px solid #100c09;
+    box-shadow:
+      inset 0 1px 0 rgba(240, 214, 180, 0.08),
+      inset 0 -1px 0 rgba(0,0,0,.5),
+      0 8px 24px rgba(0,0,0,.28);
+  }
+  .strip-ticks {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 7px;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(90deg,
+        transparent 0 11px,
+        #3a3228 11px 12px),
+      repeating-linear-gradient(90deg,
+        transparent 0 59px,
+        #5a4e3e 59px 60px);
+    opacity: .7;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-self: start;
+    color: var(--ink);
+    letter-spacing: 0.18em;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+  }
+  .brand svg { display: block; }
+  .brand em {
+    font-style: normal;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    font-size: 15px;
+  }
+
+  .bank {
+    display: flex;
+    gap: 6px;
+  }
+  .sq {
+    width: 54px;
+    height: 50px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border-radius: 3px;
+    background:
+      linear-gradient(180deg, #2e2720 0%, #221c16 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(240,214,180,.08),
+      inset 0 -1px 0 rgba(0,0,0,.45),
+      0 1px 0 #100c09,
+      0 2px 3px rgba(0,0,0,.35);
+    color: var(--ink-3);
+    transition: color .15s, background .15s;
+  }
+  .sq i {
+    width: 14px;
+    height: 4px;
+    border-radius: 1px;
+    background: #2a241c;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+  }
+  .sq b {
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+  .sq:hover { color: var(--ink-2); }
+  .sq:hover i { background: #5a4a32; }
+  .sq.is-on {
+    color: var(--ink);
+    background: linear-gradient(180deg, #322a22 0%, #1c1712 100%);
+    box-shadow:
+      inset 0 2px 5px rgba(0,0,0,.55),
+      inset 0 0 0 1px #3a3026;
+  }
+  .sq.is-on i {
+    background: var(--cu);
+    box-shadow: 0 0 0 1px #8a6a34 inset;
+  }
+
+  .acct-wrap { justify-self: end; position: relative; }
+  .acct {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 10px 0 8px;
+    border-radius: 3px;
+    color: var(--ink-2);
+    letter-spacing: 0.12em;
+    font-size: 11px;
+    text-transform: uppercase;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .acct i {
+    width: 7px; height: 7px; border-radius: 1px;
+    background: var(--moss);
+    box-shadow: inset 0 0 0 1px #4e6144;
+  }
+  .acct:hover { color: var(--ink); }
+  .acct-menu {
+    display: none;
+    position: absolute;
+    right: 0; top: calc(100% + 8px);
+    width: 168px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: 0 12px 28px rgba(0,0,0,.45), inset 0 1px 0 rgba(240,214,180,.05);
+    padding: 6px;
+    z-index: 50;
+  }
+  .acct-menu.is-open { display: block; }
+  .acct-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    color: var(--ink-2);
+  }
+  .acct-menu button:hover { color: var(--ink); background: var(--raised); }
+
+  /* ── 页框 ── */
+  main { position: relative; z-index: 1; }
+  .page { display: none; padding: 36px 40px 80px; max-width: 1360px; margin: 0 auto; }
+  .page.is-on { display: block; }
+
+  .page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 28px;
+  }
+  .verb {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(34px, 4.4vw, 56px);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+  }
+  .lede {
+    margin-top: 10px;
+    color: var(--ink-3);
+    font-size: 14px;
+    max-width: 46em;
+  }
+  .lede code {
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+
+  /* ── 硬件件 ── */
+  .plunger {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px 12px 14px;
+    background: linear-gradient(180deg, #322a22, #1e1914);
+    border-radius: 4px;
+    box-shadow:
+      inset 0 1px 0 rgba(240,214,180,.1),
+      0 0 0 1px #3a3026,
+      0 1px 0 #0e0b08,
+      0 6px 0 #120e0a,
+      0 8px 14px rgba(0,0,0,.4);
+    color: var(--ink);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 14px;
+    font-weight: 500;
+    transform: translateY(-2px);
+  }
+  .plunger.hero { padding: 16px 26px 16px 16px; font-size: 15px; letter-spacing: 0.16em; }
+  .plunger:active, .plunger.is-down {
+    transform: translateY(2px);
+    box-shadow:
+      inset 0 2px 6px rgba(0,0,0,.55),
+      0 0 0 1px #3a3026,
+      0 1px 0 #120e0a;
+  }
+  .hero .plunger-cap { width: 36px; height: 36px; }
+  .plunger-cap {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 40% 35%, #e8c888, #b8863a 46%, #6a4a1e 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,230,180,.5),
+      0 0 0 2px #2a2218,
+      0 0 0 3px #5a4a32;
+  }
+  .plunger.is-lit .plunger-cap {
+    background: radial-gradient(circle at 40% 35%, #f0d49a, #d4a056 50%, #8a6a34 100%);
+  }
+
+  .hw {
+    height: 34px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--raised);
+    color: var(--ink-2);
+    box-shadow: inset 0 0 0 1px var(--line), inset 0 2px 4px rgba(0,0,0,.35);
+    letter-spacing: 0.06em;
+  }
+  .hw:hover { color: var(--ink); }
+  .hw.is-on {
+    color: var(--ink);
+    box-shadow:
+      inset 0 0 0 1px var(--cu-dim),
+      inset 0 2px 5px rgba(0,0,0,.45);
+  }
+  .hw i {
+    width: 7px; height: 7px;
+    background: #2a241c;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+  }
+  .hw.is-on i { background: var(--cu); }
+  .hw.is-fail.is-on { color: #f0d0c8; box-shadow: inset 0 0 0 1px #6a382e, inset 0 2px 5px rgba(0,0,0,.45); }
+  .hw.is-fail.is-on i { background: var(--fail); }
+
+  .lamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ink-3);
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .lamp i {
+    width: 8px; height: 8px;
+    border-radius: 1px;
+    flex: 0 0 auto;
+    background: #2a241c;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.75);
+  }
+  .lamp.is-on { color: var(--ink-2); }
+  .lamp.is-on i { background: var(--cu); }
+  .lamp.is-ok { color: var(--ink-2); }
+  .lamp.is-ok i { background: var(--moss); }
+  .lamp.is-off { color: var(--ink-3); }
+  .lamp.is-bad { color: #e0b2a8; }
+  .lamp.is-bad i { background: var(--fail); }
+
+  .lever {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink-3);
+  }
+  .lever-track {
+    width: 22px; height: 40px;
+    border-radius: 2px;
+    background: var(--well);
+    box-shadow:
+      inset 0 2px 4px rgba(0,0,0,.7),
+      0 0 0 1px #3a3228;
+    position: relative;
+  }
+  .lever-knob {
+    position: absolute;
+    left: 2px; right: 2px;
+    height: 16px;
+    background: linear-gradient(180deg, #4a4036, #2a241c);
+    box-shadow: inset 0 1px 0 rgba(240,214,180,.12), 0 2px 3px rgba(0,0,0,.4);
+    transition: top .16s ease;
+    top: 21px;
+  }
+  .lever.is-on .lever-knob { top: 3px; background: linear-gradient(180deg, #6a5a40, #3a3020); }
+  .lever.is-on { color: var(--moss); }
+  .lever b { font-weight: 500; letter-spacing: 0.12em; font-size: 14px; }
+  .lever-track { width: 24px; height: 46px; }
+  .lever-knob { height: 18px; }
+
+  /* ── 模型机架 ── */
+  .rack-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .chassis {
+    background: var(--well);
+    box-shadow:
+      inset 0 3px 10px rgba(0,0,0,.55),
+      0 0 0 1px #100c09,
+      0 0 0 2px #2a241c;
+    padding: 0 0 12px;
+  }
+  .ch-tags {
+    display: flex;
+    gap: 0;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #100c09;
+    background: #1a1510;
+  }
+  .ch-tag {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 38px;
+    padding: 0 16px;
+    background: transparent;
+    color: var(--ink-3);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-size: 13px;
+    box-shadow: inset -1px 0 0 var(--line);
+  }
+  .ch-tag small {
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--ink-3);
+  }
+  .ch-tag:hover { color: var(--ink-2); }
+  .ch-tag.is-on {
+    color: var(--ink);
+    background: var(--well);
+    box-shadow: inset 0 2px 0 var(--cu), inset -1px 0 0 var(--line);
+  }
+  .ch-tag.is-dead { opacity: .7; }
+  .ch-tag .pip {
+    width: 6px; height: 6px;
+    background: #2a241c;
+  }
+  .ch-tag.is-on .pip { background: var(--cu); }
+  .ch-tag.is-dead .pip { background: var(--ink-3); }
+
+  .patch {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows .22s ease;
+    margin: 0;
+  }
+  .patch.is-open { grid-template-rows: 1fr; }
+  .patch-inner {
+    overflow: hidden;
+    min-height: 0;
+  }
+  .patch-board {
+    background: #18140f;
+    box-shadow: inset 0 -1px 0 var(--line);
+    padding: 16px 18px 18px;
+  }
+  .patch-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .patch-top h2 {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .patch-top p { color: var(--ink-3); font-size: 14px; }
+  .jacks { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .jack {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    background: var(--panel);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .socket {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 50%, #0e0b08 0 28%, #2a241c 32% 48%, #1a1510 52% 100%);
+    box-shadow:
+      inset 0 2px 4px rgba(0,0,0,.8),
+      0 0 0 1px #3a3228,
+      0 0 0 4px #241e18,
+      0 0 0 5px #3a3228;
+  }
+  .socket.is-in {
+    background:
+      radial-gradient(circle at 50% 50%, #3a2e1c 0 30%, #c4a06a 34% 46%, #1a1510 50% 100%);
+  }
+  .jack h3 { font-size: 14px; font-weight: 500; color: var(--ink); }
+  .jack .meta { color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+  .secret { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--ink-2); min-width: 0; }
+  .secret code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .linkish {
+    flex-shrink: 0;
+    color: var(--cu);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    padding: 0;
+  }
+  .probes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 22px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+  }
+
+  .fetch-tray {
+    display: none;
+    margin: 0;
+    background: #1a1510;
+    box-shadow: inset 0 -1px 0 var(--line);
+    padding: 14px 16px;
+  }
+  .fetch-tray.is-open { display: block; }
+  .fetch-tray h2 {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .fetch-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 7px 0;
+    border-top: 1px solid #2e2720;
+    color: var(--ink-2);
+  }
+  .fetch-row:first-of-type { border-top: 0; }
+  .pill-mute {
+    color: var(--ink-3);
+    letter-spacing: 0.1em;
+    font-size: 12px;
+  }
+
+  .rack {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+    gap: 8px;
+    padding: 12px;
+  }
+  @media (min-width: 1180px) {
+    .rack { grid-template-columns: repeat(5, 1fr); }
+  }
+  .mod {
+    position: relative;
+    background:
+      linear-gradient(180deg, #2a231c 0%, #221c16 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(240,214,180,.07),
+      inset 0 0 0 1px #322a22,
+      0 1px 0 #100c09,
+      0 8px 16px rgba(0,0,0,.22);
+    padding: 14px 14px 12px;
+    min-height: 268px;
+    display: flex;
+    flex-direction: column;
+    transition: opacity .18s, filter .18s;
+  }
+  .mod::before, .mod::after {
+    content: "";
+    position: absolute;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #4a4036, #1a1510);
+    box-shadow: inset 0 1px 1px rgba(0,0,0,.7);
+  }
+  .mod::before { top: 8px; right: 8px; }
+  .mod::after { bottom: 8px; right: 8px; }
+  .mod.is-dim { opacity: .38; filter: saturate(.6); }
+  .mod.is-off { background: linear-gradient(180deg, #221c16, #1a1510); }
+  .mod-ch {
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .mod-name {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.25;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .mod-q {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--ink-3);
+    font-size: 13px;
+    min-width: 0;
+  }
+  .mod-q code {
+    color: var(--ink-2);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .copy {
+    color: var(--cu);
+    letter-spacing: 0.08em;
+    font-size: 13px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .copy:hover { color: var(--ink); }
+  .mod-lamps {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mod-foot {
+    margin-top: auto;
+    padding-top: 14px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  /* ── 钥匙槽 ── */
+  .slots {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .slot {
+    background: var(--panel);
+    box-shadow: inset 0 0 0 1px var(--line), inset 0 2px 10px rgba(0,0,0,.25);
+    padding: 16px 16px 14px;
+    min-height: 260px;
+    display: flex;
+    flex-direction: column;
+  }
+  .slot-idx {
+    display: flex;
+    justify-content: space-between;
+    color: var(--ink-3);
+    letter-spacing: 0.18em;
+    font-size: 11px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .slot h2 {
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .keywell {
+    margin: 16px 0 12px;
+    height: 54px;
+    background: var(--well);
+    box-shadow: inset 0 3px 8px rgba(0,0,0,.65), 0 0 0 1px #100c09;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .keywell::before {
+    content: "";
+    position: absolute;
+    left: 18px; right: 18px;
+    height: 10px;
+    border-radius: 1px;
+    background: #0e0b08;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.8);
+  }
+  .keyblade {
+    position: relative;
+    z-index: 1;
+    width: 72%;
+    height: 18px;
+    background: linear-gradient(180deg, #c4a06a, #8a6a34);
+    clip-path: polygon(0 4px, 10px 0, 100% 0, 100% 100%, 10px 100%, 0 calc(100% - 4px));
+    box-shadow: 0 2px 4px rgba(0,0,0,.4);
+    transition: transform .2s ease, opacity .2s;
+  }
+  .slot.is-out .keyblade {
+    transform: translateX(28%) rotate(-8deg);
+    opacity: .28;
+  }
+  .slot-meta { color: var(--ink-2); font-size: 13px; }
+  .slot-meta + .slot-meta { margin-top: 4px; color: var(--ink-3); }
+  .slot-actions {
+    margin-top: auto;
+    padding-top: 14px;
+    display: flex;
+    gap: 8px;
+  }
+
+  /* ── 磁带流水 ── */
+  .tape-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .sel {
+    height: 34px;
+    padding: 0 10px;
+    background: var(--well);
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--ink-2);
+    min-width: 200px;
+  }
+  .tape {
+    background: var(--well);
+    box-shadow: inset 0 2px 8px rgba(0,0,0,.45), 0 0 0 1px #100c09;
+    padding: 6px 0;
+  }
+  .specline {
+    display: grid;
+    grid-template-columns: 28px 52px 1fr auto;
+    gap: 12px;
+    align-items: center;
+    height: 58px;
+    padding: 0 16px 0 0;
+    width: 100%;
+    text-align: left;
+    color: var(--ink);
+    border-bottom: 1px solid #2a241c;
+    position: relative;
+  }
+  .specline:last-child { border-bottom: 0; }
+  .specline:hover { background: #1e1914; }
+  .specline.is-on { background: #2a221a; box-shadow: inset 0 0 0 1px var(--cu-dim); }
+  .specline.is-bad {
+    background: linear-gradient(90deg, var(--fail-well), transparent 42%);
+  }
+  .sprocket {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-evenly;
+    height: 100%;
+    background: #120e0a;
+  }
+  .sprocket span {
+    width: 8px; height: 8px;
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1px #2a241c;
+  }
+  .st {
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--ink-2);
+  }
+  .specline.is-bad .st { color: #f0c4ba; }
+  .sl-main { min-width: 0; }
+  .sl-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sl-sub {
+    color: var(--ink-3);
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sl-side {
+    text-align: right;
+    color: var(--ink-3);
+    font-size: 14px;
+  }
+  .word {
+    display: inline-block;
+    color: #f0c4ba;
+    letter-spacing: 0.04em;
+  }
+  .hidden { display: none !important; }
+
+  .dock {
+    position: fixed;
+    top: var(--strip-h);
+    right: 0;
+    bottom: 0;
+    width: min(420px, 100%);
+    background: #1f1a15;
+    box-shadow:
+      -12px 0 32px rgba(0,0,0,.4),
+      inset 1px 0 0 var(--line);
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+  }
+  .dock.is-open { transform: translateX(0); }
+  .dock-h {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 20px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .dock-h h2 {
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .x {
+    width: 32px; height: 32px;
+    color: var(--ink-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .x:hover { color: var(--ink); }
+  .dock-b { padding: 18px 20px 32px; overflow: auto; }
+  .kv { display: grid; grid-template-columns: 108px 1fr; gap: 8px 12px; }
+  .kv dt { color: var(--ink-3); }
+  .kv dd { color: var(--ink); word-break: break-all; }
+  .raw {
+    margin-top: 18px;
+    padding: 12px;
+    background: var(--well);
+    box-shadow: inset 0 0 0 1px #100c09;
+    color: var(--ink-2);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ── 接入点：命名总线 ── */
+  .buses { display: grid; gap: 12px; }
+  .bus {
+    display: grid;
+    grid-template-columns: 220px 1fr minmax(200px, 260px) auto;
+    gap: 16px;
+    align-items: center;
+    background: var(--panel);
+    box-shadow: inset 0 0 0 1px var(--line);
+    padding: 20px 22px;
+    min-height: 108px;
+  }
+  .bus-name {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .bus-k {
+    color: var(--ink-3);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .cord {
+    height: 2px;
+    background:
+      repeating-linear-gradient(90deg, var(--cu-dim) 0 8px, transparent 8px 12px);
+    position: relative;
+    margin: 0 8px;
+  }
+  .cord::before, .cord::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 50%, #0e0b08 0 30%, #c4a06a 36% 48%, #1a1510 52%);
+    box-shadow: 0 0 0 1px #3a3228;
+    transform: translateY(-50%);
+  }
+  .cord::before { left: -6px; }
+  .cord::after { right: -6px; }
+  .cand { color: var(--ink-2); }
+  .bus-state { justify-self: end; }
+
+  /* ── 排行柱 ── */
+  .rank-tools { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  .seg { display: flex; }
+  .rank-stage {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 36px;
+    align-items: stretch;
+    min-height: 460px;
+  }
+  .cols-wrap {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 8px;
+    background: var(--well);
+    box-shadow: inset 0 2px 10px rgba(0,0,0,.5), 0 0 0 1px #100c09;
+    padding: 18px 16px 12px;
+  }
+  .scale {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    color: var(--ink-3);
+    font-size: 11px;
+    text-align: right;
+    padding: 0 0 28px;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    align-items: end;
+    height: 420px;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+  }
+  .stack {
+    width: 56px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    box-shadow:
+      inset 0 0 0 1px #3a3228,
+      0 0 0 3px #1a1510,
+      0 0 0 4px #3a3228;
+    background:
+      repeating-linear-gradient(180deg,
+        transparent 0 19px,
+        #2a241c 19px 20px);
+  }
+  .seg-out {
+    background: var(--out);
+    box-shadow: inset 0 1px 0 rgba(240,214,180,.12);
+  }
+  .seg-in {
+    background: var(--in);
+    box-shadow: inset 0 1px 0 rgba(240,214,180,.18);
+  }
+  .col-lab {
+    margin-top: 10px;
+    color: var(--ink-3);
+    font-size: 11px;
+    text-align: center;
+    letter-spacing: 0.02em;
+    line-height: 1.3;
+    max-width: 100%;
+    word-break: break-all;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    color: var(--ink-3);
+    font-size: 12px;
+  }
+  .legend b { font-weight: 500; }
+  .sw { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+  .olist { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+  .orow {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 12px;
+    align-items: baseline;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  .ono {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 28px;
+    letter-spacing: -0.04em;
+    color: var(--ink-2);
+    line-height: 1;
+  }
+  .oname { color: var(--ink); font-size: 15px; }
+  .osub { color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+  .opct { color: var(--ink-2); font-size: 18px; font-variant-numeric: tabular-nums; }
+  .total {
+    margin-top: 18px;
+    color: var(--ink-3);
+    letter-spacing: 0.08em;
+  }
+  .total strong { color: var(--ink); font-weight: 500; }
+
+  /* ── 面板 / 表单 ── */
+  .sheet {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(10,8,6,.55);
+  }
+  .sheet.is-open { display: flex; align-items: flex-start; justify-content: center; padding: 12vh 20px 40px; }
+  .sheet-card {
+    width: min(440px, 100%);
+    background: var(--panel);
+    box-shadow: 0 20px 50px rgba(0,0,0,.5), inset 0 0 0 1px var(--line);
+    padding: 22px 22px 20px;
+  }
+  .sheet-card h2 {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 6px;
+  }
+  .sheet-card .lede { margin: 0 0 16px; }
+  .fld { margin-bottom: 12px; }
+  .fld label {
+    display: block;
+    color: var(--ink-3);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .fld input, .fld select {
+    width: 100%;
+    height: 36px;
+    padding: 0 10px;
+    background: var(--well);
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--ink);
+  }
+  .row-btns { display: flex; gap: 8px; margin-top: 16px; }
+
+  .toast {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--panel);
+    color: var(--ink);
+    padding: 8px 14px;
+    box-shadow: 0 8px 20px rgba(0,0,0,.4), inset 0 0 0 1px var(--line);
+    letter-spacing: 0.08em;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s, transform .18s;
+    z-index: 90;
+  }
+  .toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 920px) {
+    .page { padding: 24px 16px 72px; }
+    .page-head { flex-direction: column; align-items: flex-start; }
+    .rank-stage, .bus { grid-template-columns: 1fr; }
+    .bus { min-height: 0; }
+    .cord { margin: 16px 20px; }
+    .strip { padding: 0 10px; }
+    .brand span:not(.mark) { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="strip">
+  <div class="strip-ticks" aria-hidden="true"></div>
+  <div class="brand">
+    <svg class="mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+    </svg>
+    <em>Portage</em>
+  </div>
+  <nav class="bank" aria-label="主导航">
+    <button class="sq is-on" data-go="models" type="button"><i></i><b>模型</b></button>
+    <button class="sq" data-go="keys" type="button"><i></i><b>钥匙</b></button>
+    <button class="sq" data-go="logs" type="button"><i></i><b>记录</b></button>
+    <button class="sq" data-go="aps" type="button"><i></i><b>接入</b></button>
+    <button class="sq" data-go="rank" type="button"><i></i><b>排行</b></button>
+  </nav>
+  <div class="acct-wrap">
+    <button class="acct" id="acct-btn" type="button"><i></i>账号</button>
+    <div class="acct-menu" id="acct-menu">
+      <button type="button" id="btn-pw">改密码</button>
+      <button type="button" id="btn-out">退出</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- 模型 -->
+  <section class="page is-on" id="page-models">
+    <div class="page-head">
+      <div>
+        <h1 class="verb">纳管这些模型</h1>
+        <p class="lede">五个模块插在三家上游的槽位里。限定名 <code>渠道名/模型名</code> 可直接给客户端，不必先建接入点。</p>
+      </div>
+    </div>
+
+    <div class="rack-tools">
+      <button class="plunger hero" id="btn-fetch" type="button">
+        <span class="plunger-cap"></span>
+        <span>获取模型列表</span>
+      </button>
+    </div>
+
+    <div class="chassis">
+      <div class="ch-tags" role="tablist" aria-label="按渠道分组">
+        <button class="ch-tag" data-ch="anthropic" type="button"><span class="pip"></span>anthropic <small>2 凭证</small></button>
+        <button class="ch-tag" data-ch="bailian" type="button"><span class="pip"></span>bailian <small>1 凭证</small></button>
+        <button class="ch-tag is-dead" data-ch="openai" type="button"><span class="pip"></span>openai <small>停用</small></button>
+      </div>
+      <div class="fetch-tray" id="fetch-tray"></div>
+      <div class="patch" id="patch">
+        <div class="patch-inner">
+          <div class="patch-board" id="patch-board"></div>
+        </div>
+      </div>
+      <div class="rack" id="rack"></div>
+    </div>
+  </section>
+
+  <!-- API Key -->
+  <section class="page" id="page-keys">
+    <div class="page-head">
+      <div>
+        <h1 class="verb">签发一把钥匙</h1>
+        <p class="lede">客户端拿它调网关（<code>x-api-key</code> 或 <code>Authorization: Bearer</code>）。跟渠道里那份上游凭证是两回事，也跟管理端密码是两回事。</p>
+      </div>
+      <button class="plunger" id="btn-new-key" type="button">
+        <span class="plunger-cap"></span>
+        <span>新建一把</span>
+      </button>
+    </div>
+    <div class="slots" id="slots"></div>
+  </section>
+
+  <!-- 调用记录 -->
+  <section class="page" id="page-logs">
+    <div class="page-head">
+      <div>
+        <h1 class="verb">刚才那几次怎么样</h1>
+        <p class="lede">失败行点亮并写出词表里的那个词。点开右侧看 request-id；上游原文只在失败行。</p>
+      </div>
+      <div class="tape-tools">
+        <button class="hw" id="flt-all" type="button"><i></i>全部</button>
+        <button class="hw is-fail" id="flt-bad" type="button"><i></i>只看失败</button>
+        <select class="sel" id="flt-model" aria-label="按模型筛">
+          <option value="">全部模型</option>
+          <option value="claude-sonnet-4">claude-sonnet-4</option>
+          <option value="claude-opus-4">claude-opus-4</option>
+          <option value="qwen3-max">qwen3-max</option>
+          <option value="gpt-4o">gpt-4o</option>
+        </select>
+      </div>
+    </div>
+    <div class="tape" id="tape"></div>
+  </section>
+
+  <!-- 接入点 -->
+  <section class="page" id="page-aps">
+    <div class="page-head">
+      <div>
+        <h1 class="verb">给模型起个对外的名字</h1>
+        <p class="lede">只想直连用限定名即可，不必建。接入点是别名：对外一个名字，绑一个候选（渠道 + 纳管模型）。</p>
+      </div>
+      <button class="plunger" id="btn-new-ap" type="button">
+        <span class="plunger-cap"></span>
+        <span>起一个名字</span>
+      </button>
+    </div>
+    <div class="buses">
+      <article class="bus">
+        <div>
+          <div class="bus-k">对外名</div>
+          <div class="bus-name">sonnet</div>
+        </div>
+        <div class="cord" aria-hidden="true"></div>
+        <div>
+          <div class="bus-k">候选</div>
+          <div class="cand">anthropic / claude-sonnet-4</div>
+        </div>
+        <span class="lamp is-ok"><i></i>启用</span>
+      </article>
+      <article class="bus">
+        <div>
+          <div class="bus-k">对外名</div>
+          <div class="bus-name">qwen-max</div>
+        </div>
+        <div class="cord" aria-hidden="true"></div>
+        <div>
+          <div class="bus-k">候选</div>
+          <div class="cand">bailian / qwen3-max</div>
+        </div>
+        <span class="lamp is-ok"><i></i>启用</span>
+      </article>
+    </div>
+  </section>
+
+  <!-- 排行 -->
+  <section class="page" id="page-rank">
+    <div class="page-head">
+      <div>
+        <h1 class="verb">谁在烧</h1>
+        <p class="lede">名次按 token 合计。柱是输入 / 输出两段叠，不是贵贱。占比分母是这一窗的合计。</p>
+      </div>
+      <div class="rank-tools">
+        <div class="seg" id="dim-seg">
+          <button class="hw is-on" data-dim="model" type="button"><i></i>按模型</button>
+          <button class="hw" data-dim="key" type="button"><i></i>按 API Key</button>
+          <button class="hw" data-dim="credential" type="button"><i></i>按上游凭证</button>
+        </div>
+        <div class="seg" id="day-seg">
+          <button class="hw" data-days="1" type="button"><i></i>1 天</button>
+          <button class="hw is-on" data-days="7" type="button"><i></i>7 天</button>
+          <button class="hw" data-days="30" type="button"><i></i>30 天</button>
+        </div>
+      </div>
+    </div>
+    <div class="rank-stage">
+      <div>
+        <div class="cols-wrap">
+          <div class="scale" id="scale"></div>
+          <div>
+            <div class="cols" id="cols"></div>
+            <div class="legend">
+              <span><i class="sw" style="background:var(--in)"></i>输入</span>
+              <span><i class="sw" style="background:var(--out)"></i>输出</span>
+              <span>思考是输出的明细，不另加一截</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <ol class="olist" id="olist"></ol>
+        <p class="total" id="total"></p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<aside class="dock" id="dock" aria-hidden="true">
+  <div class="dock-h">
+    <h2>这一次</h2>
+    <button class="x" id="dock-x" type="button" aria-label="关闭">×</button>
+  </div>
+  <div class="dock-b" id="dock-b"></div>
+</aside>
+
+<div class="sheet" id="sheet-pw">
+  <div class="sheet-card">
+    <h2>改密码</h2>
+    <p class="lede">只动管理端账号，不动 API Key，也不动上游凭证。</p>
+    <div class="fld"><label>当前密码</label><input type="password" autocomplete="current-password" /></div>
+    <div class="fld"><label>新密码</label><input type="password" autocomplete="new-password" /></div>
+    <div class="fld"><label>再写一遍</label><input type="password" autocomplete="new-password" /></div>
+    <div class="row-btns">
+      <button class="plunger" type="button" data-close-sheet><span class="plunger-cap"></span><span>写下</span></button>
+      <button class="hw" type="button" data-close-sheet><i></i>取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet-key">
+  <div class="sheet-card">
+    <h2>签发一把钥匙</h2>
+    <p class="lede">明文只在创建当下露一次。白名单写客户端 <code>model</code> 字段：接入点名或限定名。</p>
+    <div class="fld"><label>名称</label><input placeholder="例如 desktop" /></div>
+    <div class="fld">
+      <label>模型白名单</label>
+      <select>
+        <option value="*">* （全部）</option>
+        <option>sonnet</option>
+        <option>qwen-max</option>
+        <option>anthropic/claude-sonnet-4</option>
+        <option>anthropic/claude-opus-4</option>
+        <option>bailian/qwen3-max</option>
+      </select>
+    </div>
+    <div class="row-btns">
+      <button class="plunger" type="button" data-close-sheet><span class="plunger-cap"></span><span>签发</span></button>
+      <button class="hw" type="button" data-close-sheet><i></i>取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet-ap">
+  <div class="sheet-card">
+    <h2>起一个名字</h2>
+    <p class="lede">绑一个候选。只想直连用限定名即可，不必建。</p>
+    <div class="fld"><label>对外名</label><input placeholder="例如 opus" /></div>
+    <div class="fld">
+      <label>候选</label>
+      <select>
+        <option>anthropic / claude-sonnet-4</option>
+        <option>anthropic / claude-opus-4</option>
+        <option>bailian / qwen3-max</option>
+        <option>bailian / qwen3-coder-plus</option>
+      </select>
+    </div>
+    <div class="row-btns">
+      <button class="plunger" type="button" data-close-sheet><span class="plunger-cap"></span><span>写上</span></button>
+      <button class="hw" type="button" data-close-sheet><i></i>取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  const CHANNELS = {
+    anthropic: {
+      name: "anthropic",
+      on: true,
+      protocols: ["anthropic"],
+      creds: [
+        { name: "生产号", on: true, mask: "sk-ant-api03-7k…x2", full: "sk-ant-api03-7k2m············c91x2", note: "启用" },
+        { name: "备用号", on: false, mask: "sk-ant-api03-9p…w8", full: "sk-ant-api03-9p4c············d33w8", note: "已摘 · 401" }
+      ],
+      probes: [
+        { proto: "anthropic", path: "/v1/messages", ok: true, text: "通过 · 生产号" },
+        { proto: "anthropic", path: "/v1/messages", ok: false, text: "401 · 备用号已摘" }
+      ]
+    },
+    bailian: {
+      name: "bailian",
+      on: true,
+      protocols: ["openai", "openai_responses"],
+      creds: [
+        { name: "主号", on: true, mask: "sk-bai-8c…19", full: "sk-bai-8c31············aa19", note: "启用" }
+      ],
+      probes: [
+        { proto: "openai", path: "/v1/chat/completions", ok: true, text: "通过" },
+        { proto: "openai_responses", path: "/v1/responses", ok: true, text: "通过" }
+      ]
+    },
+    openai: {
+      name: "openai",
+      on: false,
+      protocols: ["openai"],
+      creds: [
+        { name: "默认", on: false, mask: "sk-proj-4e…0c", full: "sk-proj-4e22············110c", note: "渠道已停" }
+      ],
+      probes: [
+        { proto: "openai", path: "/v1/chat/completions", ok: false, text: "未探测 · 渠道停用" }
+      ]
+    }
+  };
+
+  const PROTOCOLS = ["anthropic", "openai", "openai_responses"];
+
+  const MODELS = [
+    { ch: "anthropic", name: "claude-sonnet-4", on: true, protos: ["anthropic"] },
+    { ch: "anthropic", name: "claude-opus-4", on: true, protos: ["anthropic"] },
+    { ch: "bailian", name: "qwen3-max", on: true, protos: ["openai", "openai_responses"] },
+    { ch: "bailian", name: "qwen3-coder-plus", on: false, protos: ["openai", "openai_responses"] },
+    { ch: "openai", name: "gpt-4o", on: false, protos: ["openai"], chDown: true }
+  ];
+
+  const KEYS = [
+    { name: "claude-code", mask: "sk-ptg-8f2a…c91d", full: "sk-ptg-8f2a9c3e7b1d44c91d", allow: "*", on: true, when: "2026-07-02" },
+    { name: "codex-laptop", mask: "sk-ptg-11b0…44e2", full: "sk-ptg-11b07e4a22c844e2", allow: "anthropic/claude-sonnet-4", on: true, when: "2026-08-01" },
+    { name: "old-script", mask: "原值没存过", full: "", allow: "—", on: false, when: "2026-03-18" }
+  ];
+
+  const LOGS = [
+    {
+      id: "l1", t: "08-16 14:02:11", status: 200, req: "claude-sonnet-4", up: "anthropic / claude-sonnet-4",
+      q: "claude-sonnet-4", key: "claude-code",
+      cin: "12.4k", cout: "802", think: "640", ttfb: "380ms",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Ff3a1b9c2"
+    },
+    {
+      id: "l2", t: "08-16 14:01:58", status: 200, req: "bailian/qwen3-max", up: "bailian / qwen3-max",
+      q: "qwen3-max", key: "claude-code",
+      cin: "3.1k", cout: "410",
+      client: "openai", upProto: "openai", rid: "chatcmpl-9k2"
+    },
+    {
+      id: "l3", t: "08-16 14:01:44", status: 429, req: "claude-opus-4", up: "anthropic / claude-opus-4",
+      q: "claude-opus-4", key: "claude-code",
+      err: "queue_timeout", wait: "30012",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Ee7k2a4d8",
+      raw: null, rawNote: "失败发生在拿到响应体之前（渠道并发闸排队超时 30s）。这一行没有上游原文。"
+    },
+    {
+      id: "l4", t: "08-16 13:58:02", status: 200, req: "anthropic/claude-sonnet-4", up: "anthropic / claude-sonnet-4",
+      q: "claude-sonnet-4", key: "codex-laptop",
+      cin: "9.1k", cout: "220", ttfb: "190ms", cache: "读 8.2k",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Dd2c8e011"
+    },
+    {
+      id: "l5", t: "08-16 13:55:17", status: 401, req: "（未记录模型）", up: "—",
+      q: "", key: "—",
+      err: "unauthorized",
+      client: "openai", upProto: "", rid: "",
+      raw: null, rawNote: "失败发生在鉴权，没走到上游。没有 request-id，也没有上游原文。"
+    },
+    {
+      id: "l6", t: "08-16 13:52:40", status: 200, req: "sonnet", up: "anthropic / claude-sonnet-4",
+      q: "claude-sonnet-4", key: "claude-code",
+      cin: "2.8k", cout: "156", ttfb: "210ms",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Cc9b0f773"
+    },
+    {
+      id: "l7", t: "08-16 13:48:11", status: 403, req: "gpt-4o", up: "—",
+      q: "gpt-4o", key: "old-script",
+      err: "model_not_allowed",
+      client: "openai", upProto: "", rid: "",
+      raw: null, rawNote: "白名单拦住了，没走到上游。old-script 已停，且不在可访问模型里。"
+    },
+    {
+      id: "l8", t: "08-16 13:41:05", status: 200, req: "anthropic/claude-opus-4", up: "anthropic / claude-opus-4",
+      q: "claude-opus-4", key: "claude-code",
+      cin: "6.1k", cout: "1.2k", think: "890", ttfb: "520ms",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Bb4e3910a"
+    },
+    {
+      id: "l9", t: "08-16 13:22:18", status: 429, req: "qwen-max", up: "bailian / qwen3-max",
+      q: "qwen3-max", key: "claude-code",
+      cin: "1.4k", err: "rate_limited",
+      client: "openai", upProto: "openai", rid: "",
+      raw: "{\"error\":{\"message\":\"You exceeded your current quota\",\"type\":\"insufficient_quota\"}}"
+    },
+    {
+      id: "l10", t: "08-16 13:10:03", status: 200, req: "anthropic/claude-sonnet-4", up: "anthropic / claude-sonnet-4",
+      q: "claude-sonnet-4", key: "codex-laptop",
+      cin: "890", cout: "44", ttfb: "160ms", cache: "写 890",
+      client: "anthropic", upProto: "anthropic", rid: "req_018Aa1f72c44"
+    }
+  ];
+
+  const RANK = {
+    1: {
+      total: "1.11M",
+      model: [
+        { name: "claude-sonnet-4", inn: 0.58, out: 0.10, tot: 0.68, pct: "61.3%" },
+        { name: "qwen3-max", inn: 0.25, out: 0.04, tot: 0.29, pct: "26.1%" },
+        { name: "claude-opus-4", inn: 0.08, out: 0.03, tot: 0.11, pct: "9.9%" },
+        { name: "gpt-4o", inn: 0.026, out: 0.004, tot: 0.03, pct: "2.7%" }
+      ],
+      key: [
+        { name: "claude-code", inn: 0.67, out: 0.12, tot: 0.79, pct: "71.2%" },
+        { name: "codex-laptop", inn: 0.25, out: 0.04, tot: 0.29, pct: "26.1%" },
+        { name: "old-script", inn: 0.026, out: 0.004, tot: 0.03, pct: "2.7%" }
+      ],
+      credential: [
+        { name: "生产号", sub: "anthropic", inn: 0.66, out: 0.13, tot: 0.79, pct: "71.2%" },
+        { name: "主号", sub: "bailian", inn: 0.25, out: 0.04, tot: 0.29, pct: "26.1%" },
+        { name: "默认", sub: "openai", inn: 0.026, out: 0.004, tot: 0.03, pct: "2.7%" }
+      ]
+    },
+    7: {
+      total: "8.32M",
+      model: [
+        { name: "claude-sonnet-4", inn: 4.12, out: 0.70, tot: 4.82, pct: "57.9%" },
+        { name: "qwen3-max", inn: 1.78, out: 0.32, tot: 2.10, pct: "25.2%" },
+        { name: "claude-opus-4", inn: 0.82, out: 0.26, tot: 1.08, pct: "13.0%" },
+        { name: "gpt-4o", inn: 0.28, out: 0.04, tot: 0.32, pct: "3.9%" }
+      ],
+      key: [
+        { name: "claude-code", inn: 5.04, out: 0.87, tot: 5.91, pct: "71.0%" },
+        { name: "codex-laptop", inn: 1.88, out: 0.33, tot: 2.21, pct: "26.6%" },
+        { name: "old-script", inn: 0.18, out: 0.02, tot: 0.20, pct: "2.4%" }
+      ],
+      credential: [
+        { name: "生产号", sub: "anthropic", inn: 4.94, out: 0.96, tot: 5.90, pct: "70.9%" },
+        { name: "主号", sub: "bailian", inn: 1.78, out: 0.32, tot: 2.10, pct: "25.2%" },
+        { name: "默认", sub: "openai", inn: 0.28, out: 0.04, tot: 0.32, pct: "3.9%" }
+      ]
+    },
+    30: {
+      total: "34.0M",
+      model: [
+        { name: "claude-sonnet-4", inn: 15.7, out: 2.7, tot: 18.4, pct: "54.1%" },
+        { name: "qwen3-max", inn: 7.9, out: 1.3, tot: 9.2, pct: "27.1%" },
+        { name: "claude-opus-4", inn: 3.8, out: 1.3, tot: 5.1, pct: "15.0%" },
+        { name: "gpt-4o", inn: 1.14, out: 0.16, tot: 1.3, pct: "3.8%" }
+      ],
+      key: [
+        { name: "claude-code", inn: 20.4, out: 3.7, tot: 24.1, pct: "70.9%" },
+        { name: "codex-laptop", inn: 7.3, out: 1.3, tot: 8.6, pct: "25.3%" },
+        { name: "old-script", inn: 1.14, out: 0.16, tot: 1.3, pct: "3.8%" }
+      ],
+      credential: [
+        { name: "生产号", sub: "anthropic", inn: 19.5, out: 4.0, tot: 23.5, pct: "69.1%" },
+        { name: "主号", sub: "bailian", inn: 7.9, out: 1.3, tot: 9.2, pct: "27.1%" },
+        { name: "默认", sub: "openai", inn: 1.14, out: 0.16, tot: 1.3, pct: "3.8%" }
+      ]
+    }
+  };
+
+  const FETCHED = {
+    anthropic: [
+      { name: "claude-sonnet-4", have: true },
+      { name: "claude-opus-4", have: true },
+      { name: "claude-haiku-4", have: false }
+    ],
+    bailian: [
+      { name: "qwen3-max", have: true },
+      { name: "qwen3-coder-plus", have: true },
+      { name: "qwen-plus", have: false }
+    ],
+    openai: [
+      { name: "gpt-4o", have: true },
+      { name: "gpt-4o-mini", have: false }
+    ]
+  };
+
+  let page = "models";
+  let chSel = "";
+  let failOnly = false;
+  let modelFlt = "";
+  let logSel = "";
+  let dim = "model";
+  let days = 7;
+  const shown = { keys: {}, creds: {} };
+
+  function toast(msg) {
+    const el = $("#toast");
+    el.textContent = msg;
+    el.classList.add("is-on");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("is-on"), 1600);
+  }
+
+  function copyText(t) {
+    const ok = () => toast("已复制");
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(t).then(ok).catch(fallback);
+    } else fallback();
+    function fallback() {
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); ok(); } catch (e) { toast(t); }
+      document.body.removeChild(ta);
+    }
+  }
+
+  function go(id) {
+    page = id;
+    $$(".page").forEach((p) => p.classList.toggle("is-on", p.id === "page-" + id));
+    $$(".sq").forEach((b) => b.classList.toggle("is-on", b.dataset.go === id));
+    if (id !== "logs") closeDock();
+    $("#acct-menu").classList.remove("is-open");
+  }
+
+  $$(".sq").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+
+  /* 账号 */
+  $("#acct-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("#acct-menu").classList.toggle("is-open");
+  });
+  document.addEventListener("click", () => $("#acct-menu").classList.remove("is-open"));
+  $("#btn-pw").addEventListener("click", () => $("#sheet-pw").classList.add("is-open"));
+  $("#btn-out").addEventListener("click", () => toast("这是原型，退出不接线"));
+  $$("[data-close-sheet]").forEach((b) => {
+    b.addEventListener("click", () => {
+      b.closest(".sheet").classList.remove("is-open");
+      if (b.classList.contains("plunger")) toast("原型不写回");
+    });
+  });
+  $$(".sheet").forEach((s) => s.addEventListener("click", (e) => {
+    if (e.target === s) s.classList.remove("is-open");
+  }));
+  $("#btn-new-key").addEventListener("click", () => $("#sheet-key").classList.add("is-open"));
+  $("#btn-new-ap").addEventListener("click", () => $("#sheet-ap").classList.add("is-open"));
+
+  /* 机架 */
+  function lampClass(on, kind) {
+    if (kind === "ok") return on ? "lamp is-ok" : "lamp is-off";
+    if (kind === "bad") return on ? "lamp is-bad" : "lamp is-off";
+    return on ? "lamp is-on" : "lamp is-off";
+  }
+
+  function renderRack() {
+    const root = $("#rack");
+    root.innerHTML = MODELS.map((m, i) => {
+      const q = m.ch + "/" + m.name;
+      const chOn = CHANNELS[m.ch].on;
+      const dimmed = chSel && chSel !== m.ch;
+      const lamps = PROTOCOLS.map((p) => {
+        const on = m.protos.includes(p);
+        return `<span class="${lampClass(on)}"><i></i>${p}</span>`;
+      }).join("");
+      return `<article class="mod${m.on && chOn ? "" : " is-off"}${dimmed ? " is-dim" : ""}" data-ch="${m.ch}">
+        <div class="mod-ch">
+          <span>${m.ch}</span>
+          <span class="${lampClass(chOn, chOn ? "ok" : "bad")}"><i></i>${chOn ? "渠道启用" : "渠道停用"}</span>
+        </div>
+        <div class="mod-name">${m.name}</div>
+        <div class="mod-q"><code title="${q}">${q}</code><button class="copy" type="button" data-copy="${q}">复制</button></div>
+        <div class="mod-lamps">${lamps}</div>
+        <div class="mod-foot">
+          <button class="lever${m.on ? " is-on" : ""}" type="button" data-lever="${i}">
+            <span class="lever-track"><span class="lever-knob"></span></span>
+            <b>${m.on ? "启用" : "停用"}</b>
+          </button>
+          ${m.chDown ? `<span class="lamp is-bad"><i></i>渠道已停</span>` : ""}
+        </div>
+      </article>`;
+    }).join("");
+  }
+
+  function renderPatch() {
+    const wrap = $("#patch");
+    const board = $("#patch-board");
+    if (!chSel) {
+      wrap.classList.remove("is-open");
+      return;
+    }
+    const c = CHANNELS[chSel];
+    const jacks = c.creds.map((k, i) => {
+      const id = chSel + "-" + i;
+      const shownV = shown.creds[id];
+      return `<article class="jack">
+        <div class="socket${k.on ? " is-in" : ""}" aria-hidden="true"></div>
+        <div>
+          <h3>${k.name}</h3>
+          <div class="meta"><span class="${lampClass(k.on, k.on ? "ok" : "bad")}"><i></i>${k.note}</span></div>
+          <div class="secret"><code>${shownV && k.full ? k.full : k.mask}</code></div>
+        </div>
+        ${k.full ? `<button class="linkish" type="button" data-reveal-cred="${id}">${shownV ? "掩码" : "显示"}</button>` : ""}
+      </article>`;
+    }).join("");
+    const probes = c.probes.map((p) =>
+      `<span class="${lampClass(p.ok, p.ok ? "ok" : "bad")}"><i></i>${p.proto} ${p.path} · ${p.text}</span>`
+    ).join("");
+    board.innerHTML = `
+      <div class="patch-top">
+        <div>
+          <h2>这家上游 · ${c.name}</h2>
+          <p>协议 ${c.protocols.join(" + ")} · ${c.creds.length} 把凭证 · ${c.on ? "启用" : "停用"}。目标已配置，列表里不写 base_url。</p>
+        </div>
+        <button class="hw" id="btn-probe" type="button"><i></i>探测</button>
+      </div>
+      <div class="jacks">${jacks}</div>
+      <div class="probes">${probes}</div>`;
+    wrap.classList.add("is-open");
+    $("#btn-probe").addEventListener("click", () => toast(c.on ? "探测完成 · 只提示，不落库" : "渠道停用，未发出探测"));
+  }
+
+  $$(".ch-tag").forEach((b) => {
+    b.addEventListener("click", () => {
+      chSel = chSel === b.dataset.ch ? "" : b.dataset.ch;
+      $$(".ch-tag").forEach((x) => x.classList.toggle("is-on", x.dataset.ch === chSel));
+      renderPatch();
+      renderRack();
+    });
+  });
+
+  $("#rack").addEventListener("click", (e) => {
+    const copy = e.target.closest("[data-copy]");
+    if (copy) { copyText(copy.dataset.copy); return; }
+    const lv = e.target.closest("[data-lever]");
+    if (lv) {
+      const i = +lv.dataset.lever;
+      MODELS[i].on = !MODELS[i].on;
+      renderRack();
+    }
+  });
+
+  $("#patch").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-reveal-cred]");
+    if (!b) return;
+    const id = b.dataset.revealCred;
+    shown.creds[id] = !shown.creds[id];
+    renderPatch();
+  });
+
+  $("#btn-fetch").addEventListener("click", () => {
+    const btn = $("#btn-fetch");
+    btn.classList.add("is-down", "is-lit");
+    setTimeout(() => btn.classList.remove("is-down"), 180);
+    const tray = $("#fetch-tray");
+    const src = chSel ? [chSel] : ["anthropic", "bailian"];
+    tray.innerHTML = src.map((ch) => {
+      const rows = FETCHED[ch].map((m) =>
+        `<div class="fetch-row">
+          <code>${ch}/${m.name}</code>
+          <span class="pill-mute">${m.have ? "已纳管" : "未纳管"}</span>
+          ${m.have ? "" : `<button class="hw" type="button" data-adopt="${ch}/${m.name}"><i></i>纳管</button>`}
+        </div>`
+      ).join("");
+      return `<h2>上游回了这些 · ${ch}</h2>${rows}`;
+    }).join("");
+    tray.classList.add("is-open");
+    toast("列表已取回 · 不改机架");
+  });
+  $("#fetch-tray").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-adopt]");
+    if (!b) return;
+    b.replaceWith(Object.assign(document.createElement("span"), { className: "pill-mute", textContent: "已纳管" }));
+    toast("原型不写回机架");
+  });
+
+  /* 钥匙槽 */
+  function renderKeys() {
+    $("#slots").innerHTML = KEYS.map((k, i) => `
+      <article class="slot${k.on ? "" : " is-out"}">
+        <div class="slot-idx"><span>槽 0${i + 1}</span><span>${k.when}</span></div>
+        <h2>${k.name}</h2>
+        <div class="keywell" aria-hidden="true"><div class="keyblade"></div></div>
+        <div class="slot-meta">
+          <code>${shown.keys[i] && k.full ? k.full : k.mask}</code>
+          ${k.full ? ` · <button class="linkish" type="button" data-reveal-key="${i}">${shown.keys[i] ? "掩码" : "显示"}</button>
+          · <button class="linkish" type="button" data-copy="${k.full}">复制</button>` : ""}
+        </div>
+        <div class="slot-meta">白名单 ${k.allow}</div>
+        <div class="slot-actions">
+          <button class="hw${k.on ? " is-on" : ""}" type="button" data-key-toggle="${i}">
+            <i></i>${k.on ? "插上 · 启用" : "拔出 · 停用"}
+          </button>
+        </div>
+      </article>`).join("");
+  }
+  $("#slots").addEventListener("click", (e) => {
+    const r = e.target.closest("[data-reveal-key]");
+    if (r) { shown.keys[+r.dataset.revealKey] = !shown.keys[+r.dataset.revealKey]; renderKeys(); return; }
+    const t = e.target.closest("[data-key-toggle]");
+    if (t) { const i = +t.dataset.keyToggle; KEYS[i].on = !KEYS[i].on; renderKeys(); return; }
+    const c = e.target.closest("[data-copy]");
+    if (c) copyText(c.dataset.copy);
+  });
+
+  /* 磁带 */
+  function subOf(l) {
+    const bits = [];
+    if (l.cin) bits.push(l.cin + " / " + (l.cout || "—"));
+    if (l.think) bits.push("思考 " + l.think);
+    if (l.cache) bits.push("缓存" + l.cache);
+    if (l.ttfb) bits.push("首字 " + l.ttfb);
+    if (l.wait) bits.push("queue_wait_ms " + l.wait);
+    bits.push(l.t);
+    return bits.join("  ·  ");
+  }
+
+  function renderTape() {
+    $("#tape").innerHTML = LOGS.map((l) => {
+      const bad = l.status >= 400;
+      const hide = (failOnly && !bad) || (modelFlt && l.q !== modelFlt);
+      return `<button class="specline${bad ? " is-bad" : ""}${logSel === l.id ? " is-on" : ""}${hide ? " hidden" : ""}" data-log="${l.id}" type="button">
+        <span class="sprocket" aria-hidden="true"><span></span><span></span></span>
+        <span class="st">${l.status}</span>
+        <span class="sl-main">
+          <div class="sl-title">${l.req}${l.up && l.up !== "—" ? " → " + l.up : ""}</div>
+          <div class="sl-sub">${subOf(l)}</div>
+        </span>
+        <span class="sl-side">${l.err ? `<span class="word">${l.err}</span>` : (l.cin ? l.cin + " in" : "")}</span>
+      </button>`;
+    }).join("");
+    $("#flt-all").classList.toggle("is-on", !failOnly);
+    $("#flt-bad").classList.toggle("is-on", failOnly);
+  }
+
+  function openDock(id) {
+    const l = LOGS.find((x) => x.id === id);
+    logSel = id;
+    renderTape();
+    const dock = $("#dock");
+    const rows = [
+      ["时间", l.t],
+      ["状态", l.status + (l.err ? " · " + l.err : " · 成功")],
+      ["请求", l.req],
+      ["上游", l.up],
+      ["端点", l.client + " → " + (l.upProto || "—")],
+      ["API Key", l.key]
+    ];
+    if (l.cin || l.cout) rows.push(["输入 / 输出", (l.cin || "—") + " / " + (l.cout || "—")]);
+    if (l.think) rows.push(["思考", l.think]);
+    if (l.cache) rows.push(["缓存", l.cache]);
+    if (l.ttfb) rows.push(["首字", l.ttfb]);
+    if (l.wait) rows.push(["queue_wait_ms", l.wait]);
+    const rid = l.rid
+      ? `<code>${l.rid}</code> <button class="linkish" type="button" data-copy="${l.rid}">复制</button>`
+      : "—";
+    let raw = "";
+    if (l.status >= 400) {
+      raw = `<pre class="raw">${l.raw ? l.raw : (l.rawNote || "这一行没有存下上游原文。")}</pre>`;
+    }
+    $("#dock-b").innerHTML = `<dl class="kv">${
+      rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")
+    }<dt>上游 request-id</dt><dd>${rid}</dd></dl>${raw}`;
+    dock.classList.add("is-open");
+    dock.setAttribute("aria-hidden", "false");
+  }
+  function closeDock() {
+    logSel = "";
+    $("#dock").classList.remove("is-open");
+    $("#dock").setAttribute("aria-hidden", "true");
+    renderTape();
+  }
+  $("#tape").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-log]");
+    if (b) openDock(b.dataset.log);
+  });
+  $("#dock-x").addEventListener("click", closeDock);
+  $("#dock-b").addEventListener("click", (e) => {
+    const c = e.target.closest("[data-copy]");
+    if (c) copyText(c.dataset.copy);
+  });
+  $("#flt-all").addEventListener("click", () => { failOnly = false; renderTape(); });
+  $("#flt-bad").addEventListener("click", () => { failOnly = true; renderTape(); });
+  $("#flt-model").addEventListener("change", (e) => { modelFlt = e.target.value; renderTape(); });
+
+  /* 排行 */
+  function fmtM(n) {
+    if (n >= 10) return n.toFixed(1) + "M";
+    if (n >= 0.1) return n.toFixed(2) + "M";
+    return n.toFixed(3) + "M";
+  }
+  function niceMax(v) {
+    const pads = [0.8, 1, 2, 3, 5, 6, 8, 10, 15, 20, 25, 30, 40];
+    return pads.find((p) => p >= v * 1.04) || Math.ceil(v / 10) * 10;
+  }
+  function tickLabel(n) {
+    if (n === 0) return "0";
+    if (Number.isInteger(n)) return n + "M";
+    return n.toFixed(1) + "M";
+  }
+  function renderRank() {
+    const pack = RANK[days];
+    const rows = pack[dim];
+    const max = niceMax(Math.max(...rows.map((r) => r.tot)));
+    const ticks = [max, max * 0.75, max * 0.5, max * 0.25, 0].map(tickLabel);
+    $("#scale").innerHTML = ticks.map((t) => `<span>${t}</span>`).join("");
+    $("#cols").style.gridTemplateColumns = "repeat(" + rows.length + ", 1fr)";
+    $("#cols").innerHTML = rows.map((r) => {
+      const h = (r.tot / max) * 100;
+      const sum = r.inn + r.out;
+      return `<div class="col">
+        <div class="stack" style="height:${h}%">
+          <div class="seg-out" style="height:${(r.out / sum) * 100}%"></div>
+          <div class="seg-in" style="height:${(r.inn / sum) * 100}%"></div>
+        </div>
+        <div class="col-lab">${r.name}</div>
+      </div>`;
+    }).join("");
+    $("#olist").innerHTML = rows.map((r, i) => `
+      <li class="orow">
+        <span class="ono">${i + 1}</span>
+        <span>
+          <div class="oname">${r.name}${r.sub ? ` <span class="osub">· ${r.sub}</span>` : ""}</div>
+          <div class="osub">输入 ${fmtM(r.inn)} · 输出 ${fmtM(r.out)} · 合计 ${fmtM(r.tot)}</div>
+        </span>
+        <span class="opct">${r.pct}</span>
+      </li>`).join("");
+    const unit = dim === "model" ? "个模型" : dim === "key" ? "把 API Key" : "份上游凭证";
+    $("#total").innerHTML = `合计 <strong>${pack.total}</strong> · ${rows.length} ${unit} · ${days} 天（占比分母）`;
+    $$("#dim-seg .hw").forEach((b) => b.classList.toggle("is-on", b.dataset.dim === dim));
+    $$("#day-seg .hw").forEach((b) => b.classList.toggle("is-on", +b.dataset.days === days));
+  }
+  $("#dim-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-dim]");
+    if (!b) return;
+    dim = b.dataset.dim;
+    renderRank();
+  });
+  $("#day-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-days]");
+    if (!b) return;
+    days = +b.dataset.days;
+    renderRank();
+  });
+
+  renderRack();
+  renderKeys();
+  renderTape();
+  renderRank();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 17264,
+    "OutputTokens": 33,
+    "CacheReadTokens": 13056,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（PO 2026-08-13 裁定该渠道背后是原生模型，非 Grok 一类自行合成压缩的后端），Codex CLI 0.147 交互式 TUI 打 /compact，2026-08-13。透传判据三条：compaction item 的 encrypted_content 是 Fernet 形态真密文、没有 Grok 本地合成才有的明文 summary 数组、response.completed.output 为空数组（中转若重组响应不会造出这一形态）。**远程压缩的开关是客户端 provider 的 name = \"OpenAI\"**，不是 requires_openai_auth；取别的名字时 /compact 静默走本地压缩，一个 trigger 都不发（#73）。 压缩后的回带一轮。input 里那个 compaction 项的 id 与 encrypted_content 逐字节等于上一份样本 .done 事件里的值——这是「客户端取的是 done 那份」的全部证据，脱敏时刻意保留。另可见 codex 的历史重建：compaction 项前面仍留着压缩前的首条 user 消息（且沿用同一个 msg_ id），后面重新注入 skills 与 environment_context。"
+}

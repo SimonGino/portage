@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14768,
+    "OutputTokens": 29,
+    "CacheReadTokens": 14080,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（与 2026-08-13 压缩批同渠道），Codex CLI 0.147 codex exec 无头模式，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、developer 提示词换占位符、路径中性化）；`reasoning.encrypted_content` 与各项 id 原样保留；expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **code-mode 并行的回带轮**：request.input 里带 reasoning 项回放（1484 字符密文，逐字节等于上一轮 `output_item.done` 那份）+ custom_tool_call（`Promise.all` 那段 JS 原样）+ 单个 custom_tool_call_output（两个文件的结果合在**一条** output 文本里，因为并行在 JS 里而不在线上）。响应是纯文本收尾。"
+}

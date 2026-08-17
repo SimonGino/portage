@@ -1,0 +1,1624 @@
+<!--
+  方向 B · 旱路栈
+  骨架：编辑型/海报型工作台——无传统侧栏，窄竖排巨字书脊换页，主区超大衬线排印与报纸栏清单。
+  form 来自：旱路即 portage（搬船过陆）；竖脊是被切断的水道，字是船体留下的龙骨。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portage · 旱路栈</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,360;1,9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400;1,8..60,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f3eadb;
+    --paper-2: #e7dcc8;
+    --ink: #16120c;
+    --ink-2: #3a3126;
+    --mute: #5c4a3a;
+    --rust: #9a3412;
+    --rust-deep: #7c2a0e;
+    --rule: #c9b79a;
+    --spine: #9a3412;
+    --font-display: Fraunces, "Source Serif 4", Palatino, "Palatino Linotype", serif;
+    --font-body: "Source Serif 4", Palatino, "Palatino Linotype", Georgia, serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    text-wrap: pretty;
+    font-optical-sizing: auto;
+  }
+  body { min-height: 100vh; }
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: inherit;
+  }
+  input, textarea, select {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    outline: none;
+  }
+  ::selection { background: var(--ink); color: var(--paper); }
+  :focus-visible { outline: 2px solid var(--rust); outline-offset: 3px; }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 80;
+    opacity: 0.055;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 4.6rem minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* —— 书脊 —— */
+  .spine {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    background: var(--spine);
+    color: var(--paper);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1.1rem 0 0.85rem;
+    z-index: 8;
+    overflow: hidden;
+  }
+  .spine .mark {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    color: var(--paper);
+  }
+  .spine-verb {
+    writing-mode: vertical-rl;
+    font-family: var(--font-display);
+    font-size: 4.6rem;
+    font-weight: 500;
+    line-height: 0.86;
+    letter-spacing: 0.12em;
+    margin: 1.4rem 0 0;
+    user-select: none;
+    pointer-events: none;
+    font-variation-settings: "SOFT" 40, "WONK" 0;
+  }
+  .spine nav {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    padding-bottom: 0.35rem;
+  }
+  .spine nav button {
+    writing-mode: vertical-rl;
+    font-family: var(--font-display);
+    font-size: 0.92rem;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    color: #f3eadb;
+    padding: 0.55rem 0.15rem;
+    width: 100%;
+    text-align: center;
+  }
+  .spine nav button:hover { font-weight: 600; }
+  .spine nav button.is-current {
+    font-weight: 600;
+    background: var(--paper);
+    color: var(--rust);
+  }
+  .spine-lands {
+    display: flex;
+    gap: 0.45rem;
+    padding: 0.85rem 0 0.15rem;
+    pointer-events: none;
+  }
+  .spine-lands i {
+    display: block;
+    width: 0.95rem;
+    height: 0.42rem;
+    background: var(--paper);
+  }
+
+  /* —— 主台 —— */
+  .stage {
+    min-width: 0;
+    padding: 0 4.2rem 5.5rem 3.2rem;
+  }
+  .running {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.05rem 0 0.85rem;
+    border-bottom: 1px solid var(--ink);
+    font-size: 0.875rem;
+    letter-spacing: 0.08em;
+  }
+  .running-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+  .running .mark { width: 22px; height: 22px; }
+  .running-meta { color: var(--mute); }
+  .account-wrap { position: relative; }
+  .account-btn {
+    font-family: var(--font-body);
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid transparent;
+  }
+  .account-btn:hover { border-bottom-color: var(--ink); }
+  .account-slip {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.55rem);
+    background: var(--paper);
+    border: 1px solid var(--ink);
+    min-width: 10.5rem;
+    padding: 0.7rem 0.85rem 0.75rem;
+    z-index: 20;
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+  .account-slip.is-open { display: block; }
+  .account-slip p {
+    margin: 0 0 0.55rem;
+    font-size: 0.875rem;
+    color: var(--mute);
+    letter-spacing: 0.04em;
+  }
+  .account-slip button {
+    display: block;
+    width: 100%;
+    padding: 0.35rem 0;
+    font-size: 1rem;
+  }
+  .account-slip button:hover { color: var(--rust); }
+
+  .page { display: none; }
+  .page.is-on { display: block; animation: rise 0.42s ease; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .mast {
+    min-height: 32vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 2.1rem 0 1.4rem;
+  }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 0 0 0.7rem;
+  }
+  .mast-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(3.1rem, 7vw, 6.15rem);
+    font-weight: 500;
+    line-height: 0.92;
+    letter-spacing: -0.03em;
+    margin: 0;
+    font-variation-settings: "SOFT" 30, "opsz" 144;
+    max-width: 14ch;
+  }
+  .mast-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.45rem;
+    padding-bottom: 0.35rem;
+    flex: 0 0 auto;
+  }
+  .mast-actions button {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-style: italic;
+    border-bottom: 1px solid var(--ink);
+    padding-bottom: 0.08rem;
+  }
+  .mast-actions button:hover { color: var(--rust); border-bottom-color: var(--rust); }
+  .dek {
+    margin: 1.05rem 0 0;
+    font-size: 1.2rem;
+    font-style: italic;
+    color: var(--ink-2);
+    max-width: 36em;
+  }
+
+  .channels {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.15rem 0.15rem;
+    padding: 0.85rem 0 1rem;
+    border-top: 1px solid var(--ink);
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+  }
+  .channels button {
+    padding: 0.12rem 0.55rem;
+    letter-spacing: 0.02em;
+  }
+  .channels .dot { color: var(--mute); padding: 0 0.15rem; pointer-events: none; }
+  .channels button.is-on {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .channels button.is-dead { text-decoration: line-through; text-decoration-thickness: 1px; }
+  .channels button.is-dead.is-on { text-decoration: none; }
+
+  /* 报头油墨条 */
+  .inkbar {
+    display: none;
+    background: var(--ink);
+    color: var(--paper);
+    margin: 0 -4.2rem 0.4rem -3.2rem;
+    padding: 1.25rem 4.2rem 1.3rem 3.2rem;
+  }
+  .inkbar.is-open { display: block; }
+  .inkbar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1.5rem;
+    margin-bottom: 0.85rem;
+  }
+  .inkbar h2 {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 500;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .inkbar .meta { font-size: 0.95rem; color: #d9cbb3; }
+  .inkbar dl {
+    display: grid;
+    grid-template-columns: 6.2rem 1fr;
+    gap: 0.35rem 0.8rem;
+    margin: 0;
+    font-size: 0.95rem;
+  }
+  .inkbar dt { color: #c4b49a; font-style: italic; }
+  .inkbar dd { margin: 0; }
+  .inkbar .mono, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+  .cred-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.85rem;
+    margin-bottom: 0.3rem;
+  }
+  .inkbar button.link {
+    color: var(--paper);
+    border-bottom: 1px solid #c4b49a;
+    font-size: 0.9rem;
+  }
+  .inkbar button.link:hover { border-bottom-color: var(--paper); }
+  .probe-out { margin: 0.7rem 0 0; font-style: italic; color: #e6d7bf; min-height: 1.3em; }
+
+  /* 报纸栏清单 */
+  .roster { margin-top: 0.4rem; }
+  .model {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.4rem 1.5rem;
+    align-items: center;
+    min-height: 88px;
+    padding: 1.15rem 0 1.05rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .model.is-off .name { color: var(--mute); }
+  .name {
+    font-family: var(--font-display);
+    font-size: clamp(1.7rem, 2.5vw, 2.35rem);
+    font-weight: 500;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .from {
+    margin: 0.28rem 0 0;
+    font-size: 0.9375rem;
+    color: var(--mute);
+  }
+  .from .mono { font-size: 0.875rem; }
+  .acts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.15rem 1rem;
+    font-size: 0.95rem;
+  }
+  .acts button:hover { color: var(--rust); }
+  .state { font-style: italic; }
+  .subset {
+    display: none;
+    grid-column: 1 / -1;
+    font-size: 0.95rem;
+    color: var(--ink-2);
+    padding-bottom: 0.15rem;
+  }
+  .subset.is-open { display: block; }
+  .colophon {
+    margin: 2.4rem 0 0;
+    font-size: 0.88rem;
+    color: var(--mute);
+    font-style: italic;
+  }
+
+  /* 证件 · API Key */
+  .pass {
+    position: relative;
+    margin: 1.6rem 0 0;
+    padding: 1.7rem 1.8rem 1.5rem;
+    background: var(--paper-2);
+    border: 1px solid var(--ink);
+    outline: 1px solid var(--ink);
+    outline-offset: 4px;
+  }
+  .pass.is-off { opacity: 0.92; }
+  .pass-serial {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 0 0 0.55rem;
+  }
+  .pass-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .pass h2 {
+    font-family: var(--font-display);
+    font-size: clamp(2.4rem, 5vw, 4rem);
+    font-weight: 500;
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    margin: 0;
+  }
+  .pass .keyline {
+    margin: 1.05rem 0 1.15rem;
+    font-family: var(--font-mono);
+    font-size: 1.05rem;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--ink);
+    padding-bottom: 0.35rem;
+  }
+  .pass-foot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .stamp {
+    display: inline-block;
+    border: 2px solid var(--rust);
+    color: var(--rust);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.03em;
+    padding: 0.28rem 0.55rem 0.22rem;
+    transform: rotate(-2.5deg);
+    background: color-mix(in srgb, var(--paper) 70%, transparent);
+  }
+  .pass-acts { display: flex; gap: 1rem; font-size: 0.95rem; }
+  .pass-acts button:hover { color: var(--rust); }
+
+  /* 时间轴 */
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.2rem;
+    padding: 0.9rem 0 1.3rem;
+    border-top: 1px solid var(--ink);
+    font-size: 1.05rem;
+  }
+  .filters .lbl { font-style: italic; color: var(--mute); margin-right: 0.55rem; }
+  .filters button { padding: 0.1rem 0.5rem; }
+  .filters button.is-on { background: var(--ink); color: var(--paper); }
+  .filters .sep { color: var(--rule); padding: 0 0.25rem; }
+
+  .timeline { position: relative; padding-left: 0; }
+  .log {
+    position: relative;
+    padding: 1.05rem 0 1.15rem 1.55rem;
+    border-left: 1px solid var(--rule);
+    cursor: pointer;
+    min-height: 64px;
+  }
+  .log:hover { background: color-mix(in srgb, var(--paper-2) 70%, transparent); }
+  .log::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: 1.45rem;
+    width: 9px;
+    height: 9px;
+    background: var(--ink);
+    border-radius: 50%;
+  }
+  .log-time {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.06em;
+    color: var(--mute);
+    margin: 0 0 0.2rem;
+  }
+  .log h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 1.55rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+  .log p { margin: 0.28rem 0 0; font-size: 0.98rem; color: var(--ink-2); }
+  .log-bad {
+    background: var(--ink);
+    color: var(--paper);
+    margin: 0.55rem 0 0.55rem -1px;
+    padding: 1.2rem 1.3rem 1.25rem 1.55rem;
+    border-left: 0;
+  }
+  .log-bad::before { background: var(--paper); left: 1.15rem; top: 1.55rem; }
+  .log-bad .log-time, .log-bad p { color: #d4c4aa; }
+  .log-bad:hover { background: #1e1912; }
+
+  /* 接入点 */
+  .alias {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem 1.5rem;
+    align-items: end;
+    min-height: 110px;
+    padding: 1.5rem 0 1.4rem;
+    border-bottom: 1px solid var(--ink);
+  }
+  .alias h2 {
+    font-family: var(--font-display);
+    font-size: clamp(2.6rem, 6vw, 4.6rem);
+    font-weight: 500;
+    margin: 0;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+  }
+  .alias .point {
+    margin: 0.45rem 0 0;
+    font-size: 1.05rem;
+    color: var(--ink-2);
+  }
+
+  /* 排行 */
+  .rank-item {
+    display: grid;
+    grid-template-columns: 8.6rem minmax(0, 1fr);
+    gap: 0.2rem 1.4rem;
+    align-items: end;
+    padding: 1.6rem 0 1.4rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .rank-n {
+    font-family: var(--font-display);
+    font-size: clamp(5.4rem, 11vw, 8rem);
+    font-weight: 300;
+    line-height: 0.75;
+    letter-spacing: -0.05em;
+    color: var(--ink);
+  }
+  .rank-item:first-child .rank-n { color: var(--rust); }
+  .rank-name {
+    font-family: var(--font-display);
+    font-size: clamp(1.8rem, 3vw, 2.5rem);
+    font-weight: 500;
+    margin: 0;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .rank-stat {
+    margin: 0.55rem 0 0;
+    font-size: 1.15rem;
+    color: var(--ink-2);
+  }
+  .rank-share {
+    margin: 0.15rem 0 0;
+    font-style: italic;
+    font-size: 1.05rem;
+  }
+  .rank-total {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--ink);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 1.15rem;
+  }
+  .rank-total strong {
+    font-family: var(--font-display);
+    font-size: 1.85rem;
+    font-weight: 500;
+  }
+
+  /* 整页覆盖 */
+  .sheet {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--paper);
+    z-index: 40;
+    overflow: auto;
+    padding: 1.4rem 4.5rem 4rem;
+  }
+  .sheet.is-open { display: block; animation: rise 0.35s ease; }
+  .sheet-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--ink);
+    padding-bottom: 0.75rem;
+    font-size: 0.875rem;
+    letter-spacing: 0.08em;
+  }
+  .sheet h2 {
+    font-family: var(--font-display);
+    font-size: clamp(3.4rem, 8vw, 6.4rem);
+    font-weight: 500;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+    margin: 1.6rem 0 0.4rem;
+    max-width: 16ch;
+  }
+  .sheet .lead { font-size: 1.35rem; font-style: italic; margin: 0 0 1.8rem; }
+  .sheet dl {
+    display: grid;
+    grid-template-columns: 8rem 1fr;
+    gap: 0.55rem 1rem;
+    margin: 0;
+    max-width: 46rem;
+    font-size: 1.05rem;
+  }
+  .sheet dt { color: var(--mute); font-style: italic; }
+  .sheet dd { margin: 0; }
+  .raw {
+    margin-top: 2rem;
+    max-width: 46rem;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 1.15rem 1.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: 8rem 1fr;
+    gap: 1rem 1rem;
+    max-width: 38rem;
+    align-items: center;
+  }
+  .field {
+    border-bottom: 1px solid var(--ink);
+    padding: 0.35rem 0;
+    width: 100%;
+  }
+  .form-note {
+    grid-column: 2;
+    font-size: 0.92rem;
+    color: var(--mute);
+    font-style: italic;
+    margin: -0.4rem 0 0;
+  }
+  .form-go {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 0.8rem;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 0.55rem 1.15rem;
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+  }
+  .form-go:hover { background: var(--rust); }
+
+  .toast {
+    position: fixed;
+    right: 1.6rem;
+    bottom: 1.4rem;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 0.7rem 1rem 0.75rem;
+    font-size: 0.95rem;
+    z-index: 70;
+    transform: translateY(8px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    max-width: 22rem;
+  }
+  .toast.is-on { opacity: 1; transform: none; }
+
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 3.4rem 1fr; }
+    .stage { padding: 0 1.3rem 4rem 1.1rem; }
+    .inkbar { margin-left: -1.1rem; margin-right: -1.3rem; padding-left: 1.1rem; padding-right: 1.3rem; }
+    .mast-row { flex-direction: column; align-items: flex-start; }
+    .mast-actions { align-items: flex-start; }
+    .spine-verb { font-size: 3.1rem; }
+    .rank-item { grid-template-columns: 5.4rem 1fr; }
+    .sheet { padding: 1.1rem 1.3rem 3rem; }
+    h1 { font-size: clamp(2.4rem, 12vw, 3.6rem); }
+  }
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="shell">
+  <aside class="spine" aria-label="书脊导航">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+    </svg>
+    <div class="spine-verb" id="spineVerb">纳管</div>
+    <nav>
+      <button type="button" data-page="models" class="is-current">纳管</button>
+      <button type="button" data-page="keys">签发</button>
+      <button type="button" data-page="logs">追查</button>
+      <button type="button" data-page="aliases">起名</button>
+      <button type="button" data-page="rank">谁烧</button>
+    </nav>
+    <div class="spine-lands" aria-hidden="true"><i></i><i></i></div>
+  </aside>
+
+  <main class="stage">
+    <header class="running">
+      <div class="running-brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+        </svg>
+        <span>Portage</span>
+      </div>
+      <div class="running-meta">个人网关操作手册 · 第十六号</div>
+      <div class="account-wrap">
+        <button type="button" class="account-btn" id="accountBtn">账号</button>
+        <div class="account-slip" id="accountSlip">
+          <p>本机唯一操作者</p>
+          <button type="button" data-sheet="password">改密码</button>
+          <button type="button" id="logoutBtn">退出</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 1 模型 -->
+    <section class="page is-on" id="page-models" data-verb="纳管">
+      <div class="mast">
+        <p class="kicker">第一栏 · 模型</p>
+        <div class="mast-row">
+          <h1>纳管这些模型</h1>
+          <div class="mast-actions">
+            <button type="button" id="fetchModels">获取模型列表</button>
+            <button type="button" data-sheet="onboard">纳管一只新的</button>
+          </div>
+        </div>
+        <p class="dek">主语是纳管模型。渠道只回答「从哪家上游来」——点名字展开这家上游。</p>
+      </div>
+
+      <div class="channels" id="channelNav">
+        <button type="button" data-ch="all" class="is-on">全部</button>
+        <span class="dot">·</span>
+        <button type="button" data-ch="anthropic">anthropic</button>
+        <span class="dot">·</span>
+        <button type="button" data-ch="bailian">bailian</button>
+        <span class="dot">·</span>
+        <button type="button" data-ch="openai" class="is-dead">openai</button>
+      </div>
+
+      <aside class="inkbar" id="bar-anthropic">
+        <div class="inkbar-head">
+          <h2>这家上游 · anthropic</h2>
+          <span class="meta">启用 · 协议 anthropic</span>
+        </div>
+        <dl>
+          <dt>base_url</dt>
+          <dd class="mono">https://api.anthro…pic.com</dd>
+          <dt>凭证池</dt>
+          <dd>
+            <div class="cred-row">
+              <span>生产号</span>
+              <span class="mono" data-mask="sk-ant-••••••••••••a7k2" data-show="sk-ant-api03-8f2a····c91d">sk-ant-••••••••••••a7k2</span>
+              <span>启用</span>
+              <button type="button" class="link reveal">显示</button>
+            </div>
+            <div class="cred-row">
+              <span>备用号</span>
+              <span class="mono" data-mask="sk-ant-••••••••••••19f0" data-show="sk-ant-api03-11b0····44e2">sk-ant-••••••••••••19f0</span>
+              <span>已摘 · 401</span>
+              <button type="button" class="link reveal">显示</button>
+            </div>
+          </dd>
+          <dt>探测</dt>
+          <dd><button type="button" class="link probe" data-probe="anthropic">探一下通路</button></dd>
+        </dl>
+        <p class="probe-out" hidden></p>
+      </aside>
+
+      <aside class="inkbar" id="bar-bailian">
+        <div class="inkbar-head">
+          <h2>这家上游 · bailian</h2>
+          <span class="meta">启用 · 协议 openai + openai_responses</span>
+        </div>
+        <dl>
+          <dt>base_url</dt>
+          <dd class="mono">https://dashscope.…aliyuncs.com</dd>
+          <dt>凭证池</dt>
+          <dd>
+            <div class="cred-row">
+              <span>默认钥</span>
+              <span class="mono" data-mask="sk-ba••••••••3e91" data-show="sk-ba8c2····3e91">sk-ba••••••••3e91</span>
+              <span>启用</span>
+              <button type="button" class="link reveal">显示</button>
+            </div>
+          </dd>
+          <dt>探测</dt>
+          <dd><button type="button" class="link probe" data-probe="bailian">探一下通路</button></dd>
+        </dl>
+        <p class="probe-out" hidden></p>
+      </aside>
+
+      <aside class="inkbar" id="bar-openai">
+        <div class="inkbar-head">
+          <h2>这家上游 · openai</h2>
+          <span class="meta">停用 · 协议 openai</span>
+        </div>
+        <dl>
+          <dt>base_url</dt>
+          <dd class="mono">https://api.open…ai.com/v1</dd>
+          <dt>凭证池</dt>
+          <dd>空着。渠道已停，名册里的 gpt-4o 跟着停。</dd>
+          <dt>探测</dt>
+          <dd><button type="button" class="link probe" data-probe="openai">探一下通路</button></dd>
+        </dl>
+        <p class="probe-out" hidden></p>
+      </aside>
+
+      <div class="roster" id="roster">
+        <article class="model" data-ch="anthropic">
+          <div>
+            <h2 class="name">claude-sonnet-4</h2>
+            <p class="from">anthropic · 限定名 <span class="mono">anthropic/claude-sonnet-4</span></p>
+          </div>
+          <div class="acts">
+            <span class="state">启用</span>
+            <button type="button" data-copy="anthropic/claude-sonnet-4">复制限定名</button>
+            <button type="button" class="tog-state">停</button>
+            <button type="button" class="tog-subset">协议子集</button>
+          </div>
+          <p class="subset">协议子集：anthropic</p>
+        </article>
+
+        <article class="model" data-ch="anthropic">
+          <div>
+            <h2 class="name">claude-opus-4</h2>
+            <p class="from">anthropic · 限定名 <span class="mono">anthropic/claude-opus-4</span></p>
+          </div>
+          <div class="acts">
+            <span class="state">启用</span>
+            <button type="button" data-copy="anthropic/claude-opus-4">复制限定名</button>
+            <button type="button" class="tog-state">停</button>
+            <button type="button" class="tog-subset">协议子集</button>
+          </div>
+          <p class="subset">协议子集：anthropic</p>
+        </article>
+
+        <article class="model" data-ch="bailian">
+          <div>
+            <h2 class="name">qwen3-max</h2>
+            <p class="from">bailian · 限定名 <span class="mono">bailian/qwen3-max</span></p>
+          </div>
+          <div class="acts">
+            <span class="state">启用</span>
+            <button type="button" data-copy="bailian/qwen3-max">复制限定名</button>
+            <button type="button" class="tog-state">停</button>
+            <button type="button" class="tog-subset">协议子集</button>
+          </div>
+          <p class="subset">协议子集：openai · openai_responses</p>
+        </article>
+
+        <article class="model is-off" data-ch="bailian">
+          <div>
+            <h2 class="name">qwen3-coder-plus</h2>
+            <p class="from">bailian · 限定名 <span class="mono">bailian/qwen3-coder-plus</span></p>
+          </div>
+          <div class="acts">
+            <span class="state">停用</span>
+            <button type="button" data-copy="bailian/qwen3-coder-plus">复制限定名</button>
+            <button type="button" class="tog-state">启</button>
+            <button type="button" class="tog-subset">协议子集</button>
+          </div>
+          <p class="subset">协议子集：openai · openai_responses</p>
+        </article>
+
+        <article class="model is-off" data-ch="openai">
+          <div>
+            <h2 class="name">gpt-4o</h2>
+            <p class="from">openai · 渠道已停 · 限定名 <span class="mono">openai/gpt-4o</span></p>
+          </div>
+          <div class="acts">
+            <span class="state">停用</span>
+            <button type="button" data-copy="openai/gpt-4o">复制限定名</button>
+            <button type="button" class="tog-state">启</button>
+            <button type="button" class="tog-subset">协议子集</button>
+          </div>
+          <p class="subset">协议子集：openai。渠道已停，启了模型也走不出去。</p>
+        </article>
+      </div>
+      <p class="colophon" id="rosterNote">以上五只 · 按上游分组 · 直连用限定名即可</p>
+    </section>
+
+    <!-- 2 API Key -->
+    <section class="page" id="page-keys" data-verb="签发">
+      <div class="mast">
+        <p class="kicker">第二栏 · API Key</p>
+        <div class="mast-row">
+          <h1>签发一把钥匙</h1>
+          <div class="mast-actions">
+            <button type="button" data-sheet="issue">签发一把新钥匙</button>
+          </div>
+        </div>
+        <p class="dek">发给客户端的钥匙，不是上游凭证。上游那一把锁在「这家上游」里。</p>
+      </div>
+
+      <article class="pass">
+        <p class="pass-serial">证件 〇一九 · 客户端钥匙</p>
+        <div class="pass-top">
+          <h2>claude-code</h2>
+          <span class="state">启用</span>
+        </div>
+        <p class="keyline mono" data-mask="sk-ptg-8f2a············c91d" data-show="sk-ptg-8f2a7c01······e4c91d">sk-ptg-8f2a············c91d</p>
+        <div class="pass-foot">
+          <span class="stamp">* · 全部模型</span>
+          <div class="pass-acts">
+            <button type="button" class="reveal">显示</button>
+            <button type="button" data-copy="sk-ptg-8f2a············c91d">复制</button>
+            <button type="button" class="tog-key">停</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="pass">
+        <p class="pass-serial">证件 〇二四 · 客户端钥匙</p>
+        <div class="pass-top">
+          <h2>codex-laptop</h2>
+          <span class="state">启用</span>
+        </div>
+        <p class="keyline mono" data-mask="sk-ptg-11b0············44e2" data-show="sk-ptg-11b09a22······b844e2">sk-ptg-11b0············44e2</p>
+        <div class="pass-foot">
+          <span class="stamp">anthropic/claude-sonnet-4</span>
+          <div class="pass-acts">
+            <button type="button" class="reveal">显示</button>
+            <button type="button" data-copy="sk-ptg-11b0············44e2">复制</button>
+            <button type="button" class="tog-key">停</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="pass is-off">
+        <p class="pass-serial">证件 〇〇七 · 客户端钥匙</p>
+        <div class="pass-top">
+          <h2>old-script</h2>
+          <span class="state">停用</span>
+        </div>
+        <p class="keyline">原值没存过 · 再显也没有</p>
+        <div class="pass-foot">
+          <span class="stamp">未设白名单</span>
+          <div class="pass-acts">
+            <button type="button" class="tog-key">启</button>
+          </div>
+        </div>
+      </article>
+      <p class="colophon">三把客户端钥匙。白名单是盖在证件上的戳，不是渠道名。</p>
+    </section>
+
+    <!-- 3 调用记录 -->
+    <section class="page" id="page-logs" data-verb="追查">
+      <div class="mast">
+        <p class="kicker">第三栏 · 调用记录</p>
+        <h1>刚才那几次怎么样</h1>
+        <p class="dek">失败行整块抹成油墨。点开是一页纸，不是小窗。</p>
+      </div>
+
+      <div class="filters">
+        <span class="lbl">筛</span>
+        <button type="button" id="failOnly">只看失败</button>
+        <span class="sep">/</span>
+        <button type="button" class="log-model is-on" data-model="all">全部模型</button>
+        <button type="button" class="log-model" data-model="claude-sonnet-4">claude-sonnet-4</button>
+        <button type="button" class="log-model" data-model="qwen3-max">qwen3-max</button>
+        <button type="button" class="log-model" data-model="claude-opus-4">claude-opus-4</button>
+        <button type="button" class="log-model" data-model="gpt-4o">gpt-4o</button>
+        <button type="button" class="log-model" data-model="未记录">未记录</button>
+      </div>
+
+      <div class="timeline" id="timeline">
+        <article class="log" data-ok="1" data-model="claude-sonnet-4" data-id="l1">
+          <p class="log-time">16:41</p>
+          <h3>200 · 通过</h3>
+          <p>claude-sonnet-4 → anthropic / claude-sonnet-4</p>
+          <p>入 12.4k · 出 802 · 思考 640 · 首字 380ms</p>
+        </article>
+        <article class="log" data-ok="1" data-model="qwen3-max" data-id="l2">
+          <p class="log-time">16:28</p>
+          <h3>200 · 通过</h3>
+          <p>bailian/qwen3-max → bailian / qwen3-max</p>
+          <p>入 3.1k · 出 410</p>
+        </article>
+        <article class="log log-bad" data-ok="0" data-model="claude-opus-4" data-id="l3">
+          <p class="log-time">16:12</p>
+          <h3>429 · 失败 · queue_timeout</h3>
+          <p>claude-opus-4 · 点开看 request-id 与上游原文</p>
+        </article>
+        <article class="log" data-ok="1" data-model="claude-sonnet-4" data-id="l4">
+          <p class="log-time">15:57</p>
+          <h3>200 · 通过</h3>
+          <p>anthropic/claude-sonnet-4 → anthropic / claude-sonnet-4</p>
+          <p>入 9.6k · 出 512 · 缓存读 8.2k</p>
+        </article>
+        <article class="log log-bad" data-ok="0" data-model="未记录" data-id="l5">
+          <p class="log-time">15:40</p>
+          <h3>401 · 失败 · 未记录模型</h3>
+          <p>无授权。点开看上游原文。</p>
+        </article>
+        <article class="log" data-ok="1" data-model="claude-sonnet-4" data-id="l6">
+          <p class="log-time">14:22</p>
+          <h3>200 · 通过</h3>
+          <p>sonnet → anthropic / claude-sonnet-4</p>
+          <p>入 2.8k · 出 156 · 首字 290ms</p>
+        </article>
+        <article class="log log-bad" data-ok="0" data-model="qwen3-coder-plus" data-id="l7">
+          <p class="log-time">13:08</p>
+          <h3>500 · 失败 · upstream_error</h3>
+          <p>qwen3-coder-plus · 上游原文在详情里</p>
+        </article>
+        <article class="log" data-ok="1" data-model="claude-opus-4" data-id="l8">
+          <p class="log-time">11:44</p>
+          <h3>200 · 通过</h3>
+          <p>claude-opus-4 → anthropic / claude-opus-4</p>
+          <p>入 6.7k · 出 1.2k · 思考 890</p>
+        </article>
+        <article class="log" data-ok="1" data-model="qwen3-max" data-id="l9">
+          <p class="log-time">09:31</p>
+          <h3>200 · 通过</h3>
+          <p>qwen-max → bailian / qwen3-max</p>
+          <p>入 1.4k · 出 88</p>
+        </article>
+        <article class="log log-bad" data-ok="0" data-model="gpt-4o" data-id="l10">
+          <p class="log-time">08:06</p>
+          <h3>503 · 失败 · channel_disabled</h3>
+          <p>gpt-4o · openai 渠道已停，未转发</p>
+        </article>
+      </div>
+      <p class="colophon" id="logNote">十次 · 最新在上 · 成功行不留上游原文</p>
+    </section>
+
+    <!-- 4 接入点 -->
+    <section class="page" id="page-aliases" data-verb="起名">
+      <div class="mast">
+        <p class="kicker">第四栏 · 接入点</p>
+        <div class="mast-row">
+          <h1>给模型起个对外的名字</h1>
+          <div class="mast-actions">
+            <button type="button" data-sheet="alias">起一个新名字</button>
+          </div>
+        </div>
+        <p class="dek">只想直连，用限定名即可，不必建。接入点绑的是一个候选：渠道 + 纳管模型。</p>
+      </div>
+
+      <article class="alias">
+        <div>
+          <h2>sonnet</h2>
+          <p class="point">指向候选 · anthropic / claude-sonnet-4</p>
+        </div>
+        <div class="acts">
+          <span class="state">启用</span>
+          <button type="button" data-copy="sonnet">复制别名</button>
+          <button type="button" class="tog-state">停</button>
+        </div>
+      </article>
+      <article class="alias">
+        <div>
+          <h2>qwen-max</h2>
+          <p class="point">指向候选 · bailian / qwen3-max</p>
+        </div>
+        <div class="acts">
+          <span class="state">启用</span>
+          <button type="button" data-copy="qwen-max">复制别名</button>
+          <button type="button" class="tog-state">停</button>
+        </div>
+      </article>
+      <p class="colophon">两个对外名。其余走 <span class="mono">渠道名/模型名</span>。</p>
+    </section>
+
+    <!-- 5 排行 -->
+    <section class="page" id="page-rank" data-verb="谁烧">
+      <div class="mast">
+        <p class="kicker">第五栏 · 排行</p>
+        <h1>谁在烧</h1>
+        <p class="dek">名次、名字、token、占比。分母只有一个合计。不问费用，不问还剩多少。</p>
+      </div>
+      <div class="filters">
+        <span class="lbl">维度</span>
+        <button type="button" class="rank-dim is-on" data-dim="model">按模型</button>
+        <button type="button" class="rank-dim" data-dim="key">按 API Key</button>
+        <button type="button" class="rank-dim" data-dim="cred">按上游凭证</button>
+        <span class="sep">/</span>
+        <span class="lbl">窗口</span>
+        <button type="button" class="rank-win" data-win="1">1 天</button>
+        <button type="button" class="rank-win is-on" data-win="7">7 天</button>
+        <button type="button" class="rank-win" data-win="30">30 天</button>
+      </div>
+      <div id="rankList"></div>
+      <div class="rank-total">
+        <span>合计 · 占比分母只此一个</span>
+        <strong id="rankTotal">8.32M token</strong>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 整页覆盖 -->
+<section class="sheet" id="sheet-log" role="dialog" aria-modal="true">
+  <div class="sheet-bar">
+    <span>调用详情</span>
+    <button type="button" class="close-sheet">合上这一页</button>
+  </div>
+  <h2 id="logTitle">200 · 通过</h2>
+  <p class="lead" id="logLead"></p>
+  <dl id="logDl"></dl>
+  <pre class="raw" id="logRaw" hidden></pre>
+</section>
+
+<section class="sheet" id="sheet-onboard" role="dialog" aria-modal="true">
+  <div class="sheet-bar">
+    <span>纳管一只新的</span>
+    <button type="button" class="close-sheet">作罢</button>
+  </div>
+  <h2>收下这只</h2>
+  <p class="lead">选定上游，写下模型名。限定名会是 渠道名/模型名。</p>
+  <form class="form-grid" onsubmit="return fakeSubmit(event, '已记下，原型不写库')">
+    <label for="ob-up">上游</label>
+    <select class="field" id="ob-up">
+      <option>anthropic</option>
+      <option>bailian</option>
+      <option disabled>openai（已停）</option>
+    </select>
+    <label for="ob-name">模型名</label>
+    <input class="field" id="ob-name" placeholder="例如 claude-sonnet-4" autocomplete="off">
+    <p class="form-note">不会在本页展示完整上游 key 或 base_url。</p>
+    <button type="submit" class="form-go">收下</button>
+  </form>
+</section>
+
+<section class="sheet" id="sheet-issue" role="dialog" aria-modal="true">
+  <div class="sheet-bar">
+    <span>签发一把新钥匙</span>
+    <button type="button" class="close-sheet">作罢</button>
+  </div>
+  <h2>开一把客户端钥匙</h2>
+  <p class="lead">这不是上游凭证。白名单空着等于不让过；写 * 才是全部模型。</p>
+  <form class="form-grid" onsubmit="return fakeSubmit(event, '钥匙只在此刻显一次——原型不真开')">
+    <label for="ik-name">名字</label>
+    <input class="field" id="ik-name" placeholder="例如 ci-box" autocomplete="off">
+    <label for="ik-allow">白名单</label>
+    <input class="field" id="ik-allow" value="*" autocomplete="off">
+    <p class="form-note">可写限定名，逗号分隔。跟凭证池无关。</p>
+    <button type="submit" class="form-go">签发</button>
+  </form>
+</section>
+
+<section class="sheet" id="sheet-alias" role="dialog" aria-modal="true">
+  <div class="sheet-bar">
+    <span>起一个新名字</span>
+    <button type="button" class="close-sheet">作罢</button>
+  </div>
+  <h2>对外的短名</h2>
+  <p class="lead">绑一个候选。不想起名就用限定名直连。</p>
+  <form class="form-grid" onsubmit="return fakeSubmit(event, '名字记下了，原型不写库')">
+    <label for="al-name">接入点</label>
+    <input class="field" id="al-name" placeholder="例如 opus" autocomplete="off">
+    <label for="al-cand">候选</label>
+    <select class="field" id="al-cand">
+      <option>anthropic / claude-sonnet-4</option>
+      <option>anthropic / claude-opus-4</option>
+      <option>bailian / qwen3-max</option>
+    </select>
+    <button type="submit" class="form-go">用这个名字</button>
+  </form>
+</section>
+
+<section class="sheet" id="sheet-password" role="dialog" aria-modal="true">
+  <div class="sheet-bar">
+    <span>账号</span>
+    <button type="button" class="close-sheet">合上</button>
+  </div>
+  <h2>改密码</h2>
+  <p class="lead">本机唯一操作者。没有多用户。</p>
+  <form class="form-grid" onsubmit="return fakeSubmit(event, '密码未改，这是纸样')">
+    <label for="pw-old">现在的</label>
+    <input class="field" id="pw-old" type="password" autocomplete="current-password">
+    <label for="pw-new">新的</label>
+    <input class="field" id="pw-new" type="password" autocomplete="new-password">
+    <button type="submit" class="form-go">换一把</button>
+  </form>
+</section>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  const verbs = { models: "纳管", keys: "签发", logs: "追查", aliases: "起名", rank: "谁烧" };
+  const toastEl = document.getElementById("toast");
+  let toastTimer;
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("is-on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("is-on"); }, 2200);
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        toast("已抄下  " + text);
+      }, function () { toast("已记下  " + text); });
+    } else {
+      toast("已记下  " + text);
+    }
+  }
+
+  /* 换页 */
+  const spineBtns = document.querySelectorAll(".spine nav button");
+  const pages = document.querySelectorAll(".page");
+  const spineVerb = document.getElementById("spineVerb");
+
+  function showPage(id) {
+    pages.forEach(function (p) { p.classList.toggle("is-on", p.id === "page-" + id); });
+    spineBtns.forEach(function (b) { b.classList.toggle("is-current", b.dataset.page === id); });
+    spineVerb.textContent = verbs[id] || "";
+    window.scrollTo(0, 0);
+  }
+  spineBtns.forEach(function (b) {
+    b.addEventListener("click", function () { showPage(b.dataset.page); });
+  });
+
+  /* 账号 */
+  const accountBtn = document.getElementById("accountBtn");
+  const accountSlip = document.getElementById("accountSlip");
+  accountBtn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    accountSlip.classList.toggle("is-open");
+  });
+  document.addEventListener("click", function () { accountSlip.classList.remove("is-open"); });
+  accountSlip.addEventListener("click", function (e) { e.stopPropagation(); });
+  document.getElementById("logoutBtn").addEventListener("click", function () {
+    accountSlip.classList.remove("is-open");
+    toast("这是原型，出不去");
+  });
+
+  /* 整页覆盖 */
+  function openSheet(name) {
+    document.getElementById("sheet-" + name).classList.add("is-open");
+    accountSlip.classList.remove("is-open");
+  }
+  function closeSheets() {
+    document.querySelectorAll(".sheet").forEach(function (s) { s.classList.remove("is-open"); });
+  }
+  document.querySelectorAll("[data-sheet]").forEach(function (b) {
+    b.addEventListener("click", function () { openSheet(b.dataset.sheet); });
+  });
+  document.querySelectorAll(".close-sheet").forEach(function (b) {
+    b.addEventListener("click", closeSheets);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeSheets();
+  });
+  window.fakeSubmit = function (e, msg) {
+    e.preventDefault();
+    closeSheets();
+    toast(msg);
+    return false;
+  };
+
+  /* 渠道 / 这家上游 */
+  const chBtns = document.querySelectorAll("#channelNav button");
+  const bars = {
+    anthropic: document.getElementById("bar-anthropic"),
+    bailian: document.getElementById("bar-bailian"),
+    openai: document.getElementById("bar-openai")
+  };
+  function filterModels(ch) {
+    let n = 0;
+    document.querySelectorAll("#roster .model").forEach(function (row) {
+      const on = ch === "all" || row.dataset.ch === ch;
+      row.hidden = !on;
+      if (on) n += 1;
+    });
+    document.getElementById("rosterNote").textContent =
+      ch === "all" ? "以上五只 · 按上游分组 · 直连用限定名即可"
+                   : "这家上游名下 " + n + " 只";
+  }
+  chBtns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      const ch = b.dataset.ch;
+      chBtns.forEach(function (x) { x.classList.toggle("is-on", x === b); });
+      Object.keys(bars).forEach(function (k) {
+        bars[k].classList.toggle("is-open", ch === k);
+      });
+      filterModels(ch);
+    });
+  });
+
+  document.getElementById("fetchModels").addEventListener("click", function () {
+    const on = document.querySelector("#channelNav button.is-on").dataset.ch;
+    const who = on === "all" ? "三家上游" : on;
+    toast("已向 " + who + " 索取名册");
+  });
+
+  /* 显示 / 复制 / 启停 / 协议子集 */
+  document.body.addEventListener("click", function (e) {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+
+    if (t.classList.contains("reveal")) {
+      const host = t.closest(".cred-row, .pass");
+      const el = host && host.querySelector("[data-mask]");
+      if (!el) return;
+      const shown = el.dataset.open === "1";
+      el.textContent = shown ? el.dataset.mask : el.dataset.show;
+      el.dataset.open = shown ? "0" : "1";
+      t.textContent = shown ? "显示" : "掩上";
+      return;
+    }
+    if (t.dataset.copy) { copyText(t.dataset.copy); return; }
+    if (t.classList.contains("tog-subset")) {
+      const box = t.closest(".model").querySelector(".subset");
+      box.classList.toggle("is-open");
+      return;
+    }
+    if (t.classList.contains("tog-state") || t.classList.contains("tog-key")) {
+      const box = t.closest(".model, .pass, .alias");
+      const state = box.querySelector(".state");
+      const off = state.textContent === "启用";
+      state.textContent = off ? "停用" : "启用";
+      t.textContent = off ? "启" : "停";
+      box.classList.toggle("is-off", off);
+      return;
+    }
+    if (t.classList.contains("probe")) {
+      const map = {
+        anthropic: "通路 · 200 · 842ms",
+        bailian: "通路 · 200 · 1.2s",
+        openai: "未探测 · 渠道已停"
+      };
+      const bar = t.closest(".inkbar");
+      const out = bar.querySelector(".probe-out");
+      out.hidden = false;
+      out.textContent = map[t.dataset.probe];
+    }
+  });
+
+  /* 调用记录 */
+  let failOnly = false;
+  let logModel = "all";
+  const failBtn = document.getElementById("failOnly");
+  const logModels = document.querySelectorAll(".log-model");
+
+  function applyLogFilter() {
+    let n = 0, total = 0;
+    document.querySelectorAll("#timeline .log").forEach(function (row) {
+      const ok = row.dataset.ok === "1";
+      const m = row.dataset.model;
+      const show = (!failOnly || !ok) && (logModel === "all" || m === logModel);
+      row.hidden = !show;
+      total += 1;
+      if (show) n += 1;
+    });
+    document.getElementById("logNote").textContent =
+      "十次里现出 " + n + " 次 · 最新在上 · 成功行不留上游原文";
+  }
+  failBtn.addEventListener("click", function () {
+    failOnly = !failOnly;
+    failBtn.classList.toggle("is-on", failOnly);
+    applyLogFilter();
+  });
+  logModels.forEach(function (b) {
+    b.addEventListener("click", function () {
+      logModel = b.dataset.model;
+      logModels.forEach(function (x) { x.classList.toggle("is-on", x === b); });
+      applyLogFilter();
+    });
+  });
+
+  const LOGS = {
+    l1: {
+      title: "200 · 通过",
+      lead: "一次干净的 anthropic 往返。",
+      rows: [
+        ["时刻", "16:41"],
+        ["调用", "claude-sonnet-4 → anthropic / claude-sonnet-4"],
+        ["token", "入 12.4k · 出 802 · 思考 640"],
+        ["首字", "380ms"],
+        ["request-id", "req_01A7cK3m…"]
+      ]
+    },
+    l2: {
+      title: "200 · 通过",
+      lead: "bailian 上的 qwen3-max。",
+      rows: [
+        ["时刻", "16:28"],
+        ["调用", "bailian/qwen3-max → bailian / qwen3-max"],
+        ["token", "入 3.1k · 出 410"],
+        ["request-id", "req_0bQ2n81p…"]
+      ]
+    },
+    l3: {
+      title: "429 · 失败",
+      lead: "queue_timeout。上游原文只在失败行。",
+      rows: [
+        ["时刻", "16:12"],
+        ["调用", "claude-opus-4 → anthropic / claude-opus-4"],
+        ["失败词", "queue_timeout"],
+        ["request-id", "req_018Ee7k2…"]
+      ],
+      raw: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      copy: "req_018Ee7k2…"
+    },
+    l4: {
+      title: "200 · 通过",
+      lead: "命中缓存读。",
+      rows: [
+        ["时刻", "15:57"],
+        ["调用", "anthropic/claude-sonnet-4 → anthropic / claude-sonnet-4"],
+        ["token", "入 9.6k · 出 512 · 缓存读 8.2k"],
+        ["request-id", "req_01Hs9v2a…"]
+      ]
+    },
+    l5: {
+      title: "401 · 失败",
+      lead: "未记录模型。钥匙没对上。",
+      rows: [
+        ["时刻", "15:40"],
+        ["调用", "（未记录模型）"],
+        ["失败词", "authentication_error"],
+        ["request-id", "req_01xN4p8c…"]
+      ],
+      raw: '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+      copy: "req_01xN4p8c…"
+    },
+    l6: {
+      title: "200 · 通过",
+      lead: "走接入点 sonnet。",
+      rows: [
+        ["时刻", "14:22"],
+        ["调用", "sonnet → anthropic / claude-sonnet-4"],
+        ["token", "入 2.8k · 出 156"],
+        ["首字", "290ms"],
+        ["request-id", "req_01Lm2d0q…"]
+      ]
+    },
+    l7: {
+      title: "500 · 失败",
+      lead: "upstream_error。qwen3-coder-plus 当时不可用。",
+      rows: [
+        ["时刻", "13:08"],
+        ["调用", "qwen3-coder-plus → bailian / qwen3-coder-plus"],
+        ["失败词", "upstream_error"],
+        ["request-id", "req_02bK9m1x…"]
+      ],
+      raw: '{"error":{"code":"internal_error","message":"The model is currently unavailable.","request_id":"02bK9m1x"}}',
+      copy: "req_02bK9m1x…"
+    },
+    l8: {
+      title: "200 · 通过",
+      lead: "opus 多想了一会儿。",
+      rows: [
+        ["时刻", "11:44"],
+        ["调用", "claude-opus-4 → anthropic / claude-opus-4"],
+        ["token", "入 6.7k · 出 1.2k · 思考 890"],
+        ["request-id", "req_01Wp8t4s…"]
+      ]
+    },
+    l9: {
+      title: "200 · 通过",
+      lead: "走接入点 qwen-max。",
+      rows: [
+        ["时刻", "09:31"],
+        ["调用", "qwen-max → bailian / qwen3-max"],
+        ["token", "入 1.4k · 出 88"],
+        ["request-id", "req_0cR7y33k…"]
+      ]
+    },
+    l10: {
+      title: "503 · 失败",
+      lead: "channel_disabled。openai 渠道已停，没有转发。",
+      rows: [
+        ["时刻", "08:06"],
+        ["调用", "gpt-4o → openai / gpt-4o"],
+        ["失败词", "channel_disabled"],
+        ["request-id", "req_03Zz1a0n…"]
+      ],
+      raw: "channel_disabled · openai 渠道已停，未转发",
+      copy: "req_03Zz1a0n…"
+    }
+  };
+
+  document.getElementById("timeline").addEventListener("click", function (e) {
+    const row = e.target.closest(".log");
+    if (!row) return;
+    const d = LOGS[row.dataset.id];
+    if (!d) return;
+    document.getElementById("logTitle").textContent = d.title;
+    document.getElementById("logLead").textContent = d.lead;
+    const dl = document.getElementById("logDl");
+    dl.innerHTML = "";
+    d.rows.forEach(function (pair) {
+      const dt = document.createElement("dt");
+      dt.textContent = pair[0];
+      const dd = document.createElement("dd");
+      if (pair[0] === "request-id") {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "mono";
+        btn.textContent = pair[1] + "  ·  复制";
+        btn.addEventListener("click", function () { copyText(d.copy || pair[1]); });
+        dd.appendChild(btn);
+      } else {
+        dd.textContent = pair[1];
+      }
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    });
+    const raw = document.getElementById("logRaw");
+    if (d.raw) {
+      raw.hidden = false;
+      raw.textContent = "上游原文\n" + d.raw;
+    } else {
+      raw.hidden = true;
+      raw.textContent = "";
+    }
+    openSheet("log");
+  });
+
+  /* 排行 */
+  const RANK = {
+    "1-model": { total: "1.11M", items: [
+      ["claude-sonnet-4", "0.68M", "61.3%"],
+      ["qwen3-max", "0.28M", "25.2%"],
+      ["claude-opus-4", "0.12M", "10.8%"],
+      ["gpt-4o", "0.03M", "2.7%"]
+    ]},
+    "7-model": { total: "8.32M", items: [
+      ["claude-sonnet-4", "4.82M", "57.9%"],
+      ["qwen3-max", "2.10M", "25.2%"],
+      ["claude-opus-4", "1.08M", "13.0%"],
+      ["gpt-4o", "0.32M", "3.9%"]
+    ]},
+    "30-model": { total: "33.4M", items: [
+      ["claude-sonnet-4", "18.4M", "55.1%"],
+      ["qwen3-max", "8.9M", "26.6%"],
+      ["claude-opus-4", "4.6M", "13.8%"],
+      ["gpt-4o", "1.5M", "4.5%"]
+    ]},
+    "1-key": { total: "1.11M", items: [
+      ["claude-code", "0.79M", "71.2%"],
+      ["codex-laptop", "0.29M", "26.1%"],
+      ["old-script", "0.03M", "2.7%"]
+    ]},
+    "7-key": { total: "8.32M", items: [
+      ["claude-code", "5.91M", "71.0%"],
+      ["codex-laptop", "2.21M", "26.6%"],
+      ["old-script", "0.20M", "2.4%"]
+    ]},
+    "30-key": { total: "33.4M", items: [
+      ["claude-code", "23.6M", "70.7%"],
+      ["codex-laptop", "8.7M", "26.0%"],
+      ["old-script", "1.1M", "3.3%"]
+    ]},
+    "1-cred": { total: "1.11M", items: [
+      ["生产号 · anthropic", "0.80M", "72.1%"],
+      ["默认钥 · bailian", "0.28M", "25.2%"],
+      ["备用号 · anthropic", "0.03M", "2.7%"]
+    ]},
+    "7-cred": { total: "8.32M", items: [
+      ["生产号 · anthropic", "5.90M", "70.9%"],
+      ["默认钥 · bailian", "2.10M", "25.2%"],
+      ["备用号 · anthropic", "0.32M", "3.9%"]
+    ]},
+    "30-cred": { total: "33.4M", items: [
+      ["生产号 · anthropic", "23.0M", "68.9%"],
+      ["默认钥 · bailian", "8.9M", "26.6%"],
+      ["备用号 · anthropic", "1.5M", "4.5%"]
+    ]}
+  };
+
+  let dim = "model";
+  let win = "7";
+  const rankList = document.getElementById("rankList");
+  const rankTotal = document.getElementById("rankTotal");
+
+  function renderRank() {
+    const pack = RANK[win + "-" + dim];
+    rankList.innerHTML = pack.items.map(function (it, i) {
+      return '<article class="rank-item">' +
+        '<div class="rank-n">' + (i + 1) + "</div>" +
+        "<div><h2 class=\"rank-name\">" + it[0] + "</h2>" +
+        "<p class=\"rank-stat\">" + it[1] + " token</p>" +
+        "<p class=\"rank-share\">占全部的 " + it[2] + "</p></div></article>";
+    }).join("");
+    rankTotal.textContent = pack.total + " token";
+  }
+  document.querySelectorAll(".rank-dim").forEach(function (b) {
+    b.addEventListener("click", function () {
+      dim = b.dataset.dim;
+      document.querySelectorAll(".rank-dim").forEach(function (x) { x.classList.toggle("is-on", x === b); });
+      renderRank();
+    });
+  });
+  document.querySelectorAll(".rank-win").forEach(function (b) {
+    b.addEventListener("click", function () {
+      win = b.dataset.win;
+      document.querySelectorAll(".rank-win").forEach(function (x) { x.classList.toggle("is-on", x === b); });
+      renderRank();
+    });
+  });
+  renderRank();
+})();
+</script>
+</body>
+</html>

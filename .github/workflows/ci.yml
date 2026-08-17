@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # go vet 与 go test 都不管格式，未格式化的代码进 main 不会红（#84）。这一步补上：
+      # gofmt -l 有输出即失败，并把文件名打出来，省得回去猜是哪个。
+      - name: Gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未过 gofmt，请跑 gofmt -w：" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # golden 样本是转换路径的防回归闸，-count=1 禁掉缓存，避免改了样本却复用旧结果。
+      - name: Test
+        run: go test -count=1 ./...

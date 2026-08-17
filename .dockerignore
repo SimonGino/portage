@@ -1,0 +1,32 @@
+# 构建上下文越小越快，也免得把本地库和真凭证塞进构建缓存。
+.git
+.github
+
+# 数据与密钥：这两类进了构建上下文就等于进了镜像层历史，删不干净。
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+config.yaml
+.env
+
+# 构建产物
+/bin
+/dist
+/portage
+
+# golden 原始转录（未脱敏的那份，本来就不进 git）
+/testdata/golden/raw
+
+# 前端依赖与产物：镜像里要的是自己那一层构建出来的 dist，不是宿主上那份。
+# internal/webui/dist 必须排掉——不排的话，宿主上一份过期的构建会跟着上下文进去，
+# 而 Dockerfile 里 `COPY . .` 在 `COPY --from=webbuild` 之前，看起来是覆盖了，
+# 一旦哪次改了 COPY 顺序就会静默用上旧前端。
+node_modules
+web/node_modules
+internal/webui/dist
+
+.DS_Store
+.idea
+.vscode

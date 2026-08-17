@@ -1,0 +1,65 @@
+# 用法（在仓库根目录）：
+#
+#   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
+#
+# 起来之后开 http://127.0.0.1:8317/admin ，用那个密码登录，在页面上配渠道、
+# 纳管模型、接入点、网关 key。库是空的很正常（日志里会有一条
+# `api_keys 表是空的，所有转发请求都会回 401`），配完就没了。
+#
+# 密码走环境变量而不是配置文件：config.docker.yaml 是**烤进镜像**的，写在里面
+# 等于写进镜像层历史；而为了设一个密码去挂一份配置文件，是在最常见的路径上
+# 要求最麻烦的操作。它只用来**初始化**——库里已经有密码了（包括在页面上改过的），
+# 这个变量给什么都不生效。忘了密码就删卷重来，或者直接改 settings 表。
+#
+# 不设密码也能起，只是管理端登不进去（登录页会明说），转发功能不受影响。
+#
+# 命令行灌配置的老路子仍然可用。scratch 镜像里既没有 shell 也没有 sqlite3，
+# 所以对着卷里的库另起一个容器：
+#
+#   docker run --rm --user 65532:65532 \
+#     -v ai-gateway-data:/data -v "$PWD/scripts:/s:ro" keinos/sqlite3 \
+#     sqlite3 /data/gateway.db ".read /s/seed-example.sql"
+#
+# --user 65532:65532 不能省：卷是按网关那个 uid 建的，用别的身份进去只能只读，
+# 报的是 `attempt to write a readonly database`，看不出是权限问题。
+#
+# 灌完不用重启——渠道、key 都是每次请求现查的。只有配置文件改了才要重启。
+
+services:
+  portage:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: portage:local
+    restart: unless-stopped
+    environment:
+      # 只用来初始化管理密码。宿主上没设这个变量时它是空串，等于没设。
+      PORTAGE_ADMIN_PASSWORD: ${PORTAGE_ADMIN_PASSWORD:-}
+    ports:
+      # 只发布给本机。要让局域网里另一台机器连过来，改成 "8317:8317"——
+      # 那一刻网关就暴露在整个网段上，只有 key 鉴权和管理端密码挡着，
+      # 没有 TLS（限流是有的，出厂 10 QPS / 突发 20，见 rate_limit_qps）。
+      # 注意管理端会话 cookie 在明文 HTTP 下不带 Secure，同网段能被嗅到。
+      #
+      # 公网暴露不要改这一行：让它继续只发布给本机，前面挂 nginx 收 TLS 并
+      # 只放行 /v1。样例见 deploy/nginx.conf.example，nginx 对 SSE 的几条
+      # 默认值必须显式改，漏了不报错、只表现为卡住或断流（展开层 §11.3）。
+      - "127.0.0.1:8317:8317"
+    volumes:
+      # **卷名保留改名前的 ai-gateway-data**：改成 portage-data 的话下次
+      # `compose up` 会新建一个空卷，渠道、key、全部流水留在旧卷里没人读。
+      # 名字难看，但它是唯一一个改名有真实代价的标识符。
+      - ai-gateway-data:/data
+      # 要改配置就把这行放开，改宿主上的 deploy/config.docker.yaml。
+      # 密码不必走这条路，用上面的环境变量。
+      # - ./config.docker.yaml:/etc/portage/config.yaml:ro
+    healthcheck:
+      # scratch 里没有 curl/wget，只能让网关自己探自己——portage 二进制不带
+      # 探活子命令，所以这里用 Docker 25+ 的原生 CMD-SHELL 也不行。
+      # 结论：健康检查交给外部（compose 只保证进程活着），别在镜像里塞一个
+      # 只为探活而存在的 shell。
+      disable: true
+
+volumes:
+  # 见上：这个名字是历史包袱，不是笔误。
+  ai-gateway-data:

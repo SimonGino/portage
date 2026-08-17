@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14521,
+    "OutputTokens": 5,
+    "CacheReadTokens": 3840,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（与 2026-08-13 压缩批同渠道），Codex CLI 0.147 codex exec 无头模式，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、developer 提示词换占位符、路径中性化）；expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **纯文本 happy-path**：output 只有一个 message item，事件序 created → in_progress → output_item.added → content_part.added → output_text.delta → .done → content_part.done → output_item.done → completed，流不发 data: [DONE]。提示词是采样时现造的 `Reply with exactly the word pong`。"
+}

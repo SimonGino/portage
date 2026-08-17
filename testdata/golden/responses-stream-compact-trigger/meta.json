@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 17217,
+    "OutputTokens": 86,
+    "CacheReadTokens": 16128,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（PO 2026-08-13 裁定该渠道背后是原生模型，非 Grok 一类自行合成压缩的后端），Codex CLI 0.147 交互式 TUI 打 /compact，2026-08-13。透传判据三条：compaction item 的 encrypted_content 是 Fernet 形态真密文、没有 Grok 本地合成才有的明文 summary 数组、response.completed.output 为空数组（中转若重组响应不会造出这一形态）。**远程压缩的开关是客户端 provider 的 name = \"OpenAI\"**，不是 requires_openai_auth；取别的名字时 /compact 静默走本地压缩，一个 trigger 都不发（#73）。 压缩 turn 本身。input 尾项 {\"type\":\"compaction_trigger\"}，响应里 output_item.added 与 .done 各一个 compaction item、两者 encrypted_content **不同**（676 vs 1164），response.completed.output 是空数组。codex-rs collect_compaction_output 只数 OutputItemDone、判据是 compaction_count==1，所以 .added 那份对客户端不作数（展开层 §7.7）。"
+}

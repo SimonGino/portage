@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 124,
+    "OutputTokens": 296,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 108,
+    "HasReasoningTokens": true,
+    "StopReason": "stop",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经中转的 OpenAI 兼容上游（new-api 系，把 Responses 桥成 CC 线格式）+ curl 手造请求，gpt-5.6-luna，reasoning_effort=high、reasoning.summary=detailed，2026-08-14。**票面写的是 glm-5.2/deepseek 一类，手上两个上游都没有**；换成本模型顶上——A→CC 解码侧吃的是 `reasoning_content` 增量这个线形态，模型身份不进 codec。没有 harness 说 CC，请求由 curl 手造：CC 那侧未来的客户端就是 portage 自己，这里近似的是它将来的出站形状。expect 已独立重算核对（不复用 Go 侧代码，按 CC wire 取终态 usage 与 finish_reason），三份全对得上。 形态三：**工具结果回去之后又一段 reasoning + 正文**。与 turn1 合起来是本批的「交错」覆盖——**注意是轮级交错，不是单条消息内交错**：这个中转把 summary 分片全部前置，实测逼不出「正文中途插一段 reasoning」的单消息形态，手造又违反本库「只存真实字节」的规矩，所以缺的那一格只登记不伪造。`reasoning_tokens=108`。"
+}

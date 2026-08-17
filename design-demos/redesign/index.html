@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portage · 三套重构方向</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    font: 16px/1.5 ui-sans-serif, system-ui, "PingFang SC", sans-serif;
+    padding: 40px 28px 80px;
+    max-width: 880px;
+  }
+  h1 { font-size: 28px; letter-spacing: -0.03em; margin: 0 0 8px; }
+  p { color: #555; }
+  ol { padding-left: 1.2em; }
+  a {
+    display: block;
+    padding: 18px 20px;
+    margin: 12px 0;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+  }
+  a:hover { background: #f6f6f4; }
+  strong { display: block; font-size: 18px; margin-bottom: 4px; }
+  code { font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Portage 整站重构 · 三套方向</h1>
+  <p>同一套信息架构，三副骨架。点进去五页都能切。这是一次性原型，不是生产代码。</p>
+  <ol>
+    <li>模型（首页，含渠道/上游）</li>
+    <li>API Key</li>
+    <li>调用记录</li>
+    <li>接入点</li>
+    <li>排行</li>
+  </ol>
+  <a href="A-grok-harbor-v2.html">
+    <strong>A-v2 · 采用稿（推荐打开这个）</strong>
+    A 的视觉 + 现网关全部功能。没有聊天气泡和底栏输入。
+  </a>
+  <a href="A-grok-harbor.html">
+    <strong>A · Grok 港（初稿，已弃交互）</strong>
+    左栏 App 壳。安静、圆、浅。带聊天式胶囊，只作色板参考。
+  </a>
+  <a href="B-dry-dock.html">
+    <strong>B · 旱路栈</strong>
+    竖脊报纸。巨大标题，清单是主语。最能「一眼看出能干嘛」。
+  </a>
+  <a href="C-instrument-rack.html">
+    <strong>C · 仪器架</strong>
+    暖暗机架。模型是插进去的模块，流水是磁带。密度最高。
+  </a>
+</body>
+</html>

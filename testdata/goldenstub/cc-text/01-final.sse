@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-stub-text","object":"chat.completion.chunk","created":1785984258,"model":"stub-model","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stub-text","object":"chat.completion.chunk","created":1785984258,"model":"stub-model","choices":[{"index":0,"delta":{"content":"网关"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stub-text","object":"chat.completion.chunk","created":1785984258,"model":"stub-model","choices":[{"index":0,"delta":{"content":"收到了。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stub-text","object":"chat.completion.chunk","created":1785984258,"model":"stub-model","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-stub-text","object":"chat.completion.chunk","created":1785984258,"model":"stub-model","choices":[],"usage":{"prompt_tokens":42,"completion_tokens":6,"total_tokens":48}}
+
+data: [DONE]
+

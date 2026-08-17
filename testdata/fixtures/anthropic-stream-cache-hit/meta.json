@@ -1,0 +1,19 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": true,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "source": "构造样本（非转录）：从 golden/anthropic-stream-text 的真实转录派生，只改 message_start 与 message_delta 两处 usage 的数字；取值依据 platform.claude.com/docs/en/api/rate-limits，2026-08-13 核对。补 #37 第 2 项缺的 Anthropic 侧缓存命中形状，不满足该票「官方直连实测」的验收。",
+  "synthetic": true,
+  "expect": {
+    "Model": "claude-sonnet-4-5",
+    "InputTokens": 17,
+    "OutputTokens": 38,
+    "CacheReadTokens": 3840,
+    "CacheWriteTokens": 1024,
+    "StopReason": "end_turn",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 4881
+}

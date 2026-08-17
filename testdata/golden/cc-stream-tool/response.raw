@@ -1,0 +1,20 @@
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_lYvXduz403byYRYDphaXknTn","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"{\""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"city"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"\":\""}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"北京"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}]}
+
+data: {"id":"resp_01e5faa159c9fb95016a73efa92a60819bbcc2c2d7af668caa","object":"chat.completion.chunk","created":1785982891,"model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":56,"completion_tokens":18,"total_tokens":74}}
+
+data: [DONE]
+

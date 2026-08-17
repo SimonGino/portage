@@ -1,0 +1,45 @@
+event: response.created
+data: {"response": {"id": "resp_stub_parallel", "object": "response", "model": "goldenrec-stub", "status": "in_progress", "output": [], "parallel_tool_calls": true, "store": false}, "type": "response.created", "sequence_number": 0}
+
+event: response.in_progress
+data: {"response": {"id": "resp_stub_parallel", "object": "response", "model": "goldenrec-stub", "status": "in_progress", "output": [], "parallel_tool_calls": true, "store": false}, "type": "response.in_progress", "sequence_number": 1}
+
+event: response.output_item.added
+data: {"output_index": 0, "item": {"type": "reasoning", "id": "rs_stub_parallel", "summary": [], "content": [], "encrypted_content": "gAAAAABstub-parallel-reasoning-blob-not-a-real-ciphertext"}, "type": "response.output_item.added", "sequence_number": 2}
+
+event: response.output_item.done
+data: {"output_index": 0, "item": {"type": "reasoning", "id": "rs_stub_parallel", "summary": [], "content": [], "encrypted_content": "gAAAAABstub-parallel-reasoning-blob-not-a-real-ciphertext"}, "type": "response.output_item.done", "sequence_number": 3}
+
+event: response.output_item.added
+data: {"output_index": 1, "item": {"type": "custom_tool_call", "id": "ctc_stub_1", "status": "in_progress", "call_id": "call_stub_par_a", "name": "exec", "input": ""}, "type": "response.output_item.added", "sequence_number": 4}
+
+event: response.custom_tool_call_input.delta
+data: {"output_index": 1, "item_id": "ctc_stub_1", "delta": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-a.txt\",", "type": "response.custom_tool_call_input.delta", "sequence_number": 5}
+
+event: response.custom_tool_call_input.delta
+data: {"output_index": 1, "item_id": "ctc_stub_1", "delta": " yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());", "type": "response.custom_tool_call_input.delta", "sequence_number": 6}
+
+event: response.custom_tool_call_input.done
+data: {"output_index": 1, "item_id": "ctc_stub_1", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-a.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());", "type": "response.custom_tool_call_input.done", "sequence_number": 7}
+
+event: response.output_item.done
+data: {"output_index": 1, "item": {"type": "custom_tool_call", "id": "ctc_stub_1", "status": "completed", "call_id": "call_stub_par_a", "name": "exec", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-a.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());"}, "type": "response.output_item.done", "sequence_number": 8}
+
+event: response.output_item.added
+data: {"output_index": 2, "item": {"type": "custom_tool_call", "id": "ctc_stub_2", "status": "in_progress", "call_id": "call_stub_par_b", "name": "exec", "input": ""}, "type": "response.output_item.added", "sequence_number": 9}
+
+event: response.custom_tool_call_input.delta
+data: {"output_index": 2, "item_id": "ctc_stub_2", "delta": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-b.txt\",", "type": "response.custom_tool_call_input.delta", "sequence_number": 10}
+
+event: response.custom_tool_call_input.delta
+data: {"output_index": 2, "item_id": "ctc_stub_2", "delta": " yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());", "type": "response.custom_tool_call_input.delta", "sequence_number": 11}
+
+event: response.custom_tool_call_input.done
+data: {"output_index": 2, "item_id": "ctc_stub_2", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-b.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());", "type": "response.custom_tool_call_input.done", "sequence_number": 12}
+
+event: response.output_item.done
+data: {"output_index": 2, "item": {"type": "custom_tool_call", "id": "ctc_stub_2", "status": "completed", "call_id": "call_stub_par_b", "name": "exec", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-b.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());"}, "type": "response.output_item.done", "sequence_number": 13}
+
+event: response.completed
+data: {"response": {"id": "resp_stub_parallel", "object": "response", "model": "goldenrec-stub", "status": "completed", "output": [{"type": "reasoning", "id": "rs_stub_parallel", "summary": [], "content": [], "encrypted_content": "gAAAAABstub-parallel-reasoning-blob-not-a-real-ciphertext"}, {"type": "custom_tool_call", "id": "ctc_stub_1", "status": "completed", "call_id": "call_stub_par_a", "name": "exec", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-a.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());"}, {"type": "custom_tool_call", "id": "ctc_stub_2", "status": "completed", "call_id": "call_stub_par_b", "name": "exec", "input": "const r = await tools.exec_command({cmd: \"head -n 1 /tmp/goldenrec-b.txt\", yield_time_ms: 10000, max_output_tokens: 100});\ntext(r.output.trimEnd());"}], "parallel_tool_calls": true, "store": false, "usage": {"input_tokens": 11, "output_tokens": 42, "total_tokens": 53}}, "type": "response.completed", "sequence_number": 14}
+

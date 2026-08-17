@@ -1,0 +1,82 @@
+# 公网暴露时的反代示例（口径层 §2.7：TLS 由反向代理承担，反代只放行 /v1）。
+#
+# 放进 /etc/nginx/conf.d/ 或 sites-available/，改掉 server_name 与证书路径。
+# 网关本身仍然只监听 127.0.0.1:8317（容器就是 compose 里那行默认的端口发布），
+# 公网上唯一的入口是这份 server 块。
+#
+# 这里每一条 proxy_* 都是为了一个具体的故障现象存在的。nginx 的默认值是按
+# 「短请求 + 完整响应」调的，而这个网关的流量全是 SSE 长流，两边正好相反：
+# 漏配的表现不是报错，是「客户端卡住不吐字」或「聊到一半断」，
+# 而且网关日志里一切正常（字节确实写出去了，是 nginx 攒着没给）。
+
+server {
+    listen 443 ssl;
+    # 独立的 http2 指令要 nginx 1.25.1+。老版本写 `listen 443 ssl http2;`，
+    # 这里照抄会直接起不来（unknown directive）。
+    http2 on;
+    server_name gw.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/gw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/gw.example.com/privkey.pem;
+
+    # 请求体上限。默认 1m，带图片或长上下文的请求会直接被 nginx 回 413（实测），
+    # 请求根本到不了网关——所以网关日志里查不到任何痕迹，最容易误判成客户端问题。
+    client_max_body_size 64m;
+
+    # 只放行转发面。管理面（/admin 页面 + /admin/api/*）不在这里开口子：
+    # 它认的是 cookie 会话，公网上多一个可爆破的登录页没有必要。
+    # 要用就走内网直连 8317，或者 SSH 端口转发：
+    #   ssh -N -L 8317:127.0.0.1:8317 user@host   然后开 http://127.0.0.1:8317/admin
+    location /v1/ {
+        proxy_pass http://127.0.0.1:8317;
+
+        # ── SSE 两组，都实测过（结果见展开层 §11.3）────────────────────
+        #
+        # buffering + gzip：**两个同时开才出事**，此时首字节要等整条流结束
+        # （实测 5s 的流首字节 5.02s，就是「卡住不吐字」），任意关掉一个都恢复
+        # 逐条下发。这里两个都关：gzip 那条防的是父配置里开了 gzip 且 gzip_types
+        # 覆盖到 text/event-stream —— 那几行往往不在这份文件里，改不改得动
+        # 也不由你说了算。location 级的 gzip off 压得住父配置（实测）。
+        proxy_buffering off;
+        gzip off;
+        #
+        # 双保险：网关自己也会给 SSE 响应盖 `X-Accel-Buffering: no`（口径层 v0.30），
+        # nginx 认这个头就对该次响应关掉缓冲。所以这里的 proxy_buffering off 是冗余的，
+        # 保留是因为它管的范围更大（比如上游直接 4xx 时那条头就不在），而且看得见。
+        #
+        # 读超时默认 60s，量的是「两次读之间的间隔」，不是流的总长。模型思考或
+        # 工具调用的空档一旦超过 60s，nginx 就把流掐了——**实测掐在第 60 秒，
+        # 客户端看到的是流正常结束**，没有错误码、没有异常断连，最难查的一种。
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+        # 到上游用 HTTP/1.1 并清掉 Connection：这两条一起才能保住 keepalive。
+        # nginx 1.29.7 起 proxy_http_version 默认已是 1.1，但老版本默认 1.0，
+        # 那种版本下 chunked 响应会被降级处理。写死不吃亏。
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 探活端点不鉴权、不泄露配置，放出来给外部监控用。不需要就删掉。
+    location = /healthz {
+        proxy_pass http://127.0.0.1:8317;
+        access_log off;
+    }
+
+    # 其余一律不给。写在最后兜底，免得以后加 location 时漏掉。
+    location / {
+        return 404;
+    }
+}
+
+# 只有 HTTPS，80 端口只做跳转。
+server {
+    listen 80;
+    server_name gw.example.com;
+    return 301 https://$host$request_uri;
+}

@@ -1,0 +1,1618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portage · Grok 港</title>
+<!--
+  方向 A · Grok 港
+
+  骨架：把 xAI 聊天壳（左栏会话、右对齐提问胶囊、底栏输入槽）搬到运营工具上——
+  会话换成当前页的货单，提问胶囊换成限定名，输入槽换成状态。
+
+  form：船体缺口 = 两段协议之间的陆路，列表是货。
+  标记上沿是船壳（梯形），下沿两岸（两块实心），中间空着的就是 portage——
+  把船从这一段水运到那一段；本页列表里每一行，是正在过岸的货。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #f3f3f1;
+    --canvas: #ffffff;
+    --ink: #161615;
+    --ink-2: #3c3c38;
+    --mute: #5e5e59;
+    --faint: #6f6f6a;
+    --line: #e6e6e2;
+    --sunken: #e8e8e4;
+    --chip: #efefe9;
+    --hover: rgba(22, 22, 21, 0.045);
+    --shadow: 0 18px 48px rgba(22, 22, 21, 0.08);
+    --r: 20px;
+    --r-sm: 16px;
+    --side: 248px;
+    --display: "Outfit", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    margin: 0;
+    display: flex;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; padding: 0; }
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  ::selection { background: var(--ink); color: var(--paper); }
+
+  /* —— 壳 —— */
+  .rail {
+    width: var(--side);
+    flex: 0 0 var(--side);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 12px 14px;
+    min-height: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px 18px;
+  }
+  .brand svg { width: 22px; height: 22px; display: block; flex: 0 0 22px; }
+  .brand b {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: -0.03em;
+  }
+
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: var(--r-sm);
+    color: var(--ink-2);
+    text-align: left;
+  }
+  .nav button svg { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.72; }
+  .nav button:hover { background: var(--hover); }
+  .nav button.is-on {
+    background: var(--sunken);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .nav button.is-on svg { opacity: 1; }
+
+  .rail-mid {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 22px;
+    overflow: auto;
+  }
+  .rail-label {
+    padding: 0 12px 8px;
+    color: var(--faint);
+    font-size: 12px;
+    letter-spacing: 0.01em;
+  }
+  .rail-list { display: flex; flex-direction: column; gap: 2px; }
+  .rail-list button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    text-align: left;
+    color: var(--ink-2);
+    min-height: 38px;
+  }
+  .rail-list button:hover { background: var(--hover); }
+  .rail-list button.is-on {
+    background: var(--sunken);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .rail-list .nm {
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-list .mark {
+    font-size: 12px;
+    color: var(--mute);
+    flex: 0 0 auto;
+  }
+  .rail-list button.is-off .nm { color: var(--faint); }
+
+  .account {
+    padding: 10px 8px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+  }
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--sunken);
+    display: grid;
+    place-items: center;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: -0.03em;
+  }
+  .who strong { display: block; font-weight: 500; font-size: 14px; }
+  .who span { display: block; color: var(--mute); font-size: 12px; }
+  .acct-acts { display: flex; gap: 4px; padding: 0 4px; }
+  .acct-acts button {
+    color: var(--mute);
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 12px;
+  }
+  .acct-acts button:hover { background: var(--hover); color: var(--ink); }
+
+  .stage {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: var(--canvas);
+    border-radius: 24px 0 0 24px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  .col {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 52px 36px 32px;
+  }
+  .col.wide { max-width: 840px; }
+
+  .hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 8px;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.15;
+    letter-spacing: -0.035em;
+    text-wrap: pretty;
+  }
+  .lede {
+    margin: 10px 0 0;
+    color: var(--mute);
+    font-size: 15px;
+    max-width: 36em;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: var(--r);
+    padding: 14px 22px;
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .btn-hero {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 16px 26px;
+    font-size: 17px;
+    border-radius: 22px;
+  }
+  .btn-hero:hover { background: #2a2a27; }
+  .btn-hero.is-on { background: var(--sunken); color: var(--ink); }
+  .btn-ghost {
+    background: var(--chip);
+    color: var(--ink);
+    padding: 8px 14px;
+    font-size: 14px;
+    border-radius: 14px;
+  }
+  .btn-ghost:hover { background: var(--sunken); }
+  .btn-text {
+    color: var(--mute);
+    font-size: 13px;
+    padding: 4px 2px;
+    border-radius: 8px;
+  }
+  .btn-text:hover { color: var(--ink); }
+
+  .capsules {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    margin: 36px 0 28px;
+    min-height: 8px;
+  }
+  .capsule {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 78%;
+    padding: 12px 18px;
+    background: var(--chip);
+    border-radius: 22px;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.35;
+    color: var(--ink);
+    text-align: left;
+    transition: background 0.15s ease, transform 0.12s ease;
+  }
+  button.capsule:hover { background: var(--sunken); }
+  button.capsule:active { transform: scale(0.985); }
+  .capsule small {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--mute);
+  }
+  .capsule.is-off { color: var(--mute); }
+
+  .reply {
+    margin: 8px 0 36px;
+    padding: 4px 2px 8px;
+    animation: rise 0.28s ease;
+  }
+  .reply p { margin: 0 0 14px; color: var(--ink-2); }
+  .suggest { display: flex; flex-direction: column; gap: 6px; }
+  .suggest-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 4px;
+  }
+  .suggest-row code { font-size: 14px; }
+  .tag {
+    font-size: 12px;
+    color: var(--mute);
+    padding: 2px 0;
+  }
+
+  .rows { display: flex; flex-direction: column; gap: 4px; }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px 20px;
+    padding: 16px 16px 14px;
+    border-radius: var(--r-sm);
+    align-items: start;
+  }
+  .row:hover { background: var(--hover); }
+  .row.is-off .name,
+  .row.is-off .sub { color: var(--faint); }
+  .name {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1.25;
+  }
+  .sub {
+    grid-column: 1;
+    color: var(--mute);
+    font-size: 13.5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  .dot { color: var(--line); }
+  .row-side {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    padding-top: 2px;
+  }
+
+  .sw {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .sw i {
+    width: 36px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--ink);
+    position: relative;
+    display: inline-block;
+    transition: background 0.15s ease;
+  }
+  .sw i::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 17px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--canvas);
+    transition: left 0.15s ease;
+  }
+  .sw.is-off { color: var(--mute); }
+  .sw.is-off i { background: var(--sunken); }
+  .sw.is-off i::after { left: 3px; background: var(--canvas); }
+
+  .status {
+    flex: 0 0 auto;
+    padding: 16px 36px 22px;
+  }
+  .status-bar {
+    max-width: 760px;
+    margin: 0 auto;
+    min-height: 56px;
+    background: var(--paper);
+    border-radius: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 18px 10px 20px;
+  }
+  .status-bar .left {
+    color: var(--ink-2);
+    font-size: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    align-items: center;
+    min-width: 0;
+  }
+  .status-bar .left .mono { font-size: 13.5px; }
+  .status-bar .right { display: flex; gap: 6px; flex: 0 0 auto; }
+  .sep { color: var(--faint); }
+
+  /* —— 调用记录 —— */
+  .log {
+    width: 100%;
+    text-align: left;
+    padding: 16px 16px 15px;
+    border-radius: var(--r-sm);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 16px;
+  }
+  .log:hover { background: var(--hover); }
+  .log-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .log-time { color: var(--faint); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .log-model {
+    font-family: var(--mono);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .log-status {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .log-status.bad { letter-spacing: 0.01em; }
+  .log-sub {
+    grid-column: 1 / -1;
+    color: var(--mute);
+    font-size: 13.5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+  .word { font-family: var(--mono); font-size: 13px; }
+
+  /* —— 排行 —— */
+  .windows {
+    display: flex;
+    gap: 6px;
+    background: var(--paper);
+    padding: 4px;
+    border-radius: 18px;
+  }
+  .windows button {
+    padding: 10px 16px;
+    border-radius: 14px;
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 15px;
+    color: var(--mute);
+  }
+  .windows button.is-on { background: var(--canvas); color: var(--ink); }
+  .rank {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 8px 16px;
+    align-items: baseline;
+    padding: 18px 12px;
+    border-radius: var(--r-sm);
+  }
+  .rank:hover { background: var(--hover); }
+  .rank-n {
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .rank.is-1 .rank-n { color: var(--ink); }
+  .rank-name { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+  .rank-note { color: var(--mute); font-size: 13px; margin-top: 2px; }
+  .rank-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .rank-num b {
+    display: block;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 20px;
+    letter-spacing: -0.03em;
+  }
+  .rank-num span { color: var(--mute); font-size: 13px; }
+  .total {
+    margin-top: 18px;
+    padding: 8px 12px 0;
+    color: var(--mute);
+    font-size: 14px;
+  }
+  .total b { color: var(--ink); font-family: var(--display); font-weight: 600; font-size: 16px; }
+
+  /* —— 抽屉 / 层 —— */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(22, 22, 21, 0.18);
+    z-index: 20;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+  .scrim.is-on { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: min(420px, calc(100vw - 24px));
+    background: var(--canvas);
+    border-radius: 24px;
+    z-index: 21;
+    transform: translateX(calc(100% + 24px));
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow);
+  }
+  .drawer.is-on { transform: translateX(0); }
+  .drawer-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 22px 22px 8px;
+    gap: 12px;
+  }
+  .drawer-head h2 {
+    margin: 4px 0 0;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 24px;
+    letter-spacing: -0.03em;
+  }
+  .eyebrow { color: var(--mute); font-size: 13px; margin: 0; }
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    color: var(--mute);
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--ink); }
+  .icon-btn svg { width: 18px; height: 18px; }
+  .drawer-body {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 22px 28px;
+  }
+  .block { margin-top: 22px; }
+  .block h3 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--mute);
+  }
+  .preview {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .preview-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 0;
+  }
+  .preview-row .k { font-size: 12px; color: var(--mute); }
+  .preview-row .v {
+    font-family: var(--mono);
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .hint { color: var(--mute); font-size: 13px; margin: 6px 0 0; }
+  .cred {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    padding: 12px 0;
+  }
+  .cred + .cred { border-top: 1px solid var(--line); }
+  .cred .cn { font-weight: 500; }
+  .cred .cv { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+  .cred .cs { font-size: 13px; color: var(--mute); }
+  .cred-acts { display: flex; gap: 8px; align-items: center; }
+  .probe-box { padding: 4px 0 0; color: var(--ink-2); font-size: 14px; }
+  .probe-box ul { margin: 8px 0 0; padding: 0 0 0 1.1em; }
+  .probe-box li { margin: 4px 0; }
+  .cells { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .cell {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 4px 8px;
+    border-radius: 10px;
+    background: var(--paper);
+  }
+
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .modal[hidden] { display: none; }
+  .sheet {
+    width: min(520px, 100%);
+    background: var(--canvas);
+    border-radius: 24px;
+    padding: 26px 26px 22px;
+    box-shadow: var(--shadow);
+    position: relative;
+    z-index: 31;
+    animation: rise 0.22s ease;
+  }
+  .sheet h2 {
+    margin: 0 0 6px;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+  }
+  .sheet .lede { margin: 0 0 18px; }
+  .dl {
+    display: grid;
+    grid-template-columns: 112px 1fr;
+    gap: 10px 16px;
+    font-size: 14px;
+  }
+  .dl dt { color: var(--mute); }
+  .dl dd { margin: 0; overflow-wrap: anywhere; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 13px; color: var(--mute); }
+  .field input, .field .fake-input {
+    width: 100%;
+    border: 0;
+    background: var(--paper);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: 15px;
+    outline: none;
+  }
+  .field input:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .sheet-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .fresh-key {
+    font-family: var(--mono);
+    font-size: 15px;
+    background: var(--paper);
+    border-radius: 16px;
+    padding: 14px 16px;
+    margin: 8px 0 16px;
+    word-break: break-all;
+  }
+  .err-pre {
+    margin: 16px 0 0;
+    padding: 14px 16px;
+    background: var(--paper);
+    border-radius: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    color: var(--ink-2);
+    max-height: 200px;
+    overflow: auto;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--ink);
+    color: var(--paper);
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    max-width: min(480px, calc(100% - 32px));
+  }
+  .toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+  @media (max-width: 860px) {
+    .hero { flex-direction: column; align-items: stretch; }
+    .btn-hero { align-self: flex-start; }
+    h1 { font-size: 32px; }
+    .stage { border-radius: 0; }
+  }
+</style>
+</head>
+<body data-page="models">
+
+<aside class="rail" aria-label="导航">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+    </svg>
+    <b>Portage</b>
+  </div>
+
+  <nav class="nav" aria-label="五项">
+    <button type="button" data-nav="models" class="is-on">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h16M7 12h10M10 16h4"/></svg>
+      模型
+    </button>
+    <button type="button" data-nav="keys">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="3"/><path d="M11 12h9l-2 2m2-2-2-2"/></svg>
+      API Key
+    </button>
+    <button type="button" data-nav="logs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7h11M8 12h11M8 17h8"/><path d="M5 7.2v.01M5 12.2v.01M5 17.2v.01"/></svg>
+      调用记录
+    </button>
+    <button type="button" data-nav="aps">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="3"/><circle cx="16" cy="12" r="3"/><path d="M11 12h2"/></svg>
+      接入点
+    </button>
+    <button type="button" data-nav="rank">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 17V11M12 17V7M18 17v-4"/></svg>
+      排行
+    </button>
+  </nav>
+
+  <div class="rail-mid">
+    <div data-rail="models">
+      <div class="rail-label">渠道</div>
+      <div class="rail-list" id="rail-channels"></div>
+    </div>
+    <div data-rail="keys" hidden>
+      <div class="rail-label">钥匙</div>
+      <div class="rail-list" id="rail-keys"></div>
+    </div>
+    <div data-rail="logs" hidden>
+      <div class="rail-label">最近模型</div>
+      <div class="rail-list" id="rail-log-models"></div>
+    </div>
+    <div data-rail="aps" hidden>
+      <div class="rail-label">别名</div>
+      <div class="rail-list" id="rail-aps"></div>
+    </div>
+    <div data-rail="rank" hidden>
+      <div class="rail-label">维度</div>
+      <div class="rail-list" id="rail-dims"></div>
+    </div>
+  </div>
+
+  <div class="account">
+    <div class="who">
+      <div class="avatar" aria-hidden="true">宇</div>
+      <div>
+        <strong>宇辰</strong>
+        <span>本机唯一管理员</span>
+      </div>
+    </div>
+    <div class="acct-acts">
+      <button type="button" id="btn-pw">改密码</button>
+      <button type="button" id="btn-out">退出</button>
+    </div>
+  </div>
+</aside>
+
+<main class="stage">
+  <div class="scroll">
+
+    <section class="col" data-page="models">
+      <div class="hero">
+        <div>
+          <h1>纳管这些模型</h1>
+          <p class="lede">主语是纳管模型。渠道只回答「从哪家上游来」。限定名 <span class="mono">渠道名/模型名</span> 可直接调，不必先建接入点。</p>
+        </div>
+        <button type="button" class="btn btn-hero" id="btn-fetch">获取模型列表</button>
+      </div>
+      <div class="capsules" id="model-capsules"></div>
+      <div class="reply" id="fetch-reply" hidden></div>
+      <div class="rows" id="model-rows"></div>
+    </section>
+
+    <section class="col" data-page="keys" hidden>
+      <div class="hero">
+        <div>
+          <h1>签发一把钥匙</h1>
+          <p class="lede">客户端拿它调网关。跟渠道里那份<strong>上游凭证</strong>是两回事，也跟管理端密码是两回事。</p>
+        </div>
+        <button type="button" class="btn btn-hero" id="btn-new-key">新建一把钥匙</button>
+      </div>
+      <div class="capsules" id="key-capsules"></div>
+      <div class="rows" id="key-rows"></div>
+    </section>
+
+    <section class="col wide" data-page="logs" hidden>
+      <div class="hero">
+        <div>
+          <h1>刚才那几次怎么样</h1>
+          <p class="lede">逐行流水，排障用。点开一行看 request-id；上游原文只在失败行。</p>
+        </div>
+        <button type="button" class="btn btn-hero" id="btn-fail-only">只看失败</button>
+      </div>
+      <div class="capsules" id="log-capsules"></div>
+      <div class="rows" id="log-rows"></div>
+    </section>
+
+    <section class="col" data-page="aps" hidden>
+      <div class="hero">
+        <div>
+          <h1>给模型起个对外的名字</h1>
+          <p class="lede">接入点是别名层：绑一个候选（渠道 + 纳管模型）。只想直连，用限定名即可，不必建。</p>
+        </div>
+        <button type="button" class="btn btn-hero" id="btn-new-ap">新建接入点</button>
+      </div>
+      <div class="capsules" id="ap-capsules"></div>
+      <div class="rows" id="ap-rows"></div>
+    </section>
+
+    <section class="col" data-page="rank" hidden>
+      <div class="hero">
+        <div>
+          <h1>谁在烧</h1>
+          <p class="lede">名次 + 名字 + token + 占比。占比分母就是下面那一个合计。不做热门榜、厂商份额、环比。</p>
+        </div>
+        <div class="windows" id="rank-windows" role="tablist" aria-label="窗口">
+          <button type="button" data-days="1">1 天</button>
+          <button type="button" data-days="7" class="is-on">7 天</button>
+          <button type="button" data-days="30">30 天</button>
+        </div>
+      </div>
+      <div id="rank-rows"></div>
+      <p class="total" id="rank-total"></p>
+    </section>
+
+  </div>
+
+  <footer class="status">
+    <div class="status-bar" id="status-bar"></div>
+  </footer>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer" aria-label="这家上游" hidden>
+  <div class="drawer-head">
+    <div>
+      <p class="eyebrow">这家上游</p>
+      <h2 id="drawer-title">anthropic</h2>
+    </div>
+    <button type="button" class="icon-btn" id="drawer-close" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<div class="modal" id="modal" hidden>
+  <div class="scrim is-on" id="modal-scrim"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  const MARK = "M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z";
+
+  const CHANNELS = [
+    {
+      id: "anthropic",
+      name: "anthropic",
+      disabled: false,
+      protocols: ["anthropic"],
+      preview: [{ proto: "anthropic", path: "/v1/messages", host: "api.anth****.com" }],
+      creds: [
+        { id: "prod", name: "生产号", mask: "sk-ant-…k2p9", shown: "sk-ant-api03-demo-not-real-k2p9", disabled: false },
+        { id: "spare", name: "备用号", mask: "sk-ant-…0x4c", shown: "sk-ant-api03-demo-not-real-0x4c", disabled: true, reason: "已摘 · 401", when: "2026-08-12" },
+      ],
+      probe: {
+        path: "探测通过：勾选的 1 个协议子路径上游都有。",
+        models: [
+          { name: "claude-sonnet-4", cells: ["anthropic 通"] },
+          { name: "claude-opus-4", cells: ["anthropic 通"] },
+        ],
+        cred: "生产号",
+      },
+      fetched: ["claude-haiku-4", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    },
+    {
+      id: "bailian",
+      name: "bailian",
+      disabled: false,
+      protocols: ["openai", "openai_responses"],
+      preview: [
+        { proto: "openai", path: "/v1/chat/completions", host: "dashscope.ali****.com" },
+        { proto: "openai_responses", path: "/v1/responses", host: "dashscope.ali****.com" },
+      ],
+      creds: [
+        { id: "main", name: "主号", mask: "sk-…7a21", shown: "sk-demo-bailian-not-real-7a21", disabled: false },
+      ],
+      probe: {
+        path: "探测通过：勾选的 2 个协议子路径上游都有。",
+        models: [
+          { name: "qwen3-max", cells: ["openai 通", "responses 通"] },
+        ],
+        cred: "主号",
+      },
+      fetched: ["qwen3-plus", "qwen-vl-max"],
+    },
+    {
+      id: "openai",
+      name: "openai",
+      disabled: true,
+      protocols: ["openai", "openai_responses"],
+      preview: [
+        { proto: "openai", path: "/v1/chat/completions", host: "api.open****.com" },
+        { proto: "openai_responses", path: "/v1/responses", host: "api.open****.com" },
+      ],
+      creds: [
+        { id: "off", name: "官方", mask: "sk-…m4e8", shown: "sk-demo-openai-not-real-m4e8", disabled: false },
+      ],
+      probe: {
+        path: "子路径都在，但渠道已停。探测只提示，不进路由。",
+        models: [
+          { name: "gpt-4o", cells: ["openai 通", "responses 通"] },
+        ],
+        cred: "官方",
+      },
+      fetched: ["gpt-4o-mini", "o3-mini"],
+    },
+  ];
+
+  const MODELS = [
+    { id: "sonnet", channel: "anthropic", name: "claude-sonnet-4", q: "anthropic/claude-sonnet-4", disabled: false, proto: "anthropic", inherit: true },
+    { id: "opus", channel: "anthropic", name: "claude-opus-4", q: "anthropic/claude-opus-4", disabled: false, proto: "anthropic", inherit: true },
+    { id: "qwenmax", channel: "bailian", name: "qwen3-max", q: "bailian/qwen3-max", disabled: false, proto: "openai · openai_responses", inherit: true },
+    { id: "qwencode", channel: "bailian", name: "qwen3-coder-plus", q: "bailian/qwen3-coder-plus", disabled: true, proto: "openai · openai_responses", inherit: true },
+    { id: "gpt4o", channel: "openai", name: "gpt-4o", q: "openai/gpt-4o", disabled: true, proto: "openai · openai_responses", inherit: true, note: "渠道已停" },
+  ];
+
+  const KEYS = [
+    { id: "claude-code", name: "claude-code", mask: "sk-ptg-8f2a…c91d", shown: "sk-ptg-8f2a9c01-demo-c91d", allow: "*", disabled: false },
+    { id: "codex-laptop", name: "codex-laptop", mask: "sk-ptg-11b0…44e2", shown: "sk-ptg-11b0aa02-demo-44e2", allow: "anthropic/claude-sonnet-4", disabled: false },
+    { id: "old-script", name: "old-script", mask: "", shown: "", allow: "*", disabled: true, lost: true },
+  ];
+
+  const LOGS = [
+    { id: 1, time: "14:22:08", status: 200, req: "claude-sonnet-4", up: "anthropic / claude-sonnet-4", in: "12.4k", out: "802", think: "640", ttft: "380ms", key: "claude-code", cred: "生产号", proto: "anthropic → anthropic", rid: "req_01SonnetA9c2" },
+    { id: 2, time: "14:18:41", status: 200, req: "bailian/qwen3-max", up: "bailian / qwen3-max", in: "3.1k", out: "410", key: "claude-code", cred: "主号", proto: "openai → openai", rid: "chatcmpl-qwen3max01" },
+    { id: 3, time: "14:11:03", status: 429, req: "claude-opus-4", up: "anthropic / claude-opus-4", err: "queue_timeout", detail: "渠道并发闸等到超时。队满或等超时回 429，文案是我方固定词表。", key: "claude-code", cred: "生产号", proto: "anthropic → anthropic", rid: "req_018Ee7k2…" },
+    { id: 4, time: "13:56:20", status: 200, req: "anthropic/claude-sonnet-4", up: "anthropic / claude-sonnet-4", in: "9.4k", out: "340", cache: "8.2k", key: "codex-laptop", cred: "生产号", proto: "anthropic → anthropic", rid: "req_01CacheHit82" },
+    { id: 5, time: "13:44:12", status: 401, req: "(未记录模型)", up: "—", err: "unauthorized", detail: "鉴权失败，请求体还没解到 model。", key: "—", cred: "—", proto: "—", rid: "" },
+    { id: 6, time: "13:02:55", status: 200, req: "sonnet", up: "anthropic / claude-sonnet-4", in: "2.8k", out: "156", ttft: "210ms", key: "claude-code", cred: "生产号", proto: "anthropic → anthropic", rid: "req_01AliasSonnet" },
+    { id: 7, time: "12:41:18", status: 200, req: "qwen-max", up: "bailian / qwen3-max", in: "6.4k", out: "890", ttft: "520ms", key: "claude-code", cred: "主号", proto: "openai → openai", rid: "chatcmpl-qwenmax02" },
+    { id: 8, time: "11:28:04", status: 503, req: "openai/gpt-4o", up: "openai / gpt-4o", err: "rejected", detail: "渠道已停。未走到上游。", key: "claude-code", cred: "—", proto: "openai → —", rid: "" },
+    { id: 9, time: "10:15:33", status: 200, req: "anthropic/claude-opus-4", up: "anthropic / claude-opus-4", in: "18.2k", out: "1.4k", think: "2.1k", ttft: "640ms", key: "claude-code", cred: "生产号", proto: "anthropic → anthropic", rid: "req_01OpusLong21" },
+    { id: 10, time: "09:02:47", status: 403, req: "openai/gpt-4o", up: "—", err: "model_not_allowed", detail: "codex-laptop 白名单只有 anthropic/claude-sonnet-4。", key: "codex-laptop", cred: "—", proto: "openai → —", rid: "" },
+  ];
+
+  const APS = [
+    { id: "sonnet", name: "sonnet", q: "anthropic / claude-sonnet-4", disabled: false },
+    { id: "qwen-max", name: "qwen-max", q: "bailian / qwen3-max", disabled: false },
+  ];
+
+  const RANK = {
+    1: {
+      total: "1.20M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "0.72M", pct: "60.0%" },
+        { name: "qwen3-max", tokens: "0.31M", pct: "25.8%" },
+        { name: "claude-opus-4", tokens: "0.14M", pct: "11.7%" },
+        { name: "gpt-4o", tokens: "0.03M", pct: "2.5%" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "0.88M", pct: "73.3%", note: "API Key" },
+        { name: "codex-laptop", tokens: "0.32M", pct: "26.7%", note: "API Key" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "0.86M", pct: "71.7%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "0.31M", pct: "25.8%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "0.03M", pct: "2.5%", note: "openai · 上游凭证" },
+      ],
+    },
+    7: {
+      total: "8.32M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "4.82M", pct: "57.9%" },
+        { name: "qwen3-max", tokens: "2.10M", pct: "25.2%" },
+        { name: "claude-opus-4", tokens: "1.08M", pct: "13.0%" },
+        { name: "gpt-4o", tokens: "0.32M", pct: "3.9%" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "6.12M", pct: "73.6%", note: "API Key" },
+        { name: "codex-laptop", tokens: "2.20M", pct: "26.4%", note: "API Key" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "5.90M", pct: "70.9%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "2.10M", pct: "25.2%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "0.32M", pct: "3.9%", note: "openai · 上游凭证" },
+      ],
+    },
+    30: {
+      total: "32.80M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "18.40M", pct: "56.1%" },
+        { name: "qwen3-max", tokens: "8.60M", pct: "26.2%" },
+        { name: "claude-opus-4", tokens: "4.20M", pct: "12.8%" },
+        { name: "gpt-4o", tokens: "1.60M", pct: "4.9%" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "24.10M", pct: "73.5%", note: "API Key" },
+        { name: "codex-laptop", tokens: "8.70M", pct: "26.5%", note: "API Key" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "22.60M", pct: "68.9%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "8.60M", pct: "26.2%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "1.60M", pct: "4.9%", note: "openai · 上游凭证" },
+      ],
+    },
+  };
+
+  const DIMS = [
+    { id: "model", label: "按模型" },
+    { id: "key", label: "按 API Key" },
+    { id: "credential", label: "按上游凭证" },
+  ];
+
+  const state = {
+    page: "models",
+    channel: "anthropic",
+    key: "claude-code",
+    logModel: "",
+    failOnly: false,
+    ap: "sonnet",
+    rankDim: "model",
+    rankDays: 7,
+    fetchFor: null,
+    revealed: {},
+    off: {},
+    probed: {},
+  };
+
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function toast(msg) {
+    const el = $("#toast");
+    el.textContent = msg;
+    el.classList.add("is-on");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("is-on"), 1800);
+  }
+
+  function copy(text, label) {
+    const done = () => toast("已复制 " + (label || text));
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+  function fallbackCopy(text, done) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); done(); } catch (e) { toast("复制失败"); }
+    document.body.removeChild(ta);
+  }
+
+  function chBy(id) { return CHANNELS.find((c) => c.id === id); }
+  function isOff(kind, id, fallback) {
+    const k = kind + ":" + id;
+    return k in state.off ? state.off[k] : fallback;
+  }
+  function toggleOff(kind, id, fallback) {
+    state.off[kind + ":" + id] = !isOff(kind, id, fallback);
+  }
+
+  function showPage(name) {
+    state.page = name;
+    document.body.dataset.page = name;
+    $$("[data-page]").forEach((el) => { el.hidden = el.dataset.page !== name; });
+    $$("[data-nav]").forEach((el) => el.classList.toggle("is-on", el.dataset.nav === name));
+    $$("[data-rail]").forEach((el) => { el.hidden = el.dataset.rail !== name; });
+    closeDrawer();
+    closeModal();
+    render();
+  }
+
+  function renderRails() {
+    $("#rail-channels").innerHTML = CHANNELS.map((c) => {
+      const on = state.channel === c.id;
+      return `<button type="button" class="${on ? "is-on" : ""} ${c.disabled ? "is-off" : ""}" data-ch="${esc(c.id)}">
+        <span class="nm">${esc(c.name)}</span>
+        ${c.disabled ? '<span class="mark" >停用</span>' : ""}
+      </button>`;
+    }).join("");
+
+    $("#rail-keys").innerHTML = KEYS.map((k) => {
+      const off = isOff("key", k.id, k.disabled);
+      return `<button type="button" class="${state.key === k.id ? "is-on" : ""} ${off ? "is-off" : ""}" data-kid="${esc(k.id)}">
+        <span class="nm">${esc(k.name)}</span>
+        ${off ? '<span class="mark">停用</span>' : ""}
+      </button>`;
+    }).join("");
+
+    const logOpts = [
+      { id: "", label: "全部" },
+      { id: "claude-sonnet-4", label: "claude-sonnet-4" },
+      { id: "qwen3-max", label: "qwen3-max" },
+      { id: "claude-opus-4", label: "claude-opus-4" },
+      { id: "(未记录模型)", label: "(未记录模型)" },
+      { id: "gpt-4o", label: "gpt-4o" },
+    ];
+    $("#rail-log-models").innerHTML = logOpts.map((o) =>
+      `<button type="button" class="${state.logModel === o.id ? "is-on" : ""}" data-lm="${esc(o.id)}"><span class="nm">${esc(o.label)}</span></button>`
+    ).join("");
+
+    $("#rail-aps").innerHTML = APS.map((a) =>
+      `<button type="button" class="${state.ap === a.id ? "is-on" : ""}" data-ap="${esc(a.id)}"><span class="nm">${esc(a.name)}</span></button>`
+    ).join("");
+
+    $("#rail-dims").innerHTML = DIMS.map((d) =>
+      `<button type="button" class="${state.rankDim === d.id ? "is-on" : ""}" data-dim="${esc(d.id)}"><span class="nm">${esc(d.label)}</span></button>`
+    ).join("");
+  }
+
+  function renderModels() {
+    const ch = chBy(state.channel);
+    const list = MODELS.filter((m) => m.channel === state.channel);
+    $("#model-capsules").innerHTML = list.map((m) => {
+      const off = isOff("model", m.id, m.disabled) || ch.disabled;
+      return `<button type="button" class="capsule ${off ? "is-off" : ""}" data-copy="${esc(m.q)}" data-copy-label="${esc(m.q)}">${esc(m.q)}</button>`;
+    }).join("");
+
+    const reply = $("#fetch-reply");
+    if (state.fetchFor === state.channel) {
+      const managed = list.map((m) => m.name);
+      reply.hidden = false;
+      reply.innerHTML = `<p>从 <span class="mono">${esc(ch.name)}</span> 拉到 ${managed.length + ch.fetched.length} 个名字。已纳管 ${managed.length} 个；其余只是填表建议，不落库、不进路由。</p>
+        <div class="suggest">
+          ${managed.map((n) => `<div class="suggest-row"><code>${esc(n)}</code><span class="tag">已纳管</span></div>`).join("")}
+          ${ch.fetched.map((n) => `<div class="suggest-row"><code>${esc(n)}</code><span class="tag">未纳管</span></div>`).join("")}
+        </div>`;
+    } else {
+      reply.hidden = true;
+      reply.innerHTML = "";
+    }
+
+    $("#model-rows").innerHTML = list.map((m) => {
+      const off = isOff("model", m.id, m.disabled);
+      const chOff = ch.disabled;
+      const label = off || chOff ? (chOff && m.note ? m.note : "停用") : "启用";
+      return `<div class="row ${off || chOff ? "is-off" : ""}">
+        <div class="name">${esc(m.name)}</div>
+        <div class="row-side">
+          <button type="button" class="sw ${off ? "is-off" : ""}" data-toggle="model" data-id="${esc(m.id)}" ${chOff ? "disabled" : ""}>
+            ${label}<i></i>
+          </button>
+        </div>
+        <div class="sub">
+          <span>协议 ${esc(m.proto)}</span>
+          <span class="dot">·</span>
+          <span>${m.inherit ? "继承渠道全集" : "协议子集"}</span>
+          <span class="dot">·</span>
+          <button type="button" class="btn-text" data-copy="${esc(m.q)}" data-copy-label="${esc(m.q)}">复制限定名</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderKeys() {
+    $("#key-capsules").innerHTML = KEYS.filter((k) => k.id === state.key).map((k) => {
+      const off = isOff("key", k.id, k.disabled);
+      return `<button type="button" class="capsule ${off ? "is-off" : ""}" data-copy="${esc(k.name)}" data-copy-label="${esc(k.name)}">${esc(k.name)}</button>`;
+    }).join("");
+
+    $("#key-rows").innerHTML = KEYS.map((k) => {
+      const off = isOff("key", k.id, k.disabled);
+      const shown = !!state.revealed["key:" + k.id];
+      const secret = k.lost ? "原值没存过" : shown ? k.shown : k.mask;
+      return `<div class="row ${off ? "is-off" : ""}" id="key-${esc(k.id)}" style="${state.key === k.id ? "background:var(--hover)" : ""}">
+        <div class="name">${esc(k.name)}</div>
+        <div class="row-side">
+          <button type="button" class="sw ${off ? "is-off" : ""}" data-toggle="key" data-id="${esc(k.id)}">
+            ${off ? "停用" : "启用"}<i></i>
+          </button>
+        </div>
+        <div class="sub">
+          <span class="mono">${esc(secret)}</span>
+          ${k.lost ? "" : `<button type="button" class="btn-text" data-reveal="key:${esc(k.id)}">${shown ? "隐藏" : "显示"}</button>`}
+          ${k.lost ? "" : `<button type="button" class="btn-text" data-copy="${esc(k.shown)}" data-copy-label="${esc(k.name)}">复制</button>`}
+          <span class="dot">·</span>
+          <span>白名单 <span class="mono">${esc(k.allow)}</span></span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function logMatches(l) {
+    if (state.failOnly && l.status < 400) return false;
+    if (!state.logModel) return true;
+    if (state.logModel === "(未记录模型)") return l.req === "(未记录模型)";
+    return (l.req && l.req.indexOf(state.logModel) !== -1) || (l.up && l.up.indexOf(state.logModel) !== -1);
+  }
+
+  function renderLogs() {
+    const rows = LOGS.filter(logMatches);
+    const cap = state.logModel || "全部";
+    $("#log-capsules").innerHTML = `<span class="capsule">${esc(cap)}${state.failOnly ? " · 只看失败" : ""}</span>`;
+    $("#btn-fail-only").classList.toggle("is-on", state.failOnly);
+    $("#btn-fail-only").textContent = state.failOnly ? "在看失败" : "只看失败";
+
+    if (!rows.length) {
+      $("#log-rows").innerHTML = `<p class="lede">这个筛选项下没有行。</p>`;
+      return;
+    }
+    $("#log-rows").innerHTML = rows.map((l) => {
+      const bits = [];
+      if (l.up && l.up !== "—") bits.push(esc(l.up));
+      if (l.in) bits.push(esc(l.in) + " / " + esc(l.out));
+      if (l.think) bits.push("思考 " + esc(l.think));
+      if (l.cache) bits.push("缓存读 " + esc(l.cache));
+      if (l.ttft) bits.push("首字 " + esc(l.ttft));
+      if (l.err) bits.push(`<span class="word">${esc(l.err)}</span>`);
+      return `<button type="button" class="log" data-log="${l.id}">
+        <div class="log-top">
+          <span class="log-time">${esc(l.time)}</span>
+          <span class="log-model">${esc(l.req)}</span>
+        </div>
+        <span class="log-status ${l.status >= 400 ? "bad" : ""}">${l.status}</span>
+        <div class="log-sub">${bits.join('<span class="dot">·</span>')}</div>
+      </button>`;
+    }).join("");
+  }
+
+  function renderAps() {
+    $("#ap-capsules").innerHTML = APS.filter((a) => a.id === state.ap).map((a) =>
+      `<button type="button" class="capsule" data-copy="${esc(a.name)}" data-copy-label="${esc(a.name)}">${esc(a.name)}</button>`
+    ).join("");
+
+    $("#ap-rows").innerHTML = APS.map((a) => {
+      const off = isOff("ap", a.id, a.disabled);
+      return `<div class="row ${off ? "is-off" : ""}" style="${state.ap === a.id ? "background:var(--hover)" : ""}">
+        <div class="name">${esc(a.name)}</div>
+        <div class="row-side">
+          <button type="button" class="sw ${off ? "is-off" : ""}" data-toggle="ap" data-id="${esc(a.id)}">
+            ${off ? "停用" : "启用"}<i></i>
+          </button>
+        </div>
+        <div class="sub">
+          <span>候选 <span class="mono">${esc(a.q)}</span></span>
+          <span class="dot">·</span>
+          <button type="button" class="btn-text" data-copy="${esc(a.name)}" data-copy-label="${esc(a.name)}">复制对外名</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderRank() {
+    $$("#rank-windows button").forEach((b) => b.classList.toggle("is-on", Number(b.dataset.days) === state.rankDays));
+    const pack = RANK[state.rankDays];
+    const rows = pack[state.rankDim];
+    $("#rank-rows").innerHTML = rows.map((r, i) =>
+      `<div class="rank ${i === 0 ? "is-1" : ""}">
+        <div class="rank-n">${i + 1}</div>
+        <div>
+          <div class="rank-name">${esc(r.name)}</div>
+          ${r.note ? `<div class="rank-note">${esc(r.note)}</div>` : ""}
+        </div>
+        <div class="rank-num">
+          <b title="${esc(r.tokens)}">${esc(r.tokens)}</b>
+          <span>${esc(r.pct)}</span>
+        </div>
+      </div>`
+    ).join("");
+    const unit = state.rankDim === "key" ? "把 API Key" : state.rankDim === "credential" ? "份上游凭证" : "个模型";
+    $("#rank-total").innerHTML = `${state.rankDays} 天 · 合计 <b>${esc(pack.total)}</b> · ${rows.length} ${unit}。这是上面每一行占比的分母。`;
+  }
+
+  function credCount(ch) {
+    const n = ch.creds.length;
+    const live = ch.creds.filter((c) => !c.disabled).length;
+    return `${n} 把凭证 · ${live} 可用`;
+  }
+
+  function renderStatus() {
+    const bar = $("#status-bar");
+    if (state.page === "models") {
+      const ch = chBy(state.channel);
+      bar.innerHTML = `<div class="left">
+          <span class="mono">${esc(ch.name)}</span>
+          <span class="sep">/</span>
+          <span>${ch.disabled ? "停用" : "启用"}</span>
+          <span class="sep">·</span>
+          <span>${esc(credCount(ch))}</span>
+        </div>
+        <div class="right">
+          <button type="button" class="btn btn-ghost" data-probe="${esc(ch.id)}">探测</button>
+          <button type="button" class="btn btn-ghost" data-upstream="${esc(ch.id)}">这家上游</button>
+        </div>`;
+    } else if (state.page === "keys") {
+      const live = KEYS.filter((k) => !isOff("key", k.id, k.disabled)).length;
+      bar.innerHTML = `<div class="left">${KEYS.length} 把钥匙 · ${live} 启用 · 跟上游凭证不是一把东西</div>
+        <div class="right"><button type="button" class="btn btn-ghost" id="status-new-key">签发</button></div>`;
+    } else if (state.page === "logs") {
+      const n = LOGS.filter(logMatches).length;
+      bar.innerHTML = `<div class="left">${n} 条 · 最新在上${state.failOnly ? " · 只看失败" : ""}</div>
+        <div class="right"><button type="button" class="btn btn-ghost" id="status-refresh">刷新</button></div>`;
+    } else if (state.page === "aps") {
+      bar.innerHTML = `<div class="left">${APS.length} 个别名 · 直连用限定名即可，不必建</div>
+        <div class="right"><button type="button" class="btn btn-ghost" id="status-new-ap">新建</button></div>`;
+    } else {
+      const pack = RANK[state.rankDays];
+      const dim = DIMS.find((d) => d.id === state.rankDim).label;
+      bar.innerHTML = `<div class="left">${state.rankDays} 天 · ${esc(dim)} · 合计 <span class="mono">${esc(pack.total)}</span></div>
+        <div class="right"></div>`;
+    }
+  }
+
+  function render() {
+    renderRails();
+    if (state.page === "models") renderModels();
+    if (state.page === "keys") renderKeys();
+    if (state.page === "logs") renderLogs();
+    if (state.page === "aps") renderAps();
+    if (state.page === "rank") renderRank();
+    renderStatus();
+  }
+
+  function openDrawer(id) {
+    const ch = chBy(id);
+    state.channel = id;
+    $("#drawer-title").textContent = ch.name;
+    $("#drawer-body").innerHTML = drawerHTML(ch);
+    $("#drawer").hidden = false;
+    $("#scrim").hidden = false;
+    requestAnimationFrame(() => {
+      $("#drawer").classList.add("is-on");
+      $("#scrim").classList.add("is-on");
+    });
+    renderRails();
+    if (state.page === "models") { renderModels(); renderStatus(); }
+  }
+
+  function drawerHTML(ch) {
+    const probed = !!state.probed[ch.id];
+    return `
+      <div class="block">
+        <h3>状态</h3>
+        <div>${ch.disabled ? "停用" : "启用"} · 协议 ${ch.protocols.map(esc).join(" · ")} · ${credCount(ch)}</div>
+      </div>
+      <div class="block">
+        <h3>拼好的地址</h3>
+        <div class="preview">
+          ${ch.preview.map((p) => `<div class="preview-row">
+            <span class="k">${esc(p.proto)}</span>
+            <span class="v">https://${esc(p.host)}${esc(p.path)}</span>
+          </div>`).join("")}
+        </div>
+        <p class="hint">base_url 是子路径之前的前缀。填成 …/v1 会拼出 /v1/v1/…。列表里不放完整地址，只在这里预览。</p>
+      </div>
+      <div class="block">
+        <h3>上游凭证</h3>
+        ${ch.creds.map((c) => {
+          const shown = !!state.revealed["cred:" + c.id];
+          return `<div class="cred">
+            <div>
+              <div class="cn">${esc(c.name)}</div>
+              <div class="cv">${esc(shown ? c.shown : c.mask)}</div>
+              <div class="cs">${c.disabled ? esc(c.reason) + (c.when ? " · " + esc(c.when) : "") : "启用"}</div>
+            </div>
+            <div class="cred-acts">
+              <button type="button" class="btn-text" data-reveal="cred:${esc(c.id)}">${shown ? "隐藏" : "显示"}</button>
+              <button type="button" class="btn-text" data-copy="${esc(c.shown)}" data-copy-label="${esc(c.name)}">复制</button>
+              ${c.disabled ? `<button type="button" class="btn-text" data-restore="${esc(c.id)}">恢复</button>` : ""}
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="block" id="probe-block">
+        <h3>探测 <button type="button" class="btn-text" data-run-probe="${esc(ch.id)}">${probed ? "再探一次" : "跑一遍"}</button></h3>
+        <div class="probe-box">
+          ${probed ? `
+            <p>${esc(ch.probe.path)}</p>
+            <p class="hint">模型矩阵（用「${esc(ch.probe.cred)}」）：每格一个带模型名的最小请求。只提示，不落库，不进路由。</p>
+            ${ch.probe.models.map((m) => `<div style="margin-top:10px">
+              <code>${esc(m.name)}</code>
+              <div class="cells">${m.cells.map((c) => `<span class="cell">${esc(c)}</span>`).join("")}</div>
+            </div>`).join("")}
+          ` : `<p class="hint">人手点。子路径层看协议勾对没有、凭证还活不活；模型矩阵看这个模型在这一侧通不通。</p>`}
+        </div>
+      </div>
+    `;
+  }
+
+  function closeDrawer() {
+    $("#drawer").classList.remove("is-on");
+    $("#scrim").classList.remove("is-on");
+    setTimeout(() => {
+      if (!$("#drawer").classList.contains("is-on")) {
+        $("#drawer").hidden = true;
+        $("#scrim").hidden = true;
+      }
+    }, 220);
+  }
+
+  function openModal(html) {
+    $("#sheet").innerHTML = html;
+    $("#modal").hidden = false;
+    const focusable = $("#sheet").querySelector("input, button");
+    if (focusable) focusable.focus();
+  }
+  function closeModal() { $("#modal").hidden = true; $("#sheet").innerHTML = ""; }
+
+  function openLog(id) {
+    const l = LOGS.find((x) => x.id === id);
+    const rid = l.rid
+      ? `<button type="button" class="btn-text" data-copy="${esc(l.rid)}" data-copy-label="request-id">${esc(l.rid)}</button>`
+      : "—";
+    const bits = [];
+    if (l.in) bits.push(`${l.in} / ${l.out}`);
+    if (l.think) bits.push("思考 " + l.think);
+    if (l.cache) bits.push("缓存读 " + l.cache);
+    if (l.ttft) bits.push("首字 " + l.ttft);
+    openModal(`
+      <button type="button" class="icon-btn" id="modal-x" aria-label="关闭" style="position:absolute;top:16px;right:16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <p class="eyebrow">${esc(l.time)}</p>
+      <h2>调用详情</h2>
+      <p class="lede">${l.status >= 400 ? "失败行。" : "成功行也有 request-id 可对账。"}上游原文只在失败时出现。</p>
+      <dl class="dl">
+        <dt>状态</dt><dd><span class="mono">${l.status}</span>${l.err ? ' · <span class="word">' + esc(l.err) + "</span>" : ""}</dd>
+        <dt>模型</dt><dd><span class="mono">${esc(l.req)}</span> → ${esc(l.up)}</dd>
+        <dt>协议</dt><dd class="mono">${esc(l.proto)}</dd>
+        <dt>API Key</dt><dd class="mono">${esc(l.key)}</dd>
+        <dt>上游凭证</dt><dd>${esc(l.cred)}</dd>
+        <dt>用量</dt><dd>${bits.length ? bits.map(esc).join(" · ") : "—"}</dd>
+        <dt>request-id</dt><dd>${rid}</dd>
+      </dl>
+      ${l.status >= 400 ? `<pre class="err-pre">${esc(l.detail || "上游没有返回任何响应体。")}</pre>` : ""}
+    `);
+  }
+
+  function openPassword() {
+    openModal(`
+      <button type="button" class="icon-btn" id="modal-x" aria-label="关闭" style="position:absolute;top:16px;right:16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <h2>改密码</h2>
+      <p class="lede">管的是这个管理端，不是上游凭证，也不是 API Key。</p>
+      <div class="field"><label for="pw-old">当前密码</label><input id="pw-old" type="password" autocomplete="current-password" /></div>
+      <div class="field"><label for="pw-new">新密码</label><input id="pw-new" type="password" autocomplete="new-password" /></div>
+      <div class="field"><label for="pw-again">再写一遍</label><input id="pw-again" type="password" autocomplete="new-password" /></div>
+      <div class="sheet-acts">
+        <button type="button" class="btn btn-ghost" id="modal-x2">取消</button>
+        <button type="button" class="btn btn-hero" id="pw-save" style="padding:12px 20px;font-size:15px">保存</button>
+      </div>
+    `);
+  }
+
+  function openNewKey() {
+    openModal(`
+      <button type="button" class="icon-btn" id="modal-x" aria-label="关闭" style="position:absolute;top:16px;right:16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <h2>这把钥匙只亮这一次</h2>
+      <p class="lede">离开这屏就只剩哈希。客户端用 <span class="mono">x-api-key</span> 或 <span class="mono">Authorization: Bearer</span>。跟上游凭证不是一把东西。</p>
+      <div class="fresh-key">sk-ptg-4e18a07b-demo-only-once-b3c2</div>
+      <div class="sheet-acts">
+        <button type="button" class="btn btn-ghost" data-copy="sk-ptg-4e18a07b-demo-only-once-b3c2" data-copy-label="新钥匙">复制</button>
+        <button type="button" class="btn btn-hero" id="modal-x2" style="padding:12px 20px;font-size:15px">知道了</button>
+      </div>
+    `);
+  }
+
+  function openNewAp() {
+    openModal(`
+      <button type="button" class="icon-btn" id="modal-x" aria-label="关闭" style="position:absolute;top:16px;right:16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <h2>给模型起个对外的名字</h2>
+      <p class="lede">绑一个候选。演示不写库。</p>
+      <div class="field"><label for="ap-name">对外名</label><input id="ap-name" placeholder="例如 opus" /></div>
+      <div class="field"><label>候选</label><div class="fake-input mono">anthropic / claude-opus-4</div></div>
+      <div class="sheet-acts">
+        <button type="button" class="btn btn-ghost" id="modal-x2">取消</button>
+        <button type="button" class="btn btn-hero" id="ap-save" style="padding:12px 20px;font-size:15px">建好</button>
+      </div>
+    `);
+  }
+
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-nav], [data-ch], [data-kid], [data-lm], [data-ap], [data-dim], [data-copy], [data-toggle], [data-reveal], [data-upstream], [data-probe], [data-run-probe], [data-restore], [data-log], [data-days], #btn-fetch, #btn-new-key, #btn-fail-only, #btn-new-ap, #btn-pw, #btn-out, #drawer-close, #scrim, #modal-scrim, #modal-x, #modal-x2, #pw-save, #ap-save, #status-new-key, #status-new-ap, #status-refresh");
+    if (!t) return;
+
+    if (t.dataset.nav) { showPage(t.dataset.nav); return; }
+    if (t.dataset.ch) { state.channel = t.dataset.ch; state.fetchFor = state.fetchFor === state.channel ? state.fetchFor : null; render(); return; }
+    if (t.dataset.kid) { state.key = t.dataset.kid; render(); return; }
+    if (t.dataset.lm !== undefined && t.hasAttribute("data-lm")) { state.logModel = t.dataset.lm; render(); return; }
+    if (t.dataset.ap) { state.ap = t.dataset.ap; render(); return; }
+    if (t.dataset.dim) { state.rankDim = t.dataset.dim; render(); return; }
+    if (t.dataset.days) { state.rankDays = Number(t.dataset.days); render(); return; }
+    if (t.dataset.copy) { copy(t.dataset.copy, t.dataset.copyLabel); return; }
+    if (t.dataset.toggle) {
+      const kind = t.dataset.toggle;
+      const id = t.dataset.id;
+      const src = kind === "model" ? MODELS.find((m) => m.id === id).disabled
+        : kind === "key" ? KEYS.find((k) => k.id === id).disabled
+        : APS.find((a) => a.id === id).disabled;
+      toggleOff(kind, id, src);
+      render();
+      return;
+    }
+    if (t.dataset.reveal) {
+      state.revealed[t.dataset.reveal] = !state.revealed[t.dataset.reveal];
+      if (t.dataset.reveal.indexOf("cred:") === 0) {
+        const ch = chBy(state.channel);
+        $("#drawer-body").innerHTML = drawerHTML(ch);
+      } else {
+        render();
+      }
+      return;
+    }
+    if (t.dataset.upstream) { openDrawer(t.dataset.upstream); return; }
+    if (t.dataset.probe) {
+      state.probed[t.dataset.probe] = true;
+      openDrawer(t.dataset.probe);
+      return;
+    }
+    if (t.dataset.runProbe) {
+      state.probed[t.dataset.runProbe] = true;
+      $("#drawer-body").innerHTML = drawerHTML(chBy(t.dataset.runProbe));
+      toast("探测只提示，不落库");
+      return;
+    }
+    if (t.dataset.restore) { toast("只人工恢复，不自动探活"); return; }
+    if (t.dataset.log) { openLog(Number(t.dataset.log)); return; }
+
+    if (t.id === "btn-fetch") {
+      const btn = t;
+      btn.textContent = "在拉…";
+      setTimeout(() => {
+        state.fetchFor = state.channel;
+        btn.textContent = "获取模型列表";
+        render();
+        toast("只是填表助手，不进路由");
+      }, 420);
+      return;
+    }
+    if (t.id === "btn-new-key" || t.id === "status-new-key") { openNewKey(); return; }
+    if (t.id === "btn-fail-only") { state.failOnly = !state.failOnly; render(); return; }
+    if (t.id === "btn-new-ap" || t.id === "status-new-ap") { openNewAp(); return; }
+    if (t.id === "btn-pw") { openPassword(); return; }
+    if (t.id === "btn-out") { toast("演示：退出不会真的登出"); return; }
+    if (t.id === "drawer-close" || t.id === "scrim") { closeDrawer(); return; }
+    if (t.id === "modal-scrim" || t.id === "modal-x" || t.id === "modal-x2") { closeModal(); return; }
+    if (t.id === "pw-save") { closeModal(); toast("密码已更新（演示）"); return; }
+    if (t.id === "ap-save") { closeModal(); toast("演示不写库"); return; }
+    if (t.id === "status-refresh") { toast("窗口钉住，新流水要刷新才进来"); return; }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (!$("#modal").hidden) closeModal();
+      else if ($("#drawer").classList.contains("is-on")) closeDrawer();
+    }
+  });
+
+  // hull path kept in JS so the comment at the top stays the source of form
+  void MARK;
+
+  render();
+})();
+</script>
+</body>
+</html>

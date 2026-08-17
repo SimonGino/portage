@@ -1,0 +1,25 @@
+# 容器内的默认启动配置，烤进镜像。要改就在 compose 里挂一份盖掉
+# /etc/portage/config.yaml。
+#
+# listen 绑 0.0.0.0 而不是宿主上的默认 127.0.0.1：容器里的 loopback 只有容器自己
+# 看得见，绑它等于端口映射永远连不上。边界因此从「进程绑哪个地址」挪到了「你把
+# 端口发布给谁」——`-p 127.0.0.1:8317:8317` 只给本机，`-p 8317:8317` 是整个局域网。
+listen: "0.0.0.0:8317"
+
+# 落在卷里。写容器可写层的话 docker rm 一执行，渠道、key、全部流水一起没。
+db_path: "/data/gateway.db"
+
+# 排障开关，平时关着：Claude Code 2.x 单轮请求体约 185 KB，打开后日志涨得很快。
+log_bodies: false
+
+retry:
+  max_retries: 2      # 同一份凭证上的退避重试次数，不含首次尝试
+  max_attempts: 6     # 一次请求的全局上游尝试上限，跨凭证累计（口径层 v0.38）；写 0 即不封顶
+  base_delay: 500ms
+  max_delay: 10s
+
+# 全局限流：一只桶，不分 key/IP，只挂转发面（/healthz 与 /admin 不受影响）。
+# 它防的是 key 泄露或被扫时刷爆上游账单，不是公平调度。超限回 429 + Retry-After: 1。
+# 写 0 关掉。10 QPS 的取值依据见口径层 v0.15：agent 会话峰值 <5 QPS，留了双会话余量。
+rate_limit_qps: 10
+rate_limit_burst: 20

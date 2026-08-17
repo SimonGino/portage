@@ -1,0 +1,14 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": true,
+  "endpoint": "/v1/messages",
+  "headers": {
+    "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24,afk-mode-2026-01-31",
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json"
+  },
+  "stub": "02-final.sse",
+  "verified": true,
+  "source": "Claude Code 2.1.232 无头 `-p -c` 第二轮的入站请求，goldenrec inbound 模式采于 2026-08-14（#94 实测同一批）。上一轮的假响应是 `testdata/goldenstub/anthropic-thinking-nosig/01-final.sse`——一个**不发 `signature_delta`** 的 thinking 块；本样本要的就是客户端拿到它之后**下一轮发回来什么**。答案在 `messages` 的 assistant 项里：thinking 块被原样回带，`signature` 被客户端**自己补成空串 `\"\"`**（上游一个 signature 字段都没发过）。**这一格没有按 redact-inbound-anthropic.jq 换成占位符**，是刻意的：占位符虽然带 len=0，但样本的存在理由就是这个空串本身，换掉之后 codec 测试读到的是一个非空签名，结论就没了。理由同 Responses 批留 encrypted_content。另：请求里带 `thinking:{\"type\":\"adaptive\"}`——Claude Code 这版发的是 adaptive 档，不带 budget_tokens（#95 要的输入）。thinking 正文是 stub 里的标记文本，stub 是道具、不入库，配对关系记在这里。"
+}

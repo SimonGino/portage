@@ -1,0 +1,2742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portage · 工作台</title>
+<!--
+  方向 A-v2 · Grok 港改成网关工作台
+
+  假设：视觉 = A（纸灰 248 左栏、白画布大圆角、Outfit / IBM Plex Sans / IBM Plex Mono、
+  选中浅底药丸、主按钮实心黑胶囊、几乎无边框靠 --sunken）。
+  交互 = 现网关工作台（清单 / 定高表 / 模型列表上方展开井 / 居中工作表）。
+  聊天壳已剥掉：无胶囊对话、无底栏输入槽、无右对齐限定名气泡、探测不是助手回复。
+
+  对照 brief 已覆盖：
+  - 五项导航，默认模型页，无概览；账号钉左栏底（改密码 / 退出）
+  - 左栏中段只在模型页：渠道搜索 + 列表 + 新建渠道
+  - 模型页：渠道名 + 立即启停；主按钮「获取模型列表」；「上游设置 / 上游凭证」展开井（默收）
+  - 模型行：裸名等宽左对齐、限定名可复制（停用不可复制）、协议子集、启停、删除二次确认
+  - 获取模型弹层：搜索、显示已纳管、分组勾选、全选只作用于当前可见、确认纳管；含未纳管样例
+  - 上游设置井：渠道名禁 /、协议（Gemini 置灰暂未支持）、Base URL + 逐协议脱敏预览、
+    并发上限空=不限、勾 Responses 才出 Codex 压缩、脏了才可保存 + 已保存回执、
+    删除渠道二次确认并写「该渠道被 N 个接入点引用」
+  - 新建渠道：主区整页即该表 + 一份凭证，无模型列表
+  - 上游凭证井：与 API Key 两回事；名 ghost、值掩码、显示/复制/启停/删除；
+    已摘 · 401 + 时刻、只人工恢复；≥2 把出轮询/随机；段旁「检测」按凭证分行；
+    模型矩阵通/不通/说不清有文字；添加：名+值+显示+添加
+  - API Key 表：掩码/显示/复制、空串「原值没存过，只能删了重建」、白名单 * =不限、
+    创建时间、启停、编辑、删除；新建/编辑弹层（不限或多选接入点名+限定名）；
+    生成后再弹全串+复制，不写「关掉就再也看不到」
+  - 调用记录：定高 9 列（时间/API Key/模型主副/端点入站上游/类型/上游凭证/状态+错词+重试+详情/耗时+首字/in out+思考+缓存）；
+    模型下拉、只看失败、刷新；右下页码可跳；详情仅 request-id 或 ≥400；原文只在失败行
+  - 接入点表：名可复制、候选渠道/模型+权重、状态、编辑删除；空态两句；新建/编辑弹层
+  - 排行：按模型/API Key/上游凭证 × 1/7/30 天；一个合计作占比分母；无名热门/份额/环比/费用
+  - 船体标记 path 原样；样例数据沿用 SPEC
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #f3f3f1;
+    --canvas: #ffffff;
+    --ink: #161615;
+    --ink-2: #3c3c38;
+    --mute: #5e5e59;
+    --faint: #6f6f6a;
+    --line: #e6e6e2;
+    --sunken: #e8e8e4;
+    --chip: #efefe9;
+    --hover: rgba(22, 22, 21, 0.045);
+    --shadow: 0 18px 48px rgba(22, 22, 21, 0.08);
+    --r: 20px;
+    --r-sm: 16px;
+    --side: 248px;
+    --display: "Outfit", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    margin: 0;
+    display: flex;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; padding: 0; }
+  input, textarea, select { border: 0; background: transparent; outline: none; }
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  ::selection { background: var(--ink); color: var(--paper); }
+
+  /* —— 左栏 —— */
+  .rail {
+    width: var(--side);
+    flex: 0 0 var(--side);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 12px 14px;
+    min-height: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px 18px;
+  }
+  .brand svg { width: 22px; height: 22px; display: block; flex: 0 0 22px; }
+  .brand b {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: -0.03em;
+  }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: var(--r-sm);
+    color: var(--ink-2);
+    text-align: left;
+  }
+  .nav button svg { width: 18px; height: 18px; flex: 0 0 18px; opacity: 0.72; }
+  .nav button:hover { background: var(--hover); }
+  .nav button.is-on {
+    background: var(--sunken);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .nav button.is-on svg { opacity: 1; }
+
+  .rail-mid {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 22px;
+    overflow: auto;
+  }
+  .rail-label {
+    padding: 0 12px 8px;
+    color: var(--faint);
+    font-size: 12px;
+    letter-spacing: 0.01em;
+  }
+  .rail-search {
+    margin: 0 8px 8px;
+    width: calc(100% - 16px);
+    background: var(--sunken);
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .rail-search::placeholder { color: var(--faint); }
+  .rail-list { display: flex; flex-direction: column; gap: 2px; }
+  .rail-list button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    text-align: left;
+    color: var(--ink-2);
+    min-height: 38px;
+  }
+  .rail-list button:hover { background: var(--hover); }
+  .rail-list button.is-on { background: var(--sunken); color: var(--ink); font-weight: 500; }
+  .rail-list .nm {
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-list .mark { font-size: 12px; color: var(--mute); flex: 0 0 auto; }
+  .rail-list button.is-off .nm { color: var(--faint); }
+  .rail-new {
+    margin: 8px 8px 0;
+    width: calc(100% - 16px);
+    padding: 8px 12px;
+    border-radius: 12px;
+    text-align: left;
+    color: var(--mute);
+    font-size: 13px;
+  }
+  .rail-new:hover { background: var(--hover); color: var(--ink); }
+  .rail-new.is-on { background: var(--sunken); color: var(--ink); font-weight: 500; }
+
+  .account { padding: 10px 8px 4px; display: flex; flex-direction: column; gap: 8px; }
+  .who { display: flex; align-items: center; gap: 10px; padding: 4px 6px; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--sunken);
+    display: grid; place-items: center;
+    font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: -0.03em;
+  }
+  .who strong { display: block; font-weight: 500; font-size: 14px; }
+  .who span { display: block; color: var(--mute); font-size: 12px; }
+  .acct-acts { display: flex; gap: 4px; padding: 0 4px; }
+  .acct-acts button {
+    color: var(--mute); font-size: 13px; padding: 6px 8px; border-radius: 12px;
+  }
+  .acct-acts button:hover { background: var(--hover); color: var(--ink); }
+
+  /* —— 主画布 —— */
+  .stage {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: var(--canvas);
+    border-radius: 24px 0 0 24px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .scroll { flex: 1; min-height: 0; overflow: auto; }
+  .scroll.is-fill { overflow: hidden; display: flex; flex-direction: column; }
+  .scroll.is-fill #root {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    max-width: none; padding: 36px 28px 20px;
+  }
+  #root {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 48px 36px 48px;
+    width: 100%;
+  }
+  #root.is-wide { max-width: 1240px; }
+  #root.is-fill {
+    max-width: none;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 8px;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.15;
+    letter-spacing: -0.035em;
+    text-wrap: pretty;
+  }
+  .lede {
+    margin: 10px 0 0;
+    color: var(--mute);
+    font-size: 15px;
+    max-width: 40em;
+  }
+  .lede code { font-size: 0.92em; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: var(--r);
+    padding: 14px 22px;
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 16px;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  }
+  .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  .btn-hero {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 16px 26px;
+    font-size: 17px;
+    border-radius: 22px;
+  }
+  .btn-hero:hover:not(:disabled) { background: #2a2a27; }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 10px 18px;
+    font-size: 15px;
+    border-radius: 16px;
+  }
+  .btn-primary:hover:not(:disabled) { background: #2a2a27; }
+  .btn-ghost {
+    background: var(--chip);
+    color: var(--ink);
+    padding: 8px 14px;
+    font-size: 14px;
+    border-radius: 14px;
+  }
+  .btn-ghost:hover:not(:disabled) { background: var(--sunken); }
+  .btn-ghost.is-on { background: var(--sunken); font-weight: 500; }
+  .btn-text {
+    color: var(--mute);
+    font-size: 13px;
+    padding: 4px 6px;
+    border-radius: 8px;
+  }
+  .btn-text:hover:not(:disabled) { color: var(--ink); }
+  .btn-text.is-on { color: var(--ink); font-weight: 500; }
+  .btn-danger { color: var(--ink-2); }
+
+  .ch-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 28px 0 6px;
+    flex-wrap: wrap;
+  }
+  .ch-id { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .ch-id h2 {
+    margin: 0;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+  }
+  .ch-id.is-off h2 { color: var(--faint); }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag {
+    font-size: 12px;
+    color: var(--mute);
+    background: var(--chip);
+    padding: 3px 8px;
+    border-radius: 999px;
+  }
+  .tag-warn { background: var(--sunken); color: var(--ink-2); }
+  .tag-off { color: var(--faint); }
+  .ch-acts { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .well-toggle.is-on { color: var(--ink); font-weight: 500; }
+
+  .bar {
+    margin: 12px 0 0;
+    padding: 12px 14px;
+    background: var(--paper);
+    border-radius: 14px;
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+
+  .well {
+    margin: 14px 0 8px;
+    background: var(--sunken);
+    border-radius: 20px;
+    padding: 18px 20px 20px;
+  }
+  .well-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .well-head h3 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: -0.03em;
+  }
+  .well-head .row-actions { display: flex; align-items: center; gap: 8px; }
+  .well .hint, .hint { color: var(--mute); font-size: 13px; margin: 0 0 12px; }
+  .well .field input,
+  .well .field textarea,
+  .sheet .field input,
+  .sheet .field textarea {
+    background: var(--canvas);
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 18px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 13px; color: var(--mute); }
+  .field input, .field textarea, .field .fake-input {
+    width: 100%;
+    background: var(--paper);
+    border-radius: 14px;
+    padding: 11px 14px;
+    font-size: 15px;
+  }
+  .field textarea { resize: vertical; min-height: 72px; }
+  .field input:focus, .field textarea:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .field-hint { color: var(--faint); font-size: 12.5px; }
+  .field-error { color: var(--ink); font-size: 13px; }
+
+  .url-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 0 14px;
+    padding: 10px 12px;
+    background: var(--paper);
+    border-radius: 14px;
+  }
+  .url-preview div { font-size: 13px; }
+  .url-preview code { font-size: 12.5px; word-break: break-all; }
+
+  .seg, .windows {
+    display: inline-flex;
+    gap: 4px;
+    background: var(--paper);
+    padding: 4px;
+    border-radius: 14px;
+    flex-wrap: wrap;
+  }
+  .well .seg { background: var(--canvas); }
+  .seg button, .windows button {
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+  .seg button.is-on, .windows button.is-on {
+    background: var(--canvas);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .well .seg button.is-on { background: var(--sunken); }
+  .seg button.is-soon {
+    opacity: 0.42;
+    cursor: not-allowed;
+    color: var(--faint);
+  }
+  .seg button.is-soon small { display: block; font-size: 10px; letter-spacing: 0; }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    margin: 4px 0 12px;
+  }
+  .check input { width: 15px; height: 15px; accent-color: var(--ink); }
+
+  .sw {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .sw i {
+    width: 36px; height: 22px; border-radius: 999px;
+    background: var(--ink); position: relative; display: inline-block;
+    transition: background 0.15s ease;
+  }
+  .sw i::after {
+    content: "";
+    position: absolute; top: 3px; left: 17px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--canvas);
+    transition: left 0.15s ease;
+  }
+  .sw.is-off { color: var(--mute); }
+  .sw.is-off i { background: #c9c9c3; }
+  .sw.is-off i::after { left: 3px; }
+
+  /* —— 模型清单 —— */
+  .mlist { display: flex; flex-direction: column; margin-top: 10px; }
+  .mrow {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 20px;
+    padding: 16px 12px 15px;
+    border-radius: var(--r-sm);
+    align-items: start;
+    text-align: left;
+  }
+  .mrow:hover { background: var(--hover); }
+  .mrow.is-off .m-name, .mrow.is-off .m-q { color: var(--faint); }
+  .m-name {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1.25;
+  }
+  .m-q {
+    grid-column: 1;
+    color: var(--mute);
+    font-size: 13.5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  .m-q button.qcopy {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--mute);
+    padding: 0;
+    border-radius: 4px;
+  }
+  .m-q button.qcopy:hover { color: var(--ink); }
+  .m-side {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 2px;
+  }
+  .proto-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .proto-row .lbl { font-size: 12px; color: var(--faint); }
+  .chip-toggle {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--chip);
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .chip-toggle.is-on { background: var(--ink); color: var(--paper); }
+  .chip-toggle.is-stale { background: var(--sunken); text-decoration: line-through; color: var(--faint); }
+
+  .add-models {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 12px 0;
+    align-items: center;
+  }
+  .add-models input {
+    flex: 1;
+    background: var(--paper);
+    border-radius: 14px;
+    padding: 11px 14px;
+    font-size: 14px;
+  }
+  .add-models input:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+
+  /* —— 凭证 —— */
+  .cred {
+    display: grid;
+    grid-template-columns: 140px 1fr auto auto;
+    gap: 8px 12px;
+    align-items: center;
+    padding: 10px 0;
+  }
+  .cred + .cred { box-shadow: inset 0 1px 0 var(--line); }
+  .ghost-input {
+    background: transparent;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-weight: 500;
+    width: 100%;
+  }
+  .ghost-input:hover, .ghost-input:focus { background: var(--canvas); }
+  .cred-val { font-family: var(--mono); font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+  .cred-state { font-size: 13px; color: var(--mute); }
+  .cred-acts { display: flex; align-items: center; gap: 4px; }
+  .cred-add {
+    display: grid;
+    grid-template-columns: 140px 1fr auto auto;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+  }
+  .cred-add input {
+    background: var(--canvas);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .cred-add input:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+
+  .probe { margin-top: 12px; font-size: 14px; color: var(--ink-2); }
+  .probe + .probe { margin-top: 8px; }
+  .probe ul { margin: 6px 0 0; padding: 0 0 0 1.1em; }
+  .probe li { margin: 3px 0; }
+  .probe-grid { margin-top: 14px; }
+  .probe-model {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 10px;
+    padding: 8px 0;
+  }
+  .pcell {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: var(--paper);
+  }
+
+  /* —— 表 —— */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar-left { margin-right: auto; color: var(--mute); font-size: 14px; }
+  select.pick {
+    background: var(--paper);
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 14px;
+    min-width: 180px;
+  }
+
+  .table-wrap { overflow: auto; }
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  table.data th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--faint);
+    font-size: 12px;
+    padding: 0 12px 10px;
+    white-space: nowrap;
+  }
+  table.data td {
+    padding: 12px;
+    vertical-align: top;
+  }
+  table.data tbody tr:hover td { background: var(--hover); }
+  table.data tbody tr.is-off td { color: var(--faint); }
+  table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data .nowrap { white-space: nowrap; }
+  .sub { color: var(--mute); font-size: 12.5px; margin-top: 2px; }
+  .row-actions { display: flex; align-items: center; gap: 6px; }
+  .secret { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .secret code { font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--chip);
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 12.5px;
+  }
+  .chip button.x { color: var(--mute); padding: 0 2px; }
+  .chip button.x:hover { color: var(--ink); }
+
+  .log-board {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .log-viewport {
+    flex: 1;
+    min-height: 320px;
+    height: calc(100vh - 280px);
+    overflow: auto;
+    background: var(--paper);
+    border-radius: 18px;
+    padding: 8px 4px 12px;
+  }
+  .scroll.is-fill .log-viewport { height: auto; }
+  table.logs { min-width: 1120px; }
+  table.logs td, table.logs th { padding: 10px 10px; }
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .log-err { font-family: var(--mono); font-size: 12.5px; }
+  .pager {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 0 0;
+  }
+  .pager-page {
+    min-width: 36px;
+    padding: 8px 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pager-gap { color: var(--faint); padding: 0 4px; }
+  .empty {
+    padding: 48px 16px;
+    text-align: center;
+    color: var(--mute);
+    font-size: 15px;
+  }
+
+  /* —— 排行 —— */
+  .rank-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .rank-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .stat-lead { margin: 20px 0 8px; }
+  .stat-lead-value {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 36px;
+    letter-spacing: -0.04em;
+  }
+  .stat-lead-label { display: block; color: var(--mute); font-size: 14px; margin-top: 2px; }
+  .rank {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 8px 16px;
+    align-items: baseline;
+    padding: 16px 10px;
+    border-radius: var(--r-sm);
+  }
+  .rank:hover { background: var(--hover); }
+  .rank-n {
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .rank.is-1 .rank-n { color: var(--ink); }
+  .rank-name { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+  .rank-note { color: var(--mute); font-size: 13px; margin-top: 2px; }
+  .rank-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rank-num b {
+    display: block;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 20px;
+    letter-spacing: -0.03em;
+  }
+  .rank-num span { color: var(--mute); font-size: 13px; }
+
+  /* —— 弹层 —— */
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .modal[hidden] { display: none; }
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(22, 22, 21, 0.18);
+  }
+  .sheet {
+    width: min(520px, 100%);
+    background: var(--canvas);
+    border-radius: 24px;
+    padding: 26px 26px 22px;
+    box-shadow: var(--shadow);
+    position: relative;
+    z-index: 31;
+    animation: rise 0.22s ease;
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+  }
+  .sheet.is-wide { width: min(720px, 100%); }
+  .sheet h2 {
+    margin: 0 0 6px;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+  }
+  .sheet .lede { margin: 0 0 18px; }
+  .sheet-x {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: 36px; height: 36px;
+    border-radius: 12px;
+    display: grid; place-items: center;
+    color: var(--mute);
+  }
+  .sheet-x:hover { background: var(--hover); color: var(--ink); }
+  .sheet-acts {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .sheet-acts .muted { margin-right: auto; color: var(--mute); font-size: 13px; }
+  .dl {
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    gap: 10px 16px;
+    font-size: 14px;
+  }
+  .dl dt { color: var(--mute); }
+  .dl dd { margin: 0; overflow-wrap: anywhere; }
+  .fresh-key {
+    font-family: var(--mono);
+    font-size: 15px;
+    background: var(--paper);
+    border-radius: 16px;
+    padding: 14px 16px;
+    margin: 8px 0 16px;
+    word-break: break-all;
+  }
+  .err-pre {
+    margin: 16px 0 0;
+    padding: 14px 16px;
+    background: var(--paper);
+    border-radius: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    color: var(--ink-2);
+    max-height: 200px;
+    overflow: auto;
+  }
+
+  .mpick-note { font-size: 13.5px; color: var(--mute); margin: 0 0 12px; }
+  .mpick-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .mpick-search {
+    flex: 1;
+    min-width: 180px;
+    background: var(--paper);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .mpick-search:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .mpick-list { max-height: 380px; overflow: auto; }
+  .mpick-group { margin-bottom: 10px; }
+  .mpick-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .mpick-group-name { font-weight: 500; font-size: 14px; }
+  .mpick-group-name .muted { margin-left: 6px; font-weight: 400; color: var(--faint); font-size: 13px; }
+  .mpick-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  .mpick-row:hover { background: var(--hover); }
+  .mpick-row.is-off { color: var(--faint); cursor: default; }
+  .mpick-row input { accent-color: var(--ink); }
+  .suggest-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .suggest-list button {
+    background: var(--paper);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .suggest-list button:hover { background: var(--sunken); }
+  .cand-groups { display: flex; flex-direction: column; gap: 10px; max-height: 240px; overflow: auto; }
+  .cand-g { font-size: 12px; color: var(--faint); margin: 4px 0; }
+  .cand-opt {
+    display: flex;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-family: var(--mono);
+    font-size: 13.5px;
+  }
+  .cand-opt:hover { background: var(--hover); }
+  .cand-opt.is-on { background: var(--sunken); font-weight: 500; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--ink);
+    color: var(--paper);
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    max-width: min(480px, calc(100% - 32px));
+  }
+  .toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 860px) {
+    .hero, .rank-head, .form-row { flex-direction: column; align-items: stretch; }
+    .form-row { display: flex; }
+    .btn-hero { align-self: flex-start; }
+    h1 { font-size: 32px; }
+    .stage { border-radius: 0; }
+    .cred, .cred-add { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-page="models">
+
+<aside class="rail" aria-label="导航">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+    </svg>
+    <b>Portage</b>
+  </div>
+
+  <nav class="nav" aria-label="五项">
+    <button type="button" data-nav="models" class="is-on">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h16M7 12h10M10 16h4"/></svg>
+      模型
+    </button>
+    <button type="button" data-nav="keys">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="3"/><path d="M11 12h9l-2 2m2-2-2-2"/></svg>
+      API Key
+    </button>
+    <button type="button" data-nav="logs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7h11M8 12h11M8 17h8"/><path d="M5 7.2v.01M5 12.2v.01M5 17.2v.01"/></svg>
+      调用记录
+    </button>
+    <button type="button" data-nav="aps">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="3"/><circle cx="16" cy="12" r="3"/><path d="M11 12h2"/></svg>
+      接入点
+    </button>
+    <button type="button" data-nav="rank">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 17V11M12 17V7M18 17v-4"/></svg>
+      排行
+    </button>
+  </nav>
+
+  <div class="rail-mid" id="rail-mid"></div>
+
+  <div class="account">
+    <div class="who">
+      <div class="avatar" aria-hidden="true">宇</div>
+      <div>
+        <strong>宇辰</strong>
+        <span>本机唯一管理员</span>
+      </div>
+    </div>
+    <div class="acct-acts">
+      <button type="button" data-act="pw">改密码</button>
+      <button type="button" data-act="out">退出</button>
+    </div>
+  </div>
+</aside>
+
+<main class="stage">
+  <div class="scroll" id="scroll">
+    <div id="root"></div>
+  </div>
+</main>
+
+<div class="modal" id="modal" hidden>
+  <div class="scrim" id="modal-scrim"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  const PROTO = {
+    anthropic: { label: "Anthropic", short: "Anthropic", path: "/v1/messages" },
+    openai: { label: "OpenAI", short: "OpenAI", path: "/v1/chat/completions" },
+    openai_responses: { label: "OpenAI-Responses", short: "Responses", path: "/v1/responses" },
+  };
+  const PROTO_ORDER = ["anthropic", "openai", "openai_responses"];
+  const LOG_PAGE = 10;
+
+  const CHANNELS = [
+    {
+      id: "anthropic",
+      name: "anthropic",
+      disabled: false,
+      protocols: ["anthropic"],
+      base_url: "https://api.anthropic.com",
+      max_concurrency: 8,
+      supports_compaction: false,
+      key_mode: "polling",
+      fetched: [
+        "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
+        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229",
+      ],
+    },
+    {
+      id: "bailian",
+      name: "bailian",
+      disabled: false,
+      protocols: ["openai", "openai_responses"],
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode",
+      max_concurrency: 0,
+      supports_compaction: false,
+      key_mode: "polling",
+      fetched: ["qwen3-max", "qwen3-coder-plus", "qwen3-plus", "qwen-vl-max", "qwen-turbo", "qwen-plus", "text-embedding-v3"],
+    },
+    {
+      id: "openai",
+      name: "openai",
+      disabled: true,
+      protocols: ["openai", "openai_responses"],
+      base_url: "https://api.openai.com",
+      max_concurrency: 0,
+      supports_compaction: false,
+      key_mode: "polling",
+      fetched: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini", "o1-mini"],
+    },
+  ];
+
+  const CREDS = [
+    { id: "c1", channel: "anthropic", name: "生产号", value: "sk-ant-api03-demo-not-real-k2p9", mask: "sk-ant-…k2p9", disabled: false, created: "2026-07-02", reason: "", when: "" },
+    { id: "c2", channel: "anthropic", name: "备用号", value: "sk-ant-api03-demo-not-real-0x4c", mask: "sk-ant-…0x4c", disabled: true, created: "2026-06-18", reason: "已摘 · 401", when: "2026-08-12 09:14" },
+    { id: "c3", channel: "bailian", name: "主号", value: "sk-demo-bailian-not-real-7a21", mask: "sk-…7a21", disabled: false, created: "2026-07-20", reason: "", when: "" },
+    { id: "c4", channel: "openai", name: "官方", value: "sk-demo-openai-not-real-m4e8", mask: "sk-…m4e8", disabled: false, created: "2026-05-03", reason: "", when: "" },
+  ];
+
+  const MODELS = [
+    { id: "m1", channel: "anthropic", name: "claude-sonnet-4", disabled: false, protocols: [] },
+    { id: "m2", channel: "anthropic", name: "claude-opus-4", disabled: false, protocols: [] },
+    { id: "m3", channel: "bailian", name: "qwen3-max", disabled: false, protocols: [] },
+    { id: "m4", channel: "bailian", name: "qwen3-coder-plus", disabled: true, protocols: [] },
+    { id: "m5", channel: "openai", name: "gpt-4o", disabled: true, protocols: [] },
+  ];
+
+  const KEYS = [
+    { id: "k1", name: "claude-code", value: "sk-ptg-8f2a9c01-demo-c91d", mask: "sk-ptg-8f2a…c91d", allow: "*", disabled: false, created: "2026-07-02 11:20" },
+    { id: "k2", name: "codex-laptop", value: "sk-ptg-11b0aa02-demo-44e2", mask: "sk-ptg-11b0…44e2", allow: "anthropic/claude-sonnet-4", disabled: false, created: "2026-08-01 09:04" },
+    { id: "k3", name: "old-script", value: "", mask: "", allow: "*", disabled: true, created: "2026-03-18 16:41" },
+  ];
+
+  const APS = [
+    { id: "a1", name: "sonnet", channel: "anthropic", model: "claude-sonnet-4", weight: 100, disabled: false },
+    { id: "a2", name: "qwen-max", channel: "bailian", model: "qwen3-max", weight: 100, disabled: false },
+  ];
+
+  const LOGS = [
+    { id: 18, time: "今天 14:22:08", key: "claude-code", req: "claude-sonnet-4", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 2140, ttft: 380, inn: 12400, out: 802, think: 640, cacheR: 0, cacheW: 0, rid: "req_01SonnetA9c2", detail: "" },
+    { id: 17, time: "今天 14:18:41", key: "claude-code", req: "bailian/qwen3-max", ch: "bailian", up: "qwen3-max", cin: "OpenAI", cup: "OpenAI", stream: false, cred: "主号", status: 200, err: "", retry: 0, ms: 1020, ttft: null, inn: 3100, out: 410, think: 0, cacheR: 0, cacheW: 0, rid: "chatcmpl-qwen3max01", detail: "" },
+    { id: 16, time: "今天 14:11:03", key: "claude-code", req: "claude-opus-4", ch: "anthropic", up: "claude-opus-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 429, err: "queue_timeout", retry: 0, ms: 30000, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "req_018Ee7k2…", detail: "渠道并发闸等到超时。队满或等超时回 429，文案是我方固定词表。" },
+    { id: 15, time: "今天 13:56:20", key: "codex-laptop", req: "anthropic/claude-sonnet-4", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 880, ttft: 240, inn: 9400, out: 340, think: 0, cacheR: 8200, cacheW: 0, rid: "req_01CacheHit82", detail: "" },
+    { id: 14, time: "今天 13:44:12", key: "", req: "(未记录模型)", ch: "", up: "", cin: "OpenAI", cup: "", stream: null, cred: "", status: 401, err: "unauthorized", retry: 0, ms: 12, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "", detail: "鉴权失败，请求体还没解到 model。" },
+    { id: 13, time: "今天 13:02:55", key: "claude-code", req: "sonnet", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 610, ttft: 210, inn: 2800, out: 156, think: 0, cacheR: 0, cacheW: 0, rid: "req_01AliasSonnet", detail: "" },
+    { id: 12, time: "今天 12:41:18", key: "claude-code", req: "qwen-max", ch: "bailian", up: "qwen3-max", cin: "OpenAI", cup: "OpenAI", stream: false, cred: "主号", status: 200, err: "", retry: 0, ms: 1840, ttft: 520, inn: 6400, out: 890, think: 0, cacheR: 0, cacheW: 0, rid: "chatcmpl-qwenmax02", detail: "" },
+    { id: 11, time: "今天 11:28:04", key: "claude-code", req: "openai/gpt-4o", ch: "openai", up: "gpt-4o", cin: "OpenAI", cup: "", stream: false, cred: "", status: 503, err: "rejected", retry: 0, ms: 8, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "", detail: "渠道已停。未走到上游。" },
+    { id: 10, time: "今天 10:15:33", key: "claude-code", req: "anthropic/claude-opus-4", ch: "anthropic", up: "claude-opus-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 8420, ttft: 640, inn: 18200, out: 1400, think: 2100, cacheR: 0, cacheW: 0, rid: "req_01OpusLong21", detail: "" },
+    { id: 9, time: "今天 09:02:47", key: "codex-laptop", req: "openai/gpt-4o", ch: "", up: "", cin: "OpenAI", cup: "", stream: false, cred: "", status: 403, err: "model_not_allowed", retry: 0, ms: 6, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "", detail: "codex-laptop 白名单只有 anthropic/claude-sonnet-4。" },
+    { id: 8, time: "昨天 22:18:04", key: "claude-code", req: "claude-sonnet-4", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 1660, ttft: 290, inn: 7200, out: 540, think: 180, cacheR: 4100, cacheW: 0, rid: "req_01NightSonnet", detail: "" },
+    { id: 7, time: "昨天 21:04:51", key: "claude-code", req: "bailian/qwen3-max", ch: "bailian", up: "qwen3-max", cin: "OpenAI", cup: "OpenAI", stream: false, cred: "主号", status: 200, err: "", retry: 0, ms: 940, ttft: null, inn: 2100, out: 280, think: 0, cacheR: 0, cacheW: 0, rid: "chatcmpl-qwen3max03", detail: "" },
+    { id: 6, time: "昨天 19:41:12", key: "claude-code", req: "claude-opus-4", ch: "anthropic", up: "claude-opus-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 429, err: "queue_timeout", retry: 2, ms: 30110, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "req_018RetryOpus", detail: "重试两次后仍排队超时。" },
+    { id: 5, time: "昨天 18:02:33", key: "old-script", req: "sonnet", ch: "", up: "", cin: "Anthropic", cup: "", stream: null, cred: "", status: 401, err: "unauthorized", retry: 0, ms: 9, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "", detail: "这把 API Key 已停用。" },
+    { id: 4, time: "昨天 16:30:08", key: "claude-code", req: "sonnet", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 540, ttft: 188, inn: 1600, out: 92, think: 0, cacheR: 0, cacheW: 0, rid: "req_01AliasPm", detail: "" },
+    { id: 3, time: "昨天 15:11:44", key: "claude-code", req: "qwen-max", ch: "bailian", up: "qwen3-max", cin: "OpenAI", cup: "Responses", stream: true, cred: "主号", status: 200, err: "", retry: 0, ms: 2210, ttft: 610, inn: 4800, out: 720, think: 0, cacheR: 0, cacheW: 0, rid: "resp_qwenmax04", detail: "" },
+    { id: 2, time: "昨天 11:08:19", key: "claude-code", req: "anthropic/claude-sonnet-4", ch: "anthropic", up: "claude-sonnet-4", cin: "Anthropic", cup: "Anthropic", stream: true, cred: "生产号", status: 200, err: "", retry: 0, ms: 3120, ttft: 410, inn: 15100, out: 980, think: 720, cacheR: 0, cacheW: 2100, rid: "req_01CacheWrite", detail: "" },
+    { id: 1, time: "昨天 08:44:02", key: "claude-code", req: "openai/gpt-4o", ch: "openai", up: "gpt-4o", cin: "OpenAI", cup: "", stream: false, cred: "", status: 503, err: "rejected", retry: 0, ms: 7, ttft: null, inn: 0, out: 0, think: 0, cacheR: 0, cacheW: 0, rid: "", detail: "渠道已停。未走到上游。" },
+  ];
+
+  const RANK = {
+    1: {
+      total: "1.20M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "0.72M", pct: "60.0%", note: "48 次调用 · 入 0.61M / 出 0.11M" },
+        { name: "qwen3-max", tokens: "0.31M", pct: "25.8%", note: "22 次调用 · 入 0.26M / 出 0.05M" },
+        { name: "claude-opus-4", tokens: "0.14M", pct: "11.7%", note: "6 次调用 · 失败 1 · 入 0.11M / 出 0.03M" },
+        { name: "gpt-4o", tokens: "0.03M", pct: "2.5%", note: "4 次调用 · 失败 3 · 入 0.02M / 出 0.01M" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "0.88M", pct: "73.3%", note: "API Key · 68 次" },
+        { name: "codex-laptop", tokens: "0.32M", pct: "26.7%", note: "API Key · 12 次" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "0.86M", pct: "71.7%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "0.31M", pct: "25.8%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "0.03M", pct: "2.5%", note: "openai · 上游凭证" },
+      ],
+    },
+    7: {
+      total: "8.32M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "4.82M", pct: "57.9%", note: "412 次调用 · 失败 2 · 入 4.12M / 出 0.70M" },
+        { name: "qwen3-max", tokens: "2.10M", pct: "25.2%", note: "186 次调用 · 入 1.72M / 出 0.38M" },
+        { name: "claude-opus-4", tokens: "1.08M", pct: "13.0%", note: "44 次调用 · 失败 3 · 入 0.86M / 出 0.22M" },
+        { name: "gpt-4o", tokens: "0.32M", pct: "3.9%", note: "19 次调用 · 失败 8 · 入 0.24M / 出 0.08M" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "6.12M", pct: "73.6%", note: "API Key · 580 次" },
+        { name: "codex-laptop", tokens: "2.20M", pct: "26.4%", note: "API Key · 81 次" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "5.90M", pct: "70.9%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "2.10M", pct: "25.2%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "0.32M", pct: "3.9%", note: "openai · 上游凭证" },
+      ],
+    },
+    30: {
+      total: "32.80M",
+      model: [
+        { name: "claude-sonnet-4", tokens: "18.40M", pct: "56.1%", note: "1640 次调用 · 失败 11 · 入 15.6M / 出 2.80M" },
+        { name: "qwen3-max", tokens: "8.60M", pct: "26.2%", note: "740 次调用 · 入 7.1M / 出 1.50M" },
+        { name: "claude-opus-4", tokens: "4.20M", pct: "12.8%", note: "168 次调用 · 失败 9 · 入 3.4M / 出 0.80M" },
+        { name: "gpt-4o", tokens: "1.60M", pct: "4.9%", note: "86 次调用 · 失败 22 · 入 1.2M / 出 0.40M" },
+      ],
+      key: [
+        { name: "claude-code", tokens: "24.10M", pct: "73.5%", note: "API Key · 2280 次" },
+        { name: "codex-laptop", tokens: "8.70M", pct: "26.5%", note: "API Key · 354 次" },
+      ],
+      credential: [
+        { name: "生产号", tokens: "22.60M", pct: "68.9%", note: "anthropic · 上游凭证" },
+        { name: "主号", tokens: "8.60M", pct: "26.2%", note: "bailian · 上游凭证" },
+        { name: "官方", tokens: "1.60M", pct: "4.9%", note: "openai · 上游凭证" },
+      ],
+    },
+  };
+
+  const PROBE = {
+    anthropic: {
+      creds: [
+        { name: "生产号", disabled: false, ok: true, text: "探测通过：勾选的 1 个协议子路径上游都有" },
+        { name: "备用号", disabled: true, ok: false, text: "备用号（已停用）：子路径都在，但上游回了非 2xx——路由没问题，是这把凭证或上游状态的问题：", items: ["/v1/messages 凭证被拒 (HTTP 401)"] },
+      ],
+      models: [
+        { name: "claude-sonnet-4", cells: [{ proto: "Anthropic", state: "ok", label: "通" }] },
+        { name: "claude-opus-4", cells: [{ proto: "Anthropic", state: "ok", label: "通" }] },
+      ],
+      cred: "生产号",
+    },
+    bailian: {
+      creds: [
+        { name: "主号", disabled: false, ok: true, text: "探测通过：勾选的 2 个协议子路径上游都有" },
+      ],
+      models: [
+        { name: "qwen3-max", cells: [
+          { proto: "OpenAI", state: "ok", label: "通" },
+          { proto: "Responses", state: "ok", label: "通" },
+        ] },
+      ],
+      cred: "主号",
+    },
+    openai: {
+      creds: [
+        { name: "官方", disabled: false, ok: true, text: "子路径都在。渠道已停——探测只提示，不进路由。" },
+      ],
+      models: [
+        { name: "gpt-4o", cells: [
+          { proto: "OpenAI", state: "ok", label: "通" },
+          { proto: "Responses", state: "unknown", label: "说不清 429", why: "上游限流" },
+        ] },
+      ],
+      cred: "官方",
+    },
+  };
+
+  const state = {
+    page: "models",
+    channel: "anthropic",
+    creating: false,
+    well: null,
+    chQuery: "",
+    addModel: "",
+    addCred: { name: "", value: "", show: false },
+    draft: null,
+    savedFlash: false,
+    probing: false,
+    probed: {},
+    revealed: {},
+    modal: null,
+    confirm: null,
+    pick: null,
+    keyForm: null,
+    freshKey: null,
+    apForm: null,
+    logModel: "",
+    failOnly: false,
+    logPage: 0,
+    logDetail: null,
+    rankDim: "model",
+    rankDays: 7,
+    pw: null,
+    nid: 100,
+  };
+
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function nextId(p) { state.nid += 1; return p + state.nid; }
+
+  function toast(msg) {
+    const el = $("#toast");
+    el.textContent = msg;
+    el.classList.add("is-on");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("is-on"), 1800);
+  }
+
+  function copy(text, label) {
+    const done = () => toast("已复制 " + (label || text));
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else fallbackCopy(text, done);
+  }
+  function fallbackCopy(text, done) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); done(); } catch (e) { toast("复制失败"); }
+    document.body.removeChild(ta);
+  }
+
+  function chBy(id) { return CHANNELS.find((c) => c.id === id); }
+  function credsOf(id) { return CREDS.filter((c) => c.channel === id); }
+  function modelsOf(id) { return MODELS.filter((m) => m.channel === id); }
+  function qname(ch, name) { return ch + "/" + name; }
+  function apRefs(chName) { return APS.filter((a) => a.channel === chName).length; }
+  function liveKeys(id) { return credsOf(id).filter((c) => !c.disabled).length; }
+
+  function joinURL(base, path) {
+    return String(base || "").trim().replace(/\/+$/, "") + path;
+  }
+  function maskURL(url) {
+    try {
+      const u = new URL(url);
+      const parts = u.host.split(".");
+      let host = u.host;
+      if (parts.length >= 3) {
+        const mid = parts[1];
+        const keep = Math.min(4, Math.max(2, mid.length - 1));
+        host = parts[0] + "." + mid.slice(0, keep) + "****" + "." + parts[parts.length - 1];
+      } else if (parts.length === 2) {
+        host = parts[0].slice(0, 3) + "****." + parts[1];
+      }
+      const path = u.pathname === "/" ? "" : u.pathname.replace(/\/+$/, "");
+      return u.protocol + "//" + host + path;
+    } catch {
+      return "****";
+    }
+  }
+
+  function familyOf(name) {
+    const slash = name.indexOf("/");
+    if (slash > 0) return name.slice(0, slash);
+    const m = /^[a-zA-Z]+/.exec(name);
+    return m ? m[0].toLowerCase() : "其它";
+  }
+
+  function fmtTok(n) {
+    if (n >= 1000) {
+      const k = n / 1000;
+      return (k >= 10 || Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)) + "k";
+    }
+    return String(n);
+  }
+  function fmtMs(ms) {
+    if (ms === null || ms === undefined) return "—";
+    return ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(2) + "s";
+  }
+
+  function emptyDraft(ch) {
+    return {
+      name: ch.name,
+      protocols: ch.protocols.slice(),
+      base_url: ch.base_url,
+      max_concurrency: ch.max_concurrency ? String(ch.max_concurrency) : "",
+      supports_compaction: !!ch.supports_compaction,
+    };
+  }
+  function ensureDraft() {
+    const ch = chBy(state.channel);
+    if (!ch) return;
+    if (!state.draft || state.draft.id !== ch.id) state.draft = Object.assign({ id: ch.id }, emptyDraft(ch));
+  }
+  function isDirty() {
+    const ch = chBy(state.channel);
+    if (!ch || !state.draft) return false;
+    const d = state.draft;
+    const conc = parseInt(d.max_concurrency, 10) > 0 ? parseInt(d.max_concurrency, 10) : 0;
+    const showC = d.protocols.includes("openai_responses");
+    return d.name !== ch.name
+      || d.base_url !== ch.base_url
+      || conc !== ch.max_concurrency
+      || d.protocols.join(",") !== ch.protocols.join(",")
+      || (showC && d.supports_compaction !== ch.supports_compaction);
+  }
+
+  function showPage(name) {
+    state.page = name;
+    state.creating = false;
+    if (name !== "models") state.well = null;
+    document.body.dataset.page = name;
+    $$("[data-nav]").forEach((el) => el.classList.toggle("is-on", el.dataset.nav === name));
+    closeModal();
+    render();
+  }
+
+  function render() {
+    renderRail();
+    const fill = state.page === "logs";
+    $("#scroll").classList.toggle("is-fill", fill);
+    const root = $("#root");
+    root.classList.toggle("is-wide", state.page === "logs" || state.page === "keys");
+    root.classList.toggle("is-fill", fill);
+    if (state.page === "models") root.innerHTML = renderModels();
+    else if (state.page === "keys") root.innerHTML = renderKeys();
+    else if (state.page === "logs") root.innerHTML = renderLogs();
+    else if (state.page === "aps") root.innerHTML = renderAps();
+    else root.innerHTML = renderRank();
+    renderModal();
+  }
+
+  function restoreField(id, pos) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.focus();
+    if (pos != null && el.setSelectionRange && typeof el.value === "string") {
+      try { el.setSelectionRange(pos, pos); } catch (e) {}
+    }
+  }
+
+  function renderRail() {
+    const mid = $("#rail-mid");
+    if (state.page !== "models") {
+      mid.innerHTML = "";
+      return;
+    }
+    const keep = document.activeElement && document.activeElement.id === "ch-search";
+    const pos = keep ? document.activeElement.selectionStart : null;
+    const q = state.chQuery.trim().toLowerCase();
+    const list = CHANNELS.filter((c) => !q || c.name.toLowerCase().includes(q));
+    mid.innerHTML = `
+      <div class="rail-label">渠道</div>
+      <input class="rail-search" id="ch-search" placeholder="搜渠道名" value="${esc(state.chQuery)}" />
+      <div class="rail-list">
+        ${list.map((c) => `
+          <button type="button" class="${!state.creating && state.channel === c.id ? "is-on" : ""} ${c.disabled ? "is-off" : ""}" data-ch="${esc(c.id)}">
+            <span class="nm">${esc(c.name)}</span>
+            ${c.disabled ? '<span class="mark">停用</span>' : ""}
+          </button>`).join("")}
+        ${list.length === 0 ? `<div class="rail-label">没有匹配</div>` : ""}
+      </div>
+      <button type="button" class="rail-new ${state.creating ? "is-on" : ""}" data-act="new-ch">＋ 新建渠道</button>
+    `;
+    if (keep) restoreField("ch-search", pos);
+  }
+
+  function protoTags(list) {
+    if (!list.length) return `<span class="tag tag-warn">协议集为空</span>`;
+    return list.map((p) => `<span class="tag" title="${esc(PROTO[p].label)} · ${esc(PROTO[p].path)}">${esc(PROTO[p].short)}</span>`).join("");
+  }
+
+  function protoSeg(selected, prefix) {
+    return `<div class="seg" role="group" aria-label="支持协议">
+      ${PROTO_ORDER.map((p) => `
+        <button type="button" class="${selected.includes(p) ? "is-on" : ""}" data-proto="${esc(p)}" data-proto-scope="${esc(prefix)}">${esc(PROTO[p].label)}</button>
+      `).join("")}
+      <button type="button" class="is-soon" disabled title="暂未支持">Gemini<small>暂未支持</small></button>
+    </div>`;
+  }
+
+  function urlPreview(base, protos) {
+    if (!String(base || "").trim() || !protos.length) return "";
+    const masked = maskURL(base.trim());
+    return `<div class="url-preview">
+      ${protos.map((p) => `<div><span class="hint">预览 ${esc(PROTO[p].label)}：</span><code>${esc(joinURL(masked, PROTO[p].path))}</code></div>`).join("")}
+    </div>`;
+  }
+
+  function settingsForm(ch, draft, opts) {
+    const creating = !ch;
+    const showC = draft.protocols.includes("openai_responses");
+    const nameBad = draft.name.includes("/");
+    const dirty = creating ? false : isDirty();
+    const canSave = creating
+      ? draft.name.trim() && !nameBad && draft.credential
+      : dirty && draft.name.trim() && !nameBad;
+    return `
+      <div class="form-row">
+        <div class="field">
+          <label>渠道名</label>
+          <input id="set-name" value="${esc(draft.name)}" placeholder="不能含 /" ${creating ? "autofocus" : ""} />
+          <span class="field-hint">限定名的前半截（如 bailian/qwen3-max），不能含 <span class="mono">/</span></span>
+          ${nameBad ? `<span class="field-error">渠道名不能含 /</span>` : ""}
+        </div>
+        <div class="field">
+          <label>支持的上游协议</label>
+          ${protoSeg(draft.protocols, creating ? "new" : "edit")}
+          <span class="field-hint">这个上游能说的都勾上，不必按协议拆成两个渠道</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label>Base URL</label>
+          <input id="set-base" value="${esc(draft.base_url)}" placeholder="https://…" />
+        </div>
+        <div class="field">
+          <label>并发上限</label>
+          <input id="set-conc" type="number" min="0" step="1" placeholder="不限" value="${esc(draft.max_concurrency)}" />
+          <span class="field-hint">同时打向这个上游的请求数上限；留空 = 不限</span>
+        </div>
+      </div>
+      ${showC ? `
+        <div class="field">
+          <label>Codex 压缩（remote compaction）</label>
+          <div class="seg">
+            <button type="button" class="${draft.supports_compaction ? "is-on" : ""}" data-act="comp-yes">支持</button>
+            <button type="button" class="${!draft.supports_compaction ? "is-on" : ""}" data-act="comp-no">不支持</button>
+          </div>
+          <span class="field-hint">这个上游认不认 Responses 请求里的 compaction_trigger。说「不支持」时，压缩请求会被网关明确拒绝</span>
+        </div>` : ""}
+      ${urlPreview(draft.base_url, draft.protocols)}
+      ${creating ? `
+        <div class="field">
+          <label>上游凭证</label>
+          <input id="set-cred" type="password" autocomplete="off" value="${esc(draft.credential || "")}" placeholder="先给一份" />
+          <span class="field-hint">建完可以在「上游凭证」段里继续加；多给几份就是凭证池</span>
+        </div>` : ""}
+      <div class="sheet-acts">
+        ${creating ? `<button type="button" class="btn btn-ghost" data-act="cancel-new">取消</button>` : ""}
+        ${!creating && state.savedFlash ? `<span class="muted">已保存</span>` : ""}
+        <button type="button" class="btn btn-primary" data-act="${creating ? "create-ch" : "save-ch"}" ${canSave ? "" : "disabled"}>${creating ? "创建" : "保存"}</button>
+      </div>
+      ${!creating ? `
+        <div style="margin-top:18px">
+          <button type="button" class="btn btn-text btn-danger" data-act="del-ch">删除渠道</button>
+        </div>` : ""}
+    `;
+  }
+
+  function credWell(ch) {
+    const list = credsOf(ch.id);
+    const probe = state.probed[ch.id] ? PROBE[ch.id] : null;
+    return `
+      <div class="well" id="well-creds">
+        <div class="well-head">
+          <h3>上游凭证${list.length ? " · " + list.length : ""}</h3>
+          <div class="row-actions">
+            <button type="button" class="btn btn-ghost" data-act="probe" ${state.probing ? "disabled" : ""}>${state.probing ? "检测中…" : "检测"}</button>
+          </div>
+        </div>
+        <p class="hint">跟导航上的 <strong>API Key</strong> 是两回事。这里是打向上游的号。值默认掩码，点「显示」看明文、点「复制」拿全串。名字会出现在流水与排行里。</p>
+        ${list.length === 0 ? `<div class="empty" style="padding:20px 0">这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</div>` : list.map((c) => {
+          const shown = !!state.revealed["cred:" + c.id];
+          return `<div class="cred ${c.disabled ? "is-off" : ""}">
+            <input class="ghost-input" data-cred-name="${esc(c.id)}" value="${esc(c.name)}" />
+            <div class="cred-val">${esc(c.disabled && !c.value ? "—" : shown ? c.value : c.mask)}</div>
+            <div class="cred-state">${c.disabled ? esc(c.reason || "已停用") + (c.when ? " · " + esc(c.when) : "") : esc(c.created)}</div>
+            <div class="cred-acts">
+              <button type="button" class="btn-text" data-reveal="cred:${esc(c.id)}">${shown ? "隐藏" : "显示"}</button>
+              <button type="button" class="btn-text" data-copy="${esc(c.value)}" data-copy-label="${esc(c.name)}">复制</button>
+              <button type="button" class="sw ${c.disabled ? "is-off" : ""}" data-toggle-cred="${esc(c.id)}">${c.disabled ? "已摘" : "启用"}<i></i></button>
+              <button type="button" class="btn-text" data-del-cred="${esc(c.id)}">删除</button>
+            </div>
+          </div>`;
+        }).join("")}
+        <div class="cred-add">
+          <input id="add-cred-name" placeholder="名字" value="${esc(state.addCred.name)}" />
+          <input id="add-cred-val" type="${state.addCred.show ? "text" : "password"}" autocomplete="off" placeholder="上游 API key" value="${esc(state.addCred.value)}" />
+          <button type="button" class="btn btn-ghost" data-act="add-cred-show" ${state.addCred.value ? "" : "disabled"}>${state.addCred.show ? "隐藏" : "显示"}</button>
+          <button type="button" class="btn btn-primary" data-act="add-cred" ${state.addCred.value.trim() ? "" : "disabled"}>添加</button>
+        </div>
+        ${list.length >= 2 ? `
+          <div class="field" style="margin-top:16px">
+            <label>凭证选取</label>
+            <div class="seg">
+              <button type="button" class="${ch.key_mode === "polling" ? "is-on" : ""}" data-keymode="polling">轮询</button>
+              <button type="button" class="${ch.key_mode === "random" ? "is-on" : ""}" data-keymode="random">随机</button>
+            </div>
+            <span class="field-hint">按哪种顺序用池子里的 key。改了立即生效。轮询把量摊开；随机适合上游按 key 限流。</span>
+          </div>` : ""}
+        ${probe ? `
+          <div class="probe">
+            ${probe.creds.map((g) => `
+              <div>
+                <div>${esc(g.text)}</div>
+                ${g.items ? `<ul>${g.items.map((i) => `<li><code>${esc(i)}</code></li>`).join("")}</ul>` : ""}
+              </div>`).join("")}
+          </div>
+          <div class="probe-grid">
+            <div class="hint">模型探测（用「${esc(probe.cred)}」）：每格发了一个带模型名的最小真实请求——只提示，不落库也不影响路由。格子写着通 / 不通 / 说不清，不只靠色。</div>
+            ${probe.models.map((m) => `
+              <div class="probe-model">
+                <code>${esc(m.name)}</code>
+                ${m.cells.map((c) => `<span class="pcell">${esc(c.proto)} ${esc(c.label)}</span>`).join("")}
+                ${m.cells.filter((c) => c.why).map((c) => `<span class="sub">${esc(c.proto)}：${esc(c.why)}</span>`).join("")}
+              </div>`).join("")}
+          </div>` : ""}
+      </div>`;
+  }
+
+  function modelRows(ch) {
+    const list = modelsOf(ch.id);
+    if (!list.length) {
+      return `<div class="empty">还没有纳管模型。点「获取模型列表」，或在下面手填上游那边真实的模型名。</div>`;
+    }
+    return `<div class="mlist">
+      ${list.map((m) => {
+        const off = m.disabled || ch.disabled;
+        const q = qname(ch.name, m.name);
+        const showProto = ch.protocols.length > 1 || (m.protocols && m.protocols.length > 0);
+        const inherit = !m.protocols.length;
+        const stale = (m.protocols || []).filter((p) => !ch.protocols.includes(p));
+        return `<div class="mrow ${off ? "is-off" : ""}">
+          <div class="m-name">${esc(m.name)}</div>
+          <div class="m-side">
+            <button type="button" class="sw ${m.disabled ? "is-off" : ""}" data-toggle-model="${esc(m.id)}">${m.disabled ? "停用" : "启用"}<i></i></button>
+            <button type="button" class="btn-text" data-del-model="${esc(m.id)}">删除</button>
+          </div>
+          <div class="m-q">
+            ${m.disabled
+              ? `<span class="mono" title="${esc(q)}">${esc(q)}</span>`
+              : `<button type="button" class="qcopy" data-copy="${esc(q)}" data-copy-label="${esc(q)}" title="点击复制 ${esc(q)}">${esc(q)}</button>`}
+            ${ch.disabled ? `<span class="tag tag-off">渠道已停</span>` : ""}
+            ${!showProto ? `<span>协议 继承</span>` : ""}
+          </div>
+          ${showProto ? `
+            <div class="proto-row">
+              <span class="lbl">协议</span>
+              ${ch.protocols.map((p) => `
+                <button type="button" class="chip-toggle ${m.protocols.includes(p) ? "is-on" : ""}" data-mproto="${esc(m.id)}" data-p="${esc(p)}" title="${esc(PROTO[p].label)}">${esc(PROTO[p].short)}</button>
+              `).join("")}
+              ${stale.map((p) => `
+                <button type="button" class="chip-toggle is-stale" data-mproto="${esc(m.id)}" data-p="${esc(p)}" title="渠道已经不说这项了，点一下移除">${esc((PROTO[p] || {}).short || p)}</button>
+              `).join("")}
+              ${inherit && !stale.length ? `<span class="hint" style="margin:0">跟渠道一样</span>` : ""}
+            </div>` : ""}
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  function renderModels() {
+    if (state.creating) {
+      if (!state.draft || state.draft.id !== "new") {
+        state.draft = { id: "new", name: "", protocols: ["openai"], base_url: "", max_concurrency: "", supports_compaction: false, credential: "" };
+      }
+      return `
+        <div class="hero">
+          <div>
+            <h1>接一家上游</h1>
+            <p class="lede">先填渠道和一把凭证。建完再回列表拉模型。渠道名会成为限定名的前半截。</p>
+          </div>
+        </div>
+        <div style="margin-top:24px">${settingsForm(null, state.draft, { creating: true })}</div>`;
+    }
+    if (!CHANNELS.length) {
+      return `
+        <div class="hero">
+          <div>
+            <h1>纳管这些模型</h1>
+            <p class="lede">还没有上游。左边「新建渠道」接一家，再拉模型。</p>
+          </div>
+        </div>`;
+    }
+    const ch = chBy(state.channel) || CHANNELS[0];
+    state.channel = ch.id;
+    if (state.well === "settings") ensureDraft();
+    const draft = state.draft && state.draft.id === ch.id ? state.draft : emptyDraft(ch);
+    return `
+      <div class="hero">
+        <div>
+          <h1>纳管这些模型</h1>
+          <p class="lede">主语是这个渠道里已纳管的模型。限定名 <span class="mono">渠道名/模型名</span> 可直接调，不必先建接入点。</p>
+        </div>
+        <button type="button" class="btn btn-hero" data-act="fetch">获取模型列表</button>
+      </div>
+      <div class="ch-head">
+        <div class="ch-id ${ch.disabled ? "is-off" : ""}">
+          <h2>${esc(ch.name)}</h2>
+          ${protoTags(ch.protocols)}
+          <button type="button" class="sw ${ch.disabled ? "is-off" : ""}" data-toggle-ch="${esc(ch.id)}">${ch.disabled ? "停用" : "启用"}<i></i></button>
+        </div>
+        <div class="ch-acts">
+          <button type="button" class="btn btn-text well-toggle ${state.well === "settings" ? "is-on" : ""}" data-well="settings">上游设置</button>
+          <button type="button" class="btn btn-text well-toggle ${state.well === "creds" ? "is-on" : ""}" data-well="creds">上游凭证</button>
+        </div>
+      </div>
+      ${ch.disabled ? "" : liveKeys(ch.id) === 0 ? `<div class="bar">这个渠道没有可用凭证，所有走它的请求都会失败；启用状态下连启动闸都过不去。在「上游凭证」里加一份。</div>` : ""}
+      ${state.well === "settings" ? `<div class="well"><div class="well-head"><h3>上游设置</h3></div>${settingsForm(ch, draft)}</div>` : ""}
+      ${state.well === "creds" ? credWell(ch) : ""}
+      ${modelRows(ch)}
+      <form class="add-models" data-act="add-models">
+        <input id="add-model-in" placeholder="上游模型名，可一次粘一批（逗号或换行分隔）" value="${esc(state.addModel)}" />
+        <button type="submit" class="btn btn-ghost">添加</button>
+      </form>`;
+  }
+
+  function renderKeys() {
+    return `
+      <div class="hero">
+        <div>
+          <h1>签发一把钥匙</h1>
+          <p class="lede">客户端拿它调网关（<span class="mono">x-api-key</span> 或 <span class="mono">Authorization: Bearer</span>）。跟渠道里那份<strong>上游凭证</strong>是两回事，也跟管理端密码是两回事。</p>
+        </div>
+        <button type="button" class="btn btn-hero" data-act="new-key">新建 API Key</button>
+      </div>
+      ${KEYS.length === 0 ? `<div class="empty">还没有 API Key。一把都没有的话，所有转发请求都会回 401。</div>` : `
+      <div class="table-wrap" style="margin-top:28px">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>API Key</th>
+              <th>可访问模型</th>
+              <th>创建时间</th>
+              <th>状态</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${KEYS.map((k) => {
+              const shown = !!state.revealed["key:" + k.id];
+              const secret = !k.value
+                ? `<span>原值没存过，只能删了重建</span>`
+                : `<div class="secret"><code>${esc(shown ? k.value : k.mask)}</code>
+                    <button type="button" class="btn-text" data-reveal="key:${esc(k.id)}">${shown ? "隐藏" : "显示"}</button>
+                    <button type="button" class="btn-text" data-copy="${esc(k.value)}" data-copy-label="${esc(k.name)}">复制</button>
+                  </div>`;
+              const allow = k.allow === "*"
+                ? `<span class="sub" style="margin:0">不限</span>`
+                : `<div class="chips">${k.allow.split(",").filter(Boolean).map((m) => `<span class="chip"><code>${esc(m)}</code></span>`).join("")}</div>`;
+              return `<tr class="${k.disabled ? "is-off" : ""}">
+                <td>${esc(k.name)}</td>
+                <td>${secret}</td>
+                <td>${allow}</td>
+                <td class="nowrap">${esc(k.created)}</td>
+                <td><button type="button" class="sw ${k.disabled ? "is-off" : ""}" data-toggle-key="${esc(k.id)}">${k.disabled ? "停用" : "启用"}<i></i></button></td>
+                <td>
+                  <div class="row-actions">
+                    <button type="button" class="btn btn-ghost" data-edit-key="${esc(k.id)}">编辑</button>
+                    <button type="button" class="btn-text" data-del-key="${esc(k.id)}">删除</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`}`;
+  }
+
+  function filteredLogs() {
+    return LOGS.filter((l) => {
+      if (state.failOnly && l.status < 400) return false;
+      if (state.logModel && l.req !== state.logModel) return false;
+      return true;
+    });
+  }
+
+  function pageList(cur, count) {
+    const WINDOW = 5;
+    if (count <= WINDOW + 2) return Array.from({ length: count }, (_, i) => i);
+    const start = Math.max(1, Math.min(cur - 2, count - 1 - WINDOW));
+    const end = start + WINDOW;
+    const out = [0];
+    if (start === 2) out.push(1);
+    else if (start > 1) out.push("gap");
+    for (let i = start; i < end; i++) out.push(i);
+    if (end === count - 2) out.push(end);
+    else if (end < count - 1) out.push("gap");
+    out.push(count - 1);
+    return out;
+  }
+
+  function renderLogs() {
+    const all = filteredLogs();
+    const pages = Math.max(1, Math.ceil(all.length / LOG_PAGE));
+    if (state.logPage >= pages) state.logPage = pages - 1;
+    const rows = all.slice(state.logPage * LOG_PAGE, state.logPage * LOG_PAGE + LOG_PAGE);
+    const models = ["", ...Array.from(new Set(LOGS.map((l) => l.req)))];
+    return `
+      <div class="hero">
+        <div>
+          <h1>刚才那几次怎么样</h1>
+          <p class="lede">定高表，排障用。点「详情」看 request-id；上游原文只在失败行。</p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="toolbar-left">${all.length} 条${state.failOnly ? " · 只看失败" : ""}</div>
+        <select class="pick" id="log-model">
+          ${models.map((m) => `<option value="${esc(m)}" ${state.logModel === m ? "selected" : ""}>${m ? esc(m) : "全部模型"}</option>`).join("")}
+        </select>
+        <button type="button" class="btn btn-ghost ${state.failOnly ? "is-on" : ""}" data-act="fail-only">${state.failOnly ? "在看失败" : "只看失败"}</button>
+        <button type="button" class="btn btn-ghost" data-act="log-refresh">刷新</button>
+      </div>
+      <div class="log-board">
+        <div class="log-viewport">
+          ${rows.length === 0 ? `<div class="empty">${state.failOnly ? "这些条件下没有失败。" : "还没有流水。"}</div>` : `
+          <table class="data logs">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>API Key</th>
+                <th>模型</th>
+                <th>端点</th>
+                <th>类型</th>
+                <th>上游凭证</th>
+                <th class="num">状态</th>
+                <th class="num">耗时</th>
+                <th class="num">in / out</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((l) => {
+                const showDetail = l.status >= 400 || !!l.rid;
+                const type = l.stream === null ? "—" : l.stream ? "流式" : "同步";
+                return `<tr>
+                  <td class="nowrap">${esc(l.time)}</td>
+                  <td class="nowrap">${l.key ? esc(l.key) : `<span class="sub" style="margin:0">—</span>`}</td>
+                  <td>
+                    <code title="${esc(l.req)}">${esc(l.req)}</code>
+                    <div class="sub">${l.ch ? esc(l.ch + " / " + l.up) : "—"}</div>
+                  </td>
+                  <td class="nowrap">
+                    <div><span class="sub" style="margin:0">入站</span> ${esc(l.cin)}</div>
+                    <div class="sub">上游 ${l.cup ? esc(l.cup) : "—"}</div>
+                  </td>
+                  <td class="nowrap">${type === "—" ? `<span class="sub" style="margin:0">—</span>` : type}</td>
+                  <td class="nowrap">${l.cred ? esc(l.cred) : `<span class="sub" style="margin:0">—</span>`}</td>
+                  <td class="num">
+                    <span class="pill">${l.status}</span>
+                    ${l.retry ? `<div class="sub">重试 ×${l.retry}</div>` : ""}
+                    ${l.err ? `<div class="sub log-err">${esc(l.err)}</div>` : ""}
+                    ${showDetail ? `<div><button type="button" class="btn-text" data-log="${l.id}">详情</button></div>` : ""}
+                  </td>
+                  <td class="num nowrap">
+                    ${fmtMs(l.ms)}
+                    <div class="sub">${l.ttft === null ? "—" : "首字 " + fmtMs(l.ttft)}</div>
+                  </td>
+                  <td class="num nowrap">
+                    ${l.inn || l.out ? `${fmtTok(l.inn)} / ${fmtTok(l.out)}` : "0 / 0"}
+                    ${l.cacheR || l.cacheW ? `<div class="sub">缓存 读 ${fmtTok(l.cacheR)} / 写 ${fmtTok(l.cacheW)}</div>` : ""}
+                    ${l.think ? `<div class="sub">思考 ${fmtTok(l.think)}</div>` : ""}
+                  </td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>`}
+        </div>
+        ${pages > 1 ? `
+          <div class="pager">
+            <button type="button" class="btn btn-ghost" data-page-go="${state.logPage - 1}" ${state.logPage === 0 ? "disabled" : ""}>上一页</button>
+            ${pageList(state.logPage, pages).map((it, i) =>
+              it === "gap"
+                ? `<span class="pager-gap">…</span>`
+                : `<button type="button" class="btn btn-ghost pager-page ${it === state.logPage ? "is-on" : ""}" data-page-go="${it}">${it + 1}</button>`
+            ).join("")}
+            <button type="button" class="btn btn-ghost" data-page-go="${state.logPage + 1}" ${state.logPage >= pages - 1 ? "disabled" : ""}>下一页</button>
+          </div>` : ""}
+      </div>`;
+  }
+
+  function renderAps() {
+    const noCh = CHANNELS.length === 0;
+    return `
+      <div class="hero">
+        <div>
+          <h1>给模型起个对外的名字</h1>
+          <p class="lede">接入点是别名层：绑一个候选（渠道 + 纳管模型）。只想直连，客户端 <span class="mono">model</span> 填限定名即可，不必建。</p>
+        </div>
+        <button type="button" class="btn btn-hero" data-act="new-ap" ${noCh ? "disabled" : ""}>新建接入点</button>
+      </div>
+      ${APS.length === 0 ? `<div class="empty">${noCh ? "先去模型页建上游并纳管" : "不必建，客户端可直接填限定名"}</div>` : `
+      <div class="table-wrap" style="margin-top:28px">
+        <table class="data">
+          <thead>
+            <tr><th>接入点</th><th>候选</th><th>状态</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${APS.map((a) => `
+              <tr class="${a.disabled ? "is-off" : ""}">
+                <td>${a.disabled
+                  ? `<code>${esc(a.name)}</code>`
+                  : `<button type="button" class="qcopy" data-copy="${esc(a.name)}" data-copy-label="${esc(a.name)}"><code>${esc(a.name)}</code></button>`}</td>
+                <td>
+                  <div><span class="sub" style="margin:0">${esc(a.channel)} /</span> <code>${esc(a.model)}</code></div>
+                  <div class="sub">权重 ${a.weight}</div>
+                </td>
+                <td>${a.disabled ? "停用" : "启用"}</td>
+                <td>
+                  <div class="row-actions">
+                    <button type="button" class="btn btn-ghost" data-edit-ap="${esc(a.id)}">编辑</button>
+                    <button type="button" class="btn-text" data-del-ap="${esc(a.id)}">删除</button>
+                  </div>
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}`;
+  }
+
+  function renderRank() {
+    const pack = RANK[state.rankDays];
+    const rows = pack[state.rankDim];
+    const unit = state.rankDim === "key" ? "把 API Key" : state.rankDim === "credential" ? "份上游凭证" : "个模型";
+    return `
+      <div class="hero rank-head">
+        <div>
+          <h1>谁在烧</h1>
+          <p class="lede">名次 + 名字 + token + 占比。占比分母就是下面那一个合计。不做热门榜、厂商份额、环比、费用。</p>
+        </div>
+        <div class="rank-controls">
+          <div class="seg">
+            <button type="button" class="${state.rankDim === "model" ? "is-on" : ""}" data-dim="model">按模型</button>
+            <button type="button" class="${state.rankDim === "key" ? "is-on" : ""}" data-dim="key">按 API Key</button>
+            <button type="button" class="${state.rankDim === "credential" ? "is-on" : ""}" data-dim="credential">按上游凭证</button>
+          </div>
+          <div class="windows">
+            <button type="button" data-days="1" class="${state.rankDays === 1 ? "is-on" : ""}">1 天</button>
+            <button type="button" data-days="7" class="${state.rankDays === 7 ? "is-on" : ""}">7 天</button>
+            <button type="button" data-days="30" class="${state.rankDays === 30 ? "is-on" : ""}">30 天</button>
+          </div>
+        </div>
+      </div>
+      <div class="stat-lead">
+        <span class="stat-lead-value">${esc(pack.total)}</span>
+        <span class="stat-lead-label">token 合计 · ${rows.length} ${unit} · ${state.rankDays} 天。这是上面每一行占比的分母。</span>
+      </div>
+      ${rows.map((r, i) => `
+        <div class="rank ${i === 0 ? "is-1" : ""}">
+          <div class="rank-n">${i + 1}</div>
+          <div>
+            <div class="rank-name">${esc(r.name)}</div>
+            ${r.note ? `<div class="rank-note">${esc(r.note)}</div>` : ""}
+          </div>
+          <div class="rank-num">
+            <b>${esc(r.tokens)}</b>
+            <span>${esc(r.pct)}</span>
+          </div>
+        </div>`).join("")}`;
+  }
+
+  /* —— 弹层 —— */
+  function closeModal() {
+    state.modal = null;
+    state.confirm = null;
+    state.pick = null;
+    state.keyForm = null;
+    state.freshKey = null;
+    state.apForm = null;
+    state.logDetail = null;
+    state.pw = null;
+    const m = $("#modal");
+    m.hidden = true;
+    $("#sheet").innerHTML = "";
+    $("#sheet").classList.remove("is-wide");
+  }
+
+  function openModal() {
+    $("#modal").hidden = false;
+  }
+
+  function renderModal() {
+    const sheet = $("#sheet");
+    if (state.confirm) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(`
+        <h2>${esc(state.confirm.title || "确认")}</h2>
+        <p class="lede">${esc(state.confirm.body)}</p>
+        <div class="sheet-acts">
+          <button type="button" class="btn btn-ghost" data-act="modal-close">取消</button>
+          <button type="button" class="btn btn-primary" data-act="confirm-yes">${esc(state.confirm.ok || "确认")}</button>
+        </div>`);
+      openModal();
+      return;
+    }
+    if (state.pick) {
+      sheet.classList.add("is-wide");
+      sheet.innerHTML = modalChrome(pickHTML());
+      openModal();
+      return;
+    }
+    if (state.freshKey) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(`
+        <h2>新 API Key 已生成</h2>
+        <p class="lede">复制走就能用。这把之后在列表里随时能再看到、再复制。</p>
+        <div class="fresh-key">${esc(state.freshKey)}</div>
+        <div class="sheet-acts">
+          <button type="button" class="btn btn-ghost" data-copy="${esc(state.freshKey)}" data-copy-label="新 API Key">复制</button>
+          <button type="button" class="btn btn-primary" data-act="modal-close">我已保存</button>
+        </div>`);
+      openModal();
+      return;
+    }
+    if (state.keyForm) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(keyFormHTML());
+      openModal();
+      return;
+    }
+    if (state.apForm) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(apFormHTML());
+      openModal();
+      return;
+    }
+    if (state.logDetail) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(logDetailHTML());
+      openModal();
+      return;
+    }
+    if (state.pw) {
+      sheet.classList.remove("is-wide");
+      sheet.innerHTML = modalChrome(`
+        <h2>修改管理密码</h2>
+        <p class="lede">管的是这个管理端，不是上游凭证，也不是 API Key。改完所有登录状态一起失效。</p>
+        <div class="bar">改完所有登录状态一起失效，需要用新密码重新登录。</div>
+        <div class="field" style="margin-top:14px"><label>原密码</label><input id="pw-old" type="password" autocomplete="current-password" value="${esc(state.pw.old)}" /></div>
+        <div class="field"><label>新密码</label><input id="pw-new" type="password" autocomplete="new-password" value="${esc(state.pw.now)}" /><span class="field-hint">至少 8 位</span></div>
+        <div class="sheet-acts">
+          <button type="button" class="btn btn-ghost" data-act="modal-close">取消</button>
+          <button type="button" class="btn btn-primary" data-act="pw-save" ${state.pw.old && state.pw.now.length >= 8 ? "" : "disabled"}>确认修改</button>
+        </div>`);
+      openModal();
+      return;
+    }
+    $("#modal").hidden = true;
+    sheet.innerHTML = "";
+  }
+
+  function modalChrome(inner) {
+    return `<button type="button" class="sheet-x" data-act="modal-close" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>${inner}`;
+  }
+
+  function askConfirm(opts) {
+    state.confirm = opts;
+    renderModal();
+  }
+
+  /* 获取模型 */
+  function openPicker() {
+    const ch = chBy(state.channel);
+    if (!ch) return;
+    state.pick = {
+      loading: true,
+      failed: false,
+      query: "",
+      showManaged: false,
+      picked: {},
+      expanded: {},
+      names: [],
+    };
+    renderModal();
+    setTimeout(() => {
+      if (!state.pick) return;
+      state.pick.loading = false;
+      state.pick.names = (ch.fetched || []).slice();
+      renderModal();
+    }, 380);
+  }
+
+  function pickVisible() {
+    const ch = chBy(state.channel);
+    const p = state.pick;
+    const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+    const q = p.query.trim().toLowerCase();
+    return p.names
+      .filter((n) => (p.showManaged || !existing.has(n)) && (!q || n.toLowerCase().includes(q)))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  function pickGroups(visible) {
+    const by = new Map();
+    for (const n of visible) {
+      const f = familyOf(n);
+      by.set(f, [...(by.get(f) || []), n]);
+    }
+    const out = [];
+    const other = [];
+    for (const [name, items] of by) {
+      if (items.length === 1) other.push(...items);
+      else out.push({ name, items });
+    }
+    out.sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+    if (other.length) out.push({ name: "其它", items: other.sort((a, b) => a.localeCompare(b)) });
+    return out;
+  }
+
+  function pickHTML() {
+    const ch = chBy(state.channel);
+    const p = state.pick;
+    const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+    if (p.loading) {
+      return `<h2>获取并挑选模型：${esc(ch.name)}</h2>
+        <p class="mpick-note">拉取中…朝勾选的协议侧各请求一次上游 /v1/models。</p>`;
+    }
+    if (p.failed) {
+      return `<h2>获取并挑选模型：${esc(ch.name)}</h2>
+        <p class="mpick-note">拉取失败——上游没有 /v1/models 是常事，可以关掉手填，或重试。</p>
+        <div class="sheet-acts"><button type="button" class="btn btn-ghost" data-act="pick-reload">重新拉取</button></div>`;
+    }
+    const visible = pickVisible();
+    const groups = pickGroups(visible);
+    const pickable = visible.filter((n) => !existing.has(n));
+    const pickedN = Object.keys(p.picked).filter((n) => p.picked[n]).length;
+    const allPicked = pickable.length > 0 && pickable.every((n) => p.picked[n]);
+    const total = p.names.length;
+    const managed = p.names.filter((n) => existing.has(n)).length;
+    const q = p.query.trim();
+    return `
+      <h2>获取并挑选模型：${esc(ch.name)}</h2>
+      <p class="mpick-note">上游列出 ${total} 个，其中 ${managed} 个已纳管。这份列表只用来帮你填表，不落库、不影响路由——中转站把没有的模型也写进列表是常事，勾之前最好确认它真的能调通。</p>
+      <div class="mpick-bar">
+        <input class="mpick-search" id="pick-q" placeholder="搜模型名，比如 qwen3 或 haiku" value="${esc(p.query)}" />
+        <button type="button" class="btn btn-ghost ${p.showManaged ? "is-on" : ""}" data-act="pick-managed">显示已纳管</button>
+        <button type="button" class="btn btn-ghost" data-act="pick-reload">重新拉取</button>
+        <button type="button" class="btn btn-ghost" data-act="pick-all" ${pickable.length ? "" : "disabled"}>${allPicked ? "取消这 " + pickable.length + " 个" : "全选可见的 " + pickable.length + " 个"}</button>
+      </div>
+      <div class="mpick-list">
+        ${visible.length === 0 ? `<div class="empty">${q ? "没有匹配「" + esc(p.query) + "」的模型。" : "上游列出的都已经纳管了。"}</div>` : groups.map((g, gi) => {
+          const open = q !== "" || p.expanded[g.name] !== false && (gi === 0 || p.expanded[g.name] || g.items.length <= 12);
+          const free = g.items.filter((n) => !existing.has(n));
+          const on = free.filter((n) => p.picked[n]).length;
+          return `<div class="mpick-group">
+            <div class="mpick-group-head">
+              <button type="button" class="mpick-group-name" data-pick-group="${esc(g.name)}">${open ? "▾" : "▸"} ${esc(g.name)}<span class="muted">${g.items.length}</span></button>
+              ${on ? `<span class="tag">已选 ${on}</span>` : ""}
+              ${free.length ? `<button type="button" class="btn-text" data-pick-galli="${esc(g.name)}">${on < free.length ? "全选" : "全不选"}</button>` : ""}
+            </div>
+            ${open ? g.items.map((name) => {
+              const has = existing.has(name);
+              return `<label class="mpick-row ${has ? "is-off" : ""}">
+                <input type="checkbox" data-pick-one="${esc(name)}" ${has || p.picked[name] ? "checked" : ""} ${has ? "disabled" : ""} />
+                <code>${esc(name)}</code>
+                ${ch.protocols.length > 1 ? ch.protocols.map((pr) => `<span class="tag">${esc(PROTO[pr].short)}</span>`).join("") : ""}
+                ${has ? `<span class="tag tag-off">已纳管</span>` : ""}
+              </label>`;
+            }).join("") : ""}
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="sheet-acts">
+        <span class="muted">${pickedN ? "已选 " + pickedN + " 个" : "还没选"}</span>
+        <button type="button" class="btn btn-ghost" data-act="modal-close">取消</button>
+        <button type="button" class="btn btn-primary" data-act="pick-add" ${pickedN ? "" : "disabled"}>添加 ${pickedN} 个</button>
+      </div>`;
+  }
+
+  function whitelistOptions() {
+    const aps = APS.filter((a) => !a.disabled).map((a) => a.name);
+    const qs = CHANNELS.filter((c) => !c.disabled).flatMap((c) =>
+      modelsOf(c.id).filter((m) => !m.disabled).map((m) => qname(c.name, m.name))
+    );
+    return [...aps, ...qs];
+  }
+
+  function keyFormHTML() {
+    const f = state.keyForm;
+    const editing = !!f.id;
+    const opts = whitelistOptions();
+    return `
+      <h2>${editing ? "编辑 API Key：" + esc(f.name) : "新建 API Key"}</h2>
+      <p class="lede">白名单写接入点名或纳管模型限定名。逐项精确匹配，不支持通配。</p>
+      <div class="field">
+        <label>名称</label>
+        <input id="kf-name" value="${esc(f.name)}" placeholder="会出现在调用流水里" />
+      </div>
+      <div class="field">
+        <label>可访问模型</label>
+        <label class="check"><input type="checkbox" id="kf-unlim" ${f.unlimited ? "checked" : ""} /> 不限（所有可路由的模型）</label>
+        ${f.unlimited ? "" : `
+          <div class="chips" style="margin-bottom:8px">
+            ${f.picked.map((m) => `<span class="chip"><code>${esc(m)}</code><button type="button" class="x" data-kf-rm="${esc(m)}">×</button></span>`).join("")}
+          </div>
+          ${f.picked.length === 0 ? `<span class="field-hint">一个都不选等于不限——后端把空白名单当作 *。</span>` : ""}
+          <div class="suggest-list">
+            ${opts.filter((o) => !f.picked.includes(o)).map((o) => `<button type="button" data-kf-add="${esc(o)}">${esc(o)}</button>`).join("")}
+          </div>`}
+      </div>
+      ${editing ? `<label class="check"><input type="checkbox" id="kf-off" ${f.disabled ? "checked" : ""} /> 停用这把 API Key</label>` : ""}
+      <div class="sheet-acts">
+        <button type="button" class="btn btn-ghost" data-act="modal-close">取消</button>
+        <button type="button" class="btn btn-primary" data-act="key-save" ${f.name.trim() ? "" : "disabled"}>${editing ? "保存" : "生成"}</button>
+      </div>`;
+  }
+
+  function apFormHTML() {
+    const f = state.apForm;
+    const groups = CHANNELS.filter((c) => !c.disabled).map((c) => ({
+      name: c.name,
+      items: modelsOf(c.id).filter((m) => !m.disabled),
+    })).filter((g) => g.items.length);
+    return `
+      <h2>${f.id ? "编辑接入点：" + esc(f.name) : "新建接入点"}</h2>
+      <p class="lede">M0~M2 每个接入点一个候选。权重在多候选放开后才有用。</p>
+      <div class="field">
+        <label>接入点名</label>
+        <input id="ap-name" value="${esc(f.name)}" placeholder="客户端 model 字段填的就是这个" />
+      </div>
+      <div class="field">
+        <label>候选（渠道 / 纳管模型）</label>
+        <div class="cand-groups">
+          ${groups.map((g) => `
+            <div>
+              <div class="cand-g">${esc(g.name)}</div>
+              ${g.items.map((m) => `
+                <button type="button" class="cand-opt ${f.channel === g.name && f.model === m.name ? "is-on" : ""}" data-ap-cand="${esc(g.name)}" data-ap-model="${esc(m.name)}">${esc(m.name)}</button>
+              `).join("")}
+            </div>`).join("")}
+          ${groups.length === 0 ? `<div class="empty">没有可用的纳管模型。</div>` : ""}
+        </div>
+      </div>
+      <div class="field">
+        <label>权重</label>
+        <input id="ap-w" type="number" min="1" value="${esc(f.weight)}" />
+      </div>
+      <label class="check"><input type="checkbox" id="ap-off" ${f.disabled ? "checked" : ""} /> 停用这个接入点</label>
+      <div class="sheet-acts">
+        <button type="button" class="btn btn-ghost" data-act="modal-close">取消</button>
+        <button type="button" class="btn btn-primary" data-act="ap-save" ${f.name.trim() && f.model ? "" : "disabled"}>保存</button>
+      </div>`;
+  }
+
+  function logDetailHTML() {
+    const l = LOGS.find((x) => x.id === state.logDetail);
+    if (!l) return "";
+    const rid = l.rid
+      ? `<button type="button" class="btn-text" data-copy="${esc(l.rid)}" data-copy-label="request-id"><code>${esc(l.rid)}</code></button>`
+      : "—";
+    return `
+      <h2>调用详情</h2>
+      <p class="lede">${esc(l.time)}</p>
+      <dl class="dl">
+        <dt>模型</dt>
+        <dd><code>${esc(l.req)}</code> <span class="sub">→ ${l.ch ? esc(l.ch + " / " + l.up) : "—"}</span></dd>
+        <dt>端点</dt>
+        <dd class="mono">${esc(l.cin)} → ${l.cup ? esc(l.cup) : "—"}</dd>
+        <dt>状态</dt>
+        <dd><span class="pill">${l.status}</span>${l.retry ? " 重试 ×" + l.retry : ""}${l.err ? " · " + esc(l.err) : ""}</dd>
+        <dt>上游 request-id</dt>
+        <dd>${rid}</dd>
+      </dl>
+      ${l.status >= 400 ? `<pre class="err-pre">${esc(l.detail || "上游没有返回任何响应体。")}</pre>` : ""}`;
+  }
+
+  /* —— 读表单草稿（不整页重绘） —— */
+  function readSettingsFromDom() {
+    if (!state.draft) return;
+    const name = $("#set-name");
+    const base = $("#set-base");
+    const conc = $("#set-conc");
+    const cred = $("#set-cred");
+    if (name) state.draft.name = name.value;
+    if (base) state.draft.base_url = base.value;
+    if (conc) state.draft.max_concurrency = conc.value;
+    if (cred) state.draft.credential = cred.value;
+  }
+
+  function refreshSettingsChrome() {
+    const active = document.activeElement;
+    const focusId = active && active.id;
+    const pos = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    readSettingsFromDom();
+    const root = $("#root");
+    if (!root) return;
+    if (state.creating) {
+      root.innerHTML = renderModels();
+    } else {
+      const well = root.querySelector(".well");
+      if (!well || state.well !== "settings") return;
+      const ch = chBy(state.channel);
+      well.innerHTML = `<div class="well-head"><h3>上游设置</h3></div>${settingsForm(ch, state.draft)}`;
+    }
+    if (focusId) restoreField(focusId, pos);
+  }
+
+  function saveChannel() {
+    readSettingsFromDom();
+    const ch = chBy(state.channel);
+    const d = state.draft;
+    if (!ch || !d || d.name.includes("/")) return;
+    const renamed = ch.name !== d.name.trim();
+    const oldName = ch.name;
+    ch.name = d.name.trim();
+    ch.protocols = d.protocols.slice();
+    ch.base_url = d.base_url.trim();
+    ch.max_concurrency = parseInt(d.max_concurrency, 10) > 0 ? parseInt(d.max_concurrency, 10) : 0;
+    if (d.protocols.includes("openai_responses")) ch.supports_compaction = !!d.supports_compaction;
+    if (renamed) {
+      APS.forEach((a) => { if (a.channel === oldName) a.channel = ch.name; });
+    }
+    state.draft = Object.assign({ id: ch.id }, emptyDraft(ch));
+    state.savedFlash = true;
+    render();
+    setTimeout(() => { state.savedFlash = false; if (state.well === "settings") render(); }, 2000);
+  }
+
+  function createChannel() {
+    readSettingsFromDom();
+    const d = state.draft;
+    if (!d || !d.name.trim() || d.name.includes("/") || !d.credential) return;
+    const id = d.name.trim().toLowerCase().replace(/\s+/g, "-");
+    if (chBy(id) || CHANNELS.some((c) => c.name === d.name.trim())) {
+      toast("这个渠道名已经有了");
+      return;
+    }
+    CHANNELS.push({
+      id,
+      name: d.name.trim(),
+      disabled: false,
+      protocols: d.protocols.slice(),
+      base_url: d.base_url.trim(),
+      max_concurrency: parseInt(d.max_concurrency, 10) > 0 ? parseInt(d.max_concurrency, 10) : 0,
+      supports_compaction: !!d.supports_compaction,
+      key_mode: "polling",
+      fetched: [],
+    });
+    CREDS.push({
+      id: nextId("c"),
+      channel: id,
+      name: "凭证 1",
+      value: d.credential,
+      mask: d.credential.slice(0, 6) + "…" + d.credential.slice(-4),
+      disabled: false,
+      created: "2026-08-16",
+      reason: "",
+      when: "",
+    });
+    state.creating = false;
+    state.channel = id;
+    state.draft = null;
+    state.well = null;
+    toast("渠道已创建");
+    render();
+  }
+
+  function addModelsFromText(raw) {
+    const ch = chBy(state.channel);
+    const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+    const names = Array.from(new Set(String(raw).split(/[\s,，、]+/).map((s) => s.trim()).filter(Boolean)));
+    const fresh = names.filter((n) => !existing.has(n));
+    fresh.forEach((n) => MODELS.push({ id: nextId("m"), channel: ch.id, name: n, disabled: false, protocols: [] }));
+    state.addModel = "";
+    if (fresh.length) toast("已纳管 " + fresh.length + " 个");
+    else toast("没有新的名字");
+    render();
+  }
+
+  /* —— 事件 —— */
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("button, [data-nav], label.mpick-row");
+    if (!t) {
+      if (e.target.id === "modal-scrim") { closeModal(); render(); }
+      return;
+    }
+    if (t.dataset.nav) { showPage(t.dataset.nav); return; }
+    if (t.dataset.ch) {
+      state.creating = false;
+      state.channel = t.dataset.ch;
+      state.well = null;
+      state.draft = null;
+      state.addCred = { name: "", value: "", show: false };
+      render();
+      return;
+    }
+    if (t.dataset.copy) { copy(t.dataset.copy, t.dataset.copyLabel); return; }
+    if (t.dataset.reveal) {
+      state.revealed[t.dataset.reveal] = !state.revealed[t.dataset.reveal];
+      render();
+      return;
+    }
+    if (t.dataset.well) {
+      const w = t.dataset.well;
+      state.well = state.well === w ? null : w;
+      if (state.well === "settings") ensureDraft();
+      render();
+      return;
+    }
+    if (t.dataset.toggleCh) {
+      const ch = chBy(t.dataset.toggleCh);
+      ch.disabled = !ch.disabled;
+      render();
+      return;
+    }
+    if (t.dataset.toggleModel) {
+      const m = MODELS.find((x) => x.id === t.dataset.toggleModel);
+      m.disabled = !m.disabled;
+      render();
+      return;
+    }
+    if (t.dataset.toggleCred) {
+      const c = CREDS.find((x) => x.id === t.dataset.toggleCred);
+      if (c.disabled) {
+        c.disabled = false;
+        c.reason = "";
+        c.when = "";
+        toast("已人工恢复");
+      } else {
+        c.disabled = true;
+        c.reason = "已停用";
+        c.when = "";
+      }
+      render();
+      return;
+    }
+    if (t.dataset.toggleKey) {
+      const k = KEYS.find((x) => x.id === t.dataset.toggleKey);
+      k.disabled = !k.disabled;
+      render();
+      return;
+    }
+    if (t.dataset.delModel) {
+      const m = MODELS.find((x) => x.id === t.dataset.delModel);
+      askConfirm({
+        title: "删除纳管模型",
+        body: "从纳管列表里拿掉 " + m.name + "？不会动上游。",
+        ok: "删除",
+        run: () => { const i = MODELS.findIndex((x) => x.id === m.id); if (i >= 0) MODELS.splice(i, 1); },
+      });
+      return;
+    }
+    if (t.dataset.delCred) {
+      const c = CREDS.find((x) => x.id === t.dataset.delCred);
+      askConfirm({
+        title: "删除上游凭证",
+        body: "删除凭证「" + c.name + "」。",
+        ok: "删除",
+        run: () => { const i = CREDS.findIndex((x) => x.id === c.id); if (i >= 0) CREDS.splice(i, 1); },
+      });
+      return;
+    }
+    if (t.dataset.delKey) {
+      const k = KEYS.find((x) => x.id === t.dataset.delKey);
+      askConfirm({
+        title: "删除 API Key",
+        body: "删除「" + k.name + "」。持有这把钥匙的客户端会立刻 401。",
+        ok: "删除",
+        run: () => { const i = KEYS.findIndex((x) => x.id === k.id); if (i >= 0) KEYS.splice(i, 1); },
+      });
+      return;
+    }
+    if (t.dataset.delAp) {
+      const a = APS.find((x) => x.id === t.dataset.delAp);
+      askConfirm({
+        title: "删除接入点",
+        body: "删除接入点「" + a.name + "」。",
+        ok: "删除",
+        run: () => { const i = APS.findIndex((x) => x.id === a.id); if (i >= 0) APS.splice(i, 1); },
+      });
+      return;
+    }
+    if (t.dataset.mproto) {
+      const m = MODELS.find((x) => x.id === t.dataset.mproto);
+      const p = t.dataset.p;
+      const ch = chBy(m.channel);
+      let cur = (m.protocols && m.protocols.length) ? m.protocols.slice() : ch.protocols.slice();
+      if (cur.includes(p)) cur = cur.filter((x) => x !== p);
+      else cur.push(p);
+      const inCh = ch.protocols.filter((x) => cur.includes(x));
+      const rest = cur.filter((x) => !ch.protocols.includes(x));
+      m.protocols = (inCh.length === ch.protocols.length && rest.length === 0) ? [] : [...inCh, ...rest];
+      render();
+      return;
+    }
+    if (t.dataset.proto) {
+      readSettingsFromDom();
+      const set = new Set(state.draft.protocols);
+      if (set.has(t.dataset.proto)) {
+        if (set.size > 1) set.delete(t.dataset.proto);
+      } else set.add(t.dataset.proto);
+      state.draft.protocols = PROTO_ORDER.filter((p) => set.has(p));
+      refreshSettingsChrome();
+      return;
+    }
+    if (t.dataset.keymode) {
+      chBy(state.channel).key_mode = t.dataset.keymode;
+      render();
+      return;
+    }
+    if (t.dataset.editKey) {
+      const k = KEYS.find((x) => x.id === t.dataset.editKey);
+      state.keyForm = {
+        id: k.id,
+        name: k.name,
+        unlimited: k.allow === "*",
+        picked: k.allow === "*" ? [] : k.allow.split(",").filter(Boolean),
+        disabled: k.disabled,
+      };
+      renderModal();
+      return;
+    }
+    if (t.dataset.editAp) {
+      const a = APS.find((x) => x.id === t.dataset.editAp);
+      state.apForm = { id: a.id, name: a.name, channel: a.channel, model: a.model, weight: a.weight, disabled: a.disabled };
+      renderModal();
+      return;
+    }
+    if (t.dataset.log) {
+      state.logDetail = Number(t.dataset.log);
+      renderModal();
+      return;
+    }
+    if (t.dataset.pageGo !== undefined) {
+      const n = Number(t.dataset.pageGo);
+      if (!Number.isNaN(n) && n >= 0) { state.logPage = n; render(); }
+      return;
+    }
+    if (t.dataset.dim) { state.rankDim = t.dataset.dim; render(); return; }
+    if (t.dataset.days) { state.rankDays = Number(t.dataset.days); render(); return; }
+    if (t.dataset.kfAdd) {
+      state.keyForm.picked.push(t.dataset.kfAdd);
+      renderModal();
+      return;
+    }
+    if (t.dataset.kfRm) {
+      state.keyForm.picked = state.keyForm.picked.filter((x) => x !== t.dataset.kfRm);
+      renderModal();
+      return;
+    }
+    if (t.dataset.apCand) {
+      state.apForm.channel = t.dataset.apCand;
+      state.apForm.model = t.dataset.apModel;
+      renderModal();
+      return;
+    }
+    if (t.dataset.pickOne !== undefined) {
+      /* handled via change on checkbox */
+    }
+    if (t.dataset.pickGroup) {
+      const name = t.dataset.pickGroup;
+      const cur = state.pick.expanded[name];
+      state.pick.expanded[name] = cur === false ? true : false;
+      renderModal();
+      return;
+    }
+    if (t.dataset.pickGalli) {
+      const gname = t.dataset.pickGalli;
+      const ch = chBy(state.channel);
+      const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+      const g = pickGroups(pickVisible()).find((x) => x.name === gname);
+      const free = g.items.filter((n) => !existing.has(n));
+      const on = free.every((n) => state.pick.picked[n]);
+      free.forEach((n) => { if (on) delete state.pick.picked[n]; else state.pick.picked[n] = true; });
+      renderModal();
+      return;
+    }
+
+    const act = t.dataset.act;
+    if (!act) return;
+    if (act === "modal-close") { closeModal(); return; }
+    if (act === "confirm-yes") {
+      const run = state.confirm && state.confirm.run;
+      closeModal();
+      if (run) run();
+      render();
+      return;
+    }
+    if (act === "new-ch") {
+      state.creating = true;
+      state.well = null;
+      state.draft = { id: "new", name: "", protocols: ["openai"], base_url: "", max_concurrency: "", supports_compaction: false, credential: "" };
+      render();
+      return;
+    }
+    if (act === "cancel-new") { state.creating = false; state.draft = null; render(); return; }
+    if (act === "save-ch") { saveChannel(); return; }
+    if (act === "create-ch") { createChannel(); return; }
+    if (act === "del-ch") {
+      const ch = chBy(state.channel);
+      const n = apRefs(ch.name);
+      askConfirm({
+        title: "删除渠道",
+        body: "删除渠道 " + ch.name + "。该渠道被 " + n + " 个接入点引用。",
+        ok: "删除渠道",
+        run: () => {
+          const id = ch.id;
+          const name = ch.name;
+          const i = CHANNELS.findIndex((c) => c.id === id);
+          if (i >= 0) CHANNELS.splice(i, 1);
+          for (let j = MODELS.length - 1; j >= 0; j--) if (MODELS[j].channel === id) MODELS.splice(j, 1);
+          for (let j = CREDS.length - 1; j >= 0; j--) if (CREDS[j].channel === id) CREDS.splice(j, 1);
+          if (state.channel === id) state.channel = CHANNELS[0] ? CHANNELS[0].id : "";
+          state.well = null;
+          state.draft = null;
+          void name;
+        },
+      });
+      return;
+    }
+    if (act === "comp-yes" || act === "comp-no") {
+      readSettingsFromDom();
+      state.draft.supports_compaction = act === "comp-yes";
+      refreshSettingsChrome();
+      return;
+    }
+    if (act === "fetch") { openPicker(); return; }
+    if (act === "probe") {
+      state.probing = true;
+      render();
+      setTimeout(() => {
+        state.probing = false;
+        state.probed[state.channel] = true;
+        toast("探测只提示，不落库");
+        render();
+      }, 420);
+      return;
+    }
+    if (act === "add-cred-show") {
+      state.addCred.show = !state.addCred.show;
+      render();
+      return;
+    }
+    if (act === "add-cred") {
+      const name = (state.addCred.name || "").trim() || ("凭证 " + (credsOf(state.channel).length + 1));
+      const value = state.addCred.value.trim();
+      if (!value) return;
+      CREDS.push({
+        id: nextId("c"),
+        channel: state.channel,
+        name,
+        value,
+        mask: value.slice(0, 6) + "…" + value.slice(-4),
+        disabled: false,
+        created: "2026-08-16",
+        reason: "",
+        when: "",
+      });
+      state.addCred = { name: "", value: "", show: false };
+      toast("已追加，不覆盖池子");
+      render();
+      return;
+    }
+    if (act === "new-key") {
+      state.keyForm = { id: null, name: "", unlimited: true, picked: [], disabled: false };
+      renderModal();
+      return;
+    }
+    if (act === "key-save") {
+      const f = state.keyForm;
+      const allow = f.unlimited || f.picked.length === 0 ? "*" : f.picked.join(",");
+      if (f.id) {
+        const k = KEYS.find((x) => x.id === f.id);
+        k.name = f.name.trim();
+        k.allow = allow;
+        k.disabled = !!f.disabled;
+        closeModal();
+        render();
+        toast("已保存");
+      } else {
+        const plain = "sk-ptg-" + Math.random().toString(16).slice(2, 10) + "-demo-" + Math.random().toString(16).slice(2, 6);
+        KEYS.unshift({
+          id: nextId("k"),
+          name: f.name.trim(),
+          value: plain,
+          mask: plain.slice(0, 10) + "…" + plain.slice(-4),
+          allow,
+          disabled: false,
+          created: "2026-08-16 14:30",
+        });
+        state.keyForm = null;
+        state.freshKey = plain;
+        render();
+        renderModal();
+      }
+      return;
+    }
+    if (act === "new-ap") {
+      state.apForm = { id: null, name: "", channel: "", model: "", weight: 100, disabled: false };
+      renderModal();
+      return;
+    }
+    if (act === "ap-save") {
+      const f = state.apForm;
+      if (f.id) {
+        const a = APS.find((x) => x.id === f.id);
+        a.name = f.name.trim();
+        a.channel = f.channel;
+        a.model = f.model;
+        a.weight = Number(f.weight) || 100;
+        a.disabled = !!f.disabled;
+      } else {
+        APS.push({
+          id: nextId("a"),
+          name: f.name.trim(),
+          channel: f.channel,
+          model: f.model,
+          weight: Number(f.weight) || 100,
+          disabled: !!f.disabled,
+        });
+      }
+      closeModal();
+      render();
+      toast("已保存");
+      return;
+    }
+    if (act === "fail-only") { state.failOnly = !state.failOnly; state.logPage = 0; render(); return; }
+    if (act === "log-refresh") { state.logPage = 0; toast("窗口钉住，新流水要刷新才进来"); render(); return; }
+    if (act === "pw") { state.pw = { old: "", now: "" }; renderModal(); return; }
+    if (act === "pw-save") {
+      closeModal();
+      toast("密码已更新。演示不真的登出。");
+      return;
+    }
+    if (act === "out") { toast("演示：退出不会真的登出"); return; }
+    if (act === "pick-managed") { state.pick.showManaged = !state.pick.showManaged; renderModal(); return; }
+    if (act === "pick-reload") {
+      state.pick.loading = true;
+      renderModal();
+      setTimeout(() => { if (state.pick) { state.pick.loading = false; renderModal(); } }, 380);
+      return;
+    }
+    if (act === "pick-all") {
+      const ch = chBy(state.channel);
+      const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+      const pickable = pickVisible().filter((n) => !existing.has(n));
+      const all = pickable.every((n) => state.pick.picked[n]);
+      pickable.forEach((n) => { if (all) delete state.pick.picked[n]; else state.pick.picked[n] = true; });
+      renderModal();
+      return;
+    }
+    if (act === "pick-add") {
+      const ch = chBy(state.channel);
+      const names = Object.keys(state.pick.picked).filter((n) => state.pick.picked[n]);
+      const existing = new Set(modelsOf(ch.id).map((m) => m.name));
+      names.forEach((n) => {
+        if (!existing.has(n)) MODELS.push({ id: nextId("m"), channel: ch.id, name: n, disabled: false, protocols: [] });
+      });
+      closeModal();
+      render();
+      toast("已纳管 " + names.length + " 个");
+      return;
+    }
+  });
+
+  document.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.id === "log-model") { state.logModel = t.value; state.logPage = 0; render(); return; }
+    if (t.id === "kf-unlim") { state.keyForm.unlimited = t.checked; renderModal(); return; }
+    if (t.id === "kf-off") { state.keyForm.disabled = t.checked; return; }
+    if (t.id === "ap-off") { state.apForm.disabled = t.checked; return; }
+    if (t.dataset.pickOne) {
+      if (t.checked) state.pick.picked[t.dataset.pickOne] = true;
+      else delete state.pick.picked[t.dataset.pickOne];
+      renderModal();
+    }
+  });
+
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.id === "ch-search") { state.chQuery = t.value; renderRail(); return; }
+    if (t.id === "set-name" || t.id === "set-base" || t.id === "set-conc" || t.id === "set-cred") {
+      refreshSettingsChrome();
+      return;
+    }
+    if (t.id === "add-model-in") { state.addModel = t.value; return; }
+    if (t.id === "add-cred-name") { state.addCred.name = t.value; return; }
+    if (t.id === "add-cred-val") {
+      state.addCred.value = t.value;
+      const btn = $("[data-act='add-cred']");
+      const sh = $("[data-act='add-cred-show']");
+      if (btn) btn.disabled = !t.value.trim();
+      if (sh) sh.disabled = !t.value;
+      return;
+    }
+    if (t.dataset.credName) {
+      const c = CREDS.find((x) => x.id === t.dataset.credName);
+      if (c) c.name = t.value;
+      return;
+    }
+    if (t.id === "pick-q") {
+      const pos = t.selectionStart;
+      state.pick.query = t.value;
+      renderModal();
+      restoreField("pick-q", pos);
+      return;
+    }
+    if (t.id === "kf-name") {
+      state.keyForm.name = t.value;
+      const b = $("[data-act='key-save']");
+      if (b) b.disabled = !t.value.trim();
+      return;
+    }
+    if (t.id === "ap-name") {
+      state.apForm.name = t.value;
+      const b = $("[data-act='ap-save']");
+      if (b) b.disabled = !t.value.trim() || !state.apForm.model;
+      return;
+    }
+    if (t.id === "ap-w") { state.apForm.weight = t.value; return; }
+    if (t.id === "pw-old") {
+      state.pw.old = t.value;
+      const b = $("[data-act='pw-save']");
+      if (b) b.disabled = !(state.pw.old && state.pw.now.length >= 8);
+      return;
+    }
+    if (t.id === "pw-new") {
+      state.pw.now = t.value;
+      const b = $("[data-act='pw-save']");
+      if (b) b.disabled = !(state.pw.old && state.pw.now.length >= 8);
+      return;
+    }
+  });
+
+  document.addEventListener("submit", (e) => {
+    if (e.target.dataset.act === "add-models") {
+      e.preventDefault();
+      addModelsFromText(state.addModel);
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("#modal").hidden) {
+      closeModal();
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

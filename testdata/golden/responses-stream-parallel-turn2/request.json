@@ -1,0 +1,235 @@
+{
+  "model": "gpt-5.6-luna",
+  "input": [
+    {
+      "type": "additional_tools",
+      "role": "developer",
+      "tools": [
+        {
+          "type": "namespace",
+          "name": "functions",
+          "description": "[redacted tool-desc len=0]",
+          "tools": [
+            {
+              "type": "custom",
+              "name": "exec",
+              "description": "Run JavaScript code to orchestrate/compose tool calls\n- Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers, for example `await tools.mcp__ologs__get_profile(...)`.\n- Nested tool methods take either a string or an object as their input argument.\n- Nested tools return either an object or a string, based on the description.\n- Runs raw JavaScript -- no Node, no file system, no network access, no console.\n- Accepts raw JavaScript source text, not JSON, quoted strings, or markdown code fences.\n- You may optionally start the tool input with a first-line pragma like `// @exec: {\"yield_time_ms\": 10000, \"max_output_tokens\": 1000}`.\n- `yield_time_ms` asks `exec` to yield early if the script is still running. Defaults to 10000 ms.\n- `max_output_tokens` sets the token budget for direct `exec` results. Defaults to 10000 tokens.\n- When the JS code is fully evaluated, the isolate's lifetime ends and unawaited promises are silently discarded.\n\n- Global helpers:\n- `exit()`: Immediately ends the current script successfully (like an early return from the top level).\n- `text(value: string | number | boolean | undefined | null)`: Appends a text item. Non-string values are stringified with `JSON.stringify(...)` when possible.\n- `image(imageUrlOrItem: string | { image_url: string; detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null } | ImageContent, detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`. MCP image blocks may request detail with `_meta: { \"codex/imageDetail\": \"original\" }`. When provided, the second `detail` argument overrides any detail embedded in the first argument.\n- `audio(audioUrlOrItem: string | { audio_url: string } | AudioContent)`: Appends an audio item. `audio_url` should be a base64-encoded `data:` URL. To forward an MCP tool audio block, pass an individual `AudioContent` block from `result.content`, for example `audio(result.content[0])`.\n- `generatedImage(result: { image_url: string; output_hint?: string })`: Appends an image-generation result and its optional output hint. HTTP(S) URLs are not supported.\n- `store(key: string, value: any)`: stores a serializable value under a string key for later `exec` calls in the same session.\n- `load(key: string)`: returns the stored value for a string key, or `undefined` if it is missing.\n- `notify(value: string | number | boolean | undefined | null)`: immediately injects an extra `custom_tool_call_output` for the current `exec` call. Values are stringified like `text(...)`.\n- `setTimeout(callback: () => void, delayMs?: number)`: schedules a callback to run later and returns a timeout id. Pending timeouts do not keep `exec` alive by themselves; await an explicit promise if you need to wait for one.\n- `clearTimeout(timeoutId?: number)`: cancels a timeout created by `setTimeout`.\n- `ALL_TOOLS`: metadata for the enabled nested tools as `{ name, description }` entries.\n- `yield_control()`: yields the accumulated output to the model immediately while the script keeps running.\n\nSome deferred nested tools may be omitted from this description. They are still available on the global `tools` object and listed in `ALL_TOOLS`.\nTo find one, filter `ALL_TOOLS` by `name` and `description`.\n\n### `apply_patch`\nThe `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.\n\nexec tool declaration:\n```ts\ndeclare const tools: { create_goal(args: {\n  // Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete.\n  objective: string;\n  // Positive token budget for the new goal. Omit unless explicitly requested.\n  token_budget?: number;\n}): Promise<unknown>; };\n```\n\n### `exec_command`\nRuns a command in a PTY, returning output or a session ID for ongoing interaction.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: {\n  // Shell command to execute.\n  cmd: string;\n  // User-facing approval question for `require_escalated`; omit otherwise.\n  justification?: string;\n  // True runs the shell with -l/-i semantics; false disables them. Defaults to true.\n  login?: boolean;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].\n  prefix_rule?: Array<string>;\n  // Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.\n  sandbox_permissions?: \"use_default\" | \"require_escalated\";\n  // Shell binary to launch. Defaults to the user's default shell.\n  shell?: string;\n  // True allocates a PTY for the command; false or omitted uses plain pipes.\n  tty?: boolean;\n  // Working directory for the command. Defaults to the turn cwd.\n  workdir?: string;\n  // Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```\n\n### `get_goal`\nGet the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.\n\nexec tool declaration:\n```ts\ndeclare const tools: { get_goal(args: {}): Promise<unknown>; };\n```\n\n### `update_goal`\nUpdate the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.\n\nexec tool declaration:\n```ts\ndeclare const tools: { update_goal(args: {\n  // Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.\n  status: \"complete\" | \"blocked\";\n}): Promise<unknown>; };\n```\n\n### `update_plan`\nUpdates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n\n\nexec tool declaration:\n```ts\ndeclare const tools: { update_plan(args: {\n  // Optional explanation for this plan update.\n  explanation?: string;\n  // The list of steps\n  plan: Array<{\n  // Step status.\n  status: \"pending\" | \"in_progress\" | \"completed\";\n  // Task step text.\n  step: string;\n}>;\n}): Promise<unknown>; };\n```\n\n### `view_image`\nView a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Image detail level. Defaults to `high`; use `original` to preserve exact resolution.\n  detail?: \"high\" | \"original\";\n  // Local filesystem path to an image file.\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```\n\n### `write_stdin`\nWrites characters to an existing unified exec session and returns recent output.\n\nexec tool declaration:\n```ts\ndeclare const tools: { write_stdin(args: {\n  // Bytes to write to stdin. Defaults to empty, which polls without writing.\n  chars?: string;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Identifier of the running unified exec session.\n  session_id: number;\n  // Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```",
+              "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "\nstart: pragma_source | plain_source\npragma_source: PRAGMA_LINE NEWLINE SOURCE\nplain_source: SOURCE\n\nPRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/\nNEWLINE: /\\r?\\n/\nSOURCE: /[\\s\\S]+/\n"
+              }
+            },
+            {
+              "type": "function",
+              "name": "wait",
+              "description": "Waits on a yielded `exec` cell and returns new output or completion.\n- Use `wait` only after `exec` returns `Script running with cell ID ...`.\n- `cell_id` identifies the running `exec` cell to resume.\n- `yield_time_ms` controls how long to wait for more output before yielding again. Defaults to 10000 ms.\n- `max_tokens` limits how much new output this wait call returns. Defaults to 10000 tokens.\n- `terminate: true` stops the running cell; false or omitted waits for output.\n- `wait` returns only the new output since the last yield, or the final completion or termination result for that cell.\n- If the cell is still running, `wait` may yield again with the same `cell_id`.\n- If the cell has already finished, `wait` returns the completed result and closes the cell.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cell_id": {
+                    "type": "string",
+                    "description": "Identifier of the running exec cell."
+                  },
+                  "max_tokens": {
+                    "type": "number",
+                    "description": "Output token budget for this wait call. Defaults to 10000 tokens."
+                  },
+                  "terminate": {
+                    "type": "boolean",
+                    "description": "True stops the running exec cell; false or omitted waits for output."
+                  },
+                  "yield_time_ms": {
+                    "type": "number",
+                    "description": "Wait before yielding more output. Defaults to 10000 ms."
+                  }
+                },
+                "required": [
+                  "cell_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "request_user_input",
+              "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "questions": {
+                    "type": "array",
+                    "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "header": {
+                          "type": "string",
+                          "description": "Short header label shown in the UI (12 or fewer chars)."
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "Stable identifier for mapping answers (snake_case)."
+                        },
+                        "options": {
+                          "type": "array",
+                          "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "description": "One short sentence explaining impact/tradeoff if selected."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "User-facing label (1-5 words)."
+                              }
+                            },
+                            "required": [
+                              "label",
+                              "description"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "question": {
+                          "type": "string",
+                          "description": "Single-sentence prompt shown to the user."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "header",
+                        "question",
+                        "options"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "questions"
+                ],
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=17730]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_019fff23-5ba5-7ba1-8522-51e1b3f03603",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=13881]"
+        },
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=341]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_019fff23-5ba5-7ba1-8522-51f2568649af",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted environment-context len=424]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_019fff23-5baf-78a1-9b72-d7b8c86d41c2",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Read both /tmp/goldenrec-a.txt and /tmp/goldenrec-b.txt at the same time, in parallel, and report both first lines"
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_0df919efd009a745016a7ec16083b0819889d6fec3d96f8e20",
+      "summary": [],
+      "encrypted_content": "gAAAAABqfsFhxgUFenPxFVGnrEJ0gyuvRvpZ-DgwxDHfQt30qMSFDHQvuppKHEs522BXGuY6ODoTTBzeI5B27YN8ElGjtZC7fGf84oN1_LzrLj36XusAWk0bKpSJAb1PnnlvhGpU9wmu-sHLUkarDhMLgmIvcKzctu5oBWV5hACkpYQez8rhhCAcM6qs-s572cNuCjx9aWKDh5UFzwjKJMmlEErPR29vaGAF85gCzlc0bPyw9BmPL8N1aEVs-YGWPIhqehCIAMr46V-CrBMahnAUMAFTT_Ug2lJfh-nT3Aad3bi36adU9MZr7EU5KrP7eFgKKVYMKvXf9BpEontJYtcLSAAOtG8Z6kbq0yHCcXrTfCQSMFCBywRLx_JHr2WBoBccK0yKeRCtN1Xf2TEsggfvtMYXPVoYgHe5h6HIEqIB0F9Sy-rO6Eaq3t_LzjeV42qFe8BFCv8ZcZOLBFuGSS8D7Mzq68UJjXc6lysTTzkXmhuewKLdn4Z6c82Z8K0QoxzsaJ6FY8NiVbWv9VPvUxYKIaXqCYGP65iMS4ZfSjcMhLNRia1NFnipXOkzq5W5Ez7o0-VLGt01stgqTwYFqApHsN2tFUXG9MUG-WPBQZs_KverlIiHthAwQpwYlvBp78H20Kl0Sz42W-VF9qH-ZWMOfcbrmOsNONm4YKj7D-7OLLTwjVUwcy1jgtKLs31foF4gmpMoG3tisaFBSWf5AaNag2hK7y75K3MGoCVoPhrOYYu_zc2W7ryMRD4pRUYO4rZJLmi1SOQ9pOmc9hrEtGbgoH13nsswRx1deVFLgQjHxlbatK1YMPIn2u_ymMJx7AnOnq4DdplQ9vf5dyjsfyBmAiR48Tme_GtBq82j1illUSa7rfa8OYBPe2q7ae2HINNVLmLSUsuMPtQd6AOH1kzwzdpdIp0jx0i-Vw_vSSkeYIs4lKmTGxadEE457dFrPrHoLQ-ie5oV7Z_ebsjCxMvbPpzrSO1eArEXZ_kCwSw-kT3Wzlox1lM1SnefNpOUHy8kITSdlf75gdPdEGZJ2lKmWe08LdnJSs9VhkNZ3F5b25QdWv4lCIY6zaMmlOMYofeXIKvlel8PJqD1wFM_D2k449IrJR605PLTwUplRkPVqlaL7czqqk6JyBcvSR_9u_X7xJ6_rTnHnIeQe6jg3JRgn3dcRr7HGjdo5SlY5BrP5YWGUsmRG9vXeeTFXC_zvctS8y-2iYHPvJxCuPIkznLjZIFJvPwbSupsqJCLHmlmp5a8zW7fIu8vMLl3Jz0Joo1hkgOsjEtrKRM1hES99UEHshzcxv89PaUM2aKUqkAS26aDGmET9alzaJU06crYriPUx0ur-QEkkyW0rrF7vO5ab6KWuUoaHe9tTjHLHmJHBTaFE8VWWw7imWyitTBHcy9xZnwWt0fzoOa-Ua1i-gNc53T7h-MXuSHJf415ZteaVutFgQ5ylpNioAldm5p9-QlNfb5cUEfc"
+    },
+    {
+      "type": "message",
+      "id": "msg_0df919efd009a745016a7ec1614adc819890346ddb401d891b",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "I’ll read both files concurrently and return only their first lines."
+        }
+      ],
+      "phase": "commentary"
+    },
+    {
+      "type": "custom_tool_call",
+      "id": "ctc_0df919efd009a745016a7ec161bd588198be9dda8f5d59630e",
+      "status": "completed",
+      "call_id": "call_2BbnSnhHmKrzOjMZQHLMaq5s",
+      "name": "exec",
+      "input": "const results = await Promise.all([\n  tools.exec_command({cmd:\"sed -n '1p' /tmp/goldenrec-a.txt\",max_output_tokens:1000}),\n  tools.exec_command({cmd:\"sed -n '1p' /tmp/goldenrec-b.txt\",max_output_tokens:1000})\n]);\ntext(results.map((r, i) => `/tmp/goldenrec-${i === 0 ? \"a\" : \"b\"}.txt: ${r.output.trimEnd()}`).join(\"\\n\"));\n"
+    },
+    {
+      "type": "custom_tool_call_output",
+      "id": "ctco_019fff23-6e04-7850-b9dd-8b766e86cc77",
+      "call_id": "call_2BbnSnhHmKrzOjMZQHLMaq5s",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"
+        },
+        {
+          "type": "input_text",
+          "text": "/tmp/goldenrec-a.txt: alpha line one\n/tmp/goldenrec-b.txt: beta line one"
+        }
+      ]
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "high",
+    "context": "all_turns"
+  },
+  "store": false,
+  "stream": true,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "prompt_cache_key": "00000000-0000-0000-0000-000000000000",
+  "text": {
+    "verbosity": "low"
+  },
+  "client_metadata": {
+    "x-codex-installation-id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-window-id": "00000000-0000-0000-0000-000000000000:0",
+    "thread_id": "00000000-0000-0000-0000-000000000000",
+    "turn_id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"thread_id\":\"00000000-0000-0000-0000-000000000000\",\"turn_id\":\"00000000-0000-0000-0000-000000000000\",\"window_id\":\"00000000-0000-0000-0000-000000000000:0\",\"request_kind\":\"turn\",\"thread_source\":\"user\",\"sandbox\":\"seatbelt\",\"workspaces\":{\"/tmp/goldenrec-work\":{\"has_changes\":true}},\"code_mode_tool_names\":{\"apply_patch\":{\"name\":\"apply_patch\",\"namespace\":null},\"create_goal\":{\"name\":\"create_goal\",\"namespace\":null},\"exec_command\":{\"name\":\"exec_command\",\"namespace\":null},\"get_goal\":{\"name\":\"get_goal\",\"namespace\":null},\"multi_agent_v1__close_agent\":{\"name\":\"close_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__resume_agent\":{\"name\":\"resume_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__send_input\":{\"name\":\"send_input\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__spawn_agent\":{\"name\":\"spawn_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__wait_agent\":{\"name\":\"wait_agent\",\"namespace\":\"multi_agent_v1\"},\"update_goal\":{\"name\":\"update_goal\",\"namespace\":null},\"update_plan\":{\"name\":\"update_plan\",\"namespace\":null},\"view_image\":{\"name\":\"view_image\",\"namespace\":null},\"write_stdin\":{\"name\":\"write_stdin\",\"namespace\":null}},\"turn_started_at_unix_ms\":1786691935115}",
+    "session_id": "00000000-0000-0000-0000-000000000000"
+  }
+}

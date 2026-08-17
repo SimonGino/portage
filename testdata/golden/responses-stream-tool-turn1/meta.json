@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14534,
+    "OutputTokens": 96,
+    "CacheReadTokens": 14080,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 14,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（与 2026-08-13 压缩批同渠道），Codex CLI 0.147 codex exec 无头模式，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、developer 提示词换占位符、路径中性化）；`encrypted_content` 与 `rs_…`/`ctc_…` id 原样保留，理由同压缩批与 reasoning 批；expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **custom 工具整轮的第一轮**：output 三个 item——reasoning（无 summary 事件，`.added` 已带 1228 字符密文、`.done` 换成 1292 字符的另一串）、message 正文、custom_tool_call（name=exec，入参 51 片 `custom_tool_call_input.delta`）。工具 item **没有 content_part 那一层**，`.done` 的终态字段名是 `input` 而不是 `arguments`。"
+}

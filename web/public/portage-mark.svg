@@ -1,0 +1,13 @@
+<!-- Portage 的 favicon。与 web/src/brand.tsx 里的 MARK_PATH 是同一条路径，改一处要改两处。
+
+     颜色写死而不是 currentColor：favicon 是浏览器单独加载的独立文档，没有上下文可继承，
+     currentColor 会落到初始值（黑），在暗色标签栏上等于看不见。所以把亮/暗两套写进
+     SVG 自己的 <style>，由浏览器按 prefers-color-scheme 挑。两个色值取自设计稿的
+     ink/paper 对。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="Portage">
+  <style>
+    path { fill: #111110; }
+    @media (prefers-color-scheme: dark) { path { fill: #f2f2ef; } }
+  </style>
+  <path d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
+</svg>

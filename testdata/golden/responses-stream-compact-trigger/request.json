@@ -1,0 +1,225 @@
+{
+  "model": "gpt-5.6-luna",
+  "input": [
+    {
+      "type": "additional_tools",
+      "role": "developer",
+      "tools": [
+        {
+          "type": "namespace",
+          "name": "functions",
+          "description": "[redacted tool-desc len=0]",
+          "tools": [
+            {
+              "type": "custom",
+              "name": "exec",
+              "description": "Run JavaScript code to orchestrate/compose tool calls\n- Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers, for example `await tools.mcp__ologs__get_profile(...)`.\n- Nested tool methods take either a string or an object as their input argument.\n- Nested tools return either an object or a string, based on the description.\n- Runs raw JavaScript -- no Node, no file system, no network access, no console.\n- Accepts raw JavaScript source text, not JSON, quoted strings, or markdown code fences.\n- You may optionally start the tool input with a first-line pragma like `// @exec: {\"yield_time_ms\": 10000, \"max_output_tokens\": 1000}`.\n- `yield_time_ms` asks `exec` to yield early if the script is still running. Defaults to 10000 ms.\n- `max_output_tokens` sets the token budget for direct `exec` results. Defaults to 10000 tokens.\n- When the JS code is fully evaluated, the isolate's lifetime ends and unawaited promises are silently discarded.\n\n- Global helpers:\n- `exit()`: Immediately ends the current script successfully (like an early return from the top level).\n- `text(value: string | number | boolean | undefined | null)`: Appends a text item. Non-string values are stringified with `JSON.stringify(...)` when possible.\n- `image(imageUrlOrItem: string | { image_url: string; detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null } | ImageContent, detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`. MCP image blocks may request detail with `_meta: { \"codex/imageDetail\": \"original\" }`. When provided, the second `detail` argument overrides any detail embedded in the first argument.\n- `audio(audioUrlOrItem: string | { audio_url: string } | AudioContent)`: Appends an audio item. `audio_url` should be a base64-encoded `data:` URL. To forward an MCP tool audio block, pass an individual `AudioContent` block from `result.content`, for example `audio(result.content[0])`.\n- `generatedImage(result: { image_url: string; output_hint?: string })`: Appends an image-generation result and its optional output hint. HTTP(S) URLs are not supported.\n- `store(key: string, value: any)`: stores a serializable value under a string key for later `exec` calls in the same session.\n- `load(key: string)`: returns the stored value for a string key, or `undefined` if it is missing.\n- `notify(value: string | number | boolean | undefined | null)`: immediately injects an extra `custom_tool_call_output` for the current `exec` call. Values are stringified like `text(...)`.\n- `setTimeout(callback: () => void, delayMs?: number)`: schedules a callback to run later and returns a timeout id. Pending timeouts do not keep `exec` alive by themselves; await an explicit promise if you need to wait for one.\n- `clearTimeout(timeoutId?: number)`: cancels a timeout created by `setTimeout`.\n- `ALL_TOOLS`: metadata for the enabled nested tools as `{ name, description }` entries.\n- `yield_control()`: yields the accumulated output to the model immediately while the script keeps running.\n\nSome deferred nested tools may be omitted from this description. They are still available on the global `tools` object and listed in `ALL_TOOLS`.\nTo find one, filter `ALL_TOOLS` by `name` and `description`.\n\n### `apply_patch`\nThe `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.\n\nexec tool declaration:\n```ts\ndeclare const tools: { create_goal(args: {\n  // Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete.\n  objective: string;\n  // Positive token budget for the new goal. Omit unless explicitly requested.\n  token_budget?: number;\n}): Promise<unknown>; };\n```\n\n### `exec_command`\nRuns a command in a PTY, returning output or a session ID for ongoing interaction.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: {\n  // Shell command to execute.\n  cmd: string;\n  // User-facing approval question for `require_escalated`; omit otherwise.\n  justification?: string;\n  // True runs the shell with -l/-i semantics; false disables them. Defaults to true.\n  login?: boolean;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].\n  prefix_rule?: Array<string>;\n  // Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.\n  sandbox_permissions?: \"use_default\" | \"require_escalated\";\n  // Shell binary to launch. Defaults to the user's default shell.\n  shell?: string;\n  // True allocates a PTY for the command; false or omitted uses plain pipes.\n  tty?: boolean;\n  // Working directory for the command. Defaults to the turn cwd.\n  workdir?: string;\n  // Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```\n\n### `get_goal`\nGet the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.\n\nexec tool declaration:\n```ts\ndeclare const tools: { get_goal(args: {}): Promise<unknown>; };\n```\n\n### `update_goal`\nUpdate the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.\n\nexec tool declaration:\n```ts\ndeclare const tools: { update_goal(args: {\n  // Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.\n  status: \"complete\" | \"blocked\";\n}): Promise<unknown>; };\n```\n\n### `update_plan`\nUpdates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n\n\nexec tool declaration:\n```ts\ndeclare const tools: { update_plan(args: {\n  // Optional explanation for this plan update.\n  explanation?: string;\n  // The list of steps\n  plan: Array<{\n  // Step status.\n  status: \"pending\" | \"in_progress\" | \"completed\";\n  // Task step text.\n  step: string;\n}>;\n}): Promise<unknown>; };\n```\n\n### `view_image`\nView a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Image detail level. Defaults to `high`; use `original` to preserve exact resolution.\n  detail?: \"high\" | \"original\";\n  // Local filesystem path to an image file.\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```\n\n### `write_stdin`\nWrites characters to an existing unified exec session and returns recent output.\n\nexec tool declaration:\n```ts\ndeclare const tools: { write_stdin(args: {\n  // Bytes to write to stdin. Defaults to empty, which polls without writing.\n  chars?: string;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Identifier of the running unified exec session.\n  session_id: number;\n  // Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```\n\n## web\nTools in the web namespace.\n\n### `web__run`\nTool for accessing the internet.\n\n\n---\n\n## Examples of different commands available in this tool\n\nExamples of different commands available in this tool:\n* `search_query`: {\"search_query\": [{\"q\": \"What is the capital of France?\"}, {\"q\": \"What is the capital of belgium?\"}]}. Searches the internet for a given query (and optionally with a domain or recency filter)\n* `image_query`: {\"image_query\":[{\"q\": \"waterfalls\"}]}.\n* `open`: {\"open\": [{\"ref_id\": \"turn0search0\"}, {\"ref_id\": \"https://www.openai.com\", \"lineno\": 120}]}\n* `click`: {\"click\": [{\"ref_id\": \"turn0fetch3\", \"id\": 17}]}\n* `find`: {\"find\": [{\"ref_id\": \"turn0fetch3\", \"pattern\": \"Annie Case\"}]}\n* `screenshot`: {\"screenshot\": [{\"ref_id\": \"turn1view0\", \"pageno\": 0}, {\"ref_id\": \"turn1view0\", \"pageno\": 3}]}\n* `finance`: {\"finance\":[{\"ticker\":\"AMD\",\"type\":\"equity\",\"market\":\"USA\"}]}, {\"finance\":[{\"ticker\":\"BTC\",\"type\":\"crypto\",\"market\":\"\"}]}\n* `weather`: {\"weather\":[{\"location\":\"San Francisco, CA\"}]}\n* `sports`: {\"sports\":[{\"fn\":\"standings\",\"league\":\"nfl\"}, {\"fn\":\"schedule\",\"league\":\"nba\",\"team\":\"GSW\",\"date_from\":\"2025-02-24\"}]}\n* `time`: {\"time\":[{\"utc_offset\":\"+03:00\"}]}\n\n---\n\n## Usage hints\nTo use this tool efficiently:\n* Use multiple commands and queries in one call to get more results faster; e.g. {\"search_query\": [{\"q\": \"bitcoin news\"}], \"finance\":[{\"ticker\":\"BTC\",\"type\":\"crypto\",\"market\":\"\"}], \"find\": [{\"ref_id\": \"turn0search0\", \"pattern\": \"Annie Case\"}, {\"ref_id\": \"turn0search1\", \"pattern\": \"John Smith\"}]}\n* Use \"response_length\" to control the number of results returned by this tool, omit it if you intend to pass \"short\" in\n* Only write required parameters; do not write empty lists or nulls where they could be omitted.\n* `search_query` must have length at most 4 in each call. If it has length > 3, response_length must be medium or long\n* If you find yourself in a situation where you accidentally call the `web.run` tool, it's best just to send an empty query: {\"search_query\": [{\"q\": \"\"}]}.\n\n---\n\n## Decision boundary\n\nIf the user makes an explicit request to search the internet, find latest information, look up, etc (or to not do so), you must obey their request.\nWhen you make an assumption, always consider whether it is temporally stable; i.e. whether there's even a small (>10%) chance it has changed. If it is unstable, you must verify with browsing the internet for verification.\n\n<situations_where_you_must_browse_the_internet>\nBelow is a list of scenarios where browsing the internet MUST be used. PAY CLOSE ATTENTION: you MUST browse the internet in these cases. If you're unsure or on the fence, you MUST bias towards browsing the internet.\n- The information could have changed recently: for example news; prices; laws; schedules; product specs; sports scores; economic indicators; political/public/company figures (e.g. the question relates to 'the president of country A' or 'the CEO of company B', which might change over time); rules; regulations; standards; software libraries that could be updated; exchange rates; recommendations (i.e., recommendations about various topics or things might be informed by what currently exists / is popular / is safe / is unsafe / is in the zeitgeist / etc.); and many many many more categories -- again, if you're on the fence, you MUST browse the internet!\n  - For news queries, prioritize more recent events, ensuring you compare publish dates and the date that the event happened.\n- The user is seeking recommendations that could lead them to spend substantial time or money -- researching products, restaurants, travel plans, etc.\n- The user wants (or would benefit from) direct quotes, links, or precise source attribution.\n- A specific page, paper, dataset, PDF, or site is referenced and you haven't been given its contents.\n- You're unsure about a fact, the topic is niche or emerging, or you suspect there's at least a 10% chance you will incorrectly recall it\n- High-stakes accuracy matters (medical, legal, financial guidance). For these you generally should search by default because this information is highly temporally unstable\n- The user explicitly says to search, browse, verify, or look it up.\n</situations_where_you_must_browse_the_internet>\n\n---\n\n## Citations\n\nResults from `web.run` include internal reference IDs such as `turn2search5`. Use\nthose reference IDs only in calls to `web.run`; do not expose them in the final\nresponse.\n\nCite sources in the final response using Markdown links:\n\n- Cite a single source as `[descriptive source title](https://example.com/page)`.\n- Cite multiple sources with separate Markdown links, for example\n  `[first source](https://example.com/one), [second source](https://example.com/two)`.\n- Link directly to the page that supports the claim. Do not link to search result\n  pages or use bare URLs.\n\nFormatting of citations:\n\n- Place each citation as near as possible to the claim it supports, normally at\n  the end of the sentence or paragraph and after punctuation.\n- Do not place citations inside code fences.\n- Do not put citations on a line by themselves or collect all citations at the\n  end of the response.\n\nIf you browse the internet, cite statements supported by web sources. Each cited\nsource must directly support the associated claim. Prefer primary and\nauthoritative sources, and use sources from different domains when the response\nbenefits from multiple perspectives.\n\n---\n\n## Special cases\nIf these conflict with any other instructions, these should take precedence.\n\n<special_cases>\n- When the user asks for information about how to use OpenAI products, (ChatGPT, the OpenAI API, etc.), you should check the code in local env and only browse as fallback, when you browse restrict your sources to official OpenAI websites using the domains filter, unless otherwise requested.\n- When using search to answer technical questions, you must only rely on primary sources (research papers, official documentation, etc.)\n- Clearly indicate when you are making an inference from sources.\n</special_cases>\n\n---\n\n## Word limits\nResponses may not excessively quote or draw on a specific source. There are several limits here:\n- **Limit on verbatim quotes:**\n  - You may not quote more than 25 words verbatim from any single non-lyrical source, unless the source is reddit.\n  - For song lyrics, verbatim quotes must be limited to at most 10 words.\n  - Long quotes from reddit are allowed, as long as you indicate that those are direct quotes via a markdown blockquote starting with \">\", copy verbatim, and link the source.\n- **Word limits:**\n  - Each webpage source in the sources has a word limit label formatted like \"[wordlim N]\", in which N is the maximum number of words in the whole response that are attributed to that source. If omitted, the word limit is 200 words.\n  - Non-contiguous words derived from a given source must be counted to the word limit.\n  - The summarization limit N is a maximum for each source.\n  - When using multiple sources, their summarization limits add together. However, each article used must be relevant to the response.\n- **Copyright compliance:**\n  - You must avoid providing full articles, long verbatim passages, or extensive direct quotes due to copyright concerns.\n  - If the user asked for a verbatim quote, the response should provide a short compliant excerpt and then answer with paraphrases and summaries.\n  - Again, this limit does not apply to reddit content, as long as it's appropriately indicated that those are direct quotes and you link to the source.\n\n\nexec tool declaration:\n```ts\ndeclare const tools: { web__run(args: {\n  // Open links from previously opened pages.\n  click?: Array<{\n  // Numbered link id to open.\n  id: number;\n  // Reference id containing the numbered link.\n  ref_id: string;\n}>;\n  // Look up prices for the given stock symbols.\n  finance?: Array<{\n  // ISO 3166-1 alpha-3 country code, \"OTC\", or \"\" for cryptocurrency.\n  market?: string;\n  // Ticker symbol to look up.\n  ticker: string;\n  // Asset type to look up.\n  type: \"equity\" | \"fund\" | \"crypto\" | \"index\";\n}>;\n  // Find text patterns in pages.\n  find?: Array<{\n  // Text pattern to find.\n  pattern: string;\n  // Reference id or URL to search within.\n  ref_id: string;\n}>;\n  // Query the image search engine for a given list of queries.\n  image_query?: Array<{\n  // Whether to filter by a specific list of domains.\n  domains?: Array<string>;\n  // Search query.\n  q: string;\n  // Whether to filter by recency, as a number of recent days.\n  recency?: number;\n}>;\n  // Open pages by reference id or URL.\n  open?: Array<{\n  // Line number to position the page at.\n  lineno?: number;\n  // Reference id or URL to open.\n  ref_id: string;\n}>;\n  // Set the length of the response to be returned.\n  response_length?: \"short\" | \"medium\" | \"long\";\n  // Take screenshots of PDF pages.\n  screenshot?: Array<{\n  // Zero-indexed PDF page number.\n  pageno: number;\n  // Reference id or URL to screenshot.\n  ref_id: string;\n}>;\n  // Query the internet search engine for a given list of queries.\n  search_query?: Array<{\n  // Whether to filter by a specific list of domains.\n  domains?: Array<string>;\n  // Search query.\n  q: string;\n  // Whether to filter by recency, as a number of recent days.\n  recency?: number;\n}>;\n  // Look up sports schedules and standings.\n  sports?: Array<{\n  // Start date in YYYY-MM-DD format.\n  date_from?: string;\n  // End date in YYYY-MM-DD format.\n  date_to?: string;\n  // Sports function to call.\n  fn: \"schedule\" | \"standings\";\n  // League to look up.\n  league: \"nba\" | \"wnba\" | \"nfl\" | \"nhl\" | \"mlb\" | \"epl\" | \"ncaamb\" | \"ncaawb\" | \"ipl\";\n  // Locale for the lookup.\n  locale?: string;\n  // Number of games to return.\n  num_games?: number;\n  // Opponent to use with `team` when narrowing the lookup.\n  opponent?: string;\n  // Team to look up, using the common 3 or 4 letter alias used in broadcasts.\n  team?: string;\n  // Tool name for sports requests.\n  tool?: \"sports\";\n}>;\n  // Get time for the given UTC offsets.\n  time?: Array<{\n  // UTC offset formatted like \"+03:00\".\n  utc_offset: string;\n}>;\n  // Look up weather forecasts.\n  weather?: Array<{\n  // Number of days to return. Defaults to 7.\n  duration?: number;\n  // Location in \"Country, Area, City\" format.\n  location: string;\n  // Start date in YYYY-MM-DD format. Defaults to today.\n  start?: string;\n}>;\n}): Promise<unknown>; };\n```",
+              "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "\nstart: pragma_source | plain_source\npragma_source: PRAGMA_LINE NEWLINE SOURCE\nplain_source: SOURCE\n\nPRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/\nNEWLINE: /\\r?\\n/\nSOURCE: /[\\s\\S]+/\n"
+              }
+            },
+            {
+              "type": "function",
+              "name": "wait",
+              "description": "Waits on a yielded `exec` cell and returns new output or completion.\n- Use `wait` only after `exec` returns `Script running with cell ID ...`.\n- `cell_id` identifies the running `exec` cell to resume.\n- `yield_time_ms` controls how long to wait for more output before yielding again. Defaults to 10000 ms.\n- `max_tokens` limits how much new output this wait call returns. Defaults to 10000 tokens.\n- `terminate: true` stops the running cell; false or omitted waits for output.\n- `wait` returns only the new output since the last yield, or the final completion or termination result for that cell.\n- If the cell is still running, `wait` may yield again with the same `cell_id`.\n- If the cell has already finished, `wait` returns the completed result and closes the cell.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cell_id": {
+                    "type": "string",
+                    "description": "Identifier of the running exec cell."
+                  },
+                  "max_tokens": {
+                    "type": "number",
+                    "description": "Output token budget for this wait call. Defaults to 10000 tokens."
+                  },
+                  "terminate": {
+                    "type": "boolean",
+                    "description": "True stops the running exec cell; false or omitted waits for output."
+                  },
+                  "yield_time_ms": {
+                    "type": "number",
+                    "description": "Wait before yielding more output. Defaults to 10000 ms."
+                  }
+                },
+                "required": [
+                  "cell_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "request_user_input",
+              "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "questions": {
+                    "type": "array",
+                    "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "header": {
+                          "type": "string",
+                          "description": "Short header label shown in the UI (12 or fewer chars)."
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "Stable identifier for mapping answers (snake_case)."
+                        },
+                        "options": {
+                          "type": "array",
+                          "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "description": "One short sentence explaining impact/tradeoff if selected."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "User-facing label (1-5 words)."
+                              }
+                            },
+                            "required": [
+                              "label",
+                              "description"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "question": {
+                          "type": "string",
+                          "description": "Single-sentence prompt shown to the user."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "header",
+                        "question",
+                        "options"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "questions"
+                ],
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=17730]"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_019ffaa1-0ded-7b31-b19a-19773943ba6b",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=13881]"
+        },
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=341]"
+        },
+        {
+          "type": "input_text",
+          "text": "[redacted codex-instructions len=966]"
+        }
+      ],
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "message",
+      "id": "msg_019ffaa1-0ded-7b31-b19a-19831981dcbf",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[redacted environment-context len=424]"
+        }
+      ],
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "message",
+      "id": "msg_019ffaa1-0dfc-7c21-aa44-be3a11cdb0eb",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "请用一句话解释什么是 SSE 注释行"
+        }
+      ],
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "message",
+      "id": "msg_0d8e512552094a9d016a7d99e0ade4819bad513893c3d076c8",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "SSE 注释行是以冒号 `:` 开头、用于传递备注或心跳信息而不会触发客户端消息事件的行。"
+        }
+      ],
+      "phase": "final_answer",
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "compaction_trigger"
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "medium",
+    "context": "all_turns"
+  },
+  "store": false,
+  "stream": true,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "prompt_cache_key": "00000000-0000-0000-0000-000000000000",
+  "text": {
+    "verbosity": "low"
+  },
+  "client_metadata": {
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-installation-id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-window-id": "00000000-0000-0000-0000-000000000000:0",
+    "turn_id": "00000000-0000-0000-0000-000000000000",
+    "thread_id": "00000000-0000-0000-0000-000000000000",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-0000-0000-000000000000\",\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"thread_id\":\"00000000-0000-0000-0000-000000000000\",\"turn_id\":\"00000000-0000-0000-0000-000000000000\",\"window_id\":\"00000000-0000-0000-0000-000000000000:0\",\"request_kind\":\"compaction\",\"thread_source\":\"user\",\"sandbox\":\"seatbelt\",\"code_mode_tool_names\":{\"apply_patch\":{\"name\":\"apply_patch\",\"namespace\":null},\"create_goal\":{\"name\":\"create_goal\",\"namespace\":null},\"exec_command\":{\"name\":\"exec_command\",\"namespace\":null},\"get_goal\":{\"name\":\"get_goal\",\"namespace\":null},\"multi_agent_v1__close_agent\":{\"name\":\"close_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__resume_agent\":{\"name\":\"resume_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__send_input\":{\"name\":\"send_input\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__spawn_agent\":{\"name\":\"spawn_agent\",\"namespace\":\"multi_agent_v1\"},\"multi_agent_v1__wait_agent\":{\"name\":\"wait_agent\",\"namespace\":\"multi_agent_v1\"},\"update_goal\":{\"name\":\"update_goal\",\"namespace\":null},\"update_plan\":{\"name\":\"update_plan\",\"namespace\":null},\"view_image\":{\"name\":\"view_image\",\"namespace\":null},\"web__run\":{\"name\":\"run\",\"namespace\":\"web\"},\"write_stdin\":{\"name\":\"write_stdin\",\"namespace\":null}},\"turn_started_at_unix_ms\":1786616333304,\"compaction\":{\"trigger\":\"manual\",\"reason\":\"user_requested\",\"implementation\":\"responses_compaction_v2\",\"phase\":\"standalone_turn\",\"strategy\":\"memento\"}}"
+  }
+}

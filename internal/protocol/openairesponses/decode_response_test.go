@@ -1,0 +1,630 @@
+package openairesponses
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/SimonGino/portage/internal/protocol"
+)
+
+// 本文件测 Responses 的**解码**侧（#80）。
+//
+// 分工：golden 驱动的用例（TestGoldenDecode*）钉「真实上游字节解出来是什么」，
+// 手搭 fixture 的用例钉真实样本覆盖不到的形态——function_call 流（九份转录里一份
+// 都没有，线上 Codex 只用 custom 工具）、incomplete/failed 终帧、断流兜底，以及
+// 整个非流式路径（§9.4 缺口②）。手搭的是**测试输入**不是样本，不进 golden 库。
+
+// readGoldenResponse 读真实上游转录。样本没采就跳过，同 compaction_golden_test.go 的纪律。
+func readGoldenResponse(t *testing.T, sample string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(compactionGoldenDir, sample, "response.raw"))
+	if err != nil {
+		t.Skipf("样本尚未采集：%s（见 testdata/golden/README.md）", sample)
+	}
+	return raw
+}
+
+// goldenExpect 读 meta.json 里独立核算过的 expect 块，用它当断言的事实源，
+// 而不是把数字抄进测试——抄一遍就多一份会漂的副本。
+type goldenExpect struct {
+	Model            string
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	ReasoningTokens  int
+	StopReason       string
+}
+
+func readGoldenExpect(t *testing.T, sample string) goldenExpect {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(compactionGoldenDir, sample, "meta.json"))
+	if err != nil {
+		t.Skipf("样本尚未采集：%s", sample)
+	}
+	var meta struct {
+		Expect goldenExpect `json:"expect"`
+	}
+	if err := json.Unmarshal(body, &meta); err != nil {
+		t.Fatalf("meta.json 解不动: %v", err)
+	}
+	return meta.Expect
+}
+
+func collect(t *testing.T, raw []byte) []protocol.Event {
+	t.Helper()
+	c := NewCodec()
+	ch, err := c.DecodeStream(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("DecodeStream: %v", err)
+	}
+	var events []protocol.Event
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	return events
+}
+
+func lastUsage(events []protocol.Event) *protocol.Usage {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type == protocol.EvUsage {
+			return events[i].Usage
+		}
+	}
+	return nil
+}
+
+func typesOf(events []protocol.Event) []protocol.EventType {
+	out := make([]protocol.EventType, 0, len(events))
+	for _, ev := range events {
+		out = append(out, ev.Type)
+	}
+	return out
+}
+
+// TestGoldenDecodeText：纯文本 happy-path 的整条事件序。
+func TestGoldenDecodeText(t *testing.T) {
+	const sample = "responses-stream-text"
+	events := collect(t, readGoldenResponse(t, sample))
+	want := readGoldenExpect(t, sample)
+
+	if len(events) < 4 {
+		t.Fatalf("事件太少: %v", typesOf(events))
+	}
+	if events[0].Type != protocol.EvMessageStart {
+		t.Fatalf("首个事件不是 MessageStart: %v", typesOf(events))
+	}
+	if events[0].Model != want.Model {
+		t.Errorf("Model = %q, want %q", events[0].Model, want.Model)
+	}
+	if !strings.HasPrefix(events[0].ID, "resp_") {
+		t.Errorf("响应 id 没带过来: %q", events[0].ID)
+	}
+
+	// created 与 completed 之间只该有正文增量：content_part.* / output_text.done
+	// 这些结构信号在 canonical 里没有对应事件，混进来就是凭空造内容。
+	var text strings.Builder
+	for _, ev := range events[1 : len(events)-2] {
+		if ev.Type != protocol.EvTextDelta {
+			t.Fatalf("正文段混进了 %v: %v", ev.Type, typesOf(events))
+		}
+		text.WriteString(ev.Text)
+	}
+	if text.String() != "pong" {
+		t.Errorf("正文 = %q, want %q", text.String(), "pong")
+	}
+
+	u := lastUsage(events)
+	if u == nil {
+		t.Fatal("没放出 usage：call_logs 的 token 数会恒为零")
+	}
+	if u.InputTokens != want.InputTokens || u.OutputTokens != want.OutputTokens ||
+		u.CacheReadTokens != want.CacheReadTokens || u.CacheWriteTokens != want.CacheWriteTokens {
+		t.Errorf("usage = %+v, want in=%d out=%d cacheR=%d cacheW=%d", *u,
+			want.InputTokens, want.OutputTokens, want.CacheReadTokens, want.CacheWriteTokens)
+	}
+
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "stop" || last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{stop, 未截断}", last)
+	}
+}
+
+// TestGoldenDecodeToolTurn1：custom 工具那轮。三件事一起钉：
+// reasoning 静默跳过、custom 入参整条包装成 JSON、停因判成 tool_calls。
+func TestGoldenDecodeToolTurn1(t *testing.T) {
+	const sample = "responses-stream-tool-turn1"
+	events := collect(t, readGoldenResponse(t, sample))
+	want := readGoldenExpect(t, sample)
+
+	// 推理一个事件都不该产（口径层 v0.10：跨协议只能丢、不得伪造）。真实样本里
+	// reasoning item 的 .added/.done 各带一串上千字符的密文，漏出去客户端会当正文渲染。
+	for i, ev := range events {
+		if ev.Type == protocol.EvThinkingDelta {
+			t.Fatalf("事件 %d 是 ThinkingDelta：推理被伪造出来了", i)
+		}
+		if strings.Contains(ev.Text, "gAAAAAB") {
+			t.Fatalf("事件 %d 的正文里混进了 encrypted_content 密文", i)
+		}
+	}
+
+	var text strings.Builder
+	var starts, ends, argsDeltas int
+	var args strings.Builder
+	var toolID, toolName string
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvTextDelta:
+			text.WriteString(ev.Text)
+		case protocol.EvToolCallStart:
+			starts++
+			toolID, toolName = ev.ToolID, ev.ToolName
+			if !ev.ArgsIsJSON {
+				t.Error("ToolCallStart.ArgsIsJSON 为 false：响应侧不变式是入参一律 JSON")
+			}
+		case protocol.EvToolArgsDelta:
+			argsDeltas++
+			args.WriteString(ev.Text)
+		case protocol.EvToolCallEnd:
+			ends++
+		}
+	}
+
+	if text.String() != "I’m reading only the first line of the specified file." {
+		t.Errorf("正文 = %q", text.String())
+	}
+	if starts != 1 || ends != 1 {
+		t.Errorf("工具调用 Start/End = %d/%d, want 1/1", starts, ends)
+	}
+	if toolName != "exec" || !strings.HasPrefix(toolID, "call_") {
+		t.Errorf("工具标识 = %q/%q，ToolID 应取 call_id 而非 item id", toolName, toolID)
+	}
+	// 51 片 custom_tool_call_input.delta 只放出**一条** ArgsDelta：整条包装是
+	// 有意为之（flushCustom），代价是丢掉分片节奏。
+	if argsDeltas != 1 {
+		t.Errorf("ArgsDelta 条数 = %d, want 1（custom 入参整条包装）", argsDeltas)
+	}
+	var wrapped map[string]string
+	if err := json.Unmarshal([]byte(args.String()), &wrapped); err != nil {
+		t.Fatalf("入参不是合法 JSON，CC/A 客户端解不动: %v", err)
+	}
+	if !strings.Contains(wrapped[protocol.CustomToolArgsKey], "tools.exec_command") {
+		t.Errorf("包装后的入参丢了原文: %.80q", wrapped[protocol.CustomToolArgsKey])
+	}
+
+	u := lastUsage(events)
+	if u == nil || u.ReasoningTokens != want.ReasoningTokens {
+		t.Errorf("ReasoningTokens = %v, want %d（思考量只能靠 usage 带走）", u, want.ReasoningTokens)
+	}
+	if u != nil && u.InputTokens != want.InputTokens {
+		t.Errorf("InputTokens = %d, want %d", u.InputTokens, want.InputTokens)
+	}
+
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "tool_calls" {
+		t.Errorf("终事件 = %+v, want EvDone{tool_calls}——Responses 不发 finish_reason，"+
+			"停因只能由 output 里有没有工具项判出来", last)
+	}
+}
+
+// TestGoldenDecodeParallelTurn1：code-mode 并行那轮。线上仍只有一个 custom_tool_call
+// （并行在入参那段 JS 里），所以形态与 tool-turn1 同构；这里钉的是 usage 与停因。
+func TestGoldenDecodeParallelTurn1(t *testing.T) {
+	const sample = "responses-stream-parallel-turn1"
+	events := collect(t, readGoldenResponse(t, sample))
+	want := readGoldenExpect(t, sample)
+
+	u := lastUsage(events)
+	if u == nil {
+		t.Fatal("没放出 usage")
+	}
+	if u.InputTokens != want.InputTokens || u.OutputTokens != want.OutputTokens ||
+		u.ReasoningTokens != want.ReasoningTokens {
+		t.Errorf("usage = %+v, want in=%d out=%d reasoning=%d", *u,
+			want.InputTokens, want.OutputTokens, want.ReasoningTokens)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "tool_calls" {
+		t.Errorf("终事件 = %+v, want EvDone{tool_calls}", last)
+	}
+}
+
+// TestGoldenDecodeToolTurn2：工具结果回带之后的那轮，output 里没有工具项，
+// 停因必须是 stop——sawTool 的状态不该跨轮泄漏。
+func TestGoldenDecodeToolTurn2(t *testing.T) {
+	const sample = "responses-stream-tool-turn2"
+	events := collect(t, readGoldenResponse(t, sample))
+
+	for _, ev := range events {
+		if ev.Type == protocol.EvToolCallStart {
+			t.Fatal("这一轮不该有工具调用")
+		}
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "stop" || last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{stop, 未截断}", last)
+	}
+}
+
+// TestGoldenDecodeParallelTurn2：并行样本的回带轮，性质同 tool-turn2——五份 #79
+// 入库转录至此每份都有解码用例吃过，§9.4 表里「五份真实上游转录」才算数字属实。
+func TestGoldenDecodeParallelTurn2(t *testing.T) {
+	const sample = "responses-stream-parallel-turn2"
+	events := collect(t, readGoldenResponse(t, sample))
+	want := readGoldenExpect(t, sample)
+
+	for _, ev := range events {
+		if ev.Type == protocol.EvToolCallStart {
+			t.Fatal("这一轮不该有工具调用")
+		}
+	}
+	if u := lastUsage(events); u == nil || u.InputTokens != want.InputTokens {
+		t.Errorf("usage 没对上 expect：got %+v, want in=%d", u, want.InputTokens)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "stop" || last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{stop, 未截断}", last)
+	}
+}
+
+// TestGoldenDecodeReasoningSummaryNeverLeaks：带 reasoning_summary_* 四种帧的那份
+// 转录里，摘要正文一个字都不该出现在事件流里。
+//
+// 单列一条是因为它与 tool-turn1 那份不是同一件事：那边的 reasoning item 只有密文，
+// 这边上游**真的发了人读得懂的摘要**。把它转成 EvThinkingDelta 到 A 出口会被物化成
+// thinking 块，等于拿摘要冒充推理正文（口径层 v0.10 明令只能丢）。
+func TestGoldenDecodeReasoningSummaryNeverLeaks(t *testing.T) {
+	const sample = "responses-stream-reasoning-turn1"
+	raw := readGoldenResponse(t, sample)
+
+	// 先确认这份样本里确实有摘要帧，否则这条断言是空跑。
+	if !bytes.Contains(raw, []byte("response.reasoning_summary_text.delta")) {
+		t.Skip("这份样本没有 reasoning_summary 帧，断言无的放矢")
+	}
+	var summary string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var f struct {
+			Type  string `json:"type"`
+			Delta string `json:"delta"`
+		}
+		if json.Unmarshal([]byte(line[6:]), &f) == nil &&
+			f.Type == "response.reasoning_summary_text.delta" && f.Delta != "" {
+			summary = f.Delta
+			break
+		}
+	}
+	if summary == "" {
+		t.Skip("样本里的摘要增量为空")
+	}
+
+	for i, ev := range collect(t, raw) {
+		if ev.Type == protocol.EvThinkingDelta {
+			t.Fatalf("事件 %d 是 ThinkingDelta", i)
+		}
+		if strings.Contains(ev.Text, summary) {
+			t.Fatalf("事件 %d 的正文里混进了推理摘要: %.60q", i, ev.Text)
+		}
+	}
+}
+
+// --- 以下用手搭 fixture，覆盖真实样本到不了的形态 ---
+
+func sseFrames(frames ...string) []byte {
+	var buf strings.Builder
+	for _, f := range frames {
+		buf.WriteString(f)
+		buf.WriteString("\n\n")
+	}
+	return []byte(buf.String())
+}
+
+// TestDecodeFunctionCallStream：function 形态的工具流。
+//
+// 九份真实转录里**一份都没有**（线上 Codex 只声明 custom 工具），而 CC→R / A→R 两条
+// 路径发出去的工具声明全是 function 形态，回来的就是这个形状。所以它只能手搭。
+//
+// 钉住两件事：Start 的 call_id 与 name 只能从 output_item.added 上取（增量帧只带
+// item_id，实采可证），以及 function 入参**逐片透传**、不像 custom 那样攒起来。
+func TestDecodeFunctionCallStream(t *testing.T) {
+	raw := sseFrames(
+		`event: response.created`+"\n"+
+			`data: {"type":"response.created","response":{"id":"resp_x","model":"gpt-5.6"}}`,
+		`event: response.output_item.added`+"\n"+
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"get_weather","arguments":""}}`,
+		`event: response.function_call_arguments.delta`+"\n"+
+			`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":"}`,
+		`event: response.function_call_arguments.delta`+"\n"+
+			`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"\"SH\"}"}`,
+		`event: response.output_item.done`+"\n"+
+			`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"get_weather","arguments":"{\"city\":\"SH\"}"}}`,
+		`event: response.completed`+"\n"+
+			`data: {"type":"response.completed","response":{"id":"resp_x","model":"gpt-5.6","status":"completed","usage":{"input_tokens":10,"output_tokens":3}}}`,
+	)
+	events := collect(t, raw)
+
+	var start *protocol.Event
+	var frags []string
+	var ends int
+	for i := range events {
+		switch events[i].Type {
+		case protocol.EvToolCallStart:
+			start = &events[i]
+		case protocol.EvToolArgsDelta:
+			frags = append(frags, events[i].Text)
+		case protocol.EvToolCallEnd:
+			ends++
+		}
+	}
+	if start == nil {
+		t.Fatal("没放出 ToolCallStart")
+	}
+	if start.ToolID != "call_abc" || start.ToolName != "get_weather" || !start.ArgsIsJSON {
+		t.Errorf("Start = %+v, want call_abc/get_weather/JSON", *start)
+	}
+	if start.Index != 0 {
+		t.Errorf("Index = %d, want 0（原样用 output_index）", start.Index)
+	}
+	if len(frags) != 2 {
+		t.Errorf("ArgsDelta 条数 = %d, want 2（function 入参逐片透传，保住上游节奏）", len(frags))
+	}
+	if got := strings.Join(frags, ""); got != `{"city":"SH"}` {
+		t.Errorf("入参拼起来 = %q", got)
+	}
+	if ends != 1 {
+		t.Errorf("ToolCallEnd = %d, want 1", ends)
+	}
+	if last := events[len(events)-1]; last.StopReason != "tool_calls" {
+		t.Errorf("停因 = %q, want tool_calls", last.StopReason)
+	}
+}
+
+// TestDecodeIncompleteIsLength：截断终帧映成 length。
+func TestDecodeIncompleteIsLength(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"half"}`,
+		`data: {"type":"response.incomplete","response":{"id":"r","model":"m","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":7,"output_tokens":2}}}`,
+	)
+	events := collect(t, raw)
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "length" {
+		t.Errorf("终事件 = %+v, want EvDone{length}", last)
+	}
+	if last.Truncated {
+		t.Error("Truncated 为真：incomplete 是上游明说的收尾，不是断流")
+	}
+	if u := lastUsage(events); u == nil || u.InputTokens != 7 {
+		t.Error("incomplete 帧上的 usage 没收：它与 completed 一样是终帧")
+	}
+}
+
+// TestDecodeIncompleteContentFilterMapsAcross：content_filter 是 incomplete_details
+// 里另一个有 canonical 对应取值的理由，不能与上游自造词一起兜成 stop。
+func TestDecodeIncompleteContentFilterMapsAcross(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.incomplete","response":{"id":"r","model":"m","status":"incomplete","incomplete_details":{"reason":"content_filter"}}}`,
+	)
+	events := collect(t, raw)
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "content_filter" {
+		t.Errorf("终事件 = %+v, want EvDone{content_filter}", last)
+	}
+}
+
+// TestDecodeFailedBecomesError：response.failed 转 EvError，且不带上任何连接信息。
+func TestDecodeFailedBecomesError(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"server_error","message":"upstream exploded"}}}`,
+	)
+	events := collect(t, raw)
+	last := events[len(events)-1]
+	if last.Type != protocol.EvError || last.Message != "upstream exploded" {
+		t.Fatalf("终事件 = %+v, want EvError{upstream exploded}", last)
+	}
+	for _, ev := range events {
+		if ev.Type == protocol.EvDone {
+			t.Error("出错之后还放了 EvDone：下游会以为这是正常收尾")
+		}
+	}
+}
+
+// TestDecodeBareErrorFrame：裸 error 帧（不裹 response 对象）也认。
+func TestDecodeBareErrorFrame(t *testing.T) {
+	raw := sseFrames(
+		`event: error` + "\n" +
+			`data: {"type":"error","error":{"code":"rate_limit","message":"slow down"}}`,
+	)
+	events := collect(t, raw)
+	if len(events) != 1 || events[0].Type != protocol.EvError || events[0].Message != "slow down" {
+		t.Fatalf("events = %+v, want 单个 EvError{slow down}", events)
+	}
+}
+
+// errReader 在吐完 body 之后报一个非 EOF 错，模拟上游传输中断。
+type errReader struct {
+	body []byte
+	done bool
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		return copy(p, r.body), nil
+	}
+	return 0, errors.New("connection reset by peer")
+}
+
+// TestDecodeStreamReadErrorIsFlagged：传输断了要既放 EvError 又置 StreamReadFlag。
+//
+// 两件事缺一不可：只放 EvError 的话，收场时与「上游回了个错误对象」混成一样，
+// 客户端断线会被记成干净的 ok（protocol.StreamReadReporter 存在的理由）。
+func TestDecodeStreamReadErrorIsFlagged(t *testing.T) {
+	c := NewCodec()
+	var reporter protocol.StreamReadReporter = c
+	ch, err := c.DecodeStream(&errReader{body: []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"model\":\"m\"}}\n\n")})
+	if err != nil {
+		t.Fatalf("DecodeStream: %v", err)
+	}
+	var events []protocol.Event
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvError {
+		t.Fatalf("终事件 = %+v, want EvError", last)
+	}
+	if reporter.StreamReadError() == nil {
+		t.Error("StreamReadError 为 nil：断流会被记成干净收尾")
+	}
+}
+
+// TestDecodeTruncatedStreamFallsBack：流断在终帧之前，兜一个 EvDone{stop} 并标 Truncated。
+func TestDecodeTruncatedStreamFallsBack(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"half"}`,
+	)
+	events := collect(t, raw)
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "stop" || !last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{stop, Truncated}", last)
+	}
+}
+
+// TestDecodeCustomToolTruncatedStillFlushes：custom 入参攒到一半流断了，攒着的照样放出去。
+func TestDecodeCustomToolTruncatedStillFlushes(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","call_id":"call_z","name":"exec","input":""}}`,
+		`data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_1","output_index":0,"delta":"console.log(1)"}`,
+	)
+	events := collect(t, raw)
+	var args string
+	var ends int
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvToolArgsDelta:
+			args = ev.Text
+		case protocol.EvToolCallEnd:
+			ends++
+		}
+	}
+	if ends != 1 {
+		t.Errorf("ToolCallEnd = %d, want 1（半个调用也比凭空消失强）", ends)
+	}
+	var wrapped map[string]string
+	if json.Unmarshal([]byte(args), &wrapped) != nil || wrapped[protocol.CustomToolArgsKey] != "console.log(1)" {
+		t.Errorf("兜底放出的入参 = %q，want 包装过的 console.log(1)", args)
+	}
+}
+
+// TestDecodeFullBodySynthetic：非流式路径。
+//
+// **没有真实样本**：九份 Responses 转录全是 stream:true，golden 终帧里那个 output
+// 数组是中转侧的降级重建（tool-turn1 里 custom_tool_call 被重建成没有入参的
+// function_call），不能当线格真值。缺口记在展开层 §9.4②。
+func TestDecodeFullBodySynthetic(t *testing.T) {
+	body := []byte(`{
+	  "id":"resp_full","model":"gpt-5.6","status":"completed",
+	  "output":[
+	    {"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAABsecret","summary":[]},
+	    {"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
+	    {"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"SH\"}"},
+	    {"type":"custom_tool_call","call_id":"call_2","name":"exec","input":"console.log(1)"}
+	  ],
+	  "usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":40,"cache_write_tokens":5},
+	           "output_tokens":20,"output_tokens_details":{"reasoning_tokens":8}}
+	}`)
+	c := NewCodec()
+	events, err := c.DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+
+	if events[0].Type != protocol.EvMessageStart || events[0].ID != "resp_full" {
+		t.Errorf("首事件 = %+v", events[0])
+	}
+	for i, ev := range events {
+		if ev.Type == protocol.EvThinkingDelta || strings.Contains(ev.Text, "gAAAAAB") {
+			t.Fatalf("事件 %d 泄漏了 reasoning: %+v", i, ev)
+		}
+	}
+
+	var starts int
+	var argsByTool = map[string]string{}
+	var curTool string
+	var text string
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvTextDelta:
+			text += ev.Text
+		case protocol.EvToolCallStart:
+			starts++
+			curTool = ev.ToolName
+			if !ev.ArgsIsJSON {
+				t.Errorf("%s 的 ArgsIsJSON 为 false", ev.ToolName)
+			}
+		case protocol.EvToolArgsDelta:
+			argsByTool[curTool] += ev.Text
+		}
+	}
+	if text != "done" {
+		t.Errorf("正文 = %q", text)
+	}
+	if starts != 2 {
+		t.Errorf("工具调用数 = %d, want 2", starts)
+	}
+	if argsByTool["get_weather"] != `{"city":"SH"}` {
+		t.Errorf("function 入参 = %q（原样带，不重新序列化）", argsByTool["get_weather"])
+	}
+	var wrapped map[string]string
+	if json.Unmarshal([]byte(argsByTool["exec"]), &wrapped) != nil ||
+		wrapped[protocol.CustomToolArgsKey] != "console.log(1)" {
+		t.Errorf("custom 入参 = %q，want 包装过的", argsByTool["exec"])
+	}
+
+	u := lastUsage(events)
+	if u == nil || u.InputTokens != 100 || u.CacheReadTokens != 40 ||
+		u.CacheWriteTokens != 5 || u.ReasoningTokens != 8 {
+		t.Errorf("usage = %+v", u)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "tool_calls" || last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{tool_calls, 未截断}", last)
+	}
+}
+
+// TestDecodeFullBodyIncomplete：非流式的截断与流式判一样的停因。
+func TestDecodeFullBodyIncomplete(t *testing.T) {
+	body := []byte(`{"id":"r","model":"m","status":"incomplete",
+	  "incomplete_details":{"reason":"max_output_tokens"},
+	  "output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"half"}]}]}`)
+	events, err := NewCodec().DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.StopReason != "length" || last.Truncated {
+		t.Errorf("终事件 = %+v, want EvDone{length, 未截断}", last)
+	}
+}
+
+// TestDecodeFullBodyNotJSON：解不动要报错，不能悄悄回一个空事件序列。
+func TestDecodeFullBodyNotJSON(t *testing.T) {
+	if _, err := NewCodec().DecodeFullBody([]byte("<html>502</html>")); err == nil {
+		t.Fatal("非 JSON 响应体没报错")
+	}
+}
+
+var _ io.Reader = (*errReader)(nil)

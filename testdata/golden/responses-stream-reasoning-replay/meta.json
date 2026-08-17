@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 15035,
+    "OutputTokens": 26,
+    "CacheReadTokens": 14080,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经中转的 OpenAI 兼容上游 + Codex CLI 0.147 `codex exec`，gpt-5.6-luna，model_reasoning_effort=high、model_reasoning_summary=detailed，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、路径中性化）；`encrypted_content` 与 `rs_…` id 原样保留，理由同压缩批——它们是这份样本的存在理由。expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **回带轮**：上一轮的 reasoning item 被 Codex 原样发回 `input`（同一个 `rs_…` id、summary 文本、1316 B 密文，位置在 tool_call 之前），而本轮响应里**没有**新的 reasoning item。与 in-anthropic-thinking-replay 那份成对看：Responses 客户端回带的是**带真密文**的 item，Anthropic 客户端回带的是 signature 为**空串**的块，两种回带的处置代价完全不同（口径层 v0.62 ③ 一律丢，正是因为后者必被上游拒）。"
+}

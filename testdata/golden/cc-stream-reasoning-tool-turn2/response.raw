@@ -1,0 +1,360 @@
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"reasoning_content":"**Interpreting AQI 168 as 中度污染 advising reduced outdoor activity**"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"北京"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"目前"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"天气"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"：\n\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" **"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"气"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"温"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"："},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"31"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"℃"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" **"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"南"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"风"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"："},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"3"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"级"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" **"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"湿"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"度"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"："},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"约"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"62"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"%"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" **"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"AQ"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"I"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"："},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"168"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"属于"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"中"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"度"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"污染"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**\n\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"不"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"太"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"适"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"合"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"户"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"外"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"跑"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"步"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"。"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"**"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" "},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"主要"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"原因"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"是"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"空气"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"质量"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"较"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"差"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，加"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"上"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"31"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"℃"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"和"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"较"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"高"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"湿"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"度"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"跑"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"步"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"时"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"呼"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"吸"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"负"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"担"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"和"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"中"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"暑"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"风险"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"都会"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"增加"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"。"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"建议"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"今天"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"改"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"为"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"室"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"内"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"跑"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"步"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"或"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"其他"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"室"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"内"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"训练"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"。\n\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"如果"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"一定"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"要"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"户"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"外"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"运动"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"：\n\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" "},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"选择"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"清"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"晨"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"或"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"傍"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"晚"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"较"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"凉"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"时"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"段"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"避"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"开"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"高"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"温"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"时"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"段"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"；\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" 降"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"低"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"配"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"速"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"、"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"缩"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"短"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"时间"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"避免"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"间"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"歇"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"和"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"长"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"距离"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"；\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" 有"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"呼"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"吸"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"道"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"、"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"心"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"肺"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"疾病"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"，"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"或"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"出现"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"咳"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"嗽"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"、"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"胸"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"闷"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"、"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"头"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"晕"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"时"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"不要"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"运动"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"；\n"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"-"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":" "},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"运动"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"前"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"后"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"及时"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"补"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"水"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"。"},"finish_reason":null}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"resp_060b1a00d796fb2d016a7e86f06a8c87d09045a5565776ab9e","object":"chat.completion.chunk","created":1786676976,"model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":124,"completion_tokens":296,"total_tokens":420,"completion_tokens_details":{"reasoning_tokens":108}}}
+
+data: [DONE]
+

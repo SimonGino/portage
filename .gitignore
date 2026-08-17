@@ -1,0 +1,42 @@
+# binaries & build
+/bin/
+/dist/
+*.exe
+/portage
+
+# Go
+*.test
+*.out
+vendor/
+
+# data & secrets
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+config.yaml
+channels.yaml
+!*.example.yaml
+
+# frontend
+node_modules/
+# Vite 的 outDir 就在这儿（见 web/vite.config.ts）：Go 用 //go:embed 读它，
+# 而 embed 只能读自己包目录下的文件，所以产物不能待在 web/ 里。
+internal/webui/dist/
+
+# tooling
+.DS_Store
+.idea/
+.vscode/
+/testdata/golden/raw/
+# agent 的本机工作区（.claude/worktrees/ 下是一个个内嵌 git 仓库，git add -A 会
+# 把它们当子模块加进来）
+.claude/
+
+# tsc -b 的增量缓存，机器本地状态
+web/tsconfig.tsbuildinfo
+
+# 真机截图带真实渠道名与掩码 key，不入库；设计稿本身（HTML/MD）是假数据，照常跟踪
+design-demos/redesign/shots/live-*.png

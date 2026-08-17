@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 67,
+    "OutputTokens": 350,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 157,
+    "HasReasoningTokens": true,
+    "StopReason": "stop",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经中转的 OpenAI 兼容上游（new-api 系，把 Responses 桥成 CC 线格式）+ curl 手造请求，gpt-5.6-luna，reasoning_effort=high、reasoning.summary=detailed，2026-08-14。**票面写的是 glm-5.2/deepseek 一类，手上两个上游都没有**；换成本模型顶上——A→CC 解码侧吃的是 `reasoning_content` 增量这个线形态，模型身份不进 codec。没有 harness 说 CC，请求由 curl 手造：CC 那侧未来的客户端就是 portage 自己，这里近似的是它将来的出站形状。expect 已独立重算核对（不复用 Go 侧代码，按 CC wire 取终态 usage 与 finish_reason），三份全对得上。 形态一：**纯 reasoning 开头**。先两条 `delta.reasoning_content`（summary 分片，各自一整段）才出第一个 `delta.content`——正是 #87 起因里「message_start 之后几秒空白」的线上形态：这段期间下行只有 reasoning，解码侧不产 EvThinkingDelta 就是纯空白。终态 usage 带 `completion_tokens_details.reasoning_tokens=157`（#97 要的那一格，真实字节里确实有）。"
+}

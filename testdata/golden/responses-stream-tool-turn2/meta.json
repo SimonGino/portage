@@ -1,0 +1,24 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-codex-beta-features": "remote_compaction_v2"
+  },
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14657,
+    "OutputTokens": 7,
+    "CacheReadTokens": 14080,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "经 sub2api 中转的 OpenAI 兼容上游（与 2026-08-13 压缩批同渠道），Codex CLI 0.147 codex exec 无头模式，2026-08-14。指纹按 scripts/redact-* 两份脱敏（client_metadata 五项与 prompt_cache_key 归零、developer 提示词换占位符、路径中性化）；`reasoning.encrypted_content` 与各项 id 原样保留；expect 用 scripts/verify-expect-responses.py 独立重算核对过。 **工具结果回带的那一轮**：与 responses-stream-tool-turn1 同一会话，request.input 尾部按序是 reasoning（带 1292 字符真密文，逐字节等于上一轮 `output_item.done` 那份）→ assistant message → custom_tool_call → custom_tool_call_output，两侧 call_id 配对（`call_HrV1…`）。响应本身是纯文本收尾，无工具项。"
+}

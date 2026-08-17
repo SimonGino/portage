@@ -1,0 +1,19 @@
+{
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "真实 OpenAI 兼容中转，2026-08-06",
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 69,
+    "OutputTokens": 74,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 10,
+    "HasReasoningTokens": true,
+    "StopReason": "tool_calls",
+    "Degraded": false
+  },
+  "verified": true
+}

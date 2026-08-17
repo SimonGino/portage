@@ -1,0 +1,1 @@
+{"model":"claude-sonnet-4-5","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"What is the weather in Paris right now? Use the tool."}],"tools":[{"name":"get_weather","description":"Get the current weather in a given city.","input_schema":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]}}]}

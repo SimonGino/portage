@@ -1,0 +1,10 @@
+{
+  "direction": "inbound",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "verified": true
+}
