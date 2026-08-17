@@ -255,8 +255,9 @@ func TestDecodeRequestAcceptsMaxCompletionTokens(t *testing.T) {
 	}
 }
 
-// content 的数组形态（多模态 part）不许把整条请求打死：认得的 text 进 Text，
-// 认不得的原样带着 type 与全部字段进 Extras。
+const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"
+
+// content 的数组形态：image_url 的 https URL 落成 BlockImage，不进 Extras。
 func TestDecodeRequestSurvivesMultimodalParts(t *testing.T) {
 	body := `{"model":"m","messages":[{"role":"user","content":[` +
 		`{"type":"text","text":"看图"},` +
@@ -272,11 +273,70 @@ func TestDecodeRequestSurvivesMultimodalParts(t *testing.T) {
 	if blocks[0].Kind != protocol.BlockText || blocks[0].Text != "看图" {
 		t.Errorf("第一个块没解对: %+v", blocks[0])
 	}
-	if blocks[1].Kind != "image_url" {
-		t.Errorf("未知 part 的 type 应原样保留，实得 %q", blocks[1].Kind)
+	if blocks[1].Kind != protocol.BlockImage {
+		t.Errorf("image_url 应落成 BlockImage，实得 %q", blocks[1].Kind)
 	}
-	if blocks[1].Extras["image_url"] == nil {
-		t.Errorf("未知 part 的正文应进 Extras: %+v", blocks[1].Extras)
+	if blocks[1].Image == nil || blocks[1].Image.URL != "https://example.com/a.png" {
+		t.Errorf("Image.URL 没解对: %+v", blocks[1].Image)
+	}
+}
+
+// data URI 拆成 MediaType + 裸 base64；载荷是 testdata/fixtures/tiny.png 的真字节。
+func TestDecodeRequestImageDataURI(t *testing.T) {
+	body := `{"model":"m","messages":[{"role":"user","content":[` +
+		`{"type":"image_url","image_url":{"url":"data:image/png;base64,` + tinyPNG + `"}}]}]}`
+	req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatalf("解不动: %v", err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 1 {
+		t.Fatalf("块数 = %d，期望 1", len(blocks))
+	}
+	if blocks[0].Kind != protocol.BlockImage || blocks[0].Image == nil {
+		t.Fatalf("没解成 BlockImage: %+v", blocks[0])
+	}
+	if blocks[0].Image.MediaType != "image/png" {
+		t.Errorf("MediaType = %q，期望 image/png", blocks[0].Image.MediaType)
+	}
+	if blocks[0].Image.Data != tinyPNG {
+		t.Errorf("Data 对不上 tiny.png 的 base64")
+	}
+}
+
+// input_audio 仍是未知块 + Extras，不落成图片。
+func TestDecodeRequestKeepsUnknownAudioParts(t *testing.T) {
+	body := `{"model":"m","messages":[{"role":"user","content":[` +
+		`{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`
+	req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 1 || blocks[0].Kind != "input_audio" {
+		t.Fatalf("input_audio 应原样留 Kind，实得 %+v", blocks)
+	}
+	if blocks[0].Image != nil {
+		t.Error("input_audio 不该填 Image")
+	}
+	if blocks[0].Extras["input_audio"] == nil {
+		t.Errorf("未知 part 的字段应进 Extras: %+v", blocks[0].Extras)
+	}
+}
+
+func TestDecodeRequestSkipsEmptyDataURI(t *testing.T) {
+	for _, uri := range []string{"data:image/png;base64,", "data:image/png;base64,   "} {
+		body := `{"model":"m","messages":[{"role":"user","content":[` +
+			`{"type":"text","text":"看图"},` +
+			`{"type":"image_url","image_url":{"url":"` + uri + `"}}]}]}`
+		req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+		if err != nil {
+			t.Fatalf("%q 解不动: %v", uri, err)
+		}
+		blocks := req.Messages[0].Content
+		if len(blocks) != 1 || blocks[0].Kind != protocol.BlockText {
+			t.Errorf("%q 空图应整块跳过，实得 %+v", uri, blocks)
+		}
 	}
 }
 

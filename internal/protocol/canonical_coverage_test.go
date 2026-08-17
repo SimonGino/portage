@@ -74,6 +74,25 @@ var coverage = map[string]disposition{
 	"messages[].content[].content":            dField,  // ToolResult.Content（字符串退化）
 	"messages[].content[].cache_control":      dExtras,
 	"messages[].content[].cache_control.type": dExtras,
+	// 图片（#1）。
+	"messages[].content[].source":            dField, // → Image.{MediaType,Data,URL,FileID}
+	"messages[].content[].source.type":       dField,
+	"messages[].content[].source.media_type": dField,
+	"messages[].content[].source.data":       dField,
+	"messages[].content[].image_url":         dField, // CC image_url 对象
+	"messages[].content[].image_url.url":     dField,
+
+	// tool_result 里的图（#1）。容器形状三协议不一样，是本项目此前没记过的一条
+	// 转换约束：Anthropic 的 tool_result.content 收 text+image 数组，CC 的
+	// role=tool content 与 Responses 的 function_call_output.output 都只收字符串，
+	// 于是那两个出口把图**抬成后续独立的 user 消息**。
+	"messages[].content[].content[]":                   dField,
+	"messages[].content[].content[].type":              dField,
+	"messages[].content[].content[].text":              dField,
+	"messages[].content[].content[].source":            dField,
+	"messages[].content[].content[].source.type":       dField,
+	"messages[].content[].content[].source.media_type": dField,
+	"messages[].content[].content[].source.data":       dField,
 
 	"tools":                dField,
 	"tools[]":              dField,
@@ -122,10 +141,11 @@ var coverage = map[string]disposition{
 	"input[].type": dField, // 判别式：message / custom_tool_call(_output) / reasoning / additional_tools
 	"input[].role": dField, // developer 归一为 RoleSystem（见 Role 注释），user 直通
 
-	"input[].content":        dField,
-	"input[].content[]":      dField,
-	"input[].content[].type": dField, // input_text
-	"input[].content[].text": dField,
+	"input[].content":             dField,
+	"input[].content[]":           dField,
+	"input[].content[].type":      dField, // input_text / input_image
+	"input[].content[].text":      dField,
+	"input[].content[].image_url": dField, // Responses 上是字符串，不是对象
 
 	"input[].call_id":       dField, // ToolCall.ID / ToolResult.ToolCallID
 	"input[].name":          dField, // ToolCall.Name
@@ -183,32 +203,94 @@ var coverage = map[string]disposition{
 	"tools[].function.parameters":  dOpaque, // → Tool.Schema，整棵 JSON Schema 不下钻
 }
 
+// inboundRoots 是入站样本的两个来源，各走各的闸。
+//
+// 两处都扫，是因为这张表要覆盖的是「canonical 装不装得下」，而**能证明形状的样本不
+// 一定是转录**：图片那几格（#1）真实 harness 至今一份都没发过——实采样本的 content
+// 全是字符串——但形状本身照官方文档是确定的。把构造样本挡在表外，等于让新加的图片
+// 路径永远无样本可依，那几行会当场被判成「表随样本烂掉」的陈旧项。
+//
+// 反过来也不放松：构造样本**不进 golden/**（PO 2026-08-17 裁），它走 synthetic 那道
+// 反向闸，钉死自己不是转录。缘由与升格规矩见 testdata/fixtures/README.md。
+var inboundRoots = []struct {
+	dir string
+	// gate 读 meta.json，判这份样本够不够格当依据。
+	gate func(meta struct {
+		Verified  bool `json:"verified"`
+		Synthetic bool `json:"synthetic"`
+	}) string
+}{
+	{
+		dir: "golden",
+		gate: func(m struct {
+			Verified  bool `json:"verified"`
+			Synthetic bool `json:"synthetic"`
+		}) string {
+			// verified 关卡：入站样本经脱敏改过字节，没人核过就不该被当成事实源。
+			// 这里跟 golden_test.go 同一道闸，理由见 cmd/goldenrec/main.go 注释。
+			if !m.Verified {
+				return "meta.json 仍是 verified:false——脱敏并核对后再置 true"
+			}
+			if m.Synthetic {
+				return "meta.json 写着 synthetic:true——构造样本请放回 testdata/fixtures/，别冒充转录"
+			}
+			return ""
+		},
+	},
+	{
+		dir: "fixtures",
+		gate: func(m struct {
+			Verified  bool `json:"verified"`
+			Synthetic bool `json:"synthetic"`
+		}) string {
+			// 反向闸：拦的是「构造样本被搬进 golden 冒充转录」。
+			if !m.Synthetic {
+				return "meta.json 没有 synthetic:true——真录到的样本请放进 testdata/golden/ 走 verified 那道闸"
+			}
+			return ""
+		},
+	},
+}
+
 func TestCanonicalModelCoversInboundSamples(t *testing.T) {
-	dirs, err := filepath.Glob(filepath.Join("..", "..", "testdata", "golden", "in-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dirs) == 0 {
-		t.Fatal("没找到任何 in-* 入站样本；这个测试对着空集合永远绿，等于没有")
+	var dirs []string
+	gates := map[string]func(struct {
+		Verified  bool `json:"verified"`
+		Synthetic bool `json:"synthetic"`
+	}) string{}
+	for _, root := range inboundRoots {
+		found, err := filepath.Glob(filepath.Join("..", "..", "testdata", root.dir, "in-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) == 0 {
+			t.Fatalf("testdata/%s 下没找到任何 in-* 入站样本；这个测试对着空集合永远绿，等于没有", root.dir)
+		}
+		for _, d := range found {
+			if name := filepath.Base(d); gates[name] != nil {
+				t.Fatalf("样本名 %s 在 golden/ 与 fixtures/ 下各有一份——同名两档说不清哪份是依据", name)
+			}
+			dirs = append(dirs, d)
+			gates[filepath.Base(d)] = root.gate
+		}
 	}
 
 	seen := map[string][]string{} // path → 出现在哪些样本
 	for _, dir := range dirs {
 		name := filepath.Base(dir)
-		// verified 关卡：入站样本经脱敏改过字节，没人核过就不该被当成事实源。
-		// 这里跟 golden_test.go 同一道闸，理由见 cmd/goldenrec/main.go 注释。
 		metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		var meta struct {
-			Verified bool `json:"verified"`
+			Verified  bool `json:"verified"`
+			Synthetic bool `json:"synthetic"`
 		}
 		if err := json.Unmarshal(metaRaw, &meta); err != nil {
 			t.Fatalf("%s meta.json: %v", name, err)
 		}
-		if !meta.Verified {
-			t.Fatalf("%s 的 meta.json 仍是 verified:false——脱敏并核对后再置 true", name)
+		if reason := gates[name](meta); reason != "" {
+			t.Fatalf("%s 的 %s", name, reason)
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, "request.json"))
 		if err != nil {

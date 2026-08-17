@@ -42,6 +42,7 @@ const (
 	DropVendorContent = "vendor_content"  // Responses 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"   // 找不到对应工具调用的结果
 	DropSampling      = "sampling_params" // temperature / top_p / stop，见文件头
+	DropImageFileID   = "image_file_id"   // file_id 是上游作用域句柄，跨协议搬不走
 )
 
 // EncodeRequest 把 canonical 编成 Responses 请求体。
@@ -123,8 +124,8 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 func encodeInput(req *protocol.Request, drop func(string)) []map[string]any {
 	items := make([]map[string]any, 0, len(req.Messages)+1)
 
-	if text := joinOutBlocks(req.System, drop); text != "" {
-		items = append(items, developerItem(text))
+	if parts, ok := encodeOutUserParts(req.System, drop); ok {
+		items = append(items, developerItem(parts))
 	}
 
 	// 先扫一遍真实出现过的工具调用 id：孤儿结果（引用一个本次请求里不存在的调用）
@@ -140,8 +141,8 @@ func encodeInput(req *protocol.Request, drop func(string)) []map[string]any {
 
 	for _, m := range req.Messages {
 		if m.Role == protocol.RoleSystem {
-			if text := joinOutBlocks(m.Content, drop); text != "" {
-				items = append(items, developerItem(text))
+			if parts, ok := encodeOutUserParts(m.Content, drop); ok {
+				items = append(items, developerItem(parts))
 			}
 			continue
 		}
@@ -154,10 +155,9 @@ func encodeInput(req *protocol.Request, drop func(string)) []map[string]any {
 //
 // 角色用 developer 而不是 system：canonical 的 RoleSystem 在 Responses 侧的惯例写法
 // 就是 developer（decode.go 的 normalizeRole 是这条映射的反向，两边对称）。
-func developerItem(text string) map[string]any {
+func developerItem(parts []map[string]any) map[string]any {
 	return map[string]any{
-		"type": "message", "role": "developer",
-		"content": []map[string]any{{"type": "input_text", "text": text}},
+		"type": "message", "role": "developer", "content": parts,
 	}
 }
 
@@ -175,17 +175,17 @@ func encodeOutMessage(m protocol.Message, seen map[string]bool, drop func(string
 			continue
 		}
 		items = append(items, encodeOutToolResult(b.ToolResult, drop))
+		items = append(items, liftOutImages(b.ToolResult.Content, drop)...)
 	}
 
-	text := joinOutBlocks(m.Content, drop)
 	if m.Role == protocol.RoleAssistant {
-		if text != "" {
+		if parts, ok := encodeOutAssistantParts(m.Content, drop); ok {
 			// assistant 正文用 output_text——它描述的是**上游此前说过的话**，
 			// 与 user 侧的 input_text 不是一个部件类型（decode.go 的 decodeContent
-			// 两种都收，正是因为线上两种都真实出现）。
+			// 两种都收，正是因为线上两种都真实出现）。图跟在同一条消息里，
+			// 不经 joinOutBlocks，免得静默蒸发。
 			items = append(items, map[string]any{
-				"type": "message", "role": "assistant",
-				"content": []map[string]any{{"type": "output_text", "text": text}},
+				"type": "message", "role": "assistant", "content": parts,
 			})
 		}
 		for _, b := range m.Content {
@@ -196,14 +196,13 @@ func encodeOutMessage(m protocol.Message, seen map[string]bool, drop func(string
 		return items
 	}
 
-	if text != "" {
+	if parts, ok := encodeOutUserParts(m.Content, drop); ok {
 		// user 之外的角色（RoleTool、以及未知角色）一律当 user：Responses 的消息项
 		// 只有 user/assistant/developer 三种落点，把一条内容整个丢掉比放错角色更糟。
 		// RoleTool 的正文块正常情况下是空的（它的内容在 tool_result 块里，上面已经
 		// 编成 function_call_output 了）。
 		items = append(items, map[string]any{
-			"type": "message", "role": "user",
-			"content": []map[string]any{{"type": "input_text", "text": text}},
+			"type": "message", "role": "user", "content": parts,
 		})
 	}
 	return items
@@ -312,6 +311,130 @@ func encodeOutToolChoice(choice protocol.ToolChoice, declared map[string]bool) (
 	return nil, false
 }
 
+// encodeOutUserParts 编 user 消息的 content 数组。带图时图与正文并列，不经 joinOutBlocks。
+func encodeOutUserParts(blocks []protocol.Block, drop func(string)) ([]map[string]any, bool) {
+	if !hasConvertibleImage(blocks) {
+		text := joinOutBlocks(blocks, drop)
+		if text == "" {
+			return nil, false
+		}
+		return []map[string]any{{"type": "input_text", "text": text}}, true
+	}
+	var parts []map[string]any
+	for _, b := range blocks {
+		if _, ok := b.Extras["cache_control"]; ok {
+			drop(DropCacheControl)
+		}
+		switch b.Kind {
+		case protocol.BlockText:
+			if b.Text != "" {
+				parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
+			}
+		case protocol.BlockThinking:
+			drop(DropThinking)
+		case protocol.BlockToolUse, protocol.BlockToolResult:
+		case protocol.BlockImage:
+			if part, ok := encodeOutImage(b.Image, drop); ok {
+				parts = append(parts, part)
+			}
+		default:
+			drop(DropVendorContent)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return parts, true
+}
+
+func hasConvertibleImage(blocks []protocol.Block) bool {
+	for _, b := range blocks {
+		if b.Kind == protocol.BlockImage {
+			switch b.Image.Carrier() {
+			case "data", "url":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func encodeOutImage(img *protocol.Image, drop func(string)) (map[string]any, bool) {
+	var url string
+	switch img.Carrier() {
+	case "data":
+		url = protocol.FormatDataURI(img.MediaType, img.Data)
+	case "url":
+		url = img.URL
+	case "file":
+		drop(DropImageFileID)
+		return nil, false
+	default:
+		return nil, false
+	}
+	return map[string]any{"type": "input_image", "image_url": url}, true
+}
+
+// liftOutImages 把 tool_result 里的图抬成**一条**后续 user 消息。
+//
+// function_call_output.output 只收字符串，图放不进去。多张图进同一条
+// user 的 content 数组，不按张拆消息。
+func liftOutImages(blocks []protocol.Block, drop func(string)) []map[string]any {
+	var parts []map[string]any
+	for _, b := range blocks {
+		if b.Kind != protocol.BlockImage {
+			continue
+		}
+		part, ok := encodeOutImage(b.Image, drop)
+		if !ok {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []map[string]any{{
+		"type": "message", "role": "user", "content": parts,
+	}}
+}
+
+// encodeOutAssistantParts 编 assistant 消息的 content：正文是 output_text，图并列。
+func encodeOutAssistantParts(blocks []protocol.Block, drop func(string)) ([]map[string]any, bool) {
+	if !hasConvertibleImage(blocks) {
+		text := joinOutBlocks(blocks, drop)
+		if text == "" {
+			return nil, false
+		}
+		return []map[string]any{{"type": "output_text", "text": text}}, true
+	}
+	var parts []map[string]any
+	for _, b := range blocks {
+		if _, ok := b.Extras["cache_control"]; ok {
+			drop(DropCacheControl)
+		}
+		switch b.Kind {
+		case protocol.BlockText:
+			if b.Text != "" {
+				parts = append(parts, map[string]any{"type": "output_text", "text": b.Text})
+			}
+		case protocol.BlockThinking:
+			drop(DropThinking)
+		case protocol.BlockToolUse, protocol.BlockToolResult:
+		case protocol.BlockImage:
+			if part, ok := encodeOutImage(b.Image, drop); ok {
+				parts = append(parts, part)
+			}
+		default:
+			drop(DropVendorContent)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return parts, true
+}
+
 // joinOutBlocks 把块序列拼成一段纯文本，顺带登记丢弃。
 //
 // 拼纯文本而不是保留多个 content part：canonical 的块序列来自另外两个协议，那边的
@@ -340,10 +463,14 @@ func joinOutBlocks(blocks []protocol.Block, drop func(string)) string {
 		case protocol.BlockToolUse, protocol.BlockToolResult:
 			// 这两种块由调用方编成独立的 item，跳过是分工不是丢弃，不登记。
 
+		case protocol.BlockImage:
+			if b.Image.Carrier() == "file" {
+				drop(DropImageFileID)
+			}
+			// 图由 encodeOutUserParts / liftOutImages 另发。
+
 		default:
-			// 认不得的块类型（image 等）：跳过并登记。不登记就是静默改写语义——
-			// 客户端发了张图，上游收到一个被改成纯文本的请求还照样 200 回来。
-			// 图片的真转换是 #33 的范围。
+			// 认不得的块类型：跳过并登记。不登记就是静默改写语义。
 			drop(DropVendorContent)
 		}
 	}

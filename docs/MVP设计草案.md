@@ -1,6 +1,9 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.75
+> 状态：草案 v0.78
+> v0.78 变更（#1 收尾：样本归档改正 + 六格全链路补齐，2026-08-17）：①**四份图片入站样本从 `golden/` 挪进 `fixtures/`，meta 由 `verified: true` 改 `synthetic: true`**（PO 2026-08-17 裁）。v0.77 那批把手工构造的样本放进了 golden 库还盖上 verified——`fixtures/README.md` 明写「构造样本不得改名搬进 `golden/`」，而 `verified` 的定义是「人核过的**转录**」，构造样本盖上它就把这道闸稀释成了「人核过」，此后它说不清自己在挡什么。②**`TestCanonicalModelCoversInboundSamples` 改扫两个根**（`golden/in-*` 认 `verified`、`fixtures/in-*` 认 `synthetic`，同名两份直接判红）。不这么做①就落不了地：覆盖表要证的是「canonical 装不装得下」，而**能证明形状的样本不一定是转录**——图片那几行一旦无样本可依，会被那张表自己的陈旧项检查判红。③**新增 §9.5 与 `server/convert_image_test.go`：六个转换格子各补一条整链用例**。v0.77 那批只有三个 codec 包里的单测，而图片的解码在入口协议、编码在渠道协议，**分开看两边都「对」，错的是中间那一环**——这正是 v0.34 ① 为 developer 归一立过的规矩（「钉这条的用例走全链路而不是单测」）。断言比对的是 `tiny.png` 的**原图字节**而非样本里那串 base64：后者只能证明「串搬过去了」。④**新增构造样本 `in-anthropic-toolresult-image`**，钉「`tool_result` 里的图抬成后续独立 user 消息」——这条转换约束 v0.37 就写进范围了，v0.77 实现了却没有任何样本走到它，且覆盖表也缺 `messages[].content[].content[].source*` 那几行（嵌套一层的路径与顶层不是同一格）。用例连**位置**一起钉：抬到工具结果前面去，上游看到的顺序与实际发生的相反。⑤顺带订正口径层：v0.77 那批把 v0.76 那行版本记录（页标题改栏目名，与本票无关）**覆盖掉了**，现已恢复。修改人 jinpenga。
+> v0.77 变更（#1 图片内容块跨协议转换落地，2026-08-17）：`BlockImage` 带结构化字段 `{MediaType, Data, URL, FileID}`，三个 codec 的 decode/encode 把 base64 与 url 互转；`file_id` 单独登记 `image_file_id` 后丢，不混进 `vendor_content`。CC / Responses 出口把 `tool_result` 里的图抬成后续 user 消息，Anthropic 出口留在 `tool_result.content` 数组里。§4.6 现状表 ①②④ 划掉。修改人 jinpenga。
+> v0.76 变更（口径层 v0.77 落地：图片格式不设白名单，2026-08-17）：**只改文档**。§4.6 补一条实现约束——`MediaType` 原样写出，编码侧不做 jpeg/png/gif/webp 闸、不转码、不因格式丢块；svg 之类让上游 400。PDF 待裁仍不进本票。修改人 jinpenga。
 > v0.75 变更（口径层 v0.76 落地，2026-08-17）：页标题改栏目名、去掉 lede、模型页渠道/模型分层 + 组合按钮。修改人 jinpenga。
 > v0.74 变更（口径层 v0.75 落地：管理端壳改 A-v2，2026-08-16）：导航五项、去掉概览、侧栏改做；模型页主从改为左栏渠道 / 右栏模型主语 + 设置凭证井。修改人 jinpenga。
 > v0.73 变更（口径层 v0.74 落地：request-id 取值加第三档「读错误响应体」，2026-08-15）：**只改文档**，实现另起票。①**§6.1 那段的取值顺序改成三档**：`request-id`（头）→ 错误体里的 `request_id` → `x-request-id`（头）；新档插在中间不是末尾，因为前两档都是 Anthropic 自己写的，而实测那条链路上 `x-request-id` **总是**有值（中转编的 uuid），插末尾就永远轮不到。②**范围只到失败行**——五份真实响应实测，`request_id` 只在错误信封里，成功响应的体流式非流式都没有。③**§7 的 DDL 注释同步**。④**实现约束记了一条别人踩不到就想不到的**：`error_detail` 截 2KB，而 `request_id` 在错误信封里排在 `error` 对象之后，超长原文有把它截掉的可能——取键要在**截断前**的字节上做。⑤这一档不违反「透传路径不做 decode→encode」：失败行的 body 本来就为 `error_detail` 读过一次，这里只是多解一个键。
@@ -214,8 +217,9 @@ type Message struct {
 }
 
 type Block struct {
-    Kind       BlockKind    // text / thinking / tool_use / tool_result / image(M2 未实现)
+    Kind       BlockKind    // text / thinking / tool_use / tool_result / image
     Text       string
+    Image      *Image       // Kind==image：{MediaType, Data, URL, FileID}
     ToolCall   *ToolCall    // Kind==tool_use
     ToolResult *ToolResult  // Kind==tool_result
     Extras     map[string]any  // cache_control / signature / encrypted_content
@@ -325,7 +329,7 @@ const (
 
 `tool_choice` 的两种非法组合（引用未声明的工具、有 `tool_choice` 无 `tools`）不算丢弃而算**规整**：严格中转的第三方上游会直接拒请求，encode 侧当场消掉。见 §5 坑清单「严格中转的请求校验」。
 
-### 4.6 图片载荷的 canonical 形状（#33，2026-08-11 定，尚未实现）
+### 4.6 图片载荷的 canonical 形状（#33，2026-08-11 定，#1 落地）
 
 口径层 v0.37 定了图片要真做转换、v0.39 定了音频与文件类维持登记后丢弃。这里定**载体形状**，因为 hub-and-spoke 下这一个决定影响六个 codec 半边。
 
@@ -348,17 +352,18 @@ const (
 - **空 base64 载荷要挡**——`data:image/png;base64,` 这种只有头没有身子的（含只剩空白）当没有图，别往下传。
 - **`media_type` 为空时兜底 `image/png`**，并用例钉住。媒体类型往返本来不丢，这是唯一有损点，得是显式的。
 - **`tool_result` 里的图片要「抬」成后续独立的 user 消息**——Responses 的 `function_call_output.output` 只收字符串，图放不进去。这是本项目此前没记过的一条转换约束：`ToolResult` 带图时三个协议的容器形状不一样，进 canonical 覆盖表。
+- **`MediaType` 原样写出，不设格式白名单**（口径层 v0.77）：编码侧不做 jpeg/png/gif/webp 闸，不因 mime 丢块、不转码、不自造 400。`image/svg+xml` 转到 Anthropic 就是上游的 400，用例钉「原样发出去」即可，不必模拟上游拒收。
 
 **现状：四处卡点**（2026-08-11 通读三个 codec 得出，动手前照这张表逐个拆）：
 
 | # | 位置 | 现状 |
 |---|---|---|
-| ① | `protocol/request.go:44` | `BlockImage` 是裸占位，`Block` 无任何图片字段 |
-| ② | `anthropic/decode.go:146` | `image` 块 → `Kind="image"`，`source` 整块进 Extras（**字节在**） |
-| ② | `openaicc/decode_request.go:244` | `image_url` part → `Kind="image_url"`，全字段进 Extras（**字节在**） |
-| ② | `openairesponses/decode.go:240` | **所有 part 一律造成 `BlockText`**，不看 `type`——`input_image` 进来之后连「这原本是张图」都不知道了 |
-| ③ | `openaicc/encode.go` `joinBlocks` | ~~只认 `BlockText` / `BlockThinking`，其余落空且不登记~~ **已止血**（#41，v0.46）：补了 `default` 登记 `DropVendorContent`；**块仍然丢**，只是这次出声 |
-| ④ | `openairesponses/codec.go:45` | `EncodeRequest` 仍 `ErrNotImplemented` |
+| ① | `protocol/request.go` | ~~`BlockImage` 是裸占位~~ **已落地**（#1）：`Block.Image` 带 `{MediaType, Data, URL, FileID}` |
+| ② | `anthropic/decode.go` | ~~`source` 整块进 Extras~~ **已落地**（#1）：解成 `Block.Image` |
+| ② | `openaicc/decode_request.go` | ~~`image_url` 全字段进 Extras~~ **已落地**（#1）：解成 `Block.Image` |
+| ② | `openairesponses/decode.go` | ~~一律 `BlockText`~~ **已落地**（#1）：`input_image` → `BlockImage` |
+| ③ | `openaicc/encode.go` `joinBlocks` | ~~只认 `BlockText` / `BlockThinking`，其余落空且不登记~~ **已止血**（#41，v0.46）：补了 `default` 登记 `DropVendorContent`；图片转换由 #1 另路发出 |
+| ④ | `openairesponses` 出口 | ~~`EncodeRequest` 仍 `ErrNotImplemented`~~ **已落地**（#80 出口半边 + #1 图片 part） |
 
 ③ 曾是**当下就在发生的静默丢弃**：Anthropic 入口带图打到 CC 上游，图无声消失。#32 补的 `DropVendorContent` 只落在 `anthropic/encode_request.go:254` 那一侧，CC 出口这半边漏了——正是本项目判过「不行」的那种失败模式，在自己代码里。#41 单独补了这句登记，行为不变；真做转换时这一支会被图片那一路缩小到「真的没对等形态的那些」。
 
@@ -808,7 +813,7 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 转换路径上没有 compact 端点可转发（Anthropic / CC 都没有这个概念），唯一能让压缩真正可用的路子是本地合成：把压缩 turn 改写成一次普通的总结请求打给上游，再把上游吐出来的摘要装进一个自造信封当成 compaction item 发回去。与 opencodex `src/responses/compaction.ts` 同构（MIT，PO 2026-08-13 裁定照抄）。落点全在 `internal/protocol/openairesponses/compaction.go` 与同包的 decode/encode 两侧。
 
 - **识别**：`decodeInput` 见到 `compaction_trigger` 置 `Codec.compaction`，item 本身不进消息序列（它不是内容，是一句「这一轮请你总结」）。透传半边那个 `HasCompactionTrigger` 仍独立存在——透传根本不进 codec。
-- **改写（summarizer turn）**：`rewriteAsSummarizer` 剥掉 `Tools` / `ToolChoice` 与 Extras 里的 `text`（结构化输出与 verbosity），末尾追一条带压缩 prompt 的 user 消息。剥工具是必须的：留着上游多半去调工具，这一轮一个字的摘要都没有。`reasoning` **不剥**——压缩 turn 照样要推理。图片不用剥：canonical 目前没有承载图片数据的字段（§4.6，#33）。
+- **改写（summarizer turn）**：`rewriteAsSummarizer` 剥掉 `Tools` / `ToolChoice` 与 Extras 里的 `text`（结构化输出与 verbosity），末尾追一条带压缩 prompt 的 user 消息。剥工具是必须的：留着上游多半去调工具，这一轮一个字的摘要都没有。`reasoning` **不剥**——压缩 turn 照样要推理。图片不用剥：压缩轮照样要把图带给上游。
 - **合成**：编码侧在合成模式下抑制全部正常 output item，把 assistant 正文攒进缓冲，收尾时发**恰好一个** `response.output_item.done`（`{"type":"compaction","id":"cmp_…","encrypted_content":"ptg1:"+base64(摘要)}`）+ `response.completed`。**只发 done、不发配套的 `output_item.added`**（同 opencodex）：这个 item 不是逐步生成出来的，added 描述的那个「开始了」的时刻并不存在。**真实转录（#73，2026-08-13）与这条不一致但不推翻它**：官方上游 added 与 done **两个都发**，且两份 `encrypted_content` 不同（676 / 1164 字节，added 那份短得多），`response.completed.output` 反而是**空数组**。决定权在客户端——codex-rs `collect_compaction_output` 只在 `ResponseEvent::OutputItemDone` 上累加，`compaction_count != 1` 才报 Fatal，`output_item_count` 仅进错误文案（Apache-2.0，2026-08-13 核）；回带轮里那个 item 的 id 与密文也正是 done 那份。所以只发 done 是安全的，而「多发一个非 compaction 的 item 会不会致命」的答案是不会——**但正文仍不以普通消息形态下发**，理由从「怕致命」换成下面这句：摘要正文不以普通消息形态下发——发了 Codex 会把它连同 item 里那份记两遍。
 - **五种不产 item**（`compactionNoItem`）：截断（`length`）→ `response.incomplete` + `reason: max_output_tokens`；内容过滤（`content_filter`）→ `response.incomplete` + `reason: content_filter`；**改去调工具**（`tool_calls`，v0.56 补）、**上游断流兜底收尾**（下条）与正常收尾却零字摘要 → `response.failed` + 一句给人看的原因。前四支合起来对 canonical 的停因全集（`stop` / `length` / `content_filter` / `tool_calls`）是**完备**的：只有 `stop` 走得到产 item 那一步，漏掉任何一个非 `stop` 停因都等于把「上游没写完」当成「上游写完了」。**判据的要害不是「不产 item」而是「不许发成 completed」**——`completed` + 零 item 正是 #71 要杀的静默 Fatal 形态。返回值是 `*compactionFailure`（`wireReason` + `message`）而不是一个 string：`wireReason` 非空才是线格 `incomplete_details.reason` 的合法取值，混成一个 string 的话 `empty_summary` 这类自造哨兵会漏进线格字段冒充 reason 码。非流式那条路同理：`EncodeFullBody` 在压缩模式下产不出 item 时直接报错，不回一份空 output 的 200。
 - **断流那一种在 wire 上看不出破绽**，所以 canonical 加了一位（v0.55）：两个解码器为了给下游一个合法取值，都会把「上游没声明 stop reason 就断了」兜成 `StopReason: "stop"`（`anthropic` 的 `emitDone`、`openaicc` 的 `finish`），与真正的收尾同形；光看 `e.stop` 的话，一段写到一半的摘要会带着 `completed` 装回历史，正是本节要杀的形态。`protocol.Event` 因此在 `EvDone` 上加 `Truncated bool`，兜底收尾时置位，普通路径不读它。编码侧另外把 `e.stop == ""` 也算一种不产——今天两个解码器都会兜，这条是给直喂事件的调用方与将来不兜的解码器留的余量。**非流式两条路同样置位**（v0.56 补）：`openaicc` 的 `DecodeFullBody` 复用 `streamState.finish`，白捡这一位；`anthropic` 的 `DecodeFullBody` 不经 `respState`（没有 channel、没有跨帧状态），`EvDone` 是手搓的，v0.55 只改了流式那半边。解得开的 JSON body 里 `stop_reason` 缺失不是「流断了」而是「上游没声明这轮是怎么收的」，对压缩合成是同一个失格理由——不置位的话，一份没声明收尾的响应会被当成完整摘要装回 Codex 的历史。收尾这一处是两条路径唯一各写一遍的地方（内容块共用一处解析），加字段时两边都要改。
@@ -989,7 +994,7 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 **已知缺口，不装作没有**：
 
 - 六份 `in-cc-*` 样本**全是 `stream: true`**（opencode 恒发流式），非流式 CC 入口没有真实样本背书，只有手写用例。同 §9.1 / §9.2 那两条的性质。
-- 样本里 `content` 全是字符串，**没有一份带多模态 part**。数组形态与图片 part 的处理（认得的进 Text、认不得的整份进 Extras）只有手写用例，且 M2 本就不实现图片——钉的是「带图片的请求不被拒收」，不是「图片能转过去」。**图片到 Anthropic 出口是丢弃的，但已登记 `vendor_content`**（v0.34），日志会说出来；真做转换是单独一批（PO 已裁定要做，见口径层 v0.37 与 #33）。
+- 真实 harness 入站样本的 `content` 仍全是字符串；图片转换靠 **`testdata/fixtures/` 下四份构造样本**（`in-cc-image` / `in-anthropic-image` / `in-responses-image` / `in-anthropic-toolresult-image`，tiny.png 真字节）和手写用例钉。**#1 已落地**：base64 / url 跨协议转换，`file_id` 单独登记 `image_file_id` 后丢；六格全链路见 `server/convert_image_test.go`。样本**不在 `golden/`**（PO 2026-08-17 裁），理由与覆盖表怎么同时扫两个根见 §9.5。
 - 样本里 `tool_choice` 只出现过 `"auto"` 一种取值，其余四种形态靠手写用例。
 - ~~上游的 thinking 在这条路上必然丢弃~~ **口径层 v0.62 推翻**：CC→A 出向要把 Anthropic 的 thinking 合成为 `reasoning_content`（反向同理），流式非流式都做，signature 省略。原文的立论「CC 没有承接它的位置」是错的——`reasoning_content` 是 DeepSeek/GLM/Qwen 一路的事实标准载体，四家参考实现全用它。实现另起 effort，在那之前这条缺口仍是现状。
 - ~~请求侧的 effort 在这条路上丢弃~~ **口径层 v0.72 放开**：CC 的 `reasoning_effort` 直接写成 Anthropic 出口的 `output_config.effort`，字符串原样、不认模型、不带第二个键。原文说的「没有无条件落点」已被实测消掉（#37 评论，2026-08-14）：这个载体对 claude-sonnet-5 合法且生效，且**单发就能开思考**——所以不需要补 `thinking:{type:adaptive}`（补了才是替客户端开思考，撞口径层 v0.65 ④）。老式 `thinking:{type:enabled,budget_tokens}` 一次都不写。实现见 [#99](https://github.com/SimonGino/portage-legacy/issues/99)，落地前这条仍是登记可见的丢弃。
@@ -1021,6 +1026,26 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 - `response.incomplete` / `response.failed` 与裸 `error` 帧在九份转录里一次都没出现（全是 `status: "completed"`、`incomplete_details: null`），照协议文档实现，用例手搭。同 §9.2 里 `error` 帧那条的性质。
 - 线级**两个并行工具项**逼不出真上游：`responses-stream-parallel-turn1` 的并行发生在入参那段 JS 的 `Promise.all` 里，output 层仍只有一个 item。该形态由 `in-responses-parallel-turn2` 那个 stub 样本覆盖（§9 场景表已记）。
 - 全链只对着**假** Responses 上游跑过。真机验收（Claude Code → A→R、pi → CC→R，打真实 Responses 上游）挂 [#98](https://github.com/SimonGino/portage-legacy/issues/98) 作 PO 手动清单，不作合并闸——**六条路的真机验收已全部收拢到那一票**（PO 2026-08-14 裁定，原先散在 #9 / #11 / #12 / #25 / #80 五处，其中三处的票已经关了）。harness 分工按口径层 v0.20 的必过档，**不是 Codex**——它走 Responses 入口，配 Responses 渠道即同协议透传，一格转换都不碰。PO 2026-08-14 裁定 #80 直接关闭、验收另票。
+
+### 9.5 图片跨协议转换的用例分工与已知缺口（#1，2026-08-17）
+
+图片这件事横跨两个半边——解码在入口协议、编码在渠道协议，**分开看两边都「对」，错的是中间那一环**。所以这一格的钉法与 v0.34 ① 给 developer 归一立的规矩同线：单测钉形状，整链钉「图真的到了上游」。
+
+| 层 | 位置 | 输入 | 钉什么 |
+|---|---|---|---|
+| 载体 | `protocol/image.go` | —— | data URI 拆/拼、空 base64 判定、`media_type` 空值兜底 `image/png`、`Carrier()` 判 data/url/file |
+| 解码 ×3 | `anthropic/decode_test.go`、`openaicc/decode_request_test.go`、`openairesponses/decode_test.go` | 手搭 | 三种 `source` 形态各落对字段；`type=file` 是判别式（带残留 data 也只认 FileID）；空载荷整块跳过；`input_audio` 等认不得的 part 仍原样进 Extras |
+| 编码 ×3 | `anthropic/encode_request_cc_test.go`、`openaicc/encode_test.go`、`openairesponses/encode_request_test.go` | 手搭 canonical | base64 ↔ data URI 互转、`url` 形态原样转发、`file_id` 登记 `image_file_id` 后丢、纯文本消息**仍发字符串 content**、`tool_result` 带图时 CC/R 抬成后续 user 消息而 A 留在 `content` 数组里 |
+| 整链 ×6 | `server/convert_image_test.go` | `fixtures/in-*-image` 发包（只换 model）+ 假上游 | 六个格子各验一次：base64 载荷与 `tiny.png` **逐字节一致**（比对的是原图，不是样本里那串——后者只证明「串搬过去了」）、同条消息的正文不被图挤掉、抬出来的 user 消息**排在**工具结果之后 |
+
+**样本放 `fixtures/` 不放 `golden/`**（PO 2026-08-17 裁）。四份都是构造样本——真实 harness 至今没发过带图的轮次，实采样本的 `content` 全是字符串。此前它们放在 `golden/` 且 meta 写 `verified: true`，既违反 `fixtures/README.md` 那句「构造样本不得改名搬进 golden/」，也把 `verified` 从「人核过的转录」稀释成「人核过」。代价是 `TestCanonicalModelCoversInboundSamples` 扫两个根、各走各的闸；**这是刻意的**：那张表要证的是「canonical 装不装得下」，而能证明形状的样本不一定是转录，把构造样本挡在表外，图片那几行会当场被判成「表随样本烂掉」的陈旧项。
+
+**已知缺口，不装作没有**：
+
+- **没有一份真实 harness 的带图转录。** 形状照三家官方文档写，证得了「我们对这个形状是对的」，证不了「客户端真的这么发」。等实采到带图的轮次，在 `golden/` 下新开目录走 `verified` 那道闸，本目录这份留着当形状回归。
+- **`source.type=url` 的整链只在单测里走过。** 构造样本用的都是 base64——远程 URL 形态网关只做原样转发（口径层 v0.39：不代客户端下载），整链上验不出比单测更多的东西。
+- **格式白名单不设，域外 mime 的 400 没有实测。** 口径层 v0.77 裁定 `MediaType` 原样转发、上游不认就让它 400；用例只钉「原样发出去」，不模拟上游拒收。
+- **流式响应侧不涉及。** 三个协议的上游都不在响应里回图，图只走请求侧。
 
 ## 10. harness 验收清单
 

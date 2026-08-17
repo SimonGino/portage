@@ -88,6 +88,32 @@ func TestEncodeSystemBecomesDeveloperItem(t *testing.T) {
 	}
 }
 
+// system 里的图必须发成 input_image，不能经 joinOutBlocks 静默蒸发。
+func TestEncodeSystemImagesAreEmitted(t *testing.T) {
+	out, dropped := encodeOut(t, &protocol.Request{
+		Model: "m",
+		System: []protocol.Block{
+			textBlock("看图"),
+			{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://example.com/a.png"}},
+		},
+	}, false)
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("system 图不该 vendor_content: %v", dropped)
+	}
+	got := items(t, out)
+	if len(got) != 1 || got[0]["role"] != "developer" {
+		t.Fatalf("input = %v", got)
+	}
+	parts, _ := got[0]["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("developer content = %v", parts)
+	}
+	p1, _ := parts[1].(map[string]any)
+	if p1["type"] != "input_image" || p1["image_url"] != "https://example.com/a.png" {
+		t.Errorf("system 图没发出去: %v", p1)
+	}
+}
+
 // TestEncodeMidConversationSystemStaysInPlace：中段的 system 消息原位编成 developer，
 // 不上提。Responses 的 input 是有序列表，本来就装得下它站在哪。
 func TestEncodeMidConversationSystemStaysInPlace(t *testing.T) {
@@ -383,7 +409,7 @@ func TestEncodeVendorDropsRegistered(t *testing.T) {
 		Model:  "m",
 		Extras: map[string]any{"metadata": map[string]any{"user_id": "u"}, "thinking": map[string]any{}},
 		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{
-			{Kind: protocol.BlockImage, Extras: map[string]any{"cache_control": map[string]any{}}},
+			{Kind: "input_audio", Extras: map[string]any{"cache_control": map[string]any{}}},
 		}}},
 	}
 	body, dropped, err := NewCodec().EncodeRequestReport(req, false)
@@ -403,6 +429,134 @@ func TestEncodeVendorDropsRegistered(t *testing.T) {
 }
 
 // TestEncodeNilRequest：nil 要报错而不是 panic。
+func TestEncodeRequestInputImageParts(t *testing.T) {
+	out, dropped := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{
+			textBlock("看图"),
+			{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+		}}},
+	}, false)
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("图片已转换，不该 vendor_content: %v", dropped)
+	}
+	got := items(t, out)
+	if len(got) != 1 {
+		t.Fatalf("input 项数 = %d", len(got))
+	}
+	parts, _ := got[0]["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("content 块数 = %d，期望 input_text + input_image", len(parts))
+	}
+	p0, _ := parts[0].(map[string]any)
+	if p0["type"] != "input_text" || p0["text"] != "看图" {
+		t.Errorf("文本 part = %v", p0)
+	}
+	p1, _ := parts[1].(map[string]any)
+	if p1["type"] != "input_image" || p1["image_url"] != "data:image/png;base64,"+tinyPNG {
+		t.Errorf("图片 part = %v", p1)
+	}
+}
+
+func TestEncodeRequestDropsImageFileID(t *testing.T) {
+	out, dropped := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{
+			textBlock("看图"),
+			{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file-xxx"}},
+		}}},
+	}, false)
+	if !hasDrop(dropped, DropImageFileID) {
+		t.Errorf("file_id 应登记 %s: %v", DropImageFileID, dropped)
+	}
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("file_id 不该混进 vendor_content: %v", dropped)
+	}
+	got := items(t, out)
+	if len(got) != 1 {
+		t.Fatalf("input 项数 = %d", len(got))
+	}
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "file-xxx") || strings.Contains(string(raw), "input_image") {
+		t.Errorf("file_id 图不该出现: %s", raw)
+	}
+}
+
+func TestEncodeRequestLiftsToolResultImages(t *testing.T) {
+	out, dropped := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						textBlock("结果文本"),
+						{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("抬图不该 vendor_content: %v", dropped)
+	}
+	got := items(t, out)
+	// function_call + function_call_output + 抬出的 user
+	if len(got) != 3 {
+		t.Fatalf("input 项数 = %d，期望 3: %v", len(got), got)
+	}
+	if got[1]["type"] != "function_call_output" || got[1]["output"] != "结果文本" {
+		t.Errorf("output 应是文本，实得 %v", got[1])
+	}
+	if got[2]["type"] != "message" || got[2]["role"] != "user" {
+		t.Errorf("抬出的应是 user 消息: %v", got[2])
+	}
+	parts, _ := got[2]["content"].([]any)
+	if len(parts) != 1 {
+		t.Fatalf("抬出的 content = %v", parts)
+	}
+	p, _ := parts[0].(map[string]any)
+	if p["type"] != "input_image" || p["image_url"] != "data:image/png;base64,"+tinyPNG {
+		t.Errorf("抬出的图不对: %v", p)
+	}
+}
+
+// 多张图抬进同一条 user，不按张拆消息。
+func TestEncodeRequestLiftsToolResultImagesIntoOneUserMessage(t *testing.T) {
+	out, _ := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/2.png"}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	got := items(t, out)
+	if len(got) != 3 {
+		t.Fatalf("input 项数 = %d，期望 function_call / output / 一条 user: %v", len(got), got)
+	}
+	parts, _ := got[2]["content"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("应是一条 user 里两张图，实得 %v", parts)
+	}
+}
+
 func TestEncodeNilRequest(t *testing.T) {
 	if _, err := NewCodec().EncodeRequest(nil, false); err == nil {
 		t.Fatal("nil 请求没报错")

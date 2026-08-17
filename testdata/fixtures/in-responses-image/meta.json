@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": false,
+  "endpoint": "/v1/responses",
+  "synthetic": true,
+  "source": "#1 手工构造：照 Responses 文档的 input_image part 形状写（image_url 在这边是字符串不是对象），图是 fixtures/tiny.png 的真字节（1x1 PNG）。不是 harness 转录——Codex 实采样本里没有带图的轮次。"
+}

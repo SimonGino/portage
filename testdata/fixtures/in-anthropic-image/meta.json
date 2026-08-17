@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "synthetic": true,
+  "source": "#1 手工构造：照 Anthropic vision 文档的 image.source.base64 形状写，图是 fixtures/tiny.png 的真字节（1x1 PNG）。不是 harness 转录——Claude Code 实采样本里没有带图的轮次。"
+}

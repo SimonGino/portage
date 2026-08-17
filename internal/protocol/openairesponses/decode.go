@@ -3,6 +3,7 @@ package openairesponses
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -273,8 +274,7 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
 //   - text（Responses 的输出格式位，结构化输出与 verbosity 都在里面）：它会把回答按
 //     schema 约束住，而我们要的是自由文本。
 //
-// 图片不用剥：canonical 目前没有承载图片数据的字段（protocol.BlockImage 是占位，#33），
-// 到不了这里。
+// 图片不用剥：压缩轮照样要把图带给上游。
 //
 // 摘要指令追加成**最后一条 user 消息**，与 sub2api 的 Grok 支同一个摆法——上游看到的
 // 就是「一段历史 + 一句请你总结」，不需要它认得任何压缩概念。
@@ -317,6 +317,7 @@ func normalizeRole(r protocol.Role) protocol.Role {
 //
 // input_text / output_text / text 三个 type 都落成 BlockText：它们的区别是「谁写的」，
 // 而那个信息已经在消息的 role 上了，块级再留一份没有消费方。
+// input_image 落成 BlockImage；认不得的 type（input_audio 等）原样留 Kind + Extras。
 func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -331,17 +332,63 @@ func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 	}
 	blocks := make([]protocol.Block, 0, len(parts))
 	for _, p := range parts {
-		var text string
-		if err := unmarshalIf(p, "text", &text); err != nil {
+		var typ string
+		if err := unmarshalIf(p, "type", &typ); err != nil {
 			return nil, err
 		}
-		blocks = append(blocks, protocol.Block{
-			Kind:   protocol.BlockText,
-			Text:   text,
-			Extras: collectExtras(p, map[string]bool{"type": true, "text": true}),
-		})
+		switch typ {
+		case "", "input_text", "output_text", "text":
+			var text string
+			if err := unmarshalIf(p, "text", &text); err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, protocol.Block{
+				Kind:   protocol.BlockText,
+				Text:   text,
+				Extras: collectExtras(p, map[string]bool{"type": true, "text": true}),
+			})
+		case "input_image":
+			img := parseResponsesImage(p)
+			if img == nil {
+				continue
+			}
+			blocks = append(blocks, protocol.Block{
+				Kind:   protocol.BlockImage,
+				Image:  img,
+				Extras: collectExtras(p, map[string]bool{"type": true, "image_url": true, "file_id": true}),
+			})
+		default:
+			blocks = append(blocks, protocol.Block{
+				Kind:   protocol.BlockKind(typ),
+				Extras: collectExtras(p, map[string]bool{"type": true}),
+			})
+		}
 	}
 	return blocks, nil
+}
+
+// parseResponsesImage 解 input_image。image_url 在 Responses 上是字符串，不是对象。
+func parseResponsesImage(p map[string]json.RawMessage) *protocol.Image {
+	var url, fileID string
+	if err := unmarshalIf(p, "image_url", &url); err != nil {
+		return nil
+	}
+	if err := unmarshalIf(p, "file_id", &fileID); err != nil {
+		return nil
+	}
+	if mt, data, ok := protocol.ParseDataURI(url); ok {
+		return &protocol.Image{MediaType: mt, Data: data}
+	}
+	if strings.HasPrefix(url, "data:") {
+		return nil
+	}
+	if strings.TrimSpace(url) != "" {
+		return &protocol.Image{URL: url}
+	}
+	if strings.TrimSpace(fileID) != "" {
+		return &protocol.Image{FileID: fileID}
+	}
+	return nil
 }
 
 // decodeToolCall 解 custom_tool_call / function_call 两种调用 item。

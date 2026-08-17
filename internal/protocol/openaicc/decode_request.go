@@ -3,6 +3,7 @@ package openaicc
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -232,6 +233,9 @@ func decodeBlocks(raw json.RawMessage) ([]protocol.Block, error) {
 		if err != nil {
 			return nil, fmt.Errorf("content[%d]: %w", i, err)
 		}
+		if omittedImage(b) {
+			continue
+		}
 		blocks = append(blocks, b)
 	}
 	return blocks, nil
@@ -239,13 +243,26 @@ func decodeBlocks(raw json.RawMessage) ([]protocol.Block, error) {
 
 // decodePart 解一个 content part。
 //
-// CC 的 part 判别式是 type：text / image_url / input_audio…… 只有 text 有 canonical
-// 归宿，其余原样带着 type 与全部字段进 Extras——报错等于让一个我们不认识的多模态
-// part 把整条请求打死，而 M2 的非目标是不实现图片，不是拒收带图片的请求。
+// text → BlockText；image_url → BlockImage（data URI 拆成 MediaType+Data，其余当
+// URL）。空 data URI 返回一个没有 Image 的 BlockImage，由 decodeBlocks 丢掉。
+// input_audio 等仍原样带着 type 进 Extras。
 func decodePart(item map[string]json.RawMessage) (protocol.Block, error) {
 	var kindStr string
 	if err := unmarshalIf(item, "type", &kindStr); err != nil {
 		return protocol.Block{}, err
+	}
+	if kindStr == "image_url" {
+		img, omitted := parseCCImage(item)
+		if omitted {
+			return protocol.Block{Kind: protocol.BlockImage}, nil
+		}
+		if img != nil {
+			return protocol.Block{
+				Kind:   protocol.BlockImage,
+				Image:  img,
+				Extras: collectExtras(item, map[string]bool{"type": true, "image_url": true}),
+			}, nil
+		}
 	}
 	block := protocol.Block{Kind: protocol.BlockKind(kindStr)}
 	known := map[string]bool{"type": true}
@@ -257,6 +274,34 @@ func decodePart(item map[string]json.RawMessage) (protocol.Block, error) {
 	}
 	block.Extras = collectExtras(item, known)
 	return block, nil
+}
+
+// parseCCImage 解 image_url 对象。omitted=true 表示空载荷，整块跳过。
+func parseCCImage(item map[string]json.RawMessage) (img *protocol.Image, omitted bool) {
+	raw, ok := item["image_url"]
+	if !ok {
+		return nil, false
+	}
+	var obj struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, false
+	}
+	if mt, data, ok := protocol.ParseDataURI(obj.URL); ok {
+		return &protocol.Image{MediaType: mt, Data: data}, false
+	}
+	if strings.HasPrefix(obj.URL, "data:") {
+		return nil, true
+	}
+	if strings.TrimSpace(obj.URL) == "" {
+		return nil, true
+	}
+	return &protocol.Image{URL: obj.URL}, false
+}
+
+func omittedImage(b protocol.Block) bool {
+	return b.Kind == protocol.BlockImage && b.Image == nil
 }
 
 // decodeToolCalls 把 assistant 的 tool_calls 数组解成 tool_use 块序列。

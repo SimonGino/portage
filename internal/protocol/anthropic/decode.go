@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -130,6 +131,9 @@ func decodeBlocks(raw json.RawMessage) ([]protocol.Block, error) {
 		if err != nil {
 			return nil, fmt.Errorf("content[%d]: %w", i, err)
 		}
+		if b.Kind == protocol.BlockImage && b.Image == nil {
+			continue
+		}
 		blocks = append(blocks, b)
 	}
 	return blocks, nil
@@ -141,6 +145,7 @@ var blockKnown = map[protocol.BlockKind]map[string]bool{
 	protocol.BlockThinking:   {"type": true, "thinking": true},
 	protocol.BlockToolUse:    {"type": true, "id": true, "name": true, "input": true},
 	protocol.BlockToolResult: {"type": true, "tool_use_id": true, "content": true, "is_error": true},
+	protocol.BlockImage:      {"type": true, "source": true},
 }
 
 func decodeBlock(item map[string]json.RawMessage) (protocol.Block, error) {
@@ -196,6 +201,8 @@ func decodeBlock(item map[string]json.RawMessage) (protocol.Block, error) {
 			res.Content = inner
 		}
 		block.ToolResult = res
+	case protocol.BlockImage:
+		block.Image = parseAnthropicImage(item)
 	}
 
 	known := blockKnown[kind]
@@ -204,6 +211,48 @@ func decodeBlock(item map[string]json.RawMessage) (protocol.Block, error) {
 	}
 	block.Extras = collectExtras(item, known)
 	return block, nil
+}
+
+// parseAnthropicImage 解 image.source。空 base64 返回 nil，由 decodeBlocks 丢掉。
+func parseAnthropicImage(item map[string]json.RawMessage) *protocol.Image {
+	raw, ok := item["source"]
+	if !ok {
+		return nil
+	}
+	var src struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+		URL       string `json:"url"`
+		FileID    string `json:"file_id"`
+	}
+	if json.Unmarshal(raw, &src) != nil {
+		return nil
+	}
+	// type 是判别式：type=file 即使带了残留 data 也只认 FileID，不能让 Carrier
+	// 的 Data>URL>FileID 优先级把句柄吃成一张假 base64 图。
+	switch src.Type {
+	case "url":
+		if strings.TrimSpace(src.URL) == "" {
+			return nil
+		}
+		return &protocol.Image{URL: src.URL}
+	case "file":
+		if strings.TrimSpace(src.FileID) == "" {
+			return nil
+		}
+		return &protocol.Image{FileID: src.FileID}
+	}
+	img := &protocol.Image{MediaType: src.MediaType, Data: src.Data, URL: src.URL, FileID: src.FileID}
+	switch img.Carrier() {
+	case "data":
+		return &protocol.Image{MediaType: src.MediaType, Data: src.Data}
+	case "url":
+		return &protocol.Image{URL: src.URL}
+	case "file":
+		return &protocol.Image{FileID: src.FileID}
+	}
+	return nil
 }
 
 // decodeTools 解 tools 数组。

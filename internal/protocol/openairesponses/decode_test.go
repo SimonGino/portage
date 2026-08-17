@@ -290,3 +290,73 @@ func TestDecodeRequestToleratesUnsampledShapes(t *testing.T) {
 		t.Errorf("function_call 入参 = %q (isJSON=%v), 期望 JSON 原文", call.Args, call.ArgsIsJSON)
 	}
 }
+
+const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"
+
+func TestDecodeRequestInputImage(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_text","text":"看图"},
+		{"type":"input_image","image_url":"data:image/png;base64,` + tinyPNG + `"},
+		{"type":"input_image","image_url":"https://example.com/a.png"},
+		{"type":"input_image","file_id":"file-xxx"}
+	]}]}`
+	req, err := NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 4 {
+		t.Fatalf("块数 = %d，期望 4", len(blocks))
+	}
+	if blocks[0].Kind != protocol.BlockText || blocks[0].Text != "看图" {
+		t.Errorf("文本块不对: %+v", blocks[0])
+	}
+	if blocks[1].Kind != protocol.BlockImage || blocks[1].Image == nil || blocks[1].Image.Data != tinyPNG {
+		t.Errorf("data URI 图没解对: %+v", blocks[1])
+	}
+	if blocks[1].Image.MediaType != "image/png" {
+		t.Errorf("MediaType = %q", blocks[1].Image.MediaType)
+	}
+	if blocks[2].Image == nil || blocks[2].Image.URL != "https://example.com/a.png" {
+		t.Errorf("URL 图没解对: %+v", blocks[2].Image)
+	}
+	if blocks[3].Image == nil || blocks[3].Image.FileID != "file-xxx" {
+		t.Errorf("file_id 图没解对: %+v", blocks[3].Image)
+	}
+}
+
+func TestDecodeRequestUnknownContentStaysUnknown(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}
+	]}]}`
+	req, err := NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 1 || blocks[0].Kind != "input_audio" {
+		t.Fatalf("input_audio 不应被折成 BlockText: %+v", blocks)
+	}
+	if blocks[0].Text != "" {
+		t.Errorf("未知 part 不该填 Text: %q", blocks[0].Text)
+	}
+	if blocks[0].Extras["input_audio"] == nil {
+		t.Errorf("未知 part 的字段应进 Extras: %+v", blocks[0].Extras)
+	}
+}
+
+func TestDecodeRequestSkipsEmptyInputImage(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_text","text":"看图"},
+		{"type":"input_image","image_url":"data:image/png;base64,"},
+		{"type":"input_image","image_url":"data:image/png;base64,   "}
+	]}]}`
+	req, err := NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 1 || blocks[0].Kind != protocol.BlockText {
+		t.Errorf("空 data URI 应跳过，实得 %+v", blocks)
+	}
+}

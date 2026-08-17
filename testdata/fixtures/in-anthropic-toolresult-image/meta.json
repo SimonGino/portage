@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "synthetic": true,
+  "source": "#1 手工构造：tool_result.content 里带图，钉「抬成后续独立 user 消息」这条转换约束（Responses 的 function_call_output.output 与 CC 的 role=tool content 都只收字符串）。图是 fixtures/tiny.png 的真字节（1x1 PNG）。不是 harness 转录——实采的工具结果全是纯文本。"
+}

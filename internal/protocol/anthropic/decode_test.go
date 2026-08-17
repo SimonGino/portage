@@ -320,3 +320,61 @@ func TestDecodeRequestToleratesUnknownShapes(t *testing.T) {
 		t.Errorf("字符串形态的 tool_result content 没退化成单块: %+v", res)
 	}
 }
+
+const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"
+
+func TestDecodeRequestImageSource(t *testing.T) {
+	codec := anthropic.NewCodec()
+	body := []byte(`{
+		"model":"m","max_tokens":16,
+		"messages":[{"role":"user","content":[
+			{"type":"text","text":"看图"},
+			{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + tinyPNG + `"}},
+			{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}},
+			{"type":"image","source":{"type":"file","file_id":"file_xxx"}}
+		]}]
+	}`)
+	req, err := codec.DecodeRequest(body, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := req.Messages[0].Content
+	if len(blocks) != 4 {
+		t.Fatalf("块数 = %d，期望 4", len(blocks))
+	}
+	if blocks[1].Kind != protocol.BlockImage || blocks[1].Image == nil {
+		t.Fatalf("base64 图没落成 BlockImage: %+v", blocks[1])
+	}
+	if blocks[1].Image.MediaType != "image/png" || blocks[1].Image.Data != tinyPNG {
+		t.Errorf("base64 图字段不对: %+v", blocks[1].Image)
+	}
+	if blocks[1].Extras["source"] != nil {
+		t.Errorf("source 不应再进 Extras: %+v", blocks[1].Extras)
+	}
+	if blocks[2].Image == nil || blocks[2].Image.URL != "https://example.com/a.png" {
+		t.Errorf("url 图没解对: %+v", blocks[2].Image)
+	}
+	if blocks[3].Image == nil || blocks[3].Image.FileID != "file_xxx" {
+		t.Errorf("file 图没解对: %+v", blocks[3].Image)
+	}
+}
+
+// type 是判别式：type=file 带残留 data 仍只认 FileID，不能被 Carrier 的
+// Data 优先吃成一张假 base64 图。
+func TestDecodeRequestImageFileTypeWinsOverData(t *testing.T) {
+	codec := anthropic.NewCodec()
+	body := []byte(`{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[
+		{"type":"image","source":{"type":"file","file_id":"file_xxx","data":"` + tinyPNG + `"}}
+	]}]}`)
+	req, err := codec.DecodeRequest(body, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := req.Messages[0].Content[0].Image
+	if img == nil || img.FileID != "file_xxx" {
+		t.Fatalf("应落成 FileID: %+v", img)
+	}
+	if img.Data != "" {
+		t.Errorf("type=file 不该把残留 data 收成 Data: %+v", img)
+	}
+}

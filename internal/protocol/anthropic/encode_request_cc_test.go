@@ -1,6 +1,8 @@
 package anthropic
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -103,11 +105,11 @@ func TestEncodeRequestOmitsAbsentTemperature(t *testing.T) {
 	}
 }
 
+const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"
+
 // 认不得的内容块要**登记**再丢，不能静默蒸发。
 //
-// CC 的解码侧特意把未知 part 原样留住（免得一个带图的请求当场 400），代价是这些块
-// 会一路走到这里。不登记的话客户端发了张图、上游收到一个被改成纯文本的请求，还照样
-// 200 回来，日志里一个字都没有——比直接拒还糟。
+// 图片已走 BlockImage 转换；这里用 input_audio 钉住 vendor_content 仍登记。
 func TestEncodeRequestReportsUnknownContentBlocks(t *testing.T) {
 	_, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
 		&protocol.Request{
@@ -115,9 +117,9 @@ func TestEncodeRequestReportsUnknownContentBlocks(t *testing.T) {
 			Messages: []protocol.Message{{
 				Role: protocol.RoleUser,
 				Content: []protocol.Block{
-					{Kind: protocol.BlockText, Text: "这张图里是什么"},
-					{Kind: "image_url", Extras: map[string]any{
-						"image_url": map[string]any{"url": "https://example.com/a.png"},
+					{Kind: protocol.BlockText, Text: "听听这段"},
+					{Kind: "input_audio", Extras: map[string]any{
+						"input_audio": map[string]any{"data": "AAAA", "format": "wav"},
 					}},
 				},
 			}},
@@ -128,6 +130,204 @@ func TestEncodeRequestReportsUnknownContentBlocks(t *testing.T) {
 	if !hasDrop(dropped, DropVendorContent) {
 		t.Errorf("没登记未知内容块的丢弃: %v", dropped)
 	}
+}
+
+func TestEncodeRequestImageBlocks(t *testing.T) {
+	png := tinyPNG
+	cases := map[string]struct {
+		img      *protocol.Image
+		wantType string
+		check    func(t *testing.T, src map[string]any, dropped []string, body string)
+	}{
+		"base64": {
+			img:      &protocol.Image{MediaType: "image/png", Data: png},
+			wantType: "base64",
+			check: func(t *testing.T, src map[string]any, dropped []string, body string) {
+				t.Helper()
+				if src["media_type"] != "image/png" || src["data"] != png {
+					t.Errorf("source = %v", src)
+				}
+				if hasDrop(dropped, DropVendorContent) {
+					t.Errorf("图片不该登记 vendor_content: %v", dropped)
+				}
+			},
+		},
+		"url": {
+			img:      &protocol.Image{URL: "https://example.com/a.png"},
+			wantType: "url",
+			check: func(t *testing.T, src map[string]any, dropped []string, _ string) {
+				t.Helper()
+				if src["url"] != "https://example.com/a.png" {
+					t.Errorf("source = %v", src)
+				}
+			},
+		},
+		"空 MediaType 兜底 png": {
+			img:      &protocol.Image{Data: png},
+			wantType: "base64",
+			check: func(t *testing.T, src map[string]any, _ []string, _ string) {
+				t.Helper()
+				if src["media_type"] != "image/png" {
+					t.Errorf("空 media_type 应兜底 image/png，实得 %v", src["media_type"])
+				}
+			},
+		},
+		"svg 原样": {
+			img:      &protocol.Image{MediaType: "image/svg+xml", Data: png},
+			wantType: "base64",
+			check: func(t *testing.T, src map[string]any, _ []string, _ string) {
+				t.Helper()
+				if src["media_type"] != "image/svg+xml" {
+					t.Errorf("svg 应原样发出，实得 %v", src["media_type"])
+				}
+			},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
+				&protocol.Request{
+					Model: "m", MaxTokens: 16,
+					Messages: []protocol.Message{{
+						Role:    protocol.RoleUser,
+						Content: []protocol.Block{{Kind: protocol.BlockImage, Image: c.img}},
+					}},
+				}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]any
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
+			src := imageSource(t, out)
+			if src["type"] != c.wantType {
+				t.Errorf("source.type = %v，期望 %s", src["type"], c.wantType)
+			}
+			c.check(t, src, dropped, string(body))
+		})
+	}
+}
+
+func TestEncodeRequestSkipsEmptyImageData(t *testing.T) {
+	body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
+		&protocol.Request{
+			Model: "m", MaxTokens: 16,
+			Messages: []protocol.Message{{
+				Role: protocol.RoleUser,
+				Content: []protocol.Block{
+					{Kind: protocol.BlockText, Text: "看图"},
+					{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: "   "}},
+				},
+			}},
+		}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"type":"image"`) {
+		t.Errorf("空 base64 不该发出 image 块: %s", body)
+	}
+	if hasDrop(dropped, DropVendorContent) || hasDrop(dropped, DropImageFileID) {
+		t.Errorf("空图不是丢弃项: %v", dropped)
+	}
+}
+
+func TestEncodeRequestDropsImageFileID(t *testing.T) {
+	body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
+		&protocol.Request{
+			Model: "m", MaxTokens: 16,
+			Messages: []protocol.Message{{
+				Role: protocol.RoleUser,
+				Content: []protocol.Block{
+					{Kind: protocol.BlockText, Text: "看图"},
+					{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file_xxx"}},
+				},
+			}},
+		}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDrop(dropped, DropImageFileID) {
+		t.Errorf("file_id 应登记 %s: %v", DropImageFileID, dropped)
+	}
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("file_id 不该混进 vendor_content: %v", dropped)
+	}
+	if strings.Contains(string(body), "file_xxx") || strings.Contains(string(body), `"type":"image"`) {
+		t.Errorf("file_id 图不该出现在请求体: %s", body)
+	}
+}
+
+func TestEncodeRequestKeepsToolResultImagesInPlace(t *testing.T) {
+	out := encodeReq(t, &protocol.Request{
+		Model: "m", MaxTokens: 16,
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockText, Text: "结果文本"},
+						{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+					},
+				}},
+			}},
+		},
+	})
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages 数 = %d，图应留在 tool_result 里，不抬成第三条", len(msgs))
+	}
+	last, _ := msgs[1].(map[string]any)
+	blocks, _ := last["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("末条块数 = %d，期望一个 tool_result", len(blocks))
+	}
+	tr, _ := blocks[0].(map[string]any)
+	inner, ok := tr["content"].([]any)
+	if !ok {
+		t.Fatalf("带图的 tool_result.content 应是数组，实得 %T %v", tr["content"], tr["content"])
+	}
+	if len(inner) != 2 {
+		t.Fatalf("tool_result 块数 = %d，期望 text + image", len(inner))
+	}
+	if inner[0].(map[string]any)["type"] != "text" || inner[0].(map[string]any)["text"] != "结果文本" {
+		t.Errorf("text 块不对: %v", inner[0])
+	}
+	img, _ := inner[1].(map[string]any)
+	if img["type"] != "image" {
+		t.Errorf("第二块应是 image: %v", img)
+	}
+	src, _ := img["source"].(map[string]any)
+	if src["type"] != "base64" || src["data"] != tinyPNG {
+		t.Errorf("image source 不对: %v", src)
+	}
+}
+
+func imageSource(t *testing.T, out map[string]any) map[string]any {
+	t.Helper()
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) == 0 {
+		t.Fatal("没有 messages")
+	}
+	msg, _ := msgs[0].(map[string]any)
+	blocks, _ := msg["content"].([]any)
+	for _, raw := range blocks {
+		b, _ := raw.(map[string]any)
+		if b["type"] == "image" {
+			src, _ := b["source"].(map[string]any)
+			if src == nil {
+				t.Fatal("image 块没有 source")
+			}
+			return src
+		}
+	}
+	t.Fatalf("没有 image 块: %v", blocks)
+	return nil
 }
 
 // thinking 那一格反过来：它是口径定的必然丢弃，每次都丢，登记等于每请求一条噪声。

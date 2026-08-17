@@ -34,6 +34,7 @@ const (
 	DropVendorRequest = "vendor_request" // 入口协议独有的顶层字段
 	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
+	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
 )
 
 // EncodeRequest 把 canonical 编成 Anthropic Messages 请求体。
@@ -249,7 +250,12 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 				drop(DropOrphanResult)
 				continue
 			}
-			out = append(out, encodeToolResult(b.ToolResult))
+			out = append(out, encodeToolResult(b.ToolResult, drop))
+
+		case protocol.BlockImage:
+			if img, ok := encodeImage(b.Image, drop); ok {
+				out = append(out, img)
+			}
 
 		default:
 			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，
@@ -295,21 +301,60 @@ func encodeToolUse(call *protocol.ToolCall) map[string]any {
 	}
 }
 
+// encodeImage 编一个 image 块。FileID-only 登记后跳过；空 Data 当没有图。
+func encodeImage(img *protocol.Image, drop func(string)) (map[string]any, bool) {
+	switch img.Carrier() {
+	case "data":
+		return map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": protocol.ImageMediaType(img.MediaType),
+				"data":       img.Data,
+			},
+		}, true
+	case "url":
+		return map[string]any{
+			"type": "image",
+			"source": map[string]any{"type": "url", "url": img.URL},
+		}, true
+	case "file":
+		drop(DropImageFileID)
+	}
+	return nil, false
+}
+
 // encodeToolResult 编一条工具结果。
 //
-// content 拼成纯文本而不是块数组：canonical 的结果块序列来自 Responses 的 output
-// （若干段 input_text），Anthropic 收字符串也收数组，字符串更省事且无歧义。
-func encodeToolResult(res *protocol.ToolResult) map[string]any {
-	var parts []string
+// 纯文本仍发字符串；带图时发块数组——Anthropic 的 tool_result.content 收 text+image，
+// 不必像 CC / Responses 那样抬成后续 user 消息。
+func encodeToolResult(res *protocol.ToolResult, drop func(string)) map[string]any {
+	var textParts []string
+	var blocks []map[string]any
+	hasImage := false
 	for _, b := range res.Content {
-		if b.Kind == protocol.BlockText && b.Text != "" {
-			parts = append(parts, b.Text)
+		if b.Kind == protocol.BlockImage {
+			if img, ok := encodeImage(b.Image, drop); ok {
+				blocks = append(blocks, img)
+				hasImage = true
+			}
+			continue
 		}
+		if b.Kind == protocol.BlockText && b.Text != "" {
+			textParts = append(textParts, b.Text)
+			blocks = append(blocks, map[string]any{"type": "text", "text": b.Text})
+		}
+	}
+	var content any
+	if hasImage {
+		content = blocks
+	} else {
+		content = strings.Join(textParts, "\n")
 	}
 	out := map[string]any{
 		"type":        "tool_result",
 		"tool_use_id": res.ToolCallID,
-		"content":     strings.Join(parts, "\n"),
+		"content":     content,
 	}
 	if res.IsError {
 		out["is_error"] = true

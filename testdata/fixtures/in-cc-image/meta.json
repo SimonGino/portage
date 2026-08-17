@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "openai",
+  "stream": false,
+  "endpoint": "/v1/chat/completions",
+  "synthetic": true,
+  "source": "#1 手工构造：照 OpenAI vision 文档的 image_url part 形状写，图是 fixtures/tiny.png 的真字节（1x1 PNG）。不是 harness 转录——真实入站样本的 content 至今全是字符串。"
+}

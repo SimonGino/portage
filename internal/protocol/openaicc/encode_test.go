@@ -383,32 +383,42 @@ func TestEncodeRequestWrapsNonJSONToolArgs(t *testing.T) {
 	}
 }
 
-// 认不得的内容块要**登记**再丢。这是 #32 在 Anthropic 出口判过「不行」的同一形态，
-// CC 出口这半边原来漏了：joinBlocks 只 case 了 text 与 thinking，其余落空即丢。
-//
-// 后果是客户端从 Anthropic 入口发一张图、路由到 CC 上游，图在编码时无声消失，上游
-// 收到一个被改写成纯文本的请求，还照样 200 回来——人看日志看不出发生过任何事。
-//
-// 本票只补登记、不改行为：图仍然丢，只是这次它出声了。真做转换是 #33。
+// Anthropic 入口的 image 块转到 CC 必须带上图，不能再登记 vendor_content。
 func TestEncodeRequestReportsImageBlocks(t *testing.T) {
 	req := decodeAnthropic(t, `{
 		"model": "claude-sonnet-4", "max_tokens": 64,
 		"messages": [{"role": "user", "content": [
 			{"type": "text", "text": "这张图里是什么"},
-			{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2VieXRlcw=="}}
+			{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "`+tinyPNG+`"}}
 		]}]
 	}`)
 	body, dropped, out := encode(t, req, false)
 
-	if !contains(dropped, openaicc.DropVendorContent) {
-		t.Errorf("图片块被丢了却没登记: %v", dropped)
+	if contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("图片已转换，不该再登记 vendor_content: %v", dropped)
 	}
-	// 行为不变：正文照旧拼成纯文本，图片的载荷一个字节都不该混进请求里。
-	if len(out.Messages) != 1 || string(out.Messages[0].Content) != `"这张图里是什么"` {
-		t.Errorf("正文被改写了: %s", body)
+	if len(out.Messages) != 1 {
+		t.Fatalf("消息数 = %d，期望 1", len(out.Messages))
 	}
-	if strings.Contains(string(body), "aW1hZ2VieXRlcw==") || strings.Contains(string(body), "image") {
-		t.Errorf("图片载荷漏进了 CC 请求: %s", body)
+	var parts []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL *struct {
+			URL string `json:"url"`
+		} `json:"image_url"`
+	}
+	if err := json.Unmarshal(out.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("带图时 content 必须是 part 数组: %s", out.Messages[0].Content)
+	}
+	if len(parts) != 2 || parts[0].Type != "text" || parts[0].Text != "这张图里是什么" {
+		t.Errorf("文本 part 不对: %+v", parts)
+	}
+	wantURI := "data:image/png;base64," + tinyPNG
+	if len(parts) < 2 || parts[1].Type != "image_url" || parts[1].ImageURL == nil || parts[1].ImageURL.URL != wantURI {
+		t.Errorf("图片 part 不对: %+v", parts)
+	}
+	if !strings.Contains(string(body), tinyPNG) {
+		t.Errorf("请求体里没有 tiny.png 的字节: %s", body)
 	}
 }
 
@@ -431,6 +441,160 @@ func TestEncodeRequestDoesNotReportToolBlocksAsUnknown(t *testing.T) {
 	}
 	if calls == 0 || results == 0 {
 		t.Fatalf("样本里没有工具轮，这条用例钉不住东西（tool_calls=%d role=tool=%d）", calls, results)
+	}
+}
+
+// 纯文本消息的 content 仍是字符串；带图才发 part 数组。
+func TestEncodeRequestTextOnlyStaysString(t *testing.T) {
+	body, _, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{
+			Role:    protocol.RoleUser,
+			Content: []protocol.Block{{Kind: protocol.BlockText, Text: "你好"}},
+		}},
+	}, false)
+	if len(out.Messages) != 1 {
+		t.Fatalf("消息数 = %d", len(out.Messages))
+	}
+	var s string
+	if err := json.Unmarshal(out.Messages[0].Content, &s); err != nil {
+		t.Fatalf("纯文本 content 应是字符串: %s", out.Messages[0].Content)
+	}
+	if s != "你好" {
+		t.Errorf("content = %q", s)
+	}
+	if strings.Contains(string(body), `"type":"text"`) {
+		t.Errorf("纯文本不该发 part 数组: %s", body)
+	}
+}
+
+func TestEncodeRequestImageURLPart(t *testing.T) {
+	_, dropped, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{
+			Role: protocol.RoleUser,
+			Content: []protocol.Block{{
+				Kind:  protocol.BlockImage,
+				Image: &protocol.Image{URL: "https://example.com/a.png"},
+			}},
+		}},
+	}, false)
+	if contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("URL 图不该丢: %v", dropped)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(out.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("带图 content 应是数组: %s", out.Messages[0].Content)
+	}
+	if len(parts) != 1 || parts[0]["type"] != "image_url" {
+		t.Fatalf("parts = %v", parts)
+	}
+	obj, _ := parts[0]["image_url"].(map[string]any)
+	if obj["url"] != "https://example.com/a.png" {
+		t.Errorf("url = %v", obj["url"])
+	}
+}
+
+func TestEncodeRequestLiftsToolResultImages(t *testing.T) {
+	_, dropped, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockText, Text: "结果文本"},
+						{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	if contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("tool_result 里的图应抬走，不该 vendor_content: %v", dropped)
+	}
+	if len(out.Messages) != 3 {
+		t.Fatalf("消息数 = %d，期望 assistant / tool / user，实得 %+v", len(out.Messages), out.Messages)
+	}
+	if out.Messages[1].Role != "tool" {
+		t.Errorf("第二条 role = %q，期望 tool", out.Messages[1].Role)
+	}
+	var toolText string
+	if err := json.Unmarshal(out.Messages[1].Content, &toolText); err != nil || toolText != "结果文本" {
+		t.Errorf("role=tool content 应是文本字符串，实得 %s", out.Messages[1].Content)
+	}
+	if out.Messages[2].Role != "user" {
+		t.Errorf("抬出的图应跟一条 user，实得 %q", out.Messages[2].Role)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(out.Messages[2].Content, &parts); err != nil {
+		t.Fatalf("抬出的 user content 应是数组: %s", out.Messages[2].Content)
+	}
+	if len(parts) != 1 || parts[0]["type"] != "image_url" {
+		t.Fatalf("抬出的 part = %v", parts)
+	}
+	obj, _ := parts[0]["image_url"].(map[string]any)
+	if obj["url"] != "data:image/png;base64,"+tinyPNG {
+		t.Errorf("抬出的 data URI 不对: %v", obj["url"])
+	}
+}
+
+func TestEncodeRequestLiftsToolResultImagesIntoOneUserMessage(t *testing.T) {
+	_, _, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/2.png"}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	if len(out.Messages) != 3 {
+		t.Fatalf("消息数 = %d，期望 assistant / tool / 一条 user，实得 %+v", len(out.Messages), out.Messages)
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(out.Messages[2].Content, &parts); err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("应是一条 user 里两张图，实得 %v", parts)
+	}
+}
+
+func TestEncodeRequestEmptyMediaTypeDefaultsPNG(t *testing.T) {
+	_, _, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{
+			Role: protocol.RoleUser,
+			Content: []protocol.Block{{
+				Kind:  protocol.BlockImage,
+				Image: &protocol.Image{Data: tinyPNG},
+			}},
+		}},
+	}, false)
+	var parts []map[string]any
+	if err := json.Unmarshal(out.Messages[0].Content, &parts); err != nil {
+		t.Fatal(err)
+	}
+	obj, _ := parts[0]["image_url"].(map[string]any)
+	url, _ := obj["url"].(string)
+	if url != "data:image/png;base64,"+tinyPNG {
+		t.Errorf("空 media_type 应兜底 image/png，实得 %q", url)
 	}
 }
 

@@ -27,6 +27,7 @@ const (
 	DropVendorRequest = "vendor_request" // 其余入口协议独有的顶层字段
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
 	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
+	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
 )
 
 // EncodeRequest 把 canonical 编成 Chat Completions 请求体。
@@ -120,8 +121,8 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any, error) {
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 
-	if text := joinBlocks(req.System, drop); text != "" {
-		msgs = append(msgs, map[string]any{"role": "system", "content": text})
+	if content, ok := encodeMessageContent(req.System, drop); ok {
+		msgs = append(msgs, map[string]any{"role": "system", "content": content})
 	}
 
 	for _, m := range req.Messages {
@@ -158,15 +159,13 @@ func encodeAssistant(m protocol.Message, drop func(string)) (map[string]any, err
 			calls = append(calls, call)
 		}
 	}
-	text := joinBlocks(m.Content, drop)
-
-	if text != "" {
-		msg["content"] = text
+	if content, ok := encodeMessageContent(m.Content, drop); ok {
+		msg["content"] = content
 	}
 	if len(calls) > 0 {
 		msg["tool_calls"] = calls
 	}
-	if text == "" && len(calls) == 0 {
+	if _, ok := msg["content"]; !ok && len(calls) == 0 {
 		// 整条消息只剩被丢掉的块（例如纯 thinking 的 assistant 轮）。发一条既没
 		// content 也没 tool_calls 的 assistant 消息，严格上游会拒；整条略过。
 		return nil, nil
@@ -194,6 +193,7 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 			"tool_call_id": b.ToolResult.ToolCallID,
 			"content":      joinBlocks(b.ToolResult.Content, drop),
 		})
+		out = append(out, liftImages(b.ToolResult.Content, drop)...)
 	}
 
 	role := string(m.Role)
@@ -208,8 +208,8 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 	default:
 		role = "user"
 	}
-	if text := joinBlocks(m.Content, drop); text != "" {
-		out = append(out, map[string]any{"role": role, "content": text})
+	if content, ok := encodeMessageContent(m.Content, drop); ok {
+		out = append(out, map[string]any{"role": role, "content": content})
 	}
 	return out
 }
@@ -292,6 +292,98 @@ func encodeToolChoice(choice protocol.ToolChoice, declared map[string]bool) (any
 	return nil, false
 }
 
+// encodeMessageContent 编一条消息的 content。
+//
+// 带可转发的图时发 part 数组；纯文本仍发字符串——第三方 CC 上游拒收纯文本的数组形态。
+func encodeMessageContent(blocks []protocol.Block, drop func(string)) (any, bool) {
+	if !hasConvertibleImage(blocks) {
+		text := joinBlocks(blocks, drop)
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	}
+	var parts []map[string]any
+	for _, b := range blocks {
+		if _, ok := b.Extras["cache_control"]; ok {
+			drop(DropCacheControl)
+		}
+		switch b.Kind {
+		case protocol.BlockText:
+			if b.Text != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+			}
+		case protocol.BlockThinking:
+			drop(DropThinking)
+		case protocol.BlockToolUse, protocol.BlockToolResult:
+			// 由调用方另发。
+		case protocol.BlockImage:
+			if part, ok := encodeImagePart(b.Image, drop); ok {
+				parts = append(parts, part)
+			}
+		default:
+			drop(DropVendorContent)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return parts, true
+}
+
+func hasConvertibleImage(blocks []protocol.Block) bool {
+	for _, b := range blocks {
+		if b.Kind == protocol.BlockImage {
+			switch b.Image.Carrier() {
+			case "data", "url":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func encodeImagePart(img *protocol.Image, drop func(string)) (map[string]any, bool) {
+	var url string
+	switch img.Carrier() {
+	case "data":
+		url = protocol.FormatDataURI(img.MediaType, img.Data)
+	case "url":
+		url = img.URL
+	case "file":
+		drop(DropImageFileID)
+		return nil, false
+	default:
+		return nil, false
+	}
+	return map[string]any{
+		"type":      "image_url",
+		"image_url": map[string]any{"url": url},
+	}, true
+}
+
+// liftImages 把 tool_result 里的图抬成**一条**后续 user 消息。
+//
+// CC 的 role=tool content 只能是字符串，图放不进去。多张图进同一条 user 的
+// part 数组，不按张拆消息。
+func liftImages(blocks []protocol.Block, drop func(string)) []map[string]any {
+	var parts []map[string]any
+	for _, b := range blocks {
+		if b.Kind != protocol.BlockImage {
+			continue
+		}
+		part, ok := encodeImagePart(b.Image, drop)
+		if !ok {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []map[string]any{{"role": "user", "content": parts}}
+}
+
 // joinBlocks 把块序列拼成一段纯文本。
 //
 // 严格中转要的就是纯文本（§5 坑清单：content 为数组会被第三方上游拒）。多块之间
@@ -320,17 +412,16 @@ func joinBlocks(blocks []protocol.Block, drop func(string)) string {
 			// assistant 的 tool_calls，tool_result 由调用方编成独立的 role=tool
 			// 消息。拼纯文本时跳过它们是分工，不是丢弃，所以不登记。
 
+		case protocol.BlockImage:
+			if b.Image.Carrier() == "file" {
+				drop(DropImageFileID)
+			}
+			// 图由 encodeMessageContent / liftImages 另发；这里只拼正文。
+
 		default:
 			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，
-			// 装得下没见过的形态（A 入口的 image 块就是这么留住的），但 CC 的
-			// content 这里已经被压成纯文本，这些块无处安放。
-			//
-			// 不登记就是静默改写语义：客户端发了张图，上游收到一个被改成纯文本的
-			// 请求，还照样 200 回来，日志里一个字都没有——比直接拒还糟。thinking
-			// 那一格是**口径**定的必然丢弃，这一格不同，它是「我不认识这个东西」，
-			// 恰恰是需要看见的那种。
-			//
-			// #33 真做图片转换时，这一支会被图片那一路缩小到「真的没对等形态的那些」。
+			// 装得下没见过的形态（input_audio 就是这么留住的），但 CC 的 content
+			// 这里已经被压成纯文本，这些块无处安放。
 			drop(DropVendorContent)
 		}
 	}

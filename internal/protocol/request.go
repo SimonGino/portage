@@ -41,9 +41,7 @@ const (
 	BlockThinking   BlockKind = "thinking"
 	BlockToolUse    BlockKind = "tool_use"
 	BlockToolResult BlockKind = "tool_result"
-	// BlockImage 目前只是占位：**还没有承载图片数据的字段**，也没有任何 codec 产出它。
-	// PO 已裁定图片要真做跨协议转换（口径层 v0.37），落地见 #33；在那之前，CC 解码侧
-	// 留住的图片 part 走的是未知块那条路——到 Anthropic 出口登记 vendor_content 后丢弃。
+	// BlockImage 是跨协议图片块（#1）。载荷在 Image，三种来源各填一组字段。
 	BlockImage BlockKind = "image"
 )
 
@@ -57,6 +55,9 @@ type Block struct {
 	// Text 承载 BlockText / BlockThinking 的正文。
 	Text string
 
+	// Image 仅 BlockImage。三种来源各填一组：MediaType+Data / URL / FileID。
+	Image *Image
+
 	// ToolCall 仅 BlockToolUse。
 	ToolCall *ToolCall
 	// ToolResult 仅 BlockToolResult。
@@ -69,6 +70,16 @@ type Block struct {
 	//   - signature：Anthropic thinking 块的签名。
 	//   - encrypted_content / summary：Responses reasoning 的密文与摘要。
 	Extras map[string]any
+}
+
+// Image 是一张图的载荷。三种来源互斥，各填一组字段；网关不代下载 URL。
+//
+// Data 是裸 base64，不含 data: 前缀。FileID 是上游作用域句柄，转换路径登记后丢弃。
+type Image struct {
+	MediaType string // mime，例如 "image/png"
+	Data      string // 裸 base64，无 "data:" 前缀
+	URL       string // https://... ；网关不代下载
+	FileID    string // 上游作用域句柄；转换路径丢弃
 }
 
 // ToolCall 是一次工具调用的请求侧回带（assistant 历史里的 tool_use）。

@@ -12,6 +12,28 @@
 **构造样本不得改名搬进 `golden/`。** 真录到了就在 `golden/` 下新开目录、走 `verified` 那道闸；
 本目录这份留着当形状回归即可。
 
+`tiny.png` 是 #1 图片转换的像素（1×1 真 PNG，不是假 base64 串）。
+
+## in-cc-image / in-anthropic-image / in-responses-image / in-anthropic-toolresult-image
+
+#1 图片跨协议转换的入站样本，四份都是**手工构造**：真实 harness 至今没发过带图的轮次——
+六份 `in-cc-*`、五份 `in-anthropic-*`、四份 `in-responses-*` 实采样本的 `content` 全是字符串。
+形状照三家官方文档写，图是 `tiny.png` 的真字节（口径层 v0.39：不用假 base64 串、不截断存
+hash——往返验不了，而往返正是图片这格唯一值得测的东西）。
+
+前三份各一张图配一段正文，钉六个转换格子的载荷保真；第四份把图放进 `tool_result.content`，
+钉「CC / Responses 出口要把它抬成后续独立 user 消息」这条转换约束。
+
+**它们一度放在 `golden/` 且 meta 写 `verified: true`**（PO 2026-08-17 裁定挪回本目录）：
+那既违反上面那句「不得改名搬进 golden/」，也把 `verified` 的含义从「人核过的转录」稀释成
+「人核过」。代价是 `TestCanonicalModelCoversInboundSamples` 要多扫一个根——它扫两处，各走
+各的闸（`golden/in-*` 认 `verified`、`fixtures/in-*` 认 `synthetic`）。**这是刻意的**：
+那张覆盖表要证的是「canonical 装不装得下」，而能证明形状的样本不一定是转录；把构造样本挡在
+表外，图片那几行会当场被判成「表随样本烂掉」的陈旧项。
+
+消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
+`internal/server/convert_image_test.go`（六格全链路 + 抬图）。
+
 ## anthropic-cache-hit / anthropic-stream-cache-hit
 
 补的是 #37 第 2 项的**一半**：`anthropic-*` 六份真实样本的 cache 计数全是 0（中转那侧压根
