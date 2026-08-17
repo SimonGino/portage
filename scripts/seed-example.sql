@@ -1,4 +1,9 @@
--- M0 手工建配置示例（管理端在 M3，之前都用 SQL 维护）
+-- 用 SQL 建配置的示例。
+--
+-- **平时不该走这条路**：起来之后开 http://127.0.0.1:8317/admin，渠道、上游凭证、
+-- 纳管模型、接入点、网关 key 都在页面上配（M3 起）。这份留着是给三种情形：
+-- 不带 UI 的部署（`go build` 没加 `-tags webui`）、自动化建库、以及管理端登不进去
+-- 时的救急（忘了管理密码就是典型，密码只在库为空时由配置初始化）。
 --
 -- 用法：
 --   sqlite3 ./gateway.db < scripts/seed-example.sql
@@ -131,7 +136,11 @@ INSERT INTO candidates (access_point_id, channel_model_id, weight)
 -- 网关 key（M1 起转发端必须带，不带一律 401）。这一节不能省：干净库起来后
 -- api_keys 是空表，所有请求都是 401。
 --
--- 表里存的是 hash，不是明文——明文只有你自己留着。生成一把：
+-- 有管理端的话在页面上建更省事（明文会存进 key_plain，之后随时能「显示 / 复制」）。
+-- 这里手算 hash 灌进去的 key **不会**留下明文：管理端那一行的值只显示
+-- 「原值没存过，只能删了重建」（`web/src/pages/Keys.tsx`）。所以自己留好底下这串。
+--
+-- 表里存的是 hash，不是明文。生成一把：
 --   KEY="sk-ptg-$(openssl rand -hex 16)"; echo "$KEY"
 --   printf %s "$KEY" | shasum -a 256      # 这串填 key_hash
 -- printf 而不是 echo：echo 会多一个换行，算出来的 hash 对不上，表现是永远 401。

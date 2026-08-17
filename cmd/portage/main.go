@@ -52,12 +52,12 @@ func run(configPath string, log *slog.Logger) error {
 	}
 
 	// 空 api_keys 表意味着每个转发请求都会 401。按口径层 v0.21 通则这该「启动即报」，
-	// 但这里只警告不拒启：建库流程本身就是「先起一次网关让它建表，再灌 seed」
-	// （scripts/seed-example.sql 开头），拒启会把那条路堵死。
+	// 但这里只警告不拒启：干净库第一次起来必然是空的，而配 key 得先有个跑着的网关
+	// （开 /admin 或对着它建的库灌 SQL），拒启会把这两条路一起堵死。
 	if n, err := store.CountAPIKeys(ctx, db); err != nil {
 		return err
 	} else if n == 0 {
-		log.Warn("api_keys 表是空的，所有转发请求都会回 401；参见 scripts/seed-example.sql 的「网关 key」一节")
+		log.Warn("api_keys 表是空的，所有转发请求都会回 401；开 /admin 建一把，无 UI 的部署见 scripts/seed-example.sql 的「网关 key」一节")
 	}
 
 	// 管理端密码：配置里的明文只用来**初始化**，库里已经有了就一概不动
