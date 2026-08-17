@@ -390,14 +390,22 @@ button, input, textarea, select {
   max-width: none;
 }
 
-.main > * {
+/* 内容列居中。`:not(.overlay)` 不是洁癖，是必须的：弹框的遮罩也是 .main 的直接
+   子元素（页面组件把 <Dialog> 摆在自己那个 fragment 里，而 Routes 不多包一层
+   DOM），而它是 `position: fixed` + `inset: 0` 的整屏罩子。被这条规则套上限宽和
+   auto 外边距之后，左右两边同时被钉在 0 又被限宽，浏览器只能靠外边距把它居中——
+   罩子缩成内容列那么宽、浮在屏幕中间，左栏与两侧留白照旧亮着，看着像页面中间凭空
+   多出一块灰（1874px 宽的窗口上实测 x=309.5、w=1240）。
+   两条选择器都得排除：光排上面那条不够，is-wide 这条只给 max-width，而对一个左右
+   都钉住的定位元素来说，单是 max-width 就足以把宽度截断。 */
+.main > *:not(.overlay) {
   max-width: 920px;
   margin-left: auto;
   margin-right: auto;
   width: 100%;
 }
 
-.main.is-wide > * {
+.main.is-wide > *:not(.overlay) {
   max-width: 1240px;
 }
 
