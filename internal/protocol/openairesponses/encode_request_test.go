@@ -641,3 +641,48 @@ func TestEncodeFromGoldenAnthropicRequest(t *testing.T) {
 		t.Errorf("首项 = %v, want developer（Anthropic 的 system 数组）", got[0])
 	}
 }
+
+// 同 openaicc 那条：一条 user 消息挂多个 tool_result，头一个带图，抬出来的 user 项
+// 必须落在**所有**工具结果项之后，不许夹在两个 function_call_output 中间。
+func TestEncodeRequestLiftsImagesAfterAllToolOutputs(t *testing.T) {
+	out, _ := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_2", Name: "g", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+					},
+				}},
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_2",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "第二个结果"}},
+				}},
+			}},
+		},
+	}, false)
+
+	var types []string
+	for _, it := range items(t, out) {
+		typ, _ := it["type"].(string)
+		types = append(types, typ)
+	}
+	want := []string{"function_call", "function_call", "function_call_output", "function_call_output", "message"}
+	if len(types) != len(want) {
+		t.Fatalf("项类型序列 = %v，期望 %v", types, want)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("项类型序列 = %v，期望 %v——抬出来的图夹进了两个工具结果中间", types, want)
+		}
+	}
+}

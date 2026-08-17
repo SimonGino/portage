@@ -166,6 +166,11 @@ func encodeOutMessage(m protocol.Message, seen map[string]bool, drop func(string
 	var items []map[string]any
 
 	// 工具结果先出：它回应的是上一轮的调用，站在本轮正文之前才符合时序。
+	//
+	// 抬出来的图**攒到所有结果项发完再发一条**，不是每个结果发一条：Anthropic 的并行
+	// 工具轮把多个 tool_result 挤在同一条 user 消息里，逐个抬会把 user 项夹进两个
+	// function_call_output 中间，调用与结果之间凭空多出一轮对话。
+	var lifted []map[string]any
 	for _, b := range m.Content {
 		if b.Kind != protocol.BlockToolResult || b.ToolResult == nil {
 			continue
@@ -175,7 +180,12 @@ func encodeOutMessage(m protocol.Message, seen map[string]bool, drop func(string
 			continue
 		}
 		items = append(items, encodeOutToolResult(b.ToolResult, drop))
-		items = append(items, liftOutImages(b.ToolResult.Content, drop)...)
+		lifted = append(lifted, liftOutImageParts(b.ToolResult.Content, drop)...)
+	}
+	if len(lifted) > 0 {
+		items = append(items, map[string]any{
+			"type": "message", "role": "user", "content": lifted,
+		})
 	}
 
 	if m.Role == protocol.RoleAssistant {
@@ -311,14 +321,31 @@ func encodeOutToolChoice(choice protocol.ToolChoice, declared map[string]bool) (
 	return nil, false
 }
 
-// encodeOutUserParts 编 user 消息的 content 数组。带图时图与正文并列，不经 joinOutBlocks。
+// encodeOutUserParts 编 user / developer 消息的 content 数组（正文部件是 input_text）。
 func encodeOutUserParts(blocks []protocol.Block, drop func(string)) ([]map[string]any, bool) {
-	if !hasConvertibleImage(blocks) {
+	return encodeOutParts(blocks, "input_text", drop)
+}
+
+// encodeOutAssistantParts 编 assistant 消息的 content 数组（正文部件是 output_text）。
+//
+// 正文部件类型是这两个半边**唯一**的差别，所以走同一个 encodeOutParts：output_text
+// 描述的是上游此前说过的话，input_text 是客户端说的话，Responses 把这个区别编在部件
+// 类型上而不是角色上（decode.go 的 decodeContent 两种都收，正因为线上两种都真实出现）。
+func encodeOutAssistantParts(blocks []protocol.Block, drop func(string)) ([]map[string]any, bool) {
+	return encodeOutParts(blocks, "output_text", drop)
+}
+
+// encodeOutParts 编一条消息的 content 数组，textType 决定正文部件叫什么。
+//
+// 没有图时仍走 joinOutBlocks 拼成**一个**正文部件：多块之间的分隔与丢弃登记都在那里，
+// 图片这一路不该顺手改掉无图消息的形状。
+func encodeOutParts(blocks []protocol.Block, textType string, drop func(string)) ([]map[string]any, bool) {
+	if !protocol.HasConvertibleImage(blocks) {
 		text := joinOutBlocks(blocks, drop)
 		if text == "" {
 			return nil, false
 		}
-		return []map[string]any{{"type": "input_text", "text": text}}, true
+		return []map[string]any{{"type": textType, "text": text}}, true
 	}
 	var parts []map[string]any
 	for _, b := range blocks {
@@ -328,11 +355,12 @@ func encodeOutUserParts(blocks []protocol.Block, drop func(string)) ([]map[strin
 		switch b.Kind {
 		case protocol.BlockText:
 			if b.Text != "" {
-				parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
+				parts = append(parts, map[string]any{"type": textType, "text": b.Text})
 			}
 		case protocol.BlockThinking:
 			drop(DropThinking)
 		case protocol.BlockToolUse, protocol.BlockToolResult:
+			// 由调用方另编成顶层 item。
 		case protocol.BlockImage:
 			if part, ok := encodeOutImage(b.Image, drop); ok {
 				parts = append(parts, part)
@@ -347,26 +375,14 @@ func encodeOutUserParts(blocks []protocol.Block, drop func(string)) ([]map[strin
 	return parts, true
 }
 
-func hasConvertibleImage(blocks []protocol.Block) bool {
-	for _, b := range blocks {
-		if b.Kind == protocol.BlockImage {
-			switch b.Image.Carrier() {
-			case "data", "url":
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func encodeOutImage(img *protocol.Image, drop func(string)) (map[string]any, bool) {
 	var url string
 	switch img.Carrier() {
-	case "data":
+	case protocol.CarrierData:
 		url = protocol.FormatDataURI(img.MediaType, img.Data)
-	case "url":
+	case protocol.CarrierURL:
 		url = img.URL
-	case "file":
+	case protocol.CarrierFile:
 		drop(DropImageFileID)
 		return nil, false
 	default:
@@ -375,11 +391,12 @@ func encodeOutImage(img *protocol.Image, drop func(string)) (map[string]any, boo
 	return map[string]any{"type": "input_image", "image_url": url}, true
 }
 
-// liftOutImages 把 tool_result 里的图抬成**一条**后续 user 消息。
+// liftOutImageParts 挑出 tool_result 里的图，编成 part 数组交给调用方。
 //
-// function_call_output.output 只收字符串，图放不进去。多张图进同一条
-// user 的 content 数组，不按张拆消息。
-func liftOutImages(blocks []protocol.Block, drop func(string)) []map[string]any {
+// function_call_output.output 只收字符串，图放不进去，只能抬到一条 user 项里；但那
+// 条项由调用方在**所有**结果项发完之后统一发一条，所以这里只出 part，不出项——理由
+// 见 encodeOutMessage 里那段注释。
+func liftOutImageParts(blocks []protocol.Block, drop func(string)) []map[string]any {
 	var parts []map[string]any
 	for _, b := range blocks {
 		if b.Kind != protocol.BlockImage {
@@ -391,48 +408,7 @@ func liftOutImages(blocks []protocol.Block, drop func(string)) []map[string]any 
 		}
 		parts = append(parts, part)
 	}
-	if len(parts) == 0 {
-		return nil
-	}
-	return []map[string]any{{
-		"type": "message", "role": "user", "content": parts,
-	}}
-}
-
-// encodeOutAssistantParts 编 assistant 消息的 content：正文是 output_text，图并列。
-func encodeOutAssistantParts(blocks []protocol.Block, drop func(string)) ([]map[string]any, bool) {
-	if !hasConvertibleImage(blocks) {
-		text := joinOutBlocks(blocks, drop)
-		if text == "" {
-			return nil, false
-		}
-		return []map[string]any{{"type": "output_text", "text": text}}, true
-	}
-	var parts []map[string]any
-	for _, b := range blocks {
-		if _, ok := b.Extras["cache_control"]; ok {
-			drop(DropCacheControl)
-		}
-		switch b.Kind {
-		case protocol.BlockText:
-			if b.Text != "" {
-				parts = append(parts, map[string]any{"type": "output_text", "text": b.Text})
-			}
-		case protocol.BlockThinking:
-			drop(DropThinking)
-		case protocol.BlockToolUse, protocol.BlockToolResult:
-		case protocol.BlockImage:
-			if part, ok := encodeOutImage(b.Image, drop); ok {
-				parts = append(parts, part)
-			}
-		default:
-			drop(DropVendorContent)
-		}
-	}
-	if len(parts) == 0 {
-		return nil, false
-	}
-	return parts, true
+	return parts
 }
 
 // joinOutBlocks 把块序列拼成一段纯文本，顺带登记丢弃。
@@ -464,7 +440,7 @@ func joinOutBlocks(blocks []protocol.Block, drop func(string)) string {
 			// 这两种块由调用方编成独立的 item，跳过是分工不是丢弃，不登记。
 
 		case protocol.BlockImage:
-			if b.Image.Carrier() == "file" {
+			if b.Image.Carrier() == protocol.CarrierFile {
 				drop(DropImageFileID)
 			}
 			// 图由 encodeOutUserParts / liftOutImages 另发。

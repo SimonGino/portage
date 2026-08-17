@@ -304,7 +304,7 @@ func encodeToolUse(call *protocol.ToolCall) map[string]any {
 // encodeImage 编一个 image 块。FileID-only 登记后跳过；空 Data 当没有图。
 func encodeImage(img *protocol.Image, drop func(string)) (map[string]any, bool) {
 	switch img.Carrier() {
-	case "data":
+	case protocol.CarrierData:
 		return map[string]any{
 			"type": "image",
 			"source": map[string]any{
@@ -313,12 +313,12 @@ func encodeImage(img *protocol.Image, drop func(string)) (map[string]any, bool) 
 				"data":       img.Data,
 			},
 		}, true
-	case "url":
+	case protocol.CarrierURL:
 		return map[string]any{
-			"type": "image",
+			"type":   "image",
 			"source": map[string]any{"type": "url", "url": img.URL},
 		}, true
-	case "file":
+	case protocol.CarrierFile:
 		drop(DropImageFileID)
 	}
 	return nil, false

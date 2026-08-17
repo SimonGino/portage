@@ -620,3 +620,50 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// 一条 user 消息里挂着**多个** tool_result（Anthropic 的并行工具轮就是这个形状，
+// in-anthropic-parallel-* 实采样本可证），其中头一个带图。
+//
+// 抬出来的 user 消息必须落在**所有** tool 消息之后。夹在两条 tool 中间是硬错：CC 那边
+// role=tool 必须紧跟着带 tool_calls 的 assistant，中间插一条 user 会被上游拒。
+func TestEncodeRequestLiftsImagesAfterAllToolMessages(t *testing.T) {
+	_, _, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_2", Name: "g", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+					},
+				}},
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_2",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "第二个结果"}},
+				}},
+			}},
+		},
+	}, false)
+
+	var roles []string
+	for _, m := range out.Messages {
+		roles = append(roles, m.Role)
+	}
+	want := []string{"assistant", "tool", "tool", "user"}
+	if len(roles) != len(want) {
+		t.Fatalf("角色序列 = %v，期望 %v", roles, want)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Fatalf("角色序列 = %v，期望 %v——抬出来的图夹进了两条 tool 中间", roles, want)
+		}
+	}
+}

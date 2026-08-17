@@ -229,8 +229,10 @@ func parseAnthropicImage(item map[string]json.RawMessage) *protocol.Image {
 	if json.Unmarshal(raw, &src) != nil {
 		return nil
 	}
-	// type 是判别式：type=file 即使带了残留 data 也只认 FileID，不能让 Carrier
-	// 的 Data>URL>FileID 优先级把句柄吃成一张假 base64 图。
+	// 两级：先认 type 这个判别式，它说不清时才按 data > url > file 的优先级兜。
+	//
+	// 判别式优先是必须的，不是保险——`type=file` 即使带了残留 data，也只认 FileID；
+	// 反过来按优先级挑，一个句柄会被当成 base64 图发给上游，而那串东西根本不是图。
 	switch src.Type {
 	case "url":
 		if strings.TrimSpace(src.URL) == "" {
@@ -243,13 +245,14 @@ func parseAnthropicImage(item map[string]json.RawMessage) *protocol.Image {
 		}
 		return &protocol.Image{FileID: src.FileID}
 	}
-	img := &protocol.Image{MediaType: src.MediaType, Data: src.Data, URL: src.URL, FileID: src.FileID}
-	switch img.Carrier() {
-	case "data":
+	// type 缺失或是 base64 之外的没见过的值：按哪一组字段真的有内容来挑，
+	// 优先级与 protocol.Image.Carrier 一致。
+	switch {
+	case !protocol.IsEmptyBase64(src.Data):
 		return &protocol.Image{MediaType: src.MediaType, Data: src.Data}
-	case "url":
+	case strings.TrimSpace(src.URL) != "":
 		return &protocol.Image{URL: src.URL}
-	case "file":
+	case strings.TrimSpace(src.FileID) != "":
 		return &protocol.Image{FileID: src.FileID}
 	}
 	return nil

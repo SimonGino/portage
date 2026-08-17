@@ -179,6 +179,11 @@ func encodeAssistant(m protocol.Message, drop func(string)) (map[string]any, err
 // 塞在同一条 user 消息里，CC 那边每个工具结果都得是独立的 role=tool 消息。
 func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any {
 	var out []map[string]any
+	// 抬出来的图**攒到所有 tool 消息发完再发**，不是每个结果发一条。Anthropic 的并行
+	// 工具轮把多个 tool_result 挤在同一条 user 消息里（in-anthropic-parallel-* 实采
+	// 可证），逐个抬会把 user 夹进两条 tool 中间——而 CC 那边 role=tool 必须紧跟着带
+	// tool_calls 的 assistant，中间插一条 user 就是一个必被上游拒的请求。
+	var lifted []map[string]any
 	for _, b := range m.Content {
 		if b.Kind != protocol.BlockToolResult || b.ToolResult == nil {
 			continue
@@ -193,7 +198,10 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 			"tool_call_id": b.ToolResult.ToolCallID,
 			"content":      joinBlocks(b.ToolResult.Content, drop),
 		})
-		out = append(out, liftImages(b.ToolResult.Content, drop)...)
+		lifted = append(lifted, liftImageParts(b.ToolResult.Content, drop)...)
+	}
+	if len(lifted) > 0 {
+		out = append(out, map[string]any{"role": "user", "content": lifted})
 	}
 
 	role := string(m.Role)
@@ -296,7 +304,7 @@ func encodeToolChoice(choice protocol.ToolChoice, declared map[string]bool) (any
 //
 // 带可转发的图时发 part 数组；纯文本仍发字符串——第三方 CC 上游拒收纯文本的数组形态。
 func encodeMessageContent(blocks []protocol.Block, drop func(string)) (any, bool) {
-	if !hasConvertibleImage(blocks) {
+	if !protocol.HasConvertibleImage(blocks) {
 		text := joinBlocks(blocks, drop)
 		if text == "" {
 			return nil, false
@@ -331,26 +339,14 @@ func encodeMessageContent(blocks []protocol.Block, drop func(string)) (any, bool
 	return parts, true
 }
 
-func hasConvertibleImage(blocks []protocol.Block) bool {
-	for _, b := range blocks {
-		if b.Kind == protocol.BlockImage {
-			switch b.Image.Carrier() {
-			case "data", "url":
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func encodeImagePart(img *protocol.Image, drop func(string)) (map[string]any, bool) {
 	var url string
 	switch img.Carrier() {
-	case "data":
+	case protocol.CarrierData:
 		url = protocol.FormatDataURI(img.MediaType, img.Data)
-	case "url":
+	case protocol.CarrierURL:
 		url = img.URL
-	case "file":
+	case protocol.CarrierFile:
 		drop(DropImageFileID)
 		return nil, false
 	default:
@@ -362,11 +358,12 @@ func encodeImagePart(img *protocol.Image, drop func(string)) (map[string]any, bo
 	}, true
 }
 
-// liftImages 把 tool_result 里的图抬成**一条**后续 user 消息。
+// liftImageParts 挑出 tool_result 里的图，编成 part 数组交给调用方。
 //
-// CC 的 role=tool content 只能是字符串，图放不进去。多张图进同一条 user 的
-// part 数组，不按张拆消息。
-func liftImages(blocks []protocol.Block, drop func(string)) []map[string]any {
+// CC 的 role=tool content 只能是字符串，图放不进去，只能抬到一条 user 消息里；但
+// 那条消息由调用方在**所有** tool 消息发完之后统一发一条，所以这里只出 part，不出
+// 消息——理由见 encodeNonAssistant 里那段注释。
+func liftImageParts(blocks []protocol.Block, drop func(string)) []map[string]any {
 	var parts []map[string]any
 	for _, b := range blocks {
 		if b.Kind != protocol.BlockImage {
@@ -378,10 +375,7 @@ func liftImages(blocks []protocol.Block, drop func(string)) []map[string]any {
 		}
 		parts = append(parts, part)
 	}
-	if len(parts) == 0 {
-		return nil
-	}
-	return []map[string]any{{"role": "user", "content": parts}}
+	return parts
 }
 
 // joinBlocks 把块序列拼成一段纯文本。
@@ -413,7 +407,7 @@ func joinBlocks(blocks []protocol.Block, drop func(string)) string {
 			// 消息。拼纯文本时跳过它们是分工，不是丢弃，所以不登记。
 
 		case protocol.BlockImage:
-			if b.Image.Carrier() == "file" {
+			if b.Image.Carrier() == protocol.CarrierFile {
 				drop(DropImageFileID)
 			}
 			// 图由 encodeMessageContent / liftImages 另发；这里只拼正文。
