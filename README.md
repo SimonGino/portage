@@ -14,15 +14,15 @@
 
 - **三协议转发与互转**。Claude Code 挂到便宜的第三方 OpenAI 兼容模型上，Codex CLI 挂到 Claude 上，客户端不用改。
 - **接入点路由**。对外暴露一个模型名，绑定若干候选（渠道纳管的模型 + 权重）；也支持用限定名 `渠道名/模型名` 直连纳管模型。
-- **渠道与凭证池**。一个渠道 = base_url + 支持协议集 + 纳管模型 + 1..N 份上游凭证。凭证只写不回读，401 自动摘除并人工恢复，403 换而不摘。
+- **渠道与凭证池**。一个渠道 = base_url + 支持协议集 + 纳管模型 + 1..N 份上游凭证。凭证值管理端可回读可复制，但只由凭证池那一个接口发。401 自动摘除并人工恢复，403 换而不摘。
 - **两层重试**。同一凭证内退避重试（默认 2 次），渠道内换凭证重试，全局尝试上限封顶。流式已写出首字节后一律不重试——首字节边界即承诺边界。
-- **网关 key 生命周期**。前缀 `sk-ptg-`，hash 落库，明文只在创建时展示一次，与上游凭证严格两回事。
+- **API Key 生命周期**。前缀 `sk-ptg-`，hash 落库；新建后管理端可回读可复制（加列前的旧 key 补不回来），与上游凭证严格两回事。
 - **用量流水**。每次调用一行，记模型、渠道、真正用上的那份凭证、token 数（含缓存读写）、状态与耗时；usage 出自上游自己说的数，透传路径靠旁路 Tap 只读提取，不改流。
 - **单二进制**。React 管理端 embed 进 Go 二进制，SQLite 落库，没有外部依赖。
 
 ## 协议转换矩阵
 
-同协议对角线是字节透传。跨协议六条已全部放开（#80 收尾），九格全开：
+同协议对角线是字节透传。跨协议六条已全部放开，九格全开：
 
 | 入站 ＼ 上游 | Chat Completions | Responses | Anthropic |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ Docker（推荐）：
 PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-起来之后开 <http://127.0.0.1:8317/admin> 登录，在页面上配渠道、纳管模型、接入点、网关 key。库是空的很正常，日志里会有一条「`api_keys` 表是空的，所有转发请求都会回 401」，配完就没了。密码走环境变量而不是配置文件，因为镜像里那份配置是烤进镜像层历史的；它只用于初始化，库里已有密码后改它不生效。
+起来之后开 <http://127.0.0.1:8317/admin> 登录，在页面上配渠道、纳管模型、接入点、API Key。库是空的很正常，日志里会有一条「`api_keys` 表是空的，所有转发请求都会回 401」，配完就没了。密码走环境变量而不是配置文件，因为镜像里那份配置是烤进镜像层历史的；它只用于初始化，库里已有密码后改它不生效。
 
 从源码构建（需要 Go 1.26+ 与 Node）：
 
@@ -68,7 +68,7 @@ model_provider = "portage"
 name = "Portage"
 base_url = "http://127.0.0.1:8317/v1"
 wire_api = "responses"          # 走 /v1/responses，网关按渠道决定要不要转成别的协议
-env_key = "PORTAGE_API_KEY"     # 值是网关 key（sk-ptg-…），不是上游 key
+env_key = "PORTAGE_API_KEY"     # 值是 API Key（sk-ptg-…），不是上游 key
 
 # 每个真会用到的接入点各来一份 profile，窗口按**上游真实窗口**写
 [profiles.sonnet]
@@ -85,21 +85,20 @@ model_auto_compact_token_limit = 160000
 或者真实上游窗口比同名模型小，Codex 就会吃 fallback 的 272k、把自动压缩的触发点摆在
 约 245k 上——上游真窗口更小的话，请求会先撞上游的 400，压根轮不到压缩。
 
-**压缩（remote compaction）能不能用要看渠道**：Codex 到点会发一个 input 尾部带
+**压缩（remote compaction）按路径分两档**：Codex 到点会发一个 input 尾部带
 `compaction_trigger` 的请求，并要求响应里恰好一个 compaction item，收不到就当场 Fatal
-且不重试。所以网关只在**上游自己认得这个 trigger 的 Responses 渠道**上放行它——在管理端
-渠道页把「Codex 压缩」勾成「支持」。没勾、或者这个模型路由到的是需要跨协议转换的渠道
-（Responses → Anthropic / Chat Completions），压缩请求会被明确拒绝（400，文案说明原因），
-而不是转发出去让 Codex 收到一个空的压缩结果。网关侧的本地合成尚未实现
-（[#74](https://github.com/SimonGino/portage-legacy/issues/74)），在那之前把窗口设小、让压缩晚点
-来，或者把 Codex 挂在支持压缩的 Responses 渠道上。legacy 的 `POST /v1/responses/compact`
-不实现，回 501。
+且不重试。
+
+- **Responses 透传**：只在上游自己认得这个 trigger 的渠道上放行——在管理端渠道页把「Codex 压缩」勾成「支持」。没勾则明确拒绝（400，文案说明原因），而不是转发出去让 Codex 收到一个空的压缩结果。Responses 形状的 wire 不等于支持压缩。
+- **转换路径（Responses → Anthropic / Chat Completions）**：走本地合成。网关把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封（`ptg1:` + base64）当成恰好一个 compaction item 发回去；下一轮 Codex 回带时再拆开还原。渠道上那个勾选不管这条路。
+
+legacy 的 `POST /v1/responses/compact` 不实现，回 501。
 
 ## 管理端
 
-`/admin` 下的 React 界面覆盖日常运营的全部动作：渠道（协议集、base_url、凭证池、模型纳管、连通性探测、拉上游模型列表）、接入点（候选与权重）、网关 key、用量与最近调用。
+`/admin` 下的 React 界面覆盖日常运营的全部动作：模型（渠道、协议集、base_url、凭证池、纳管、连通性探测、拉上游模型列表）、接入点（候选与权重）、API Key、调用记录、排行。
 
-设计规范见 [`DESIGN.md`](DESIGN.md)：单色、排版先行、表格即证据、默认静止。凭证在任何界面与任何错误提示里都脱敏，上游 key 与 base_url 不出现在回显中。
+设计规范见 [`DESIGN.md`](DESIGN.md)：单色、排版先行、表格即证据、默认静止。上游凭证只在凭证池那一处可显示、可复制；渠道列表、接入点、流水、错误回显一律不带。转发链路回给客户端的东西里永远没有上游 key 与 base_url。
 
 ## 配置
 
@@ -113,9 +112,9 @@ model_auto_compact_token_limit = 160000
 
 ## 状态
 
-M0 透传骨架、M1 key 与流水已交付；M2 六条转换路径已全开，同候选退避重试已落地；M3 管理端与凭证池已落地，收尾中；M4（多候选加权分流、候选间故障转移）语义已拍板，尚未实现——在此之前单候选的临时闸仍然挂着。
+M0 透传骨架、M1 key 与流水、M2 六条转换路径与同候选退避重试、M3 管理端与凭证池均已交付。M4（多候选加权分流、候选间故障转移）语义已拍板，尚未实现——在此之前单候选的临时闸仍然挂着。
 
-进行中的工作在 [Issues](https://github.com/SimonGino/portage-legacy/issues)。
+进行中的工作在 [Issues](https://github.com/SimonGino/portage/issues)。
 
 ## 文档
 
@@ -123,15 +122,17 @@ M0 透传骨架、M1 key 与流水已交付；M2 六条转换路径已全开，�
 | --- | --- | --- |
 | [docs/口径层设计.md](docs/口径层设计.md) | 口径层 | 需求口径、转换矩阵、边界与非目标、决策版本记录 |
 | [docs/MVP设计草案.md](docs/MVP设计草案.md) | 展开层 | 模块划分、canonical 事件模型、codec 接口、数据模型、golden 测试方案 |
-| [CONTEXT.md](CONTEXT.md) | 术语表 | 领域语言词典（接入点／候选／渠道／凭证池／网关 key……） |
+| [CONTEXT.md](CONTEXT.md) | 术语表 | 领域语言词典（接入点／候选／渠道／凭证池／API Key……） |
 | [DESIGN.md](DESIGN.md) | 设计规范 | 管理端视觉与交互原则 |
 
 两份设计文档冲突时以口径层 §6 为准。决策连同依据记在口径层版本记录里，只记口径变化不记流水账。
 
 ## 参考与致谢
 
-从头重写，不 fork 代码。协议细节、字段语义与转换坑参考了三个项目：
+从头重写，不 fork 代码。协议细节、字段语义与转换坑参考了这些项目：
 
 - [new-api](https://github.com/QuantumNous/new-api) —— Go 网关的转发内核、SSE 流式转发、key 鉴权与渠道路由。
 - [sub2api](https://github.com/Wei-Shaw/sub2api) —— 协议转换的 Go 实现首要参考，其 `apicompat/` 覆盖本项目全部转换方向。**LGPL-3.0：本项目参考的是实现思路与字段语义，不复制代码。**
 - [litellm](https://github.com/BerriAI/litellm) —— 字段映射最全的对照物，thinking、tool calling、usage 语义以它逐 provider 核对。
+- [opencodex](https://github.com/lidge-jun/opencodex) —— Codex CLI 客户端行为兼容的首要参考：自动压缩、reasoning 回放、Responses SSE 事件线。
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) —— thinking/reasoning 跨协议保真与 signature 处置这一主题的首要参考（主题之外不参考）。
