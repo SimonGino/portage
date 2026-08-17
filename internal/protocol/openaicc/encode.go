@@ -112,9 +112,13 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		drop(DropMetadata)
 	}
 	for k := range req.Extras {
-		if protocol.IsThinkingParamKey(k) {
+		switch {
+		case k == "metadata":
+			// 上面已单独登记成 DropMetadata。不跳过的话它会再落进 else 记一次
+			// DropVendorRequest，日志就报了个客户端根本没发的幻影未知字段（#15）。
+		case protocol.IsThinkingParamKey(k):
 			drop(DropThinkingParam)
-		} else {
+		default:
 			drop(DropVendorRequest)
 		}
 	}

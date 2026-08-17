@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -249,6 +250,53 @@ func TestEncodeRequestReportsMandatoryDrops(t *testing.T) {
 	}
 	if strings.Contains(string(body), "signature") {
 		t.Error("thinking 的 signature 漏到了 CC 请求里")
+	}
+}
+
+// metadata 单独登记成 DropMetadata 之后，不许再被 Extras 循环记一次 DropVendorRequest：
+// 客户端并没有发第二个不认识的顶层字段，日志报这个幻影会把 §2.6 那条 WARN 的可信度打掉
+// ——真来一个我们认不得的新字段时，没人分得清是新字段还是这个已知的假阳（#15）。
+func TestEncodeRequestMetadataNotDoubleRegistered(t *testing.T) {
+	const tail = `,"messages":[{"role":"user","content":"hi"}]}`
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "只有 metadata",
+			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"}` + tail,
+			want: []string{openaicc.DropMetadata},
+		},
+		{
+			name: "metadata + 真·未知顶层键",
+			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"},"没见过的键":1` + tail,
+			want: []string{openaicc.DropMetadata, openaicc.DropVendorRequest},
+		},
+		{
+			name: "metadata + 思考参数",
+			body: `{"model":"m","max_tokens":1,"metadata":{"user_id":"u"},"thinking":{"type":"enabled","budget_tokens":1024}` + tail,
+			want: []string{openaicc.DropMetadata, openaicc.DropThinkingParam},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := anthropic.NewCodec().DecodeRequest([]byte(tc.body), false)
+			if err != nil {
+				t.Fatalf("DecodeRequest: %v", err)
+			}
+			_, dropped, err := (&openaicc.Codec{}).EncodeRequestReport(req, false)
+			if err != nil {
+				t.Fatalf("EncodeRequestReport: %v", err)
+			}
+			sort.Strings(dropped)
+			want := append([]string(nil), tc.want...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(dropped, want) {
+				t.Errorf("dropped = %v, want %v", dropped, want)
+			}
+		})
 	}
 }
 

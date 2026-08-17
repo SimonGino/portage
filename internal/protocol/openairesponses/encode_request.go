@@ -116,9 +116,13 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 		drop(DropMetadata)
 	}
 	for k := range req.Extras {
-		if protocol.IsThinkingParamKey(k) {
+		switch {
+		case k == "metadata":
+			// 已单独登记成 DropMetadata，别让它再落进 default 记一次幻影
+			// DropVendorRequest（#15，与 openaicc 出口同改）。
+		case protocol.IsThinkingParamKey(k):
 			drop(DropThinkingParam)
-		} else {
+		default:
 			drop(DropVendorRequest)
 		}
 	}
