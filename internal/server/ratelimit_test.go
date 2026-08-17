@@ -8,7 +8,9 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 口径层 §2.7（v0.15 定）：单个全局令牌桶，超限回 429 带 Retry-After，不分维度。
+// 口径层 §2.7（v0.15 定，#16 修订）：两只全局令牌桶——生成面三个端点共用一只，
+// count_tokens 独占一只，两只都用同一份 rate_limit_qps/burst 配置造。超限回 429
+// 带 Retry-After，不分维度。
 // 这些用例把桶调到 qps=1 才跑得动——出厂的 10/20 要打二十几个请求才见得到 429，
 // 那种用例在慢机器上会因为令牌回得及时而变成间歇性绿。
 
@@ -60,17 +62,57 @@ func TestRateLimitRejectsOnceBurstIsSpent(t *testing.T) {
 	}
 }
 
-// 桶是**一只**，不是每个端点一只。写成在 rateLimit(ep) 里 new 的话这里会全绿——
-// 而线上的 10 QPS 悄悄变成 4×10。
-func TestRateLimitBucketIsSharedAcrossEndpoints(t *testing.T) {
+// 生成面那三个端点共用**一只**桶，不是每个端点一只。写成在 rateLimit(ep) 里无脑
+// new 的话这里会全绿——而线上的 10 QPS 悄悄变成 3×10。
+//
+// 第二个请求用 /v1/chat/completions 而不是 count_tokens（#16 之后后者自己一只桶）。
+// 它的 model 没在这个网关里纳管，但无妨：限流在路由之前，压根解析不到模型——真机
+// 的 429 流水行 model_requested 就是空的（#16 现象表）。
+func TestRateLimitBucketIsSharedAcrossGenerationEndpoints(t *testing.T) {
 	gw, _ := newLimitedGateway(t, 1)
 
 	if resp := gw.Post(t, "/v1/messages", anthropicRequest, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("/v1/messages = %d, 期望 200", resp.StatusCode)
 	}
-	resp := gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
+	resp := gw.Post(t, "/v1/chat/completions", ccRequest, nil)
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("换个端点就 = %d 了, 期望 429——说明桶不是共用的", resp.StatusCode)
+	}
+}
+
+// #16：Claude Code 一开场连打二十几次 count_tokens，桶被打空，紧随其后的
+// /v1/messages 被 429 掉——而那批 count_tokens 命中非 Anthropic 渠道时一个字节都
+// 不打上游。桶是为「防 key 泄露刷爆上游账单」立的，不该被这种请求饿死。
+func TestCountTokensStormDoesNotStarveMessages(t *testing.T) {
+	gw, _ := newLimitedGateway(t, 2)
+
+	// 30 次是真机观测量级（26/24 次）的上取整。这里不看它们各自的状态码：
+	// count_tokens 自己那只桶被打空是应有的，要测的是它没动到生成面那只。
+	for i := 0; i < 30; i++ {
+		gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
+	}
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		t.Fatal("/v1/messages 被 429 了——count_tokens 风暴把生成面那只桶打空了")
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/messages = %d, 期望 200", resp.StatusCode)
+	}
+}
+
+// count_tokens 自己那只桶照样限得住：它在 Anthropic 出口是真打上游的，
+// 「防账单」这条对它一样成立，不能整个豁免。
+func TestCountTokensIsStillRateLimited(t *testing.T) {
+	gw, _ := newLimitedGateway(t, 1)
+
+	gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
+	resp := gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("第 2 次 count_tokens = %d, 期望 429——它自己那只桶漏了", resp.StatusCode)
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "1" {
+		t.Errorf("Retry-After = %q, 期望 1", ra)
 	}
 }
 
