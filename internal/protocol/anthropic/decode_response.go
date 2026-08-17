@@ -29,7 +29,7 @@ import (
 // 没有实测覆盖的有两处，用例都是手写的——§9 缺口清单里记着：①`error` 帧，五份转录里
 // 一次都没出现（都是 200 正常流），只能照协议文档实现；②**只带 output_tokens 的
 // message_delta**，五份转录的两帧都是完整快照，这一形态来自「兼容上游可能这么发」的
-// 推断（#72），用例钉的是「解出 InputTokens=0 而非凭空造数」这半边行为。
+// 推断（portage-legacy#72），用例钉的是「解出 InputTokens=0 而非凭空造数」这半边行为。
 
 // DecodeStream 把上游 SSE 解成 canonical 事件流。
 func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {

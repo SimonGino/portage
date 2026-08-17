@@ -17,12 +17,12 @@ import (
 // （钉死它不是转录）。缘由与升格规矩见 testdata/fixtures/README.md。
 const fixtureDir = "../../testdata/fixtures"
 
-// cacheHitFixtures 补的是 #37 第 2 项：六份真实 anthropic-* 样本的 cache 计数全是 0
+// cacheHitFixtures 补的是 #2 第 2 项：六份真实 anthropic-* 样本的 cache 计数全是 0
 // （中转那侧不回），于是缓存两项的**Anthropic 侧**解析路径此前没有任何样本走到。
 //
 // 这两份从真实转录派生、只改 usage 数字，形状依据官方文档：input_tokens 只算最后一个
 // 缓存断点**之后**的 token，与两项缓存互不相交（platform.claude.com/docs/en/api/rate-limits，
-// 2026-08-13 核对）。它证明不了「官方真的这么发」——那是 #37 拿官方 key 才能收的口。
+// 2026-08-13 核对）。它证明不了「官方真的这么发」——那是 #2 拿官方 key 才能收的口。
 var cacheHitFixtures = []string{
 	"anthropic-cache-hit",
 	"anthropic-stream-cache-hit",

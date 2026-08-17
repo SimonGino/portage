@@ -239,7 +239,7 @@ func TestNoRetryAfterFirstByteWritten(t *testing.T) {
 	}
 }
 
-// #13 的回归护栏：max_retries 配 0 时行为必须与 M0 完全一致——打一次，原样透回。
+// portage-legacy#13 的回归护栏：max_retries 配 0 时行为必须与 M0 完全一致——打一次，原样透回。
 func TestRetriesDisabledBehavesLikeM0(t *testing.T) {
 	gw, up := newRetryGateway(t, config.Retry{MaxRetries: 0, BaseDelay: time.Second, MaxDelay: time.Minute})
 	hits := countingUpstream(up, http.StatusTooManyRequests, map[string]string{

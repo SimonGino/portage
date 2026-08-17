@@ -9,11 +9,11 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件钉的是展开层 §6.1 的响应头保真度（#37 从 #7 拆出的那两项之一）：上游那套
+// 本文件钉的是展开层 §6.1 的响应头保真度（#2 从 portage-legacy#7 拆出的那两项之一）：上游那套
 // 官方响应头原样到客户端，其中 request-id 还要**同时**落进 call_logs 供事后对账。
 //
 // 这里用的是假上游按官方文档形状发的头，**不是**官方直连实测：真实头名、大小写、
-// 官方到底发不发全，仍要拿官方 key 跑一次才算数（#37 剩下的那半）。这套用例能兜住
+// 官方到底发不发全，仍要拿官方 key 跑一次才算数（#2 剩下的那半）。这套用例能兜住
 // 的是回归——网关这边把整套头吃掉一个，当场红。
 
 const messageWithRequestID = `{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],` +
@@ -282,7 +282,7 @@ func TestConvertedCallRecordsUpstreamRequestID(t *testing.T) {
 	}
 }
 
-// 落库还不够：#81 之前这个 id 只在库里和 slog 里，管理端一个地方都没露，而它落库的
+// 落库还不够：portage-legacy#81 之前这个 id 只在库里和 slog 里，管理端一个地方都没露，而它落库的
 // 全部理由就是「事后不用翻日志就能查到」。接口这一层因此要钉两件事——字段在，且
 // **空串照原样给不转 null**（库里这一列不可空，前端只判空串）。
 func TestAdminLogsExposeUpstreamRequestID(t *testing.T) {
@@ -318,7 +318,7 @@ func TestAdminLogsExposeUpstreamRequestID(t *testing.T) {
 			t.Errorf("第 %d 行 upstream_request_id = %q, 期望 %q", i, *id, want)
 		}
 	}
-	// 成功行也带 id，正是「详情」按钮不能只按 status >= 400 出的理由（#81）。
+	// 成功行也带 id，正是「详情」按钮不能只按 status >= 400 出的理由（portage-legacy#81）。
 	if got.Rows[1].Status >= 400 {
 		t.Errorf("status = %d, 这一行应当是成功的", got.Rows[1].Status)
 	}

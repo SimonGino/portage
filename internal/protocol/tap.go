@@ -17,10 +17,10 @@ type Summary struct {
 	OutputTokens     int
 	CacheReadTokens  int
 	CacheWriteTokens int
-	// ReasoningTokens 是上游报的思考 token 数（口径层 v0.66，#97）。它是
+	// ReasoningTokens 是上游报的思考 token 数（口径层 v0.66）。它是
 	// **OutputTokens 的明细，不是另一笔加数**——真实字节里 total 恒等于
 	// input + output，reasoning 一次都没进这个加法（CC 三份 + Responses 一份，
-	// 见 #97）。同 CacheRead/WriteTokens 之于 InputTokens。
+	// 见 portage-legacy#97）。同 CacheRead/WriteTokens 之于 InputTokens。
 	//
 	// 载体各协议不同键：CC 是 completion_tokens_details.reasoning_tokens，
 	// Responses 是 output_tokens_details.reasoning_tokens，Anthropic 没有这一格。

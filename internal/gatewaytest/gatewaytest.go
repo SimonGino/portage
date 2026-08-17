@@ -37,12 +37,12 @@ var client = &http.Client{
 // 的响应头（2026-08-13 核对 platform.claude.com/docs/en/api/rate-limits
 // §Response headers 与 .../api/errors §Request ID）。
 //
-// 写死整套而不是「随便挑两个」，是因为 #37 的原始症状就是**中转把它们吃了**：
+// 写死整套而不是「随便挑两个」，是因为 #2 的原始症状就是**中转把它们吃了**：
 // 网关这边只要有一处退化成白名单转发，在中转下永远看不出区别，只有把整套头钉进
 // 用例里才会当场红。Claude Code 靠 anthropic-ratelimit-* 退避，靠 request-id 报障。
 //
 // 值取文档里的样例形状（req_ 前缀、RFC 3339 的 reset），不是真实调用采来的——这一
-// 层要验的是「网关有没有改动它们」，与值本身是不是真的无关。这**不构成** #37 那条
+// 层要验的是「网关有没有改动它们」，与值本身是不是真的无关。这**不构成** #2 那条
 // 「官方直连实测」的验收：真实头名/大小写/有没有漏发，仍得拿官方 key 跑一次才算数。
 var AnthropicResponseHeaders = map[string]string{
 	"request-id":                                  "req_018EeWyXxfu5pfWkrYcMdjWG",
@@ -366,7 +366,7 @@ type Options struct {
 	LogBodies bool
 	// Retry 覆盖重试策略，零值即**关闭**重试——刻意不跟随 config.Default()。
 	// M0 的一大批用例断言的是「上游回 429/500，网关原样透一次」，默认开着重试会
-	// 让它们变成打三次、慢一秒，测的就不是原来那件事了；关掉才是 #13 要的那条
+	// 让它们变成打三次、慢一秒，测的就不是原来那件事了；关掉才是 portage-legacy#13 要的那条
 	// 「配 0 时行为与 M0 完全一致」的回归护栏。要测重试的用例显式传策略，其中
 	// 至少有一个传 config.Default().Retry，保证出厂默认值本身也被跑到。
 	Retry config.Retry

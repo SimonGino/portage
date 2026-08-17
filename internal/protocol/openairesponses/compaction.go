@@ -7,7 +7,7 @@ import (
 )
 
 // 本文件是 Codex remote compaction v2 在转换路径上的**本地合成**（口径层 v0.54 正式
-// 修法，#74）。
+// 修法）。
 //
 // Codex 的压缩 turn 形态：input 尾部追一个 `{"type":"compaction_trigger"}` 的 item，
 // 客户端随后要求响应里**恰好一个** `{"type":"compaction","encrypted_content":…}` 的
@@ -48,7 +48,7 @@ const envelopePrefix = "ptg1:"
 // 用 codex-rs 原文而不是自拟：摘要要喂回 Codex 自己的续作流程，它对「摘要里该有什么」
 // 的预期就是这份模板定的。
 //
-// **末尾那个换行是实测补上的**（#73 采样，2026-08-13）：先前照 opencodex 的
+// **末尾那个换行是实测补上的**（portage-legacy#73 采样，2026-08-13）：先前照 opencodex 的
 // `COMPACT_PROMPT` 抄，两边逐字节一致但都少了行尾换行；拿 Codex CLI 0.147 本地压缩
 // 时实发的字节一对，真模板是带的。差一个字节不影响上游怎么总结，但注释写着「镜像
 // 模板」就不该有已知偏差——而且现在这份的依据是真客户端转录，不再是二手抄写。

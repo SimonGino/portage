@@ -13,7 +13,7 @@ import (
 // RetryPolicy 描述同候选退避重试（口径层 v0.19）。
 //
 // 这条口径推翻了 v0.9 的「无同候选重试，重试留给 harness」——那个决策的依据是
-// harness 会自行退避，而 M0 验收实测（#6）证伪了一半：Codex 0.144.1 对 5xx 退避
+// harness 会自行退避，而 M0 验收实测（portage-legacy#6）证伪了一半：Codex 0.144.1 对 5xx 退避
 // 重试，对 429 一次即弃（带不带 Retry-After、把 request_max_retries 调到 4 都只打
 // 一次）。单候选单上游被限流时没有人自愈，网关必须自己补这一环。
 //

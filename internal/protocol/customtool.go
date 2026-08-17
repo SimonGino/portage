@@ -33,7 +33,7 @@ const CustomToolArgsKey = "input"
 
 // CustomToolSchema 是 custom 工具转到只认 JSON Schema 的协议时的等价声明。
 //
-// 这一步此前是**缺的**，#25 才补上：Responses 的 custom 工具用 format（lark 文法）
+// 这一步此前是**缺的**，portage-legacy#25 才补上：Responses 的 custom 工具用 format（lark 文法）
 // 描述入参，没有 parameters；转 CC 时 openaicc 原样照抄——抄了个空，于是上游收到一个
 // 不带 parameters 的 function 声明。后果不是报错而是更糟的东西：**没有任何东西告诉
 // 模型该回 {"input": …}**，模型自由发挥回一个 {"cmd": …}，回程拆包拆不动只好原样

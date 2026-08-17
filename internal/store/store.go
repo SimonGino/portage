@@ -142,7 +142,7 @@ func addUpstreamEndpoint(db *sql.DB) error {
 	return nil
 }
 
-// addUpstreamRequestID 补 v0.56 的 call_logs.upstream_request_id（#37）。
+// addUpstreamRequestID 补 v0.56 的 call_logs.upstream_request_id（#2）。
 //
 // 不可空、默认空串：存量行一律读作「没有可用的 id」，与「上游没回这个头」同档——
 // 这一列上把两者分开没有排障价值，理由见 schema.sql 的列注释。
@@ -160,7 +160,7 @@ func addUpstreamRequestID(db *sql.DB) error {
 	return nil
 }
 
-// addReasoningTokens 补 v0.66 的 call_logs.reasoning_tokens（#97）。
+// addReasoningTokens 补 v0.66 的 call_logs.reasoning_tokens。
 //
 // **可空**，存量行落 NULL——与上一条正相反。那条的两种情况（没存过 / 上游没回）在
 // 排障上是一回事，这条不是：NULL 是「不知道上游报没报」，0 是「上游报了，这次没

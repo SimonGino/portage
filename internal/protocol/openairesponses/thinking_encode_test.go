@@ -129,7 +129,7 @@ func TestEncodeFullBodySynthesizesReasoningItem(t *testing.T) {
 	assertRThinking(t, "非流式", string(body), out.Output)
 }
 
-// 压缩 turn 上一个推理帧都不许露头（#74 的「恰好一个 compaction item」不变式）：
+// 压缩 turn 上一个推理帧都不许露头（portage-legacy#74 的「恰好一个 compaction item」不变式）：
 // summarizer turn 有意留着上游的思考，那段推理只是让上游想清楚，不进 output。
 func TestCompactionSwallowsThinking(t *testing.T) {
 	c := NewCodec()

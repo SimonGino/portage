@@ -81,7 +81,7 @@ func TestInboundNotInSetFallsBackToChatCompletions(t *testing.T) {
 // count_tokens 是 Anthropic 独有端点、没有转换路径：渠道不说 anthropic 就只能 501，
 // 绝不会因为回退顺序被送去 /v1/chat/completions。
 //
-// #80 九宫格全开之后，这条是「回退顺序不会把一条走不通的路变成可用的」在本文件里
+// portage-legacy#80 九宫格全开之后，这条是「回退顺序不会把一条走不通的路变成可用的」在本文件里
 // 的唯一载体——此前那条用 CC→R 当反例的用例（TestFallbackDoesNotOpenAnUnimplementedPath）
 // 随该格放开一并删了，它测的行为已经不存在。count_tokens 这一格不同：它 501 是因为
 // **上游没有对应端点**，不是因为还没做，所以是个永久成立的反例。

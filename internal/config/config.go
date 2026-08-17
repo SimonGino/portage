@@ -77,7 +77,7 @@ func Default() Config {
 		DefaultMaxTokens: 8192,
 		RateLimitQPS:     10,
 		RateLimitBurst:   20,
-		// 取值参照 M0 实测（#6）：Codex 对 5xx 的退避是 0.22→0.45→0.84→1.62s，
+		// 取值参照 M0 实测（portage-legacy#6）：Codex 对 5xx 的退避是 0.22→0.45→0.84→1.62s，
 		// 量级相仿。重试 2 次是「够救瞬时限流、又不至于让客户端干等太久」的折中；
 		// 真实 429 通常带 Retry-After，那时以它为下界。
 		Retry: Retry{MaxRetries: 2, MaxAttempts: 6, BaseDelay: 500 * time.Millisecond, MaxDelay: 10 * time.Second},

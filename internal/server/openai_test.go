@@ -146,7 +146,7 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 
 // 走不通的路要按**入口**协议的原生格式回错——客户端只认得它自己那套。
 //
-// 载体是 count_tokens×openai_responses，而且是个**永久**反例：#80 之后九宫格全开，
+// 载体是 count_tokens×openai_responses，而且是个**永久**反例：portage-legacy#80 之后九宫格全开，
 // 「这一格还没做」的 501 已经不存在了，唯一还会 501 的是 count_tokens——它是
 // Anthropic 独有端点，CC 与 Responses 两边根本没有可以转过去的上游端点（见
 // conversionOpen 的注释）。所以这里不会像此前那两个子测试一样，随着某一格放开而

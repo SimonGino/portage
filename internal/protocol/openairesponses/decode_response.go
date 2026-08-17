@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件是 Responses 的**解码**侧：上游响应 → canonical 事件序列（#80，喂 CC→R 与
+// 本文件是 Responses 的**解码**侧：上游响应 → canonical 事件序列（portage-legacy#80，喂 CC→R 与
 // A→R 两条路径的回程）。
 //
 // 与 CC 解码侧的形状差别，都源于 Responses 的 output 是**有序 item 列表**而不是一条

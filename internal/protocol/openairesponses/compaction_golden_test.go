@@ -10,9 +10,10 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件把 #74 的解码半边直接怼到 **Codex 自己发的字节**上（#73 采于 2026-08-13，
-// Codex CLI 0.147 + remote compaction v2）。同包的 compaction_test.go 是手搭 fixture
-// ——它钉的是我们的口径自洽，钉不住「Codex 真的这么发包」；这一份补的正是后者。
+// 本文件把 portage-legacy#74 的解码半边直接怼到 **Codex 自己发的字节**上
+// （portage-legacy#73 采于 2026-08-13，Codex CLI 0.147 + remote compaction v2）。
+// 同包的 compaction_test.go 是手搭 fixture——它钉的是我们的口径自洽，钉不住
+// 「Codex 真的这么发包」；这一份补的正是后者。
 //
 // 三份样本是同一个会话的连续三轮：压缩前 → 压缩 turn → 回带轮。三轮一起摆着才看得出
 // 判据的两端都对：压缩 turn 认得出来，而**回带轮不是压缩 turn**（`CompactionTurn()`

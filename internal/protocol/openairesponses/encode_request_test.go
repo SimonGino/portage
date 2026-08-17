@@ -10,7 +10,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol/openaicc"
 )
 
-// 本文件测 Responses 的**编码**侧（#80，CC→R 与 A→R 的去程）。
+// 本文件测 Responses 的**编码**侧（portage-legacy#80，CC→R 与 A→R 的去程）。
 //
 // 后半段用真实入站样本走「入口 codec 解 → 本 codec 编」的半链，钉的是端到端形态；
 // 前半段用手搭 canonical 逐项钉规则，两者互补：手搭的能造出样本里没有的组合

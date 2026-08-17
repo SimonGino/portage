@@ -141,7 +141,7 @@ func TestEncodeStreamTextWireFormat(t *testing.T) {
 
 // 后来的 usage 快照按**非零字段**覆盖（protocol/event.go 的 EvUsage 约定）：某些
 // 兼容上游末帧只报 `{"output_tokens":N}`，整结构体覆盖会把 input 清零，total 随之
-// 低估，Codex 的压缩触发点被推后、先撞上游 400（#72）。
+// 低估，Codex 的压缩触发点被推后、先撞上游 400（portage-legacy#72）。
 func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
 	frames := encodeStream(t, NewCodec(),
 		protocol.Event{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},

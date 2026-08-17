@@ -11,7 +11,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件测的是 A→CC 转换路径（#11）：Claude Code 挂第三方便宜模型，整个项目的
+// 本文件测的是 A→CC 转换路径（portage-legacy#11）：Claude Code 挂第三方便宜模型，整个项目的
 // 主诉求。同协议透传的用例在 relay_test.go / openai_test.go，两条路不共用断言。
 
 const ccUpstreamModel = "qwen3-max"
@@ -73,7 +73,7 @@ func TestConvertedRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 		t.Errorf("上游 path = %q, 期望 /v1/chat/completions", got.Path)
 	}
 	// 查询串不带过去：?beta=true 是 Anthropic 的方言，挂到 CC 端点上不是保真是串味。
-	// （legacy #20 定的「整串照抄」管的是同协议透传那条路；那是拆库前的编号。）
+	// （portage-legacy#20 定的「整串照抄」管的是同协议透传那条路。）
 	if got.RawQuery != "" {
 		t.Errorf("上游 RawQuery = %q, 转换路径不该把入口协议的查询串带过去", got.RawQuery)
 	}
@@ -219,7 +219,7 @@ func TestConvertedStreamIsAnthropicWireFormat(t *testing.T) {
 	}
 	// usage 在 message_delta 里补齐——CC 的 usage 要到流末才来。A 出口的 input_tokens
 	// 是**净值**：上游毛值 69 减掉缓存读 11 = 58，缓存那 11 另占一个字段，客户端自己
-	// 相加（protocol.Usage 的约定，#72）。
+	// 相加（protocol.Usage 的约定，portage-legacy#72）。
 	if !strings.Contains(body, `"input_tokens":58`) || !strings.Contains(body, `"output_tokens":74`) {
 		t.Errorf("message_delta 没带上游报的 usage，或没减回净值: %s", body)
 	}

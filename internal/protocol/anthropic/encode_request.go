@@ -39,7 +39,7 @@ const (
 	// 没有「丢弃」这回事，不必像 image_file_id 那样在三个 codec 里各镜像一份。
 	DropImageDetail = "image_detail" // CC / Responses 的图片精度提示，Anthropic 无对应的一格
 	// DropThinking 是回带方向的 thinking 块（客户端把上一轮的推理原样发回来）。
-	// 这一格**必须登记**（口径层 v0.62 ④，#94）：客户端回放的是我们合成出来的、
+	// 这一格**必须登记**（口径层 v0.62 ④）：客户端回放的是我们合成出来的、
 	// 没有 signature 的 thinking 块，多数客户端会补一个 `signature:""` 再发回来，
 	// 而 Anthropic 见空签名直接 400——第二轮就崩。丢是对的，但要看得见。
 	DropThinking = "thinking" // 回带方向的 thinking 块正文与 signature
@@ -271,7 +271,7 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			// 块只有一段密文、Text 恒为空，丢个空块不值得报警」。v0.62 之后这条理由
 			// 站不住了：出口现在会把推理内容合成给客户端看，客户端下一轮就会把它**带着
 			// 文本**原样发回来（多数客户端还会补一个 `signature:""`，Anthropic 见空签名
-			// 直接 400，#94）。丢的不再是空块，而是一段客户端以为送到了的推理——必须留痕。
+			// 直接 400）。丢的不再是空块，而是一段客户端以为送到了的推理——必须留痕。
 			drop(DropThinking)
 			continue
 

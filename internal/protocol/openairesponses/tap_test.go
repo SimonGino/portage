@@ -109,7 +109,7 @@ func TestTapReadsCacheCreationWhenPresent(t *testing.T) {
 	}
 }
 
-// 思考 token（口径层 v0.66，#97）。Responses 侧的键是
+// 思考 token（口径层 v0.66）。Responses 侧的键是
 // output_tokens_details.reasoning_tokens——与 CC 的
 // completion_tokens_details.reasoning_tokens 同语义、不同父键。
 // 「报了 0」与「没报」要分得开，理由见 protocol.Summary.HasReasoningTokens。

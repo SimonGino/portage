@@ -22,7 +22,7 @@ import (
 
 // conversionOpen 报告「入口端点 → 渠道协议」这一格闸是否已放开。
 //
-// #80 之后**三协议九宫格全开**（对角线三格走透传，六格跨协议转换在这里列全）。
+// portage-legacy#80 之后**三协议九宫格全开**（对角线三格走透传，六格跨协议转换在这里列全）。
 // 于是这个函数的职责只剩一件：挡住**没有上游对应端点**的入口端点。
 //
 // 那就是 /v1/messages/count_tokens。它与 /v1/messages 的 ep.Proto 同为 anthropic，
@@ -32,17 +32,17 @@ import (
 func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 	switch {
 	case ep == protocol.EndpointMessages && channel == protocol.OpenAI:
-		return true // A→CC（#11，口径层 §2.1 优先级①上半）
+		return true // A→CC（口径层 §2.1 优先级①上半）
 	case ep == protocol.EndpointResponses && channel == protocol.OpenAI:
-		return true // R→CC（#12，优先级①下半）
+		return true // R→CC（优先级①下半）
 	case ep == protocol.EndpointResponses && channel == protocol.Anthropic:
-		return true // R→A（#25，优先级②：Codex 挂 Claude）
+		return true // R→A（优先级②：Codex 挂 Claude）
 	case ep == protocol.EndpointChatCompletions && channel == protocol.Anthropic:
-		return true // CC→A（#9，优先级③上半）
+		return true // CC→A（优先级③上半）
 	case ep == protocol.EndpointChatCompletions && channel == protocol.OpenAIResponses:
-		return true // CC→R（#80，优先级③下半）
+		return true // CC→R（优先级③下半）
 	case ep == protocol.EndpointMessages && channel == protocol.OpenAIResponses:
-		return true // A→R（#80，优先级④）
+		return true // A→R（优先级④）
 	}
 	return false
 }
@@ -82,7 +82,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// 转换路径本来就要重编码，改字段即可。
 	req.Model = cand.UpstreamModel
 
-	// Codex 压缩 turn 走本地合成（#74）。日志在这里打而不是在 codec 里：codec 是纯
+	// Codex 压缩 turn 走本地合成（portage-legacy#74）。日志在这里打而不是在 codec 里：codec 是纯
 	// 函数、不持有 logger，同「跨协议转换丢弃字段」那条的分工。
 	if rc, ok := inCodec.(*openairesponses.Codec); ok {
 		if rc.CompactionTurn() {
@@ -117,8 +117,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// 编码 500 两条早退，那些行同样没打上游，记了就是在说一件没发生的事。
 	rec.upstreamEndpoint = outEp.Path
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
-	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。legacy #20 定的
-	//「整串照抄」管的是同协议透传那条路（那是拆库前的编号，与上一段的 #20 无关）。
+	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。portage-legacy#20 定的
+	//「整串照抄」管的是同协议透传那条路（那是旧仓的编号，与上一段的 #20 不是同一张票）。
 	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
 	rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 	if err != nil {
@@ -134,7 +134,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	}
 	defer resp.Body.Close()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
-	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#37）。三档的取舍与
+	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#2）。三档的取舍与
 	// 透传路径同一处（logCall），包括错误体那一档（v0.74）。
 	rec.officialRequestID, rec.proxyRequestID = upstream.RequestIDs(resp.Header)
 

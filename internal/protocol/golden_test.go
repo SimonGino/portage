@@ -31,10 +31,10 @@ var m0Samples = []string{
 	"cc-parallel-tools",
 }
 
-// compactionSamples 是 Codex remote compaction v2 的三段真实转录（#73）。
+// compactionSamples 是 Codex remote compaction v2 的三段真实转录（portage-legacy#73）。
 //
 // 单开一张表而不是并进 m0Samples：§9 的 M0 必抓子集是「六场景 × 双协议」那张网，
-// Responses 样本本就排在 M1；这三份是为 #74 的压缩口径采的，进度归属不同，混在一起
+// Responses 样本本就排在 M1；这三份是为 portage-legacy#74 的压缩口径采的，进度归属不同，混在一起
 // 会让「M0 齐了没有」这个问题答不出来。
 //
 // 它们喂给 Tap 的部分与其余 upstream 样本毫无二致（也正好补上 Responses Tap 的
@@ -46,7 +46,7 @@ var compactionSamples = []string{
 	"responses-stream-compact-replay",
 }
 
-// reasoningSamples 是 thinking/reasoning 跨协议口径那批的真实转录（#93）。
+// reasoningSamples 是 thinking/reasoning 跨协议口径那批的真实转录（portage-legacy#93）。
 //
 // 又单开一张表，理由同 compactionSamples：它们既不属 §9 的「六场景 × 双协议」M0 网，
 // 也不是压缩那一批，是为口径层 v0.62（出向合成）采的前置样本，进度归属独立。
@@ -71,7 +71,7 @@ var reasoningSamples = []string{
 	"anthropic-thinking-high",
 }
 
-// responsesUpstreamSamples 是 Responses 出口半边的基础转录（#79）。
+// responsesUpstreamSamples 是 Responses 出口半边的基础转录（portage-legacy#79）。
 //
 // 第三张单开的表，理由同上两张：它们既不在 §9 的「六场景 × 双协议」M0 网里（Responses
 // 样本排在 M1），也不属压缩批或 reasoning 批，是为 openairesponses 出口半边采的样本前提。
@@ -95,7 +95,7 @@ type sampleMeta struct {
 	Expect   protocol.Summary `json:"expect"`
 	Verified bool             `json:"verified"`
 	// Source 记这份样本采自哪个上游，不参与任何断言。声明在这里是为了让它可被发现：
-	// 同一个目录树里迟早会同时躺着中转采的和官方直连采的样本（#37），到那时
+	// 同一个目录树里迟早会同时躺着中转采的和官方直连采的样本（#2），到那时
 	// 「这个数是谁报的」只能靠它区分。
 	Source string `json:"source"`
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 毛值减回净值：Anthropic 出口的 input_tokens 与两项缓存互不相交（#72）。
+// 毛值减回净值：Anthropic 出口的 input_tokens 与两项缓存互不相交（portage-legacy#72）。
 func TestUsageNetInput(t *testing.T) {
 	cases := []struct {
 		name string
@@ -28,7 +28,7 @@ func TestUsageNetInput(t *testing.T) {
 }
 
 // EvUsage 的语义是**累计快照**，后来者的非零字段覆盖先前值（event.go）。整结构体
-// 覆盖会让「只报 output_tokens」的兼容上游把 input 清零（#72）。
+// 覆盖会让「只报 output_tokens」的兼容上游把 input 清零（portage-legacy#72）。
 func TestUsageMergeSnapshot(t *testing.T) {
 	cases := []struct {
 		name       string

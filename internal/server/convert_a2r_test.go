@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件测的是 A→R 转换路径（#80，口径层 §2.1 优先级④）：Claude Code 挂 Responses 渠道。
+// 本文件测的是 A→R 转换路径（口径层 §2.1 优先级④）：Claude Code 挂 Responses 渠道。
 //
 // 与 convert_cc2r_test.go 共用出口那半边，所以「Responses 请求长什么样」的通用断言
 // 不在这里重复；这边验的是**另一半**——Anthropic 入口特有的形态（顶层 system 数组、
@@ -406,7 +406,7 @@ func TestA2RReasoningSummaryBecomesThinking(t *testing.T) {
 		t.Errorf("摘要正文没送到客户端（已经花掉的思考成本被静默吞没了）:\n%s", body)
 	}
 	// 密文与 Responses 侧的字段名都不许出现。signature 尤其不许——不发字段、不发空串、
-	// 不伪造（口径层 v0.62 ②）：客户端会把 signature:"" 原样回带，上游直接 400（#94）。
+	// 不伪造（口径层 v0.62 ②）：客户端会把 signature:"" 原样回带，上游直接 400。
 	for _, leaked := range []string{"encrypted_content", "gAAAAAB", "reasoning", "signature", "summary_index"} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("%q 漏给了 Anthropic 客户端:\n%s", leaked, body)

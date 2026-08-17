@@ -221,7 +221,7 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			c.compaction = true
 
 		case itemCompaction, itemCompactionSummary, itemContextCompaction:
-			// G2 回带还原（#74）。Codex 把上一轮压缩产出的 item 原样放回 input 尾部，
+			// G2 回带还原（portage-legacy#74）。Codex 把上一轮压缩产出的 item 原样放回 input 尾部，
 			// 而上游（Anthropic / CC）没有任何位置装得下它——静默跳过的后果是整段历史
 			// 凭空消失，表现成模型忽然失忆。
 			var encrypted string
@@ -268,7 +268,7 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
 	return nil
 }
 
-// rewriteAsSummarizer 把一个压缩 turn 改写成纯总结请求（#74 范围 2）。
+// rewriteAsSummarizer 把一个压缩 turn 改写成纯总结请求（portage-legacy#74 范围 2）。
 //
 // 剥掉的三样东西各有各的必须：
 //

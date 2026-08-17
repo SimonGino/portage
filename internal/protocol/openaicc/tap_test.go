@@ -114,7 +114,7 @@ func TestTapDoneSentinelIsNotADegradation(t *testing.T) {
 	}
 }
 
-// 思考 token（口径层 v0.66，#97）。三条要分开钉：
+// 思考 token（口径层 v0.66）。三条要分开钉：
 //
 //   - 报了数：取 completion_tokens_details.reasoning_tokens，**不**从 completion
 //     里减掉——它是 completion 的明细而非另一笔加数（真实字节里 total 恒等于

@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 思考 token 落流水（口径层 v0.66，#97）。
+// 思考 token 落流水（口径层 v0.66）。
 //
 // 三档必须落成三种不同的库值，这是本条口径的全部内容——「已发生的成本不得静默
 // 吞没」在流水这一侧的兑现方式，就是让「没思考」与「不知道」在库里分得开。

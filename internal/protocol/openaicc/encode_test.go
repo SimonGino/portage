@@ -55,7 +55,7 @@ type ccRequest struct {
 // decodeSample 把真实入站样本解成 canonical，作为编码侧用例的输入。
 //
 // 用真实样本而不是手搭 canonical：手搭的 Request 只会长成我以为的样子，而这条
-// 链路真正要扛的是 Claude Code 实际发出来的形态（#11 的验收项之一）。
+// 链路真正要扛的是 Claude Code 实际发出来的形态（portage-legacy#11 的验收项之一）。
 func decodeSample(t *testing.T, name string) *protocol.Request {
 	t.Helper()
 	dir := filepath.Join(goldenDir, name)
@@ -355,7 +355,7 @@ func TestEncodeRequestSkipsEmptyAssistantMessage(t *testing.T) {
 }
 
 // 非 JSON 入参要包成 JSON 对象：CC 的 function.arguments 按契约必须是 JSON 字符串。
-// A 入口走不到这条分支（Anthropic 的 input 恒是对象），但 #12 的 Codex custom 工具
+// A 入口走不到这条分支（Anthropic 的 input 恒是对象），但 portage-legacy#12 的 Codex custom 工具
 // 会——这里先把不变量钉住。
 func TestEncodeRequestWrapsNonJSONToolArgs(t *testing.T) {
 	req := &protocol.Request{

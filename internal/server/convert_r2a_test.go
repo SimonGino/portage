@@ -9,7 +9,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件测的是 R→A 转换路径（#25，口径层 §2.1 优先级②）：Codex CLI 挂 Claude。
+// 本文件测的是 R→A 转换路径（口径层 §2.1 优先级②）：Codex CLI 挂 Claude。
 //
 // 与 convert_responses_test.go（R→CC）共用入口那半边，所以入站解码的断言不在这里
 // 重复；这边验的是**另一半**——Anthropic 出口的请求编码与响应解码。
@@ -377,7 +377,7 @@ func TestR2ANonStreamAggregates(t *testing.T) {
 		t.Errorf("正文没聚合出来: %s", body)
 	}
 	// Responses 的 input_tokens 是毛值：上游净值 88 + 缓存读 40 = 128。Codex 按
-	// total_tokens 判压缩触发点，低估会让它撞上游 400（protocol.Usage 的约定，#72）。
+	// total_tokens 判压缩触发点，低估会让它撞上游 400（protocol.Usage 的约定，portage-legacy#72）。
 	if out.Usage.InputTokens != 128 || out.Usage.OutputTokens != 12 {
 		t.Errorf("usage 没带过来: %+v，期望毛值 input 128", out.Usage)
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 思考 token 要如实写出去（口径层 v0.66，#97）。这一格此前是硬编码的 0——
+// 思考 token 要如实写出去（口径层 v0.66）。这一格此前是硬编码的 0——
 // canonical 装下这个数之后，那就成了「把上游报的思考成本抹成零」。
 //
 // 键**恒在**（与 CC 出口「有数才写」相反）：Responses 的 usage 契约里

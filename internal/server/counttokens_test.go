@@ -55,7 +55,7 @@ func TestCountTokensRejectsNonAnthropicChannel(t *testing.T) {
 }
 
 // 此处原有 TestMessagesRejectsCrossProtocolCandidate，钉的是「/v1/messages 命中还没
-// 放开的那几格时回错而不是乱发」。#80 九宫格全开之后 /v1/messages 对三种渠道协议都
+// 放开的那几格时回错而不是乱发」。portage-legacy#80 九宫格全开之后 /v1/messages 对三种渠道协议都
 // 走得通，这条性质不再存在，删除。它先后指过 openai 与 openai_responses 两个渠道
 // 协议，两格如今都开了。
 //

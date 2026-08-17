@@ -176,7 +176,7 @@ var coverage = map[string]disposition{
 	"input[].tools[].strict":      dExtras,
 	"input[].tools[].format":      dOpaque, // lark 文法，无 schema 对应物
 
-	// ---- OpenAI Chat Completions（opencode 1.18 实采，#27）----
+	// ---- OpenAI Chat Completions（opencode 1.18 实采，portage-legacy#27）----
 	//
 	// model / stream / max_tokens / messages / messages[].role / messages[].content
 	// 与上面 Anthropic 段同名同归宿，不再重复列。这里只列 CC 独有的那些。

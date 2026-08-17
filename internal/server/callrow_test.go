@@ -98,7 +98,7 @@ func TestStreamFlagRecorded(t *testing.T) {
 	})
 }
 
-// 鉴权失败也要落一行，否则被刷的时候表里什么都看不到（#22）。
+// 鉴权失败也要落一行，否则被刷的时候表里什么都看不到（portage-legacy#22）。
 func TestUnauthorizedCallLandsInCallLogs(t *testing.T) {
 	gw, _ := newAnthropicGateway(t)
 

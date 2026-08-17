@@ -23,7 +23,7 @@ const (
 
 // callLog 建这次调用的日志记录并保证它**恰好**落一行，无论后面在哪个中间件收场。
 //
-// 从 relay 里提出来单独成一层，是因为鉴权失败的请求也要落一行（#22）：401 时
+// 从 relay 里提出来单独成一层，是因为鉴权失败的请求也要落一行（portage-legacy#22）：401 时
 // relay 根本不会执行，日志逻辑留在里面就等于「被刷的时候日志里什么都看不到」。
 func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -105,7 +105,7 @@ func apiKeyFrom(c *gin.Context) auth.Key {
 
 // authModels 是 /v1/models 的鉴权。
 //
-// 它也要认：harness 启动时就拉这个表，不认就等于把接入点清单对全网段公开（#22）。
+// 它也要认：harness 启动时就拉这个表，不认就等于把接入点清单对全网段公开（portage-legacy#22）。
 // 不建 callRecord——`call_logs` 每行描述的是一次**转发调用**（模型、渠道、上游协议、
 // token），而这个端点一样都没有，塞一行进去只会是一条除端点外全空的记录。加了
 // endpoint 列（#17）也不改这一条：那一列是为了把四个转发端点分开，不是为了把非转发

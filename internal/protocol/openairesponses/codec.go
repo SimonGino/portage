@@ -9,7 +9,7 @@ import (
 // Codec 是 OpenAI Responses 协议的转换器。
 //
 // 入口侧（DecodeRequest + EncodeStream/EncodeFullBody，走 R→CC / R→A）与出口侧
-// （EncodeRequest + DecodeStream/DecodeFullBody，走 CC→R / A→R，#80）都已落地，
+// （EncodeRequest + DecodeStream/DecodeFullBody，走 CC→R / A→R，portage-legacy#80）都已落地，
 // 九宫格自此全开。
 //
 // 出口半边**不碰** customTools / compaction 两份状态：那是 DecodeRequest 在入口侧

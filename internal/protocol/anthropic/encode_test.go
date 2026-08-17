@@ -11,7 +11,7 @@ import (
 
 // flushCounter 是 EncodeStream 的下游：既收字节，也数 Flush。
 //
-// 数 Flush 不是形式主义——「流式输出逐字出现而非攒完一次性吐出」是 #11 的验收项，
+// 数 Flush 不是形式主义——「流式输出逐字出现而非攒完一次性吐出」是 portage-legacy#11 的验收项，
 // 而它在代码里的形态就是每帧一 flush。没有这个计数，攒着发的回归悄无声息。
 type flushCounter struct {
 	buf     strings.Builder
@@ -270,7 +270,7 @@ func assertThinkingSynthesized(t *testing.T, path, wire, thinking string) {
 		t.Errorf("%s: signature 漏进了下行字节:\n%s", path, wire)
 	}
 	// 「不发字段、不发空串、不伪造」（口径层 v0.62 ②）：客户端会把 signature:"" 原样
-	// 回带，上游直接 400（#94）。
+	// 回带，上游直接 400。
 	if strings.Contains(wire, "signature") {
 		t.Errorf("%s: 下行字节里出现了 signature 键:\n%s", path, wire)
 	}
@@ -449,7 +449,7 @@ func TestEncodeFullBodyAggregates(t *testing.T) {
 }
 
 // A 出口把毛值减回净值：canonical 的 InputTokens 含缓存两项，而 Anthropic 客户端
-// 按「input_tokens + 两项缓存 = 总输入」算，不减回去等于把缓存重复计一遍（#72）。
+// 按「input_tokens + 两项缓存 = 总输入」算，不减回去等于把缓存重复计一遍（portage-legacy#72）。
 func TestEncodeStreamSubtractsCacheFromInputTokens(t *testing.T) {
 	frames, _ := encodeStream(t, []protocol.Event{
 		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
@@ -493,7 +493,7 @@ func TestEncodeFullBodyClampsNegativeInputTokens(t *testing.T) {
 	}
 }
 
-// 兼容上游只在末帧报 output_tokens 时，先前那份 input 不许被清零（#72）。
+// 兼容上游只在末帧报 output_tokens 时，先前那份 input 不许被清零（portage-legacy#72）。
 func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
 	frames, _ := encodeStream(t, []protocol.Event{
 		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},

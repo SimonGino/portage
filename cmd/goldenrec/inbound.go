@@ -29,7 +29,7 @@ const inboundBodyLimit = 32 << 20
 // installation id 之类）意味着客户端身份跟着样本进 git，漏掉一个语义头只是转换时少条
 // 线索。凭证头（authorization / x-api-key）在任何模式下都不落盘。
 //
-// `x-codex-beta-features` 收的是**档位**不是语义（#73）：Codex remote compaction 有
+// `x-codex-beta-features` 收的是**档位**不是语义（portage-legacy#73）：Codex remote compaction 有
 // v2 内联 trigger 与 legacy `POST /v1/responses/compact` 两档，wire 不同形，而中转按
 // 这个头里有没有 `remote_compaction_v2` 分流（sub2api 的
 // `isOpenAIRemoteCompactionV2Request`，不带就把路径改写去 `/compact`）。样本不记它，

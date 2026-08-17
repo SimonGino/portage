@@ -8,9 +8,9 @@ import (
 
 // Codec 是 OpenAI Chat Completions 协议的转换器。
 //
-// 出口半边（EncodeRequest / DecodeStream / DecodeFullBody）在 #11 落地，入口半边
-// （DecodeRequest / EncodeStream / EncodeFullBody）在 #9 落地——后者打开的是 CC→A，
-// 与 openairesponses 的出口半边合起来打开 CC→R。
+// 出口半边（EncodeRequest / DecodeStream / DecodeFullBody）在 portage-legacy#11 落地，
+// 入口半边（DecodeRequest / EncodeStream / EncodeFullBody）在 portage-legacy#9 落地
+// ——后者打开的是 CC→A，与 openairesponses 的出口半边合起来打开 CC→R。
 //
 // 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
 // 在运行时组装才发现。

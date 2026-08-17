@@ -9,7 +9,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件测的是 R→CC 转换路径（#12，口径层 §2.1 优先级①下半）：Codex CLI 挂第三方
+// 本文件测的是 R→CC 转换路径（口径层 §2.1 优先级①下半）：Codex CLI 挂第三方
 // 便宜模型。A→CC 的用例在 convert_test.go，两条路不共用断言——它们唯一共享的是 CC
 // 出口那半边，而这一侧要验的恰恰是另外半边。
 
@@ -363,7 +363,7 @@ func TestResponsesGateOpensOnlyResponsesToCC(t *testing.T) {
 }
 
 // 此处原有 TestGateStaysClosedForUnimplementedPath，钉的是「只开了一格，不是开了
-// 一整行」。#80 九宫格全开之后没有哪一格还关着，这条性质不再存在，随该格放开一并
+// 一整行」。portage-legacy#80 九宫格全开之后没有哪一格还关着，这条性质不再存在，随该格放开一并
 // 删除（它先后指过 R×anthropic 与 messages×openai_responses，两格如今都开了）。
 //
 // 「走不通的路要 501 且不碰上游」这条断言仍在，载体换成了唯一永久成立的那个反例

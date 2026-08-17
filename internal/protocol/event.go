@@ -98,17 +98,17 @@ func OutboundThinkingText(e Event) (string, bool) {
 //     毛值直映；Anthropic 的 input_tokens 是净值，解码时加回缓存两项、编码时减回去。
 //   - CacheReadTokens / CacheWriteTokens 是毛值的**明细**而非另外两笔加数，不许再
 //     加到 InputTokens 上。
-//   - ReasoningTokens 同理是 **OutputTokens 的明细**（口径层 v0.66，#97）：真实字节
+//   - ReasoningTokens 同理是 **OutputTokens 的明细**（口径层 v0.66）：真实字节
 //     里 total 恒等于 input + output，思考 token 一次都没进这个加法。
 //
 // 归一放在 canonical 而不是各出口：不归一的话 total_tokens（= input + output）在
-// 缓存非零时低估，Codex 按它判压缩触发点，会被推后到先撞上游 400（#72）。
+// 缓存非零时低估，Codex 按它判压缩触发点，会被推后到先撞上游 400（portage-legacy#72）。
 type Usage struct {
 	InputTokens      int
 	OutputTokens     int
 	CacheReadTokens  int
 	CacheWriteTokens int
-	// ReasoningTokens 是思考 token 数（口径层 v0.66，#97），OutputTokens 的明细。
+	// ReasoningTokens 是思考 token 数（口径层 v0.66），OutputTokens 的明细。
 	//
 	// 这里**零值即「上游没报」**，不像 Tap 的 Summary 那样另立一个 Has 标志：
 	// canonical 侧本就有这条约定（MergeSnapshot 把零值当「这一帧没报」），而两侧要答

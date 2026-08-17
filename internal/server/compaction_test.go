@@ -10,8 +10,8 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件测 Codex 压缩在网关这一层的两种收场（口径层 v0.54）：转换路径**本地合成**
-// （#74），透传路径没勾能力位就**明确拒绝**（#71）。
+// 本文件测 Codex 压缩在网关这一层的两种收场（口径层 v0.54）：转换路径**本地合成**，
+// 透传路径没勾能力位就**明确拒绝**。
 //
 // 两边共同要钉的是同一句话：压缩 turn 绝不能表现成「一次成功的普通转发」——那正是让
 // Codex 收到 0 个 compaction item、当场 Fatal 且不重试不降级的那条路。
@@ -44,7 +44,7 @@ func anthropicSummaryFrames() []string {
 }
 
 // TestCompactionSynthesizedOnConvert：转换路径把压缩 turn 改写成 summarizer 打给上游，
-// 再把上游的摘要合成**恰好一个** compaction item 发回去（#74）。
+// 再把上游的摘要合成**恰好一个** compaction item 发回去（portage-legacy#74）。
 func TestCompactionSynthesizedOnConvert(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)

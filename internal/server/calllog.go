@@ -121,7 +121,7 @@ type callRecord struct {
 	// 与 retries 同理，非 0 才进 slog；落库则恒落（列不可空，0 就是 0）。
 	queueWait time.Duration
 
-	// upstreamRequestID 是最终落库与进 slog 的那个上游请求 id（口径层 v0.56，#37）。
+	// upstreamRequestID 是最终落库与进 slog 的那个上游请求 id（口径层 v0.56，#2）。
 	// 它同时原样回传给了客户端（透传路径）；留一份在流水里，是为了事后不用翻客户端
 	// 日志就能对账。
 	//
@@ -314,7 +314,7 @@ func (s *Server) persistCall(rec *callRecord) {
 		row.OutputTokens = nullInt(rec.summary.OutputTokens)
 		row.CacheReadTokens = nullInt(rec.summary.CacheReadTokens)
 		row.CacheWriteTokens = nullInt(rec.summary.CacheWriteTokens)
-		// 思考 token 单独判（口径层 v0.66，#97）：上面四个是「有 summary 就一定有
+		// 思考 token 单独判（口径层 v0.66）：上面四个是「有 summary 就一定有
 		// 数」，这一格不是——Anthropic 协议里根本没有它，CC 上游挂非推理模型时也
 		// 整个 details 都不发。没报就留 NULL，别落 0：落 0 是在说「上游报了，这次
 		// 没思考」，而我们其实什么都不知道。
@@ -322,7 +322,7 @@ func (s *Server) persistCall(rec *callRecord) {
 			row.ReasoningTokens = nullInt(rec.summary.ReasoningTokens)
 		}
 	}
-	// 表里没有 outcome 列（#22：不动表结构），而「这行为什么不是一次干净的成功」
+	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表（upstream_error /
 	// stream_aborted / unauthorized / rejected，并发闸批加 queue_full /
 	// queue_timeout / queue_abandoned，口径层 v0.52；压缩止血批加

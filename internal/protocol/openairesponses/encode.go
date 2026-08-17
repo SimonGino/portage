@@ -14,7 +14,7 @@ import (
 // 本文件是 OpenAI Responses 的**编码**侧：canonical 事件序列 → 下行响应。
 //
 // 线格式照 `testdata/golden/responses-stream-{text,tool-turn1/2,parallel-turn1/2}`
-// 五份**真实上游 SSE 转录**（Codex CLI 0.147 实跑，2026-08-14 入库，#79），不是照
+// 五份**真实上游 SSE 转录**（Codex CLI 0.147 实跑，2026-08-14 入库，portage-legacy#79），不是照
 // sub2api 复述的。M2-1 时 protocol/event.go 记了一笔「Responses 侧没有真实上游转录，
 // 事件名以 sub2api 为准，M2 拿到真实上游流后须复核」——词表与次序 2026-08-10 复核过，
 // 字段级 2026-08-14 对着上面五份逐项比完，结论列在这里：
@@ -43,7 +43,7 @@ import (
 //   - message item 的 `phase`（实采是 `commentary`）与 `metadata` /
 //     `internal_chat_message_metadata_passthrough`（回显 turn_id 与 create_time）：
 //     后两个是上游/中转的账本，我们没有对应物；`phase` 按 commentary / final
-//     合成与否 PO 已裁（2026-08-14，#79）：**不合成，维持现状**——语义源头
+//     合成与否 PO 已裁（2026-08-14，portage-legacy#79）：**不合成，维持现状**——语义源头
 //     （Anthropic/CC 上游）没有对应概念，opencodex 无 phase 也能跑，不发不是 bug；
 //     哪天实测出客户端行为差异再立票。
 //
@@ -85,7 +85,7 @@ type streamEncoder struct {
 	// customTools 来自同一个 codec 实例的 DecodeRequest（见 codec.go 的实例约定）。
 	customTools map[string]bool
 
-	// compaction 打开本地合成模式（#74）：正常 output item 一个不发，assistant 正文
+	// compaction 打开本地合成模式（portage-legacy#74）：正常 output item 一个不发，assistant 正文
 	// 攒起来，收尾时合成恰好一个 compaction item。同样来自 DecodeRequest。
 	compaction     bool
 	compactionText strings.Builder
@@ -546,7 +546,7 @@ func (e *streamEncoder) finish() error {
 // （nginx proxy_read_timeout 默认 60 秒），又不至于把一条流灌满注释行。
 const heartbeatInterval = 15 * time.Second
 
-// heartbeat 在合成期的静默里发一行 SSE 注释（#74 范围 5）。
+// heartbeat 在合成期的静默里发一行 SSE 注释（portage-legacy#74 范围 5）。
 //
 // 合成模式下从 response.in_progress 到终帧之间下行零字节——上游正在写摘要，可能是几十
 // 秒。portage 没有 wire keepalive 层（writeDeadline 只管「写出去要多久」，它不发字节），
@@ -594,7 +594,7 @@ type compactionFailure struct {
 // 停因，都等于把「上游没写完」当成「上游写完了」。
 //
 // content_filter 单列一条不是多余的：正常路径把它并进 completed（见 finish），而合成
-// 模式下「completed + 零个 item」正是 #71 要杀的那个静默 Fatal 形态。
+// 模式下「completed + 零个 item」正是 portage-legacy#71 要杀的那个静默 Fatal 形态。
 //
 // truncated 那条是这里唯一**看不出**破绽的一种：解码侧为了给下游一个合法取值，会把
 // 断流兜成 `stop`，wire 上与真正的收尾一模一样，只有 EvDone 的 Truncated 位分得开。
@@ -773,7 +773,7 @@ func (c *Codec) EncodeFullBody(events []protocol.Event) ([]byte, error) {
 	}
 	if c.compaction && len(enc.done) == 0 {
 		// 非流式压缩 turn 没能产出 item。回一份「completed 但空 output」的响应就是
-		// #71 要杀的静默 Fatal，所以这里报错让调用方按上游错误处理（转换路径会回一个
+		// portage-legacy#71 要杀的静默 Fatal，所以这里报错让调用方按上游错误处理（转换路径会回一个
 		// 带原因的 5xx，客户端至少看得见出了事）。
 		msg := "上游没有产出摘要正文"
 		if fail := enc.compactionNoItem(); fail != nil {
@@ -797,7 +797,7 @@ func usageBody(u protocol.Usage) map[string]any {
 			"cache_write_tokens": u.CacheWriteTokens,
 		},
 		"output_tokens": u.OutputTokens,
-		// 这一格此前硬编码 0（口径层 v0.66，#97 订正）：canonical 装不下这个数的时候
+		// 这一格此前硬编码 0（口径层 v0.66 订正）：canonical 装不下这个数的时候
 		// 写 0 还算凑合，装得下之后就是把上游报的思考成本抹成零。
 		//
 		// 与 CC 出口「有数才写」不同，这里键**恒在**：Responses 的 usage 契约里

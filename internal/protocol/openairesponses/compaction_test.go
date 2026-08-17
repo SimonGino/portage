@@ -10,12 +10,12 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件覆盖 Codex 压缩的全部三段，按下面的分节排：解码半边（#74 范围 1、2、4）
+// 本文件覆盖 Codex 压缩的全部三段，按下面的分节排：解码半边（portage-legacy#74 范围 1、2、4）
 // 认出压缩 turn、改写成 summarizer、回带还原；合成半边（范围 3、5）产那一个 item
 // 与静默期心跳；末尾是透传闸的判据。
 //
-// 手搭 fixture 而非 golden：真实压缩转录是 #73，仍未采（PO 2026-08-13 裁定先实现）。
-// 这些用例钉的是我们自己的口径，钉不住「Codex 真的这么发包」——那笔账在 #73 不销。
+// 手搭 fixture 而非 golden：真实压缩转录是 portage-legacy#73，仍未采（PO 2026-08-13 裁定先实现）。
+// 这些用例钉的是我们自己的口径，钉不住「Codex 真的这么发包」——那笔账在 portage-legacy#73 不销。
 
 func TestCompactionEnvelopeRoundTrip(t *testing.T) {
 	const summary = "第一节：做了什么\n第二节：还差什么"
@@ -192,7 +192,7 @@ func TestDecodeContextCompactionMarkerSkipped(t *testing.T) {
 	}
 }
 
-// ---- 合成半边（#74 范围 3、5）----
+// ---- 合成半边（portage-legacy#74 范围 3、5）----
 
 // compactionCodec 造一个已经处在合成模式的 codec，省去每个用例都先解一遍请求。
 func compactionCodec() *Codec { return &Codec{compaction: true} }
@@ -242,7 +242,7 @@ func TestEncodeCompactionSynthesizesExactlyOneItem(t *testing.T) {
 }
 
 // 截断 / 内容过滤 / 改调工具 / 空摘要都绝不产 item，而且都不许发成 completed——
-// 「completed + 零 item」正是 #71 要杀的静默 Fatal 形态。
+// 「completed + 零 item」正是 portage-legacy#71 要杀的静默 Fatal 形态。
 //
 // 前几支合起来把 canonical 的非 stop 停因占全了：漏掉任何一个，都等于把「上游没写完」
 // 当成「上游写完了」，一段半截摘要会被 Codex 当成替换历史装回去。

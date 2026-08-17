@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件补的是 Anthropic 出口在 **CC 入口**接上来之后才走得到的两条分支（#9）：
+// 本文件补的是 Anthropic 出口在 **CC 入口**接上来之后才走得到的两条分支（portage-legacy#9）：
 // RoleTool 消息的落位，以及 temperature 的值域收窄。R→A 那条路径永远产生不了
 // RoleTool（Responses 的工具结果在 user 消息的块里），所以它此前没有被覆盖。
 
@@ -383,7 +383,7 @@ func imageSource(t *testing.T, out map[string]any) map[string]any {
 	return nil
 }
 
-// 回带方向的 thinking 块：丢，但**要登记**（口径层 v0.62 ④，#94）。
+// 回带方向的 thinking 块：丢，但**要登记**（口径层 v0.62 ④）。
 //
 // 原先这里断言的是「不登记」，理由是这一格恒为空、每请求一条噪声。v0.62 之后不成立了：
 // 出口现在会把推理合成给客户端看，客户端下一轮就带着文本原样发回来（还会补一个

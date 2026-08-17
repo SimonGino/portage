@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件测 Anthropic 作**出口**的请求编码（#25，R→A 用）。
+// 本文件测 Anthropic 作**出口**的请求编码（portage-legacy#25，R→A 用）。
 //
 // 输入是 canonical，所以这里的用例形态大多来自 openairesponses.DecodeRequest 解出来
 // 的样子——Responses 是目前唯一开通的 R→A 入口。真正的入站样本背书在那一侧

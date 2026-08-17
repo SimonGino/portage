@@ -10,7 +10,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件测的是 CC→R 转换路径（#80，口径层 §2.1 优先级③下半）：OpenAI 兼容客户端
+// 本文件测的是 CC→R 转换路径（口径层 §2.1 优先级③下半）：OpenAI 兼容客户端
 // 挂 Responses 渠道。
 //
 // 去程的入站字节用 testdata/golden/in-cc-* 真实发包；回程直接喂

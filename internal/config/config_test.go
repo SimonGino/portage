@@ -47,7 +47,7 @@ func TestLoadOverridesOnlyWhatIsSet(t *testing.T) {
 }
 
 // max_retries 的两种「0」必须分得开：没写 retry 块是「用默认」，显式写 0 是「关掉」。
-// 混淆的后果是关不掉重试，而 #13 把「配 0 时行为与 M0 完全一致」定成了回归护栏。
+// 混淆的后果是关不掉重试，而 portage-legacy#13 把「配 0 时行为与 M0 完全一致」定成了回归护栏。
 func TestLoadDistinguishesAbsentRetryFromExplicitZero(t *testing.T) {
 	for _, tc := range []struct {
 		name string

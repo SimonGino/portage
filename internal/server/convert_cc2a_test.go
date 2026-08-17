@@ -10,7 +10,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// 本文件测的是 CC→A 转换路径（#9，口径层 §2.1 优先级③上半）：opencode 一类的
+// 本文件测的是 CC→A 转换路径（口径层 §2.1 优先级③上半）：opencode 一类的
 // OpenAI 客户端挂 Claude 渠道。
 //
 // 入站字节用 testdata/golden/in-cc-* 真实发包，只把 model 换成接入点名——手搭的
@@ -266,7 +266,7 @@ data: {"type":"message_stop"}
 		t.Errorf("工具入参丢了:\n%s", body)
 	}
 	// 样本要过 stream_options.include_usage，那 usage 帧就得补上。CC 的 prompt_tokens
-	// 是毛值：上游净值 88 + 缓存读 40 = 128（protocol.Usage 的约定，#72）。
+	// 是毛值：上游净值 88 + 缓存读 40 = 128（protocol.Usage 的约定，portage-legacy#72）。
 	if !strings.Contains(body, `"prompt_tokens":128`) {
 		t.Errorf("要过 include_usage 却没有 usage 帧，或 prompt_tokens 不是毛值:\n%s", body)
 	}

@@ -17,8 +17,8 @@ const goldenDir = "../../../testdata/golden"
 //
 // Verified 是**人工关卡**：入站样本经过脱敏，脱敏动作本身会改字节，没人核过就当
 // 输入用，等于拿一份可能已经改坏的语料给实现判卷。M0 给上游样本设这道闸时理由
-// 相同（golden_test.go 的 TestGoldenSamples）；#10 采集时标志已经写进 meta.json，
-// 但当时还没有消费方，到这张票才真正接上（PO 裁定留到 #11，jinpenga）。
+// 相同（golden_test.go 的 TestGoldenSamples）；portage-legacy#10 采集时标志已经写进
+// meta.json，但当时还没有消费方，到这张票才真正接上（PO 裁定留到 portage-legacy#11，jinpenga）。
 type inboundMeta struct {
 	Direction string `json:"direction"`
 	Protocol  string `json:"protocol"`

@@ -8,7 +8,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// 老库补 call_logs.upstream_request_id（口径层 v0.56，#37）。
+// 老库补 call_logs.upstream_request_id（口径层 v0.56，#2）。
 //
 // schema.sql 那份 DDL 只对**新建**的库生效，所以真正要验的是这条 ALTER 路径。存量
 // 流水一律落在默认空串上：那些行采集时网关根本没读这个头，回填不出来，空串就是

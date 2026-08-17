@@ -8,7 +8,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// 老库补 call_logs.reasoning_tokens（口径层 v0.66，#97）。
+// 老库补 call_logs.reasoning_tokens（口径层 v0.66）。
 //
 // 与 upstream_request_id 那条的关键差别：这一列**可空**，存量行落在 NULL 上。
 // NULL 不是「还没回填」，是「那时候网关不认这一格，上游报没报都无从知道」——与新行

@@ -112,7 +112,7 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 				return err
 			}
 			// **不带 signature 字段**：不发空串、不伪造（口径层 v0.62 ②）。空串比缺字段
-			// 更糟——客户端会把 `signature:""` 原样回带，上游直接 400（#94）。
+			// 更糟——客户端会把 `signature:""` 原样回带，上游直接 400。
 			if err := e.frame("content_block_start", map[string]any{
 				"type":          "content_block_start",
 				"index":         e.nextIndex,
@@ -367,7 +367,7 @@ func (e *streamEncoder) frame(event string, payload any) error {
 		return err
 	}
 	// 每帧一 flush：攒着发等于把逐字输出重新变成一次性吐出，而「逐字出现」是
-	// #11 的验收项。
+	// portage-legacy#11 的验收项。
 	if f, ok := e.w.(Flusher); ok {
 		f.Flush()
 	}

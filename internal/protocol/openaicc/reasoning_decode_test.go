@@ -5,7 +5,7 @@ import (
 )
 
 // 解码侧：completion_tokens_details.reasoning_tokens 要进 canonical Usage
-// （口径层 v0.66，#97）。它是 OutputTokens 的**明细**，不从里面减掉。
+// （口径层 v0.66）。它是 OutputTokens 的**明细**，不从里面减掉。
 func TestDecodeStreamCarriesReasoningTokens(t *testing.T) {
 	const raw = `data: {"model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}
 

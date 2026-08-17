@@ -198,7 +198,7 @@ func TestEncodeStreamTextFrameSequence(t *testing.T) {
 }
 
 // 后来的 usage 快照按**非零字段**覆盖（protocol/event.go 的 EvUsage 约定）：只报
-// output_tokens 的末帧不许把 prompt_tokens 清零，否则 total 低估（#72）。
+// output_tokens 的末帧不许把 prompt_tokens 清零，否则 total 低估（portage-legacy#72）。
 func TestEncodeStreamMergesPartialUsageSnapshots(t *testing.T) {
 	_, chunks := encodeStream(t, streamingRequest, []protocol.Event{
 		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},

@@ -123,7 +123,7 @@ func TestUnauthorizedUsesIngressProtocolShape(t *testing.T) {
 	assertNoSecrets(t, body, anthropicCredential, up.URL)
 }
 
-// 鉴权失败也要落一行调用日志，否则被刷的时候日志里什么都看不到（#22）。
+// 鉴权失败也要落一行调用日志，否则被刷的时候日志里什么都看不到（portage-legacy#22）。
 func TestUnauthorizedStillLogsACall(t *testing.T) {
 	gw, _ := newAnthropicGateway(t)
 

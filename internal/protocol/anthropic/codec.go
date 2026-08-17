@@ -8,8 +8,9 @@ import (
 
 // Codec 是 Anthropic Messages 协议的转换器。
 //
-// #11 落地入口半边（DecodeRequest、EncodeStream / EncodeFullBody），#25 补上出口
-// 半边（EncodeRequest、DecodeStream / DecodeFullBody），两半都在了。
+// portage-legacy#11 落地入口半边（DecodeRequest、EncodeStream / EncodeFullBody），
+// portage-legacy#25 补上出口半边（EncodeRequest、DecodeStream / DecodeFullBody），
+// 两半都在了。
 //
 // 编译期断言钉住接口一致性：任一方法漏实现，`go build` 当场红，而不是等 codecs 表
 // 在运行时组装才发现。
@@ -35,7 +36,7 @@ type Codec struct {
 
 // NewCodec 建一个 Anthropic Codec。
 //
-// 取可变参数只为了让入口方向的用例（#11 那批，压根用不到 Options）不必逐个改；
+// 取可变参数只为了让入口方向的用例（portage-legacy#11 那批，压根用不到 Options）不必逐个改；
 // 出口方向由 codecs.New 显式传值。
 func NewCodec(opts ...Options) *Codec {
 	c := &Codec{}

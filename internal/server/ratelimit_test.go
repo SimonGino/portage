@@ -37,7 +37,7 @@ func TestRateLimitRejectsOnceBurstIsSpent(t *testing.T) {
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("第 3 个请求 = %d, 期望 429", resp.StatusCode)
 	}
-	// 没有 Retry-After 的 429，harness 只能自己瞎猜退避（M0 实测 #6：Codex 对 429
+	// 没有 Retry-After 的 429，harness 只能自己瞎猜退避（M0 实测 portage-legacy#6：Codex 对 429
 	// 一次即弃）。口径把它列进来就是为了让客户端有得依据。
 	if ra := resp.Header.Get("Retry-After"); ra != "1" {
 		t.Errorf("Retry-After = %q, 期望 1", ra)

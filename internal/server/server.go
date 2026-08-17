@@ -303,7 +303,7 @@ type requestHead struct {
 func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 记录由 callLog 中间件建、也由它落——鉴权失败时 relay 压根不执行，
-		// 日志逻辑留在这里就等于 401 不落库（#22）。
+		// 日志逻辑留在这里就等于 401 不落库（portage-legacy#22）。
 		rec := callRecordFrom(c)
 
 		body, err := io.ReadAll(c.Request.Body)
@@ -362,14 +362,14 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		rec.channel, rec.channelProto, rec.upstreamModel = cand.ChannelName, cand.Protocol, cand.UpstreamModel
 
-		// Codex 压缩闸（口径层 v0.54，#71）：拦在选完渠道之后、分岔之前——判据要同时
+		// Codex 压缩闸（口径层 v0.54）：拦在选完渠道之后、分岔之前——判据要同时
 		// 用到「渠道说哪个协议」与「它认不认 compaction_trigger」，而两条路的收场是
 		// 同一句拒绝，没有理由在分岔两侧各写一遍。见 compaction.go。
 		if s.rejectCompaction(c, rec, ep, cand, body) {
 			return
 		}
 
-		// 转换闸。#80 九宫格全开后，这里能拦下的只剩「没有上游对应端点」的入口端点
+		// 转换闸。portage-legacy#80 九宫格全开后，这里能拦下的只剩「没有上游对应端点」的入口端点
 		// （count_tokens），501 是**没得做**而不是「还没做」——见 conversionOpen 的注释。
 		if cand.Protocol != ep.Proto {
 			if !conversionOpen(ep, cand.Protocol) {

@@ -141,7 +141,7 @@ func TestCallLogCoversRejectedAndFailedCalls(t *testing.T) {
 	t.Run("闸门拒绝", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
-		// #80 之后九宫格全开，唯一还会被闸挡下的是 count_tokens——它是 Anthropic
+		// portage-legacy#80 之后九宫格全开，唯一还会被闸挡下的是 count_tokens——它是 Anthropic
 		// 独有端点，另外两个协议根本没有可以转过去的上游端点。载体换了，这条要钉的
 		// 「被挡下的调用照样落日志」没变。
 		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-5.6", openaiCredential)

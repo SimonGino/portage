@@ -8,11 +8,11 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件测 Anthropic 作**上游**的解码半边（#25，R→A 用）。
+// 本文件测 Anthropic 作**上游**的解码半边（portage-legacy#25，R→A 用）。
 //
 // 输入是手抄的 SSE，形状照 testdata/golden/raw/anthropic-* 五份真实转录——**不回放
 // 那些文件**：`raw/` 在 .gitignore 里，CI 上根本不存在，回放式用例会集体 skip 成
-// 一片假绿（#12 已经踩过这个）。所以真实字节的作用是定形状，定完把期望写死在这里。
+// 一片假绿（portage-legacy#12 已经踩过这个）。所以真实字节的作用是定形状，定完把期望写死在这里。
 //
 // 手抄时刻意保留了两处真实特征：data 负载尾部的空格填充（上游的抗缓冲手段），以及
 // 中间插进来的 ping 帧（五份转录每份都有）。这两样都是解码器必须无视的。
@@ -124,7 +124,7 @@ func TestDecodeStreamEmitsUsageTwiceAsSnapshots(t *testing.T) {
 
 // 兼容上游的 message_delta 可能只带 output_tokens（不重复 input 与缓存两项）。
 // 那一帧解出来 InputTokens 必然是 0——消费方靠「非零字段覆盖」不把 message_start
-// 的毛值清掉，两件事必须一起成立才不会低估 total（#72）。
+// 的毛值清掉，两件事必须一起成立才不会低估 total（portage-legacy#72）。
 func TestDecodeStreamPartialUsageDeltaKeepsZeroInput(t *testing.T) {
 	const stream = `event: message_start
 data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":1}}}

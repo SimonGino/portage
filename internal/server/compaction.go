@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 本文件是 Codex remote compaction 的透传半边闸（口径层 v0.54，#71 止血 + #74 收口）。
+// 本文件是 Codex remote compaction 的透传半边闸（口径层 v0.54，portage-legacy#71 止血 + portage-legacy#74 收口）。
 //
 // Codex 发压缩 turn 的形态是 input 尾部一个 `compaction_trigger` item，它要求响应里
 // **恰好一个** compaction item，收到 0 个就 Fatal 且不重试不降级。网关原本有两条路会让
@@ -21,7 +21,7 @@ import (
 //	② 透传路径配错渠道：Responses 形状的 wire 不等于支持压缩，一个不认 trigger 的
 //	   兼容网关会把它当成无关字段忽略掉，照样回 0 个 item。
 //
-// ① 已经由本地合成治掉（#74）：转换路径认得 trigger、把那一轮改写成 summarizer、自己
+// ① 已经由本地合成治掉：转换路径认得 trigger、把那一轮改写成 summarizer、自己
 // 合成那个 item，所以它不再是拒绝的理由。留下的只有 ②——上游认不认 trigger 网关探不
 // 出来，只能看渠道的 compaction 能力位（默认取否，口径层 v0.54 ⑨）。
 //

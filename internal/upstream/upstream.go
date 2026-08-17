@@ -266,7 +266,7 @@ func drain(resp *http.Response) {
 // everything *before* the protocol sub-path. 百炼这类自带路径前缀的兼容端点因此要
 // 填到 .../compatible-mode 为止。
 //
-// 客户端的查询串**整串照抄**接在后面，不过滤（#20，PO 裁定 jinpenga）。实测
+// 客户端的查询串**整串照抄**接在后面，不过滤（portage-legacy#20，PO 裁定 jinpenga）。实测
 // Claude Code 发的是 `POST /v1/messages?beta=true`，丢掉之后上游收到的是另一个
 // 请求，而丢没丢不看日志根本发现不了。不做白名单是因为这里没有可枚举的对象——
 // 各家 harness 的私有参数不可穷举，而查询参数不像请求头那样天然带客户端指纹。
@@ -336,7 +336,7 @@ func applyHeaders(dst, client http.Header, p protocol.Protocol, credential strin
 }
 
 // RequestIDs 取上游响应头里的两档请求 id 候选，用于事后找上游对账（口径层 v0.56，
-// #37；三档取值 v0.74）。
+// #2；三档取值 v0.74）。
 //
 // official 的头名以 `request-id` 为准：Anthropic 官方文档「Request ID」一节的原文就是
 // 这个拼写（值形如 req_018Ee…）。proxy 是通用惯例的 `x-request-id`，给中转与自建上游

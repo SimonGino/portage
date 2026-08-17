@@ -8,7 +8,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件是 Responses 的**编码**侧：canonical → 出口请求体（#80，CC→R 与 A→R 的去程）。
+// 本文件是 Responses 的**编码**侧：canonical → 出口请求体（portage-legacy#80，CC→R 与 A→R 的去程）。
 //
 // 与另外两个出口的形态差别，都源于 Responses 把消息、工具调用、工具结果**摊平成
 // 一个有序 item 列表**（`input`），而不是分成 messages/tool_calls 两层：

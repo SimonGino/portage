@@ -13,7 +13,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// 本文件测 Responses 的**解码**侧（#80）。
+// 本文件测 Responses 的**解码**侧（portage-legacy#80）。
 //
 // 分工：golden 驱动的用例（TestGoldenDecode*）钉「真实上游字节解出来是什么」，
 // 手搭 fixture 的用例钉真实样本覆盖不到的形态——function_call 流（九份转录里一份
@@ -252,7 +252,7 @@ func TestGoldenDecodeToolTurn2(t *testing.T) {
 	}
 }
 
-// TestGoldenDecodeParallelTurn2：并行样本的回带轮，性质同 tool-turn2——五份 #79
+// TestGoldenDecodeParallelTurn2：并行样本的回带轮，性质同 tool-turn2——五份
 // 入库转录至此每份都有解码用例吃过，§9.4 表里「五份真实上游转录」才算数字属实。
 func TestGoldenDecodeParallelTurn2(t *testing.T) {
 	const sample = "responses-stream-parallel-turn2"

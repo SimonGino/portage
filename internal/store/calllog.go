@@ -43,13 +43,13 @@ type CallLog struct {
 	OutputTokens     sql.NullInt64
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
-	// ReasoningTokens 是思考 token（口径层 v0.66，#97），output_tokens 的**明细**
+	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的**明细**
 	// 而非另一笔。可空的理由与上面几个不同：这一列上 NULL 是「上游不报这个数」
 	// （Anthropic 一路），0 是「上游报了，这次没思考」——抹成一个，Anthropic 渠道的
 	// 思考成本就恒显示为确凿的零。
 	ReasoningTokens sql.NullInt64
 	Error           sql.NullString
-	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#37），
+	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#2），
 	// 拿去找上游对账用。没走到上游、或上游没回这个头时是空串——这一列上两者同档。
 	UpstreamRequestID string
 	// ErrorDetail 是上游错误原文的前 2KB（口径层 v0.53），只在失败时有值。
