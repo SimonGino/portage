@@ -51,23 +51,65 @@ func TestCopyResponseHeadersKeepsMultipleValues(t *testing.T) {
 	}
 }
 
-func TestRequestID(t *testing.T) {
+// 两档头候选各按各的头名取，先后由 callRecord 定（三档取值见口径层 v0.74，
+// 网关层的用例在 internal/server/requestid_test.go）。
+func TestRequestIDs(t *testing.T) {
 	cases := []struct {
-		name string
-		hdr  http.Header
-		want string
+		name            string
+		hdr             http.Header
+		official, proxy string
 	}{
-		{"官方拼写", http.Header{"Request-Id": {"req_018Ee"}}, "req_018Ee"},
-		{"中转常用的 x- 前缀兜底", http.Header{"X-Request-Id": {"9f2c"}}, "9f2c"},
-		// 两个都在时以官方那个为准：中转会给自己也编一个号，对账要找的是上游的。
-		{"两个都在取官方的", http.Header{"Request-Id": {"req_018Ee"}, "X-Request-Id": {"9f2c"}}, "req_018Ee"},
-		{"都没有", http.Header{}, ""},
-		{"有头但值是空的", http.Header{"Request-Id": {""}, "X-Request-Id": {"9f2c"}}, "9f2c"},
+		{"官方拼写", http.Header{"Request-Id": {"req_018Ee"}}, "req_018Ee", ""},
+		{"中转常用的 x- 前缀", http.Header{"X-Request-Id": {"9f2c"}}, "", "9f2c"},
+		{"两个都在各归各位", http.Header{"Request-Id": {"req_018Ee"}, "X-Request-Id": {"9f2c"}}, "req_018Ee", "9f2c"},
+		{"都没有", http.Header{}, "", ""},
+		// 有头但值是空的与没这个头同待遇：调用方判空串，取值自然落到下一档。
+		{"有头但值是空的", http.Header{"Request-Id": {""}, "X-Request-Id": {"9f2c"}}, "", "9f2c"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := upstream.RequestID(tc.hdr); got != tc.want {
-				t.Errorf("RequestID = %q, 期望 %q", got, tc.want)
+			official, proxy := upstream.RequestIDs(tc.hdr)
+			if official != tc.official || proxy != tc.proxy {
+				t.Errorf("RequestIDs = (%q, %q), 期望 (%q, %q)", official, proxy, tc.official, tc.proxy)
+			}
+		})
+	}
+}
+
+// 第二档（口径层 v0.74）：官方那个号在错误信封的体里，而中转把响应头裁了。
+func TestErrorBodyRequestID(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			"Anthropic 错误信封",
+			`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"},` +
+				`"request_id":"req_011Ce2vfd1LHuZQWqwDRc5mm"}`,
+			"req_011Ce2vfd1LHuZQWqwDRc5mm",
+		},
+		// 键排在 error 之后是常态，但排在前面也一样取得到——JSON 里键序无意义。
+		{
+			"键排在前面",
+			`{"request_id":"req_first","type":"error","error":{"message":"x"}}`,
+			"req_first",
+		},
+		{"没有这个键", `{"type":"error","error":{"message":"boom"}}`, ""},
+		{"HTML 错误页", "<html><body>502 Bad Gateway</body></html>", ""},
+		// 截断的字节（错误原文超过 upstreamErrorLimit）解不成 JSON，落空串。
+		{"截断的 JSON", `{"type":"error","error":{"message":"boo`, ""},
+		// 流式错误帧本库无样本、形状未知：SSE 那层不解，整段字节不是 JSON，落空串。
+		{"SSE 错误帧", "event: error\ndata: {\"type\":\"error\",\"request_id\":\"req_x\"}\n\n", ""},
+		{"空体", "", ""},
+		{"键在但值是空的", `{"request_id":"","error":{"message":"x"}}`, ""},
+		// 只认顶层：嵌在别处的同名键不是官方那个号的位置。
+		{"嵌在 error 里的同名键", `{"error":{"request_id":"req_nested"}}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := upstream.ErrorBodyRequestID([]byte(tc.body)); got != tc.want {
+				t.Errorf("ErrorBodyRequestID = %q, 期望 %q", got, tc.want)
 			}
 		})
 	}

@@ -396,7 +396,8 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		defer resp.Body.Close()
 		// 在写响应头之前取：之后 c.Writer.Header() 里也有同一个值，但从上游的
 		// resp.Header 拿才是「上游报的」，不受本地补头（X-Accel-Buffering）干扰。
-		rec.upstreamRequestID = upstream.RequestID(resp.Header)
+		// 只取两档头候选，最终取哪个由 logCall 收尾时定——中间那档在错误体里（v0.74）。
+		rec.officialRequestID, rec.proxyRequestID = upstream.RequestIDs(resp.Header)
 
 		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
 		// 转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。
@@ -415,7 +416,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		// 透传路径上响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
 		// 判据是状态码而非 error 列——透传 4xx 的 error 列是空的（v0.28 纪律）。
 		if resp.StatusCode >= 400 {
-			rec.errorDetail = newCapture(errorDetailLimit)
+			rec.errorDetail = newCapture(upstreamErrorLimit)
 			observers = append(observers, rec.errorDetail)
 		}
 		src := io.Reader(resp.Body)

@@ -131,8 +131,9 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	}
 	defer resp.Body.Close()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
-	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#37）。
-	rec.upstreamRequestID = upstream.RequestID(resp.Header)
+	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#37）。三档的取舍与
+	// 透传路径同一处（logCall），包括错误体那一档（v0.74）。
+	rec.officialRequestID, rec.proxyRequestID = upstream.RequestIDs(resp.Header)
 
 	// Tap 与 body 记录挂在上游原始字节上，与透传路径一致：usage 要的是上游自己
 	// 报的数，不是网关重编出来的响应。
@@ -171,10 +172,6 @@ func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]
 	body, err := codec.EncodeRequest(req, stream)
 	return body, nil, err
 }
-
-// upstreamErrorLimit 是上游错误体的读取上限。错误体应当很小；设上限是防着一个巨大
-// 的 HTML 错误页把内存吃满。
-const upstreamErrorLimit = 64 << 10
 
 // writeUpstreamError 把上游的错误按**入口协议**的原生形态回给客户端。
 //

@@ -116,6 +116,151 @@ func TestRelayRecordsRequestIDOnUpstreamError(t *testing.T) {
 	}
 }
 
+// 口径层 v0.74 的三档取值：`request-id`（头）→ 错误响应体里的 `request_id` →
+// `x-request-id`（头）。下面七条对着该票的七条验收。
+//
+// 这一条是实测撞见的真实形状，也是加第三档的全部理由：应用层中转把官方响应头裁了
+// （小写 request-id 一个都不到），只回一个自己编号的 X-Request-Id，而官方那个号还在
+// 错误信封的体里。取中转编的号去问官方什么都查不到，比空着更误导。
+func TestRelayReadsRequestIDFromErrorBodyWhenOfficialHeaderIsStripped(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	up.RespondWith(http.StatusTooManyRequests, map[string]string{
+		"Content-Type": "application/json",
+		// 中转编的号，实测那条链路上它**总是**有值——所以新档不能插在它后面。
+		"X-Request-Id": "58b499a1-cdd5-4b78-81ad-766b71fe287e",
+	}, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"},`+
+		`"request_id":"req_011Ce2vfd1LHuZQWqwDRc5mm"}`)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	gatewaytest.ReadBody(t, resp)
+
+	// 客户端那边照旧原样收到中转那个头：这一档只改流水记什么，不动透传的字节。
+	if got := resp.Header.Get("X-Request-Id"); got != "58b499a1-cdd5-4b78-81ad-766b71fe287e" {
+		t.Errorf("X-Request-Id = %q, 期望原样回传中转那个头", got)
+	}
+	if got := gw.LastCallRow(t).UpstreamRequestID; got != "req_011Ce2vfd1LHuZQWqwDRc5mm" {
+		t.Errorf("call_logs.upstream_request_id = %q, 期望取错误体里官方那个 req_011Ce2…", got)
+	}
+}
+
+// 头里有官方那个时体不参与：两处给不同的值，取到哪个一目了然（同值的话这条钉不住）。
+func TestRelayPrefersOfficialHeaderOverErrorBodyRequestID(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	up.RespondWith(http.StatusBadRequest, map[string]string{
+		"Content-Type": "application/json",
+		"Request-Id":   "req_from_header",
+		"X-Request-Id": "proxy-uuid",
+	}, `{"type":"error","error":{"type":"invalid_request_error","message":"bad"},`+
+		`"request_id":"req_from_body"}`)
+
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
+
+	if got := gw.LastCallRow(t).UpstreamRequestID; got != "req_from_header" {
+		t.Errorf("call_logs.upstream_request_id = %q, 期望头里官方那个 req_from_header", got)
+	}
+}
+
+// 三处都没有就是没有：不失败、不告警，落空串（v0.67 ⑤ 那一档吃掉的三种情况之一）。
+func TestRelayLeavesRequestIDEmptyWhenErrorBodyHasNoneEither(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	up.RespondWith(http.StatusInternalServerError, map[string]string{"Content-Type": "application/json"},
+		`{"type":"error","error":{"type":"api_error","message":"boom"}}`)
+
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
+
+	row := gw.LastCallRow(t)
+	if row.UpstreamRequestID != "" {
+		t.Errorf("call_logs.upstream_request_id = %q, 三处都没有时期望空串", row.UpstreamRequestID)
+	}
+	// 解不出来不影响错误原文照落：两件事共用同一份字节，但互不牵连。
+	if !strings.Contains(row.ErrorDetail.String, "boom") {
+		t.Errorf("error_detail = %q, 期望仍含上游原文", row.ErrorDetail.String)
+	}
+}
+
+// 成功行不读体（口径层 v0.74 ②：实测成功响应的体里没有这个字段，流式非流式都没有）。
+// 判据是行为而不是计数：体里明摆着一个 request_id，只要成功路径去解了它就会被记下来，
+// 而期望记的是头里那个。
+func TestSuccessfulCallDoesNotReadRequestIDFromBody(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	up.RespondWith(http.StatusOK, map[string]string{
+		"Content-Type": "application/json", "X-Request-Id": "proxy-uuid",
+	}, `{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],`+
+		`"usage":{"input_tokens":10,"output_tokens":2},"request_id":"req_from_success_body"}`)
+
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
+
+	row := gw.LastCallRow(t)
+	if row.UpstreamRequestID != "proxy-uuid" {
+		t.Errorf("call_logs.upstream_request_id = %q, 成功行期望仍取头里的 proxy-uuid", row.UpstreamRequestID)
+	}
+	// 成功行连错误原文都不收集，第二档因此**结构上**走不到——这一列为空即是那个证据。
+	if row.ErrorDetail.Valid {
+		t.Errorf("成功的调用不该收集错误原文：%q", row.ErrorDetail.String)
+	}
+}
+
+// 截断顺序那一坑：`request_id` 排在 `error` 对象之后，落库截 2KB 会把它截在外面。
+// 取键因此在**截断前**的完整字节上做——这条同时钉住「两个上限确实不是一个数」。
+func TestErrorBodyRequestIDSurvivesErrorDetailTruncation(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	huge := `{"type":"error","error":{"type":"api_error","message":"` +
+		strings.Repeat("x", 8<<10) + `"},"request_id":"req_beyond_2kb"}`
+	up.RespondWith(http.StatusInternalServerError,
+		map[string]string{"Content-Type": "application/json", "X-Request-Id": "proxy-uuid"}, huge)
+
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
+
+	row := gw.LastCallRow(t)
+	if row.UpstreamRequestID != "req_beyond_2kb" {
+		t.Errorf("call_logs.upstream_request_id = %q, 期望 2KB 之外那个 req_beyond_2kb", row.UpstreamRequestID)
+	}
+	// 落库这一半照旧截：内存里收完整字节不等于往库里塞 8KB。
+	if got := row.ErrorDetail.String; !strings.HasSuffix(got, "…[truncated]") || len(got) > (2<<10)+64 {
+		t.Errorf("error_detail 长度 = %d，期望仍被截到 2KB 上下并说出截断", len(got))
+	}
+}
+
+// 体不是合法 JSON（中转的 HTML 错误页、截断的流）：落空串，且请求本身的透传不受影响。
+func TestNonJSONErrorBodyLeavesRequestIDEmptyAndDoesNotDisturbPassthrough(t *testing.T) {
+	gw, up := newAnthropicGateway(t)
+	const html = "<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>"
+	up.RespondWith(http.StatusBadGateway, map[string]string{"Content-Type": "text/html"}, html)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	body := gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, 期望原样透传上游的 502", resp.StatusCode)
+	}
+	// 透传保真：解不开体不该改动回给客户端的一个字节。
+	if body != html {
+		t.Errorf("客户端收到的 body 与上游不一致：%s", body)
+	}
+	if got := gw.LastCallRow(t).UpstreamRequestID; got != "" {
+		t.Errorf("call_logs.upstream_request_id = %q, 解不开的体期望落空串", got)
+	}
+}
+
+// 转换路径与透传路径同一套取值（v0.56 原则：对账与走哪条路无关）。三档的取舍收在
+// logCall 一处，这条钉的就是「转换路径也走得到第二档」。
+func TestConvertedCallReadsRequestIDFromErrorBody(t *testing.T) {
+	gw, up := newConvertGateway(t)
+	up.RespondWith(http.StatusTooManyRequests, map[string]string{
+		"Content-Type": "application/json", "X-Request-Id": "proxy-uuid",
+	}, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"},`+
+		`"request_id":"req_convert_body"}`)
+
+	resp := gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, 期望原样带回上游的 429", resp.StatusCode)
+	}
+
+	if got := gw.LastCallRow(t).UpstreamRequestID; got != "req_convert_body" {
+		t.Errorf("call_logs.upstream_request_id = %q, 期望取错误体里的 req_convert_body", got)
+	}
+}
+
 // 转换路径不回传上游响应头（出口协议的头是这边重造的），但流水里照记这个 id：
 // 找上游对账与走的是哪条路无关，而 A→CC 恰恰是最常出问题、最需要对账的那条。
 func TestConvertedCallRecordsUpstreamRequestID(t *testing.T) {

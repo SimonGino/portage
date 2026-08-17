@@ -5,6 +5,7 @@ package upstream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -334,19 +335,40 @@ func applyHeaders(dst, client http.Header, p protocol.Protocol, credential strin
 	}
 }
 
-// RequestID 取上游响应里的请求 id，用于事后找上游对账（口径层 v0.56，#37）。
+// RequestIDs 取上游响应头里的两档请求 id 候选，用于事后找上游对账（口径层 v0.56，
+// #37；三档取值 v0.74）。
 //
-// 头名以 `request-id` 为准：Anthropic 官方文档「Request ID」一节的原文就是这个拼写
-// （值形如 req_018Ee…），错误响应体里的 `request_id` 字段是同一个值。兜底
-// `x-request-id` 是给中转与自建上游留的——它们多半按通用惯例发这个名字，两个都不给
-// 就是没有，回空串。
+// official 的头名以 `request-id` 为准：Anthropic 官方文档「Request ID」一节的原文就是
+// 这个拼写（值形如 req_018Ee…）。proxy 是通用惯例的 `x-request-id`，给中转与自建上游
+// 留的——**它常常是中间层给自己编的号**，所以只当兜底用，排在错误体里那个官方
+// `request_id` 之后（见 ErrorBodyRequestID）。三档的先后由调用方定（server 的
+// callRecord），这里只负责按头名取值。
 //
-// 只读不改：这个头本身照 CopyResponseHeaders 原样回给客户端，这里取一份是为了落库。
-func RequestID(h http.Header) string {
-	if v := h.Get("request-id"); v != "" {
-		return v
+// 只读不改：这两个头本身照 CopyResponseHeaders 原样回给客户端，这里取一份是为了落库。
+func RequestIDs(h http.Header) (official, proxy string) {
+	return h.Get("request-id"), h.Get("x-request-id")
+}
+
+// ErrorBodyRequestID 从上游**错误**响应体里取顶层 `request_id`（口径层 v0.74）。
+//
+// 这一档是实测撞出来的：应用层中转会把官方响应头裁掉（小写 `request-id` 与
+// anthropic-ratelimit-* 一个都不到），只回一个自己编号的 `X-Request-Id`；而官方那个号
+// 还在错误信封里——`{"type":"error","error":{…},"request_id":"req_011Ce2…"}`。
+//
+// 只在失败行调用：2026-08-15 五份真实响应实测，成功响应的体里（流式与非流式）都没有
+// 这个字段，成功行不该为它多解一次 body。
+//
+// 解不出来一律回空串，不报错也不告警：不是 JSON（HTML 错误页）、截断的字节、没有这个
+// 键、流式错误帧（本库无样本，形状未知）——这几种情况在对账上是同一件事，都是「没有
+// 可用的 id」。
+func ErrorBodyRequestID(raw []byte) string {
+	var payload struct {
+		RequestID string `json:"request_id"`
 	}
-	return h.Get("x-request-id")
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	return payload.RequestID
 }
 
 // CopyResponseHeaders mirrors the upstream response headers onto the client

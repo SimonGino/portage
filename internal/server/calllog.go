@@ -7,16 +7,29 @@ import (
 
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/upstream"
 )
 
 // bodyCaptureLimit 是 log_bodies 打开时单侧 body 的记录上限。开这个开关是为了排障，
 // 不是为了留档；一条长流的完整响应进日志只会把日志冲垮。
 const bodyCaptureLimit = 64 << 10
 
-// errorDetailLimit 是落库的上游错误原文上限（口径层 v0.53）。比 body 那个小两个
+// errorDetailLimit 是**落库**的上游错误原文上限（口径层 v0.53）。比 body 那个小两个
 // 数量级：错误体是给人读的一段话，2KB 之后基本只剩上游自己的请求快照与堆栈；而
 // 这一列每条失败流水都占一份，长期躺在库里。
 const errorDetailLimit = 2 << 10
+
+// upstreamErrorLimit 是上游错误原文的**内存**上限：转换路径读到这么多就停，透传路径的
+// 旁路收集器收到这么多就停。它防着一个巨大的 HTML 错误页把内存吃满。
+//
+// 比落库那个上限大两个数量级是口径层 v0.74 要的：`request_id` 在 Anthropic 错误信封里
+// 排在 `error` 对象**之后**，超长错误原文按 2KB 截完正好把它截在外面，而取键必须在
+// 截断前的字节上做。所以内存里收完整的一段，落库那一刻再截（captureWriter.truncatedTo）。
+const upstreamErrorLimit = 64 << 10
+
+// truncationMark 是截断说出口的那句。截断这件事本身要说出来——否则一段被砍掉一半的
+// JSON 看起来像上游发了个坏包。
+const truncationMark = "…[truncated]"
 
 // captureWriter 是挂在旁路上的定量收集器。和 Tap 一样：永不报错，否则 io.MultiWriter
 // 会把错误变成读错误、打断转发。
@@ -47,9 +60,22 @@ func (c *captureWriter) Write(p []byte) (int, error) {
 
 func (c *captureWriter) String() string {
 	if c.truncated {
-		return string(c.buf) + "…[truncated]"
+		return string(c.buf) + truncationMark
 	}
 	return string(c.buf)
+}
+
+// collected 是收下的原始字节，未经二次截断。给 request_id 取键用（口径层 v0.74）：
+// 那个键排在错误信封末尾，只有完整字节上取得到。
+func (c *captureWriter) collected() []byte { return c.buf }
+
+// truncatedTo 按一个更小的上限二次截断。错误原文用得到它：内存里要留完整字节给
+// request_id 取键（v0.74），落库只留 2KB（v0.53）。
+func (c *captureWriter) truncatedTo(limit int) string {
+	if len(c.buf) > limit {
+		return string(c.buf[:limit]) + truncationMark
+	}
+	return c.String()
 }
 
 // callRecord 攒够一次调用的日志字段，由 callLog 中间件的 defer 统一落一行 slog
@@ -87,11 +113,21 @@ type callRecord struct {
 	// 与 retries 同理，非 0 才进 slog；落库则恒落（列不可空，0 就是 0）。
 	queueWait time.Duration
 
-	// upstreamRequestID 是上游响应头里的 request-id（口径层 v0.56，#37）。它同时
-	// 原样回传给了客户端；留一份在流水里，是为了事后不用翻客户端日志就能对账。
+	// upstreamRequestID 是最终落库与进 slog 的那个上游请求 id（口径层 v0.56，#37）。
+	// 它同时原样回传给了客户端（透传路径）；留一份在流水里，是为了事后不用翻客户端
+	// 日志就能对账。
 	//
 	// 不是凭证材料，进日志无碍：这是上游自己给这次调用编的号，报障时官方文档就要它。
+	//
+	// 值由 resolveUpstreamRequestID 在收尾时从下面两档候选加错误体里那一档定下来
+	// （口径层 v0.74），别在别处直接赋值。
 	upstreamRequestID string
+	// officialRequestID 是第一档：响应头里官方拼写的 `request-id`，Anthropic 自己写的。
+	officialRequestID string
+	// proxyRequestID 是第三档：响应头里的 `x-request-id`。排最后是因为它多半是中间层
+	// 给自己编的号——2026-08-15 实测那条链路上它**总是**有值，插在前面就等于永远只
+	// 记中转的流水号，拿去问官方什么都查不到，比空着更误导。
+	proxyRequestID string
 
 	summary     protocol.Summary
 	haveSummary bool
@@ -99,12 +135,38 @@ type callRecord struct {
 	requestBody  *captureWriter
 	responseBody *captureWriter
 
-	// errorDetail 是上游错误原文（口径层 v0.53），只在失败时有值、截前 2KB。
+	// errorDetail 是上游错误原文（口径层 v0.53），只在失败时有值。收到
+	// upstreamErrorLimit，落库那一刻截到 errorDetailLimit。
 	//
 	// 是 *captureWriter 而不是 string，因为透传路径上它得挂在旁路上边转发边收——
 	// 那条链路不允许为了记一份错误体把响应先读进内存再转出去。另外两个来源（转换
 	// 路径已经读到的原始字节、传输错误的 Redact 文本）用 setErrorDetail 写进来。
+	//
+	// 它同时是 request_id 第二档的字节来源（口径层 v0.74）：那一档「复用 error_detail
+	// 已经读进来的字节」，不新开一次 body 读，因此不违反透传路径不 decode→encode。
 	errorDetail *captureWriter
+}
+
+// resolveUpstreamRequestID 按三档定下这次调用的上游请求 id（口径层 v0.74）：
+// `request-id`（头）→ 错误响应体里的 `request_id` → `x-request-id`（头）。
+//
+// 前两档都是 Anthropic 自己写的，第三档是中间层给自己编的号，所以新档插在中间。
+//
+// 在收尾时才做而不是拿到响应头就做，是因为第二档要等错误体收完——透传路径上那份字节
+// 是边转发边攒的，最后一个字节到这一刻才齐。
+//
+// 第二档只有失败行有货：rec.errorDetail 只在失败时才被挂上（透传路径按 status >= 400
+// 挂旁路，转换路径在写错误时 setErrorDetail），成功行走不到这里的 json 解析。
+func (r *callRecord) resolveUpstreamRequestID() string {
+	if r.officialRequestID != "" {
+		return r.officialRequestID
+	}
+	if r.errorDetail != nil {
+		if id := upstream.ErrorBodyRequestID(r.errorDetail.collected()); id != "" {
+			return id
+		}
+	}
+	return r.proxyRequestID
 }
 
 // setErrorDetail 记下一段已经拿在手里的错误原文。**不覆盖已有的**：透传路径的旁路
@@ -113,11 +175,16 @@ func (r *callRecord) setErrorDetail(s string) {
 	if r.errorDetail != nil || s == "" {
 		return
 	}
-	r.errorDetail = newCapture(errorDetailLimit)
+	r.errorDetail = newCapture(upstreamErrorLimit)
 	_, _ = r.errorDetail.Write([]byte(s))
 }
 
 func (s *Server) logCall(rec *callRecord) {
+	// 三档取值到这一刻才定得下来（口径层 v0.74）：中间那档在错误体里，而错误体是边
+	// 转发边收的。定一次写回 rec，下面的 slog 与 persistCall 因此同源，两条转发路径
+	// （透传 / 转换）也都只经过这一处——对账与走哪条路无关（v0.56 原则）。
+	rec.upstreamRequestID = rec.resolveUpstreamRequestID()
+
 	attrs := []any{
 		"endpoint", rec.endpoint,
 		"api_key", rec.apiKeyName,
@@ -202,7 +269,7 @@ func (s *Server) persistCall(rec *callRecord) {
 		ChannelKeyName:   rec.channelKey,
 		Status:           rec.status,
 		RetryCount:       rec.retries,
-		// 上游没回这个头、或根本没走到上游时是空串（口径层 v0.56）。
+		// 三档都落空、或根本没走到上游时是空串（口径层 v0.56、v0.74）。
 		UpstreamRequestID: rec.upstreamRequestID,
 		TotalMs:           time.Since(rec.start).Milliseconds(),
 		QueueWaitMs:       rec.queueWait.Milliseconds(),
@@ -244,8 +311,10 @@ func (s *Server) persistCall(rec *callRecord) {
 	// 上游原文另落一列（口径层 v0.53）。它与 error 列是两件事，也不同步出现：上游
 	// 透传 4xx 的 error 列是空的（透传成功不算网关侧错误，v0.28 纪律），detail 却有
 	// 值——「可展开」的判据因此是 status >= 400，不是 error 非空。
+	// 落库这一刻才截到 2KB：内存里收的是完整的一段（upstreamErrorLimit），因为
+	// request_id 取键要在截断前的字节上做（v0.74）。
 	if rec.errorDetail != nil {
-		row.ErrorDetail = sql.NullString{String: rec.errorDetail.String(), Valid: true}
+		row.ErrorDetail = sql.NullString{String: rec.errorDetail.truncatedTo(errorDetailLimit), Valid: true}
 	}
 
 	if err := store.InsertCallLog(ctx, s.db, row); err != nil {
