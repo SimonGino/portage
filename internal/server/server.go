@@ -145,6 +145,11 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 
 // writeQueueReject 译写渠道并发闸的三种收场（口径层 v0.50/v0.52）；不是闸的错误
 // 则返回 false，调用方接着走通用的 upstream_error 分支。透传与转换两条路共用。
+//
+// 认下的三档都要把 rec.upstreamEndpoint 清回空串（#20）：它在两个调用点的 Do 之前
+// 一刻就记上了，而闸在 Do 里面、拨号之前就回绝——这三档一个字节都没到上游，同
+// 401 / 429 / 501 那批，空就是事实。清在这里而不是两个调用点各写一遍：这是那两条路
+// 共用的真分支。返回 false 那档不清，那是真打过上游之后的失败（拨不通、读超时）。
 func (s *Server) writeQueueReject(c *gin.Context, rec *callRecord, ep protocol.Endpoint, channel string, err error) bool {
 	var word, msg string
 	switch {
@@ -157,6 +162,7 @@ func (s *Server) writeQueueReject(c *gin.Context, rec *callRecord, ep protocol.E
 		// client closed request 惯例码），流水靠 error=queue_abandoned 归因，
 		// 与「打到上游后失败」（upstream_error）分开——这种请求没碰过上游。
 		rec.outcome = "queue_abandoned"
+		rec.upstreamEndpoint = ""
 		s.log.Info("排队途中客户端断开", "channel", channel,
 			"queue_wait_ms", rec.queueWait.Milliseconds())
 		c.Writer.WriteHeader(499)
@@ -165,6 +171,7 @@ func (s *Server) writeQueueReject(c *gin.Context, rec *callRecord, ep protocol.E
 		return false
 	}
 	rec.outcome = word
+	rec.upstreamEndpoint = ""
 	s.log.Warn("渠道并发闸拒绝", "channel", channel, "reason", word,
 		"queue_wait_ms", rec.queueWait.Milliseconds())
 	// Retry-After 要赶在 WriteError 之前设（同 rateLimit）：那里面就 WriteHeader
@@ -382,6 +389,10 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
+		// 同协议透传的出站端点就是入站那条（#20）：这条路上入口即出口，count_tokens
+		// 透传到 anthropic 渠道打的也还是 /v1/messages/count_tokens。记在这一刻而不是
+		// 选完渠道那一刻——上面的 RewriteModel 400 同样没打上游。
+		rec.upstreamEndpoint = ep.Path
 		resp, at, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
 		rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 		if err != nil {

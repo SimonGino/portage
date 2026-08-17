@@ -88,6 +88,14 @@ type callRecord struct {
 	firstByte time.Time
 
 	endpoint string
+	// upstreamEndpoint 是这次**打到上游**的那条路径（#20），在两个 s.up.Do 调用点
+	// 发请求之前的那一刻赋值——不是在 outEp 算出来的地方：解不动请求体、编不出出口
+	// 请求、压缩闸拒绝那些行都停在 Do 之前，它们同样没打上游，这一格该空着。
+	//
+	// 不变量：**非空 ⟺ 真的向上游发起过**（含拨不通、读超时那些——那些行有
+	// error_detail，恰恰要知道打的哪条路径）。反过来，401 / 429 / 501 / 并发闸队满
+	// 一律空串（队满那档由 writeQueueReject 清回去，见那里）。
+	upstreamEndpoint string
 	// apiKeyName 是网关 key 的**名字**，不是 key 本身，也不是它的 hash：
 	// 日志是最容易被复制粘贴出去的东西，凭证材料一概不进。
 	apiKeyName     string
@@ -203,6 +211,14 @@ func (s *Server) logCall(rec *callRecord) {
 	if rec.channelKey != "" {
 		attrs = append(attrs, "channel_key", rec.channelKey)
 	}
+	// 出站端点只在有值时进 slog（#20），同 retries / channel_key 那条惯例：没发到上游
+	// 的行这一格恒空，每行背一个空字段没意义。**入站那条恒落**（它由中间件写死，
+	// 每行都有），两者不对称是因为两者的空值含义不同。打它的理由：channel_protocol
+	// 推不出这条路径——同协议透传的 count_tokens 就没有出口对应物，而排障时「转成
+	// 了哪条路径」正是跨协议那批要看的第一眼。
+	if rec.upstreamEndpoint != "" {
+		attrs = append(attrs, "upstream_endpoint", rec.upstreamEndpoint)
+	}
 	if rec.retries > 0 {
 		attrs = append(attrs, "retries", rec.retries)
 	}
@@ -264,7 +280,10 @@ func (s *Server) persistCall(rec *callRecord) {
 		// 端点恒落（#17）：它在 callLog 中间件里就写死了，鉴权失败、限流、
 		// count_tokens 撞非 Anthropic 渠道那些没走到上游的行也都有——那正是最需要
 		// 它的一批，那些行的模型、耗时、渠道全是空的，只有端点分得开它们。
-		Endpoint:         rec.endpoint,
+		Endpoint: rec.endpoint,
+		// 出站端点相反，**只有真发过上游的行才有**（#20）：上面那批正是没有它的，
+		// 空就是事实，不从 upstream_protocol 反推补一条没打过的路径。
+		UpstreamEndpoint: rec.upstreamEndpoint,
 		ClientProtocol:   string(rec.inboundProto),
 		UpstreamProtocol: string(rec.channelProto),
 		ModelRequested:   rec.requestedModel,

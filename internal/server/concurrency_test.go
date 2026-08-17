@@ -204,6 +204,14 @@ func TestGateFullQueueRejectsImmediately(t *testing.T) {
 	if row.Status != http.StatusTooManyRequests {
 		t.Errorf("status = %d, 期望 429", row.Status)
 	}
+	// 队满是在闸上回绝的，一个字节都没拨到上游，出站端点因此为空（#20）——同 401 /
+	// 429 / 501 那批。入站那条照旧有值：它由最外层中间件写死。
+	if row.UpstreamEndpoint != "" {
+		t.Errorf("upstream_endpoint = %q, 期望空串——队满从没打过上游", row.UpstreamEndpoint)
+	}
+	if row.Endpoint != "/v1/messages" {
+		t.Errorf("endpoint = %q, 期望 /v1/messages", row.Endpoint)
+	}
 
 	// 收尾：放开上游，A 与排着的 B 都该正常完成——被拒的只有 C。
 	unblock()

@@ -73,7 +73,7 @@ func TestConvertedRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 		t.Errorf("上游 path = %q, 期望 /v1/chat/completions", got.Path)
 	}
 	// 查询串不带过去：?beta=true 是 Anthropic 的方言，挂到 CC 端点上不是保真是串味。
-	// （#20 定的「整串照抄」管的是同协议透传那条路。）
+	// （legacy #20 定的「整串照抄」管的是同协议透传那条路；那是拆库前的编号。）
 	if got.RawQuery != "" {
 		t.Errorf("上游 RawQuery = %q, 转换路径不该把入口协议的查询串带过去", got.RawQuery)
 	}

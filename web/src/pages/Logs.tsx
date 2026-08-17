@@ -102,9 +102,20 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
           </dd>
           {/* 端点与协议在这儿分成两格（#17）：表里那一列为了宽度把入站协议顶掉了，
               框里没有这个约束，而「打的哪条路径」与「哪个协议转成哪个协议」是两个
-              问题。老流水没有路径，那一格显示「—」——入站协议在下面那格里还在。 */}
+              问题。端点那格摆入站与出站两条真实路径（#20），与表里那一列同源；
+              没有 base_url，那是硬约束。老流水两条都没有，整格塌成一个「—」而不是
+              「— → —」——协议在下面那格里还在，摆两个破折号只是把缺值说了两遍。 */}
           <dt>端点</dt>
-          <dd className="mono">{log.endpoint || <span className="muted">—</span>}</dd>
+          <dd className="mono">
+            {log.endpoint ? (
+              <>
+                {log.endpoint} →{' '}
+                {log.upstream_endpoint || <span className="muted">未发到上游</span>}
+              </>
+            ) : (
+              <span className="muted">—</span>
+            )}
+          </dd>
           <dt>协议</dt>
           <dd className="mono">
             {log.client_protocol} → {log.upstream_protocol || '—'}
@@ -406,30 +417,53 @@ export default function Logs() {
                         说两遍；而路径能答的那个问题（这行是 messages 还是
                         count_tokens）入站协议答不了，两者的 client_protocol 同为
                         anthropic。
-                        老流水（endpoint 为空串）退回原来的「入站 <协议>」显示：那些
-                        行确实没存过路径，摆一个「—」等于把已知的入站协议也扔了。
-                        上游没走到时是「—」，与模型列的 sub 同语义。 */}
+                        副行由「上游 <协议>」换成**出站路径**（#20，PO 2026-08-17
+                        裁定）：协议推不出路径——count_tokens 透传时上游协议是
+                        anthropic，照它反推就把 count_tokens 说成了 messages。协议
+                        不再摆在这一列，要看去详情框。只摆路径不摆 base_url，那是
+                        硬约束。
+                        两档回落各有各的意思，靠入站那列分辨：**两列皆空**是加列前
+                        的老流水，退回原来的「入站 / 上游 <协议>」两行——那些行确实
+                        没存过路径，摆「—」等于把已知的协议也扔了；**入站有、出站
+                        空**说明这次请求根本没发出去（401 / 429 / 501 / 队满），副行
+                        给个「—」。 */}
                     <td className="nowrap">
                       {l.endpoint ? (
-                        <span className="route" title={l.endpoint}>
-                          <span className="route-node">{shortEndpoint(l.endpoint)}</span>
-                        </span>
+                        <>
+                          <span className="route" title={l.endpoint}>
+                            <span className="route-node">{shortEndpoint(l.endpoint)}</span>
+                          </span>
+                          <div className="sub">
+                            <span className="route" title={l.upstream_endpoint || undefined}>
+                              <span className="muted">→</span>
+                              {l.upstream_endpoint ? (
+                                <span className="route-node">
+                                  {shortEndpoint(l.upstream_endpoint)}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </span>
+                          </div>
+                        </>
                       ) : (
-                        <span className="route">
-                          <span className="muted">入站</span>
-                          <span className="route-node">{l.client_protocol}</span>
-                        </span>
+                        <>
+                          <span className="route">
+                            <span className="muted">入站</span>
+                            <span className="route-node">{l.client_protocol}</span>
+                          </span>
+                          <div className="sub">
+                            <span className="route">
+                              <span className="muted">上游</span>
+                              {l.upstream_protocol ? (
+                                <span className="route-node">{l.upstream_protocol}</span>
+                              ) : (
+                                '—'
+                              )}
+                            </span>
+                          </div>
+                        </>
                       )}
-                      <div className="sub">
-                        <span className="route">
-                          <span className="muted">上游</span>
-                          {l.upstream_protocol ? (
-                            <span className="route-node">{l.upstream_protocol}</span>
-                          ) : (
-                            '—'
-                          )}
-                        </span>
-                      </div>
                     </td>
                     {/* 同步/流式。null 是「不知道」：没解析到请求体的行（鉴权失败
                         那类）与加列前的老流水——写成「同步」是撒谎。 */}

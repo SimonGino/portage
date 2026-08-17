@@ -688,7 +688,13 @@ type CallLogRow struct {
 	//
 	// string 而不是指针：新行一律有值（callLog 中间件在任何事情失败之前就写死它），
 	// 空串只有一个意思——加列之前的老流水，与 UpstreamRequestID 同款。
-	Endpoint         string `json:"endpoint"`
+	Endpoint string `json:"endpoint"`
+	// UpstreamEndpoint 是这次打到上游的那条路径（#20），与 Endpoint 成对显示。
+	//
+	// string 而不是指针，同 Endpoint。空串在这一列上有两个意思，靠 Endpoint 分辨：
+	// 两列皆空 = 加列之前的老流水，只有这列空 = 那次请求从没发到上游（401 / 429 /
+	// count_tokens 撞非 anthropic 渠道的 501 / 并发闸队满）。
+	UpstreamEndpoint string `json:"upstream_endpoint"`
 	ClientProtocol   string `json:"client_protocol"`
 	UpstreamProtocol string `json:"upstream_protocol"`
 	ModelRequested   string `json:"model_requested"`
@@ -751,6 +757,9 @@ type CallLogFilter struct {
 	//
 	// 不设「(未记录端点)」那种哨兵：加列前的老行确实没有这个信息，而本票要的是把
 	// count_tokens 从 messages 里择出来，不是把历史行挑出来看。
+	//
+	// 筛的只有**入站**端点：出站那一列（#20）只展示不筛，问「这批 count_tokens 怎么
+	// 样」用的是客户端打的那条路径，出站是同一批行的属性、不是另一个入口。
 	Endpoint string
 	// FailedOnly 只留 status >= 400 的行。判据是状态码而非 error 列非空——上游透传
 	// 4xx 的 error 列是空的（v0.28 纪律），漏掉它「只看失败」就名不副实。
@@ -803,7 +812,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, created_at, api_key_name, endpoint, client_protocol, upstream_protocol,
+		SELECT id, created_at, api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens,
@@ -819,7 +828,8 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		var ttft, in, outTok, cr, cw, reasoning sql.NullInt64
 		var stream sql.NullBool
 		var detail sql.NullString
-		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.ClientProtocol, &r.UpstreamProtocol,
+		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.UpstreamEndpoint,
+			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &reasoning,
 			&r.Error, &detail, &r.UpstreamRequestID); err != nil {

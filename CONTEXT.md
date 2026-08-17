@@ -11,8 +11,8 @@
 _Avoid_: routes、模型映射表、endpoint
 
 **转发端点**：
-网关对外的四条转发 HTTP 路径（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`）。入站协议由路径定死，不嗅探请求体；路径比协议细一档——`/v1/messages` 与 `/v1/messages/count_tokens` 的入站协议同为 `anthropic`。v0.82（#17）起逐行落进 `call_logs.endpoint`，管理端可按它筛。
-_Avoid_: 接入点（那是模型别名层，与 HTTP 路径无关）、把它简称「端点」以外的叫法
+网关对外的四条转发 HTTP 路径（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`）。入站协议由路径定死，不嗅探请求体；路径比协议细一档——`/v1/messages` 与 `/v1/messages/count_tokens` 的入站协议同为 `anthropic`。v0.82（#17）起逐行落进 `call_logs.endpoint`，管理端可按它筛。**出站端点**是另一回事：网关这次打到上游的那条路径（v0.83、#20，`call_logs.upstream_endpoint`），跨协议时与入站那条不等，没发到上游的行为空，只展示不筛。
+_Avoid_: 接入点（那是模型别名层，与 HTTP 路径无关）、把它简称「端点」以外的叫法、光说「端点」而不分入站出站（v0.83 起这两条都在流水里）
 
 **限定名**：
 纳管模型的对外寻址名 `渠道名/纳管模型名`。渠道名与渠道内模型名各自唯一，且**渠道名不含 `/`**（v0.34），故限定名天然唯一，无需重名规则。撞上同名接入点时接入点优先。

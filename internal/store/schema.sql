@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS call_logs (
   -- 不可空、默认空串：值由最外层的 callLog 中间件在任何事情失败之前就写死（见
   -- internal/server/auth.go），新行一律有值，空串只有一个意思——加列之前的老行。
   endpoint TEXT NOT NULL DEFAULT '',
+  -- 这次**打到上游的**是哪条路径（#20），与上面那条入站端点成对。跨协议时两者不
+  -- 相等：Anthropic 入口进来、落到 openai 渠道，出站打的是 /v1/chat/completions；
+  -- 同协议透传时两者相等（count_tokens 透传到 anthropic 渠道即 count_tokens 原样）。
+  -- upstream_protocol 也分不开它，理由同上面那条：一个协议对一条路径是巧合不是恒等，
+  -- count_tokens 就没有出口对应物。
+  --
+  -- 不可空、默认空串，但空串在这一列上有两个意思，靠 endpoint 那列分辨：
+  -- endpoint 也空 = 加列之前的老行；endpoint 非空而这列空 = **这次请求从没发到上游**
+  -- （401 停在鉴权、429 停在限流、count_tokens 撞非 anthropic 渠道就地 501、并发闸
+  -- 队满/超时），空就是事实，不从 upstream_protocol 推导补值。
+  upstream_endpoint TEXT NOT NULL DEFAULT '',
   client_protocol TEXT NOT NULL,
   upstream_protocol TEXT NOT NULL,
   model_requested TEXT NOT NULL,

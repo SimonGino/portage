@@ -113,9 +113,12 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 			"inbound", ep.Proto, "channel_protocol", cand.Protocol, "dropped", dropped)
 	}
 
+	// 出站端点在这一刻才记（#20），不在上面算出 outEp 的地方：中间还夹着解码 400、
+	// 编码 500 两条早退，那些行同样没打上游，记了就是在说一件没发生的事。
+	rec.upstreamEndpoint = outEp.Path
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
-	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。#20 定的「整串照抄」
-	// 管的是同协议透传那条路。
+	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。legacy #20 定的
+	//「整串照抄」管的是同协议透传那条路（那是拆库前的编号，与上一段的 #20 无关）。
 	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
 	rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
 	if err != nil {

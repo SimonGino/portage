@@ -266,6 +266,15 @@ export interface CallLog {
    * 之前的老流水（新行一律有值，鉴权失败、限流那些也有），不是「没打端点」。
    */
   endpoint: string
+  /**
+   * 这次**打到上游**的那条路径（#20），与 `endpoint` 成对。跨协议时两者不等（A 入口
+   * 落 openai 渠道，出站是 `/v1/chat/completions`），同协议透传时相等。
+   *
+   * 空串有两个意思，靠 `endpoint` 分辨：两者皆空 = 加列之前的老流水；`endpoint` 有值
+   * 而它空 = 这次请求**从没发到上游**（401、429、count_tokens 撞非 anthropic 渠道的
+   * 501、并发闸队满）。`upstream_protocol` 推不出它——count_tokens 没有出口对应物。
+   */
+  upstream_endpoint: string
   client_protocol: string
   upstream_protocol: string
   model_requested: string

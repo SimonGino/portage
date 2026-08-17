@@ -198,7 +198,7 @@ func TestRelayNormalisesBaseURLTrailingSlash(t *testing.T) {
 	}
 }
 
-// 客户端的查询串整串照抄给上游（#20）。实测 Claude Code 发的是
+// 客户端的查询串整串照抄给上游（legacy #20，拆库前的编号）。实测 Claude Code 发的是
 // `POST /v1/messages?beta=true`——原来 buildURL 只拼固定后缀，那个参数被静默丢掉，
 // 而丢没丢不看日志根本发现不了。
 func TestRelayForwardsClientQueryStringVerbatim(t *testing.T) {

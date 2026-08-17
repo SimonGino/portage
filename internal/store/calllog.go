@@ -15,7 +15,12 @@ type CallLog struct {
 	// Endpoint 是这次打的转发端点路径（#17），取值就是 protocol.Endpoint 那四条之一。
 	// 与 ClientProtocol 不是一回事：`/v1/messages` 与 `/v1/messages/count_tokens` 的
 	// 入站协议同为 anthropic，只看协议这两者在流水里结构上不可分。
-	Endpoint         string
+	Endpoint string
+	// UpstreamEndpoint 是这次**打到上游**的那条路径（#20），与 Endpoint 成对。跨协议
+	// 时两者不等（A 入口落 openai 渠道，出站是 /v1/chat/completions），同协议透传时
+	// 相等。**没发到上游的行是空串**——401、429、count_tokens 撞非 anthropic 渠道的
+	// 501、并发闸队满/超时都从没拨过上游，空就是事实，不从 UpstreamProtocol 推导。
+	UpstreamEndpoint string
 	ClientProtocol   string
 	UpstreamProtocol string
 	ModelRequested   string
@@ -70,14 +75,14 @@ func CountAPIKeys(ctx context.Context, db *sql.DB) (int, error) {
 func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO call_logs (
-			api_key_name, endpoint, client_protocol, upstream_protocol,
+			api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			reasoning_tokens, error, error_detail,
 			upstream_request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.APIKeyName, l.Endpoint, l.ClientProtocol, l.UpstreamProtocol,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.APIKeyName, l.Endpoint, l.UpstreamEndpoint, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens,
