@@ -681,9 +681,14 @@ func DeleteAPIKey(ctx context.Context, db Conn, id int64) error {
 
 // CallLogRow 是用量页的一行。
 type CallLogRow struct {
-	ID               int64  `json:"id"`
-	CreatedAt        string `json:"created_at"`
-	APIKeyName       string `json:"api_key_name"`
+	ID         int64  `json:"id"`
+	CreatedAt  string `json:"created_at"`
+	APIKeyName string `json:"api_key_name"`
+	// Endpoint 是这次打的转发端点路径（#17）。
+	//
+	// string 而不是指针：新行一律有值（callLog 中间件在任何事情失败之前就写死它），
+	// 空串只有一个意思——加列之前的老流水，与 UpstreamRequestID 同款。
+	Endpoint         string `json:"endpoint"`
 	ClientProtocol   string `json:"client_protocol"`
 	UpstreamProtocol string `json:"upstream_protocol"`
 	ModelRequested   string `json:"model_requested"`
@@ -742,6 +747,11 @@ type CallLogFilter struct {
 	Model string
 	// APIKeyName 精确匹配网关 key 的名字快照。
 	APIKeyName string
+	// Endpoint 精确匹配端点路径（#17），取值就是 protocol.Endpoint 那四条之一。
+	//
+	// 不设「(未记录端点)」那种哨兵：加列前的老行确实没有这个信息，而本票要的是把
+	// count_tokens 从 messages 里择出来，不是把历史行挑出来看。
+	Endpoint string
 	// FailedOnly 只留 status >= 400 的行。判据是状态码而非 error 列非空——上游透传
 	// 4xx 的 error 列是空的（v0.28 纪律），漏掉它「只看失败」就名不副实。
 	FailedOnly bool
@@ -762,6 +772,9 @@ func callLogWhere(f CallLogFilter) (string, []any) {
 	}
 	if f.APIKeyName != "" {
 		where, args = append(where, "api_key_name = ?"), append(args, f.APIKeyName)
+	}
+	if f.Endpoint != "" {
+		where, args = append(where, "endpoint = ?"), append(args, f.Endpoint)
 	}
 	if f.FailedOnly {
 		where = append(where, "status >= 400")
@@ -790,7 +803,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, created_at, api_key_name, client_protocol, upstream_protocol,
+		SELECT id, created_at, api_key_name, endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens,
@@ -806,7 +819,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		var ttft, in, outTok, cr, cw, reasoning sql.NullInt64
 		var stream sql.NullBool
 		var detail sql.NullString
-		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
+		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &reasoning,
 			&r.Error, &detail, &r.UpstreamRequestID); err != nil {

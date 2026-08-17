@@ -12,6 +12,31 @@ const LOG_FILTERS = [
 ]
 
 /**
+ * 端点筛选的选项（#17）。四条转发路径写死在这儿而不是从流水里聚合出来：它们是
+ * 常量（protocol.Endpoint 那四个），不像模型名那样跟着配置长——照模型那套按窗口
+ * 聚合的话，一个这段时间没被打过的端点就会从下拉里消失，而「这个端点最近一次
+ * 是什么时候」恰恰是要它来回答的问题之一。
+ *
+ * 没有「加列前的老流水」那一档：那些行确实没有这个信息，而本票要分的是
+ * count_tokens 与 messages，不是把历史行挑出来看。
+ */
+const ENDPOINT_OPTIONS: Option<string>[] = [
+  { value: '', label: '全部端点' },
+  { value: '/v1/messages', label: 'messages', hint: 'anthropic' },
+  { value: '/v1/messages/count_tokens', label: 'messages/count_tokens', hint: 'anthropic' },
+  { value: '/v1/chat/completions', label: 'chat/completions', hint: 'openai' },
+  { value: '/v1/responses', label: 'responses', hint: 'openai_responses' },
+]
+
+/**
+ * 端点路径去掉 `/v1/` 前缀。四条路径全都以它开头，摆出来只是给每一行多四个等宽
+ * 字符的缩进——真要看全的，title 里挂着原样的那一条。
+ */
+function shortEndpoint(path: string) {
+  return path.startsWith('/v1/') ? path.slice(4) : path
+}
+
+/**
  * 一页显示多少条流水。它同时是页码的分母（总页数 = 总数 / 它），改这个数就是改页数。
  *
  * 10 而不是 50（PO 2026-08-13 裁定）。这张表有 9 列，且时间之外几乎每格都还带一行
@@ -69,7 +94,12 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
             <code>{log.model_requested}</code>
             <span className="muted"> → {upstreamOf(log)}</span>
           </dd>
+          {/* 端点与协议在这儿分成两格（#17）：表里那一列为了宽度把入站协议顶掉了，
+              框里没有这个约束，而「打的哪条路径」与「哪个协议转成哪个协议」是两个
+              问题。老流水没有路径，那一格显示「—」——入站协议在下面那格里还在。 */}
           <dt>端点</dt>
+          <dd className="mono">{log.endpoint || <span className="muted">—</span>}</dd>
+          <dt>协议</dt>
           <dd className="mono">
             {log.client_protocol} → {log.upstream_protocol || '—'}
           </dd>
@@ -132,7 +162,7 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
  * 筛选下推后端而不是在前端过滤：筛选和分页搅在一起时，本页里过滤只会筛出
  * 「这一页里的失败」，而人问的是「这段时间的失败」。
  */
-function useLogFeed(only: string, model: string) {
+function useLogFeed(only: string, model: string, endpoint: string) {
   const [rows, setRows] = useState<CallLog[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -149,6 +179,7 @@ function useLogFeed(only: string, model: string) {
       })
       if (only === 'bad') q.set('only', 'bad')
       if (model) q.set('model', model)
+      if (endpoint) q.set('endpoint', endpoint)
       if (anchor.current) q.set('before', String(anchor.current + 1))
       setLoading(true)
       try {
@@ -166,7 +197,7 @@ function useLogFeed(only: string, model: string) {
         setLoading(false)
       }
     },
-    [only, model],
+    [only, model, endpoint],
   )
 
   // 翻页只有这一个入口：页码与请求必须同时改。分开写的话，某条路径漏改页码就会
@@ -236,6 +267,9 @@ function pageList(cur: number, count: number): (number | 'gap')[] {
 export default function Logs() {
   const [filter, setFilter] = useState('all')
   const [model, setModel] = useState('')
+  // 按端点筛（#17）：`/v1/messages` 与 `/v1/messages/count_tokens` 的入站协议同为
+  // anthropic，不给这个筛子，一批 count_tokens 的 501 与真正的转发失败在表里长得一样。
+  const [endpoint, setEndpoint] = useState('')
   // 正在弹框里看的那一条（上游原文 v0.53、上游 request-id #81）。存整行而不是 id：翻页和刷新
   // 会把 rows 整块换掉，存 id 的话框还开着、内容却已经查无此行。
   const [detail, setDetail] = useState<CallLog | null>(null)
@@ -245,7 +279,7 @@ export default function Logs() {
     () => api.get<{ rows: UsageRow[] | null }>(`/usage?days=${MODEL_OPTION_DAYS}&by=model`),
     [],
   )
-  const logs = useLogFeed(filter, model)
+  const logs = useLogFeed(filter, model, endpoint)
 
   const shown = logs.rows
 
@@ -290,6 +324,16 @@ export default function Logs() {
                 options={modelOptions}
                 onChange={setModel}
                 placeholder="全部模型"
+              />
+            </div>
+            {/* 端点筛选另起一个 Picker，不并进 Segmented：连上「全部」一共 5 段，
+                横排铺开比模型下拉还宽，而这一排右边还有「只看失败」和「刷新」。 */}
+            <div className="picker-inline" title="按转发端点筛选">
+              <Picker
+                value={endpoint}
+                options={ENDPOINT_OPTIONS}
+                onChange={setEndpoint}
+                placeholder="全部端点"
               />
             </div>
             <Segmented value={filter} options={LOG_FILTERS} onChange={setFilter} />
@@ -350,14 +394,26 @@ export default function Logs() {
                         {upstreamOf(l)}
                       </div>
                     </td>
-                    {/* 端点：入站/上游各占一行，恒排两行——原「链路」的箭头式单行
-                        （同协议折叠成一枚芯片）省了宽度，代价是两枚芯片哪边是哪边
-                        全靠箭头方向猜。上游没走到时是「—」，与模型列的 sub 同语义。 */}
+                    {/* 端点：主行是真端点路径（#17），副行是上游协议，恒排两行。
+                        入站协议不再单摆一行（PO 2026-08-17 裁定）——它由路径完全
+                        决定（入口协议由路径定，不嗅探请求体），两个都摆是同一件事
+                        说两遍；而路径能答的那个问题（这行是 messages 还是
+                        count_tokens）入站协议答不了，两者的 client_protocol 同为
+                        anthropic。
+                        老流水（endpoint 为空串）退回原来的「入站 <协议>」显示：那些
+                        行确实没存过路径，摆一个「—」等于把已知的入站协议也扔了。
+                        上游没走到时是「—」，与模型列的 sub 同语义。 */}
                     <td className="nowrap">
-                      <span className="route">
-                        <span className="muted">入站</span>
-                        <span className="route-node">{l.client_protocol}</span>
-                      </span>
+                      {l.endpoint ? (
+                        <span className="route" title={l.endpoint}>
+                          <span className="route-node">{shortEndpoint(l.endpoint)}</span>
+                        </span>
+                      ) : (
+                        <span className="route">
+                          <span className="muted">入站</span>
+                          <span className="route-node">{l.client_protocol}</span>
+                        </span>
+                      )}
                       <div className="sub">
                         <span className="route">
                           <span className="muted">上游</span>

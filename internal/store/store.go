@@ -93,7 +93,29 @@ func migrate(db *sql.DB) error {
 	if err := addUpstreamRequestID(db); err != nil {
 		return err
 	}
-	return addReasoningTokens(db)
+	if err := addReasoningTokens(db); err != nil {
+		return err
+	}
+	return addEndpoint(db)
+}
+
+// addEndpoint 补 call_logs.endpoint（#17）。
+//
+// 不可空、默认空串，存量行一律停在空串上——**不回填**：历史行里根本没有这个信息，
+// 从 client_protocol 反推更是错的，anthropic 那一档正是 messages 与 count_tokens
+// 分不开的那一档，本票要的就是把它们分开。空串在这一列上只有一个意思：加列之前的老行。
+func addEndpoint(db *sql.DB) error {
+	has, err := hasColumn(db, "call_logs", "endpoint")
+	if err != nil {
+		return fmt.Errorf("检查 call_logs.endpoint: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN endpoint TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 call_logs.endpoint: %w", err)
+	}
+	return nil
 }
 
 // addUpstreamRequestID 补 v0.56 的 call_logs.upstream_request_id（#37）。

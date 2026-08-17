@@ -777,6 +777,10 @@ func (h *Handler) listLogs(c *gin.Context) {
 		Before:     int64(clampQuery(c, "before", 0, 0, 1<<31-1)),
 		Model:      c.Query("model"),
 		APIKeyName: c.Query("key"),
+		// endpoint 精确匹配那四条转发路径之一（#17）。不校验取值：与 model/key 同款
+		// 原样下推，认不得的值筛出空列表，而校验后忽略等于把「筛错了」显示成「全部
+		// 流水」——那比空列表更误导。
+		Endpoint:   c.Query("endpoint"),
 		FailedOnly: c.Query("only") == "bad",
 	}
 	rows, err := store.ListCallLogs(c.Request.Context(), h.db, f)

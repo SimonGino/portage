@@ -106,9 +106,10 @@ func apiKeyFrom(c *gin.Context) auth.Key {
 // authModels 是 /v1/models 的鉴权。
 //
 // 它也要认：harness 启动时就拉这个表，不认就等于把接入点清单对全网段公开（#22）。
-// 不建 callRecord——`call_logs` 每行描述的是一次**转发调用**（入站/上游协议、模型、
-// 渠道），表里没有 endpoint 列，塞一行进去只会是分不清来路的空记录。它的 401 走
-// 结构化日志。
+// 不建 callRecord——`call_logs` 每行描述的是一次**转发调用**（模型、渠道、上游协议、
+// token），而这个端点一样都没有，塞一行进去只会是一条除端点外全空的记录。加了
+// endpoint 列（#17）也不改这一条：那一列是为了把四个转发端点分开，不是为了把非转发
+// 路径也收进流水。它的 401 走结构化日志。
 func (s *Server) authModels() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		_, err := auth.Resolve(c.Request.Context(), s.db, c.Request.Header)

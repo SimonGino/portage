@@ -11,7 +11,11 @@ import (
 // 一回事——非流式请求本就没有首字节耗时，记成 0 会让「首字延迟」的统计凭空多出一堆
 // 满分样本。
 type CallLog struct {
-	APIKeyName       string
+	APIKeyName string
+	// Endpoint 是这次打的转发端点路径（#17），取值就是 protocol.Endpoint 那四条之一。
+	// 与 ClientProtocol 不是一回事：`/v1/messages` 与 `/v1/messages/count_tokens` 的
+	// 入站协议同为 anthropic，只看协议这两者在流水里结构上不可分。
+	Endpoint         string
 	ClientProtocol   string
 	UpstreamProtocol string
 	ModelRequested   string
@@ -66,14 +70,14 @@ func CountAPIKeys(ctx context.Context, db *sql.DB) (int, error) {
 func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO call_logs (
-			api_key_name, client_protocol, upstream_protocol,
+			api_key_name, endpoint, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			reasoning_tokens, error, error_detail,
 			upstream_request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.APIKeyName, l.ClientProtocol, l.UpstreamProtocol,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.APIKeyName, l.Endpoint, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens,

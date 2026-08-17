@@ -256,7 +256,9 @@ func (g *Gateway) LastCall(t *testing.T) LogLine {
 // CallRow is one call_logs row, with the nullable columns kept nullable —
 // 「没有」和「是 0」要能断言得出区别。
 type CallRow struct {
-	APIKeyName       string
+	APIKeyName string
+	// Endpoint 是这次打的转发端点路径（#17）。没走到上游的行也有——那正是它的用处。
+	Endpoint         string
 	ClientProtocol   string
 	UpstreamProtocol string
 	ModelRequested   string
@@ -294,14 +296,14 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 	for {
 		var r CallRow
 		err := g.DB.QueryRow(`
-			SELECT api_key_name, client_protocol, upstream_protocol,
+			SELECT api_key_name, endpoint, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
 			       status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			       reasoning_tokens, error, error_detail,
 			       upstream_request_id
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
-			Scan(&r.APIKeyName, &r.ClientProtocol, &r.UpstreamProtocol,
+			Scan(&r.APIKeyName, &r.Endpoint, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
 				&r.Status, &r.RetryCount, &r.IsStream, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
 				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens,

@@ -260,7 +260,11 @@ func (s *Server) persistCall(rec *callRecord) {
 	defer cancel()
 
 	row := store.CallLog{
-		APIKeyName:       rec.apiKeyName,
+		APIKeyName: rec.apiKeyName,
+		// 端点恒落（#17）：它在 callLog 中间件里就写死了，鉴权失败、限流、
+		// count_tokens 撞非 Anthropic 渠道那些没走到上游的行也都有——那正是最需要
+		// 它的一批，那些行的模型、耗时、渠道全是空的，只有端点分得开它们。
+		Endpoint:         rec.endpoint,
 		ClientProtocol:   string(rec.inboundProto),
 		UpstreamProtocol: string(rec.channelProto),
 		ModelRequested:   rec.requestedModel,

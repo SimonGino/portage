@@ -258,6 +258,14 @@ export interface CallLog {
   id: number
   created_at: string
   api_key_name: string
+  /**
+   * 这次打的转发端点路径（#17），取值是那四条之一：`/v1/messages`、
+   * `/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`。
+   *
+   * 它不能由 client_protocol 推出来：前两条的入站协议同为 anthropic。空串 = 加列
+   * 之前的老流水（新行一律有值，鉴权失败、限流那些也有），不是「没打端点」。
+   */
+  endpoint: string
   client_protocol: string
   upstream_protocol: string
   model_requested: string

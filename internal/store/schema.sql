@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   api_key_name TEXT NOT NULL,
+  -- 这次打的是哪个转发端点（#17），取值就是 protocol.Endpoint 的那四条路径原样。
+  -- client_protocol 分不开它：`/v1/messages` 与 `/v1/messages/count_tokens` 的入站
+  -- 协议同为 anthropic，而 count_tokens 命中非 Anthropic 渠道回 501、限流回 429 的
+  -- 行既没有模型也没有耗时，不记端点的话它们在流水里长得一模一样，「这波 501 是
+  -- count_tokens 还是别的」只能靠时间戳猜。
+  --
+  -- 不可空、默认空串：值由最外层的 callLog 中间件在任何事情失败之前就写死（见
+  -- internal/server/auth.go），新行一律有值，空串只有一个意思——加列之前的老行。
+  endpoint TEXT NOT NULL DEFAULT '',
   client_protocol TEXT NOT NULL,
   upstream_protocol TEXT NOT NULL,
   model_requested TEXT NOT NULL,

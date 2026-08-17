@@ -14,6 +14,7 @@ import (
 // logRow 只取断言用得上的几列。
 type logRow struct {
 	ID             int64  `json:"id"`
+	Endpoint       string `json:"endpoint"`
 	ModelRequested string `json:"model_requested"`
 	APIKeyName     string `json:"api_key_name"`
 	Status         int    `json:"status"`
@@ -95,6 +96,49 @@ func TestLogsFilterByModelAndFailure(t *testing.T) {
 		a.JSONInto(t, http.MethodGet, "/admin/api/logs?only=bad", "", &bad)
 		if all.Total != 2 || bad.Total != 1 {
 			t.Fatalf("total: 全部 = %d（期望 2），只看失败 = %d（期望 1）", all.Total, bad.Total)
+		}
+	})
+}
+
+// #17：按端点筛。model 与 only 筛不动这一格——`/v1/messages` 与
+// `/v1/messages/count_tokens` 的入站协议同为 anthropic，而 count_tokens 那些行连模型
+// 都常常是空的，不给这个筛子就只能靠时间戳在流水里认它们。
+func TestLogsFilterByEndpoint(t *testing.T) {
+	gw, _ := newAnthropicGateway(t)
+
+	gw.Post(t, "/v1/messages", anthropicRequest, nil)
+	gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil)
+	gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil)
+	gw.WaitCallRows(t, 3)
+
+	a := gw.LoggedIn(t)
+
+	t.Run("只留这个端点的行", func(t *testing.T) {
+		var page logPage
+		a.JSONInto(t, http.MethodGet,
+			"/admin/api/logs?endpoint="+url.QueryEscape("/v1/messages/count_tokens"), "", &page)
+		if len(page.Rows) != 2 {
+			t.Fatalf("筛出 %d 行，期望 2；rows=%+v", len(page.Rows), page.Rows)
+		}
+		for _, r := range page.Rows {
+			if r.Endpoint != "/v1/messages/count_tokens" {
+				t.Errorf("混进了 endpoint = %q 的行", r.Endpoint)
+			}
+		}
+		// total 与行共用 callLogWhere，不同源的话页码的分母就是另一组条件算出来的。
+		if page.Total != 2 {
+			t.Errorf("total = %d, 期望 2", page.Total)
+		}
+	})
+
+	// 同为 anthropic 入口的两个端点必须真的分得开——这正是本票的现象：只看协议，
+	// 它们是同一档。
+	t.Run("同协议的另一个端点不混进来", func(t *testing.T) {
+		var page logPage
+		a.JSONInto(t, http.MethodGet,
+			"/admin/api/logs?endpoint="+url.QueryEscape("/v1/messages"), "", &page)
+		if len(page.Rows) != 1 || page.Rows[0].Endpoint != "/v1/messages" {
+			t.Fatalf("筛出来的是 %+v，期望只剩那一条 /v1/messages", page.Rows)
 		}
 	})
 }
