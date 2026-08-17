@@ -31,7 +31,7 @@
 
 - Go + Gin + SQLite；React 管理端（若口径收敛保留）构建产物 embed 进单二进制。
 - 透传保真优先：同协议路径不做 decode→encode 转码。
-- 转换路径先备 golden 样本（真实 harness 发包/SSE 转录）再实现，验收对照 `docs/MVP设计草案.md` §5 坑清单与 §9 测试方案。
+- 转换路径先备 golden 样本（真实 harness 发包/SSE 转录）再实现，验收对照 `docs/MVP设计草案.md` §5 坑清单与 §9 测试方案。无真机可采时可用 `testdata/fixtures/` 的构造样本顶上（门禁 `synthetic: true`），但真机可采的路径不得以构造样本代替。
 - 上游 key 只存服务端，错误回显严禁泄露上游 key 与 base_url。
 - 提交信息简洁中文，可用 `feat:` 等前缀。
 
