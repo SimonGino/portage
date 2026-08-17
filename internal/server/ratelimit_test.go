@@ -65,18 +65,24 @@ func TestRateLimitRejectsOnceBurstIsSpent(t *testing.T) {
 // 生成面那三个端点共用**一只**桶，不是每个端点一只。写成在 rateLimit(ep) 里无脑
 // new 的话这里会全绿——而线上的 10 QPS 悄悄变成 3×10。
 //
-// 第二个请求用 /v1/chat/completions 而不是 count_tokens（#16 之后后者自己一只桶）。
-// 它的 model 没在这个网关里纳管，但无妨：限流在路由之前，压根解析不到模型——真机
-// 的 429 流水行 model_requested 就是空的（#16 现象表）。
+// 后两个请求刻意**不用** count_tokens（#16 之后它自己一只桶），而是把生成面剩下
+// 两个端点逐个点到：只点一个的话，将来谁再给 /v1/responses 单开一只桶也照样全绿。
+// 它们的 model 没在这个网关里纳管，但无妨：限流在路由之前，压根解析不到模型——
+// 真机的 429 流水行 model_requested 就是空的（#16 现象表）。
 func TestRateLimitBucketIsSharedAcrossGenerationEndpoints(t *testing.T) {
 	gw, _ := newLimitedGateway(t, 1)
 
 	if resp := gw.Post(t, "/v1/messages", anthropicRequest, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("/v1/messages = %d, 期望 200", resp.StatusCode)
 	}
-	resp := gw.Post(t, "/v1/chat/completions", ccRequest, nil)
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("换个端点就 = %d 了, 期望 429——说明桶不是共用的", resp.StatusCode)
+	for _, ep := range []struct{ path, body string }{
+		{"/v1/chat/completions", ccRequest},
+		{"/v1/responses", responsesRequest},
+	} {
+		resp := gw.Post(t, ep.path, ep.body, nil)
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("%s = %d, 期望 429——说明它没跟 /v1/messages 共用一只桶", ep.path, resp.StatusCode)
+		}
 	}
 }
 
@@ -84,7 +90,10 @@ func TestRateLimitBucketIsSharedAcrossGenerationEndpoints(t *testing.T) {
 // /v1/messages 被 429 掉——而那批 count_tokens 命中非 Anthropic 渠道时一个字节都
 // 不打上游。桶是为「防 key 泄露刷爆上游账单」立的，不该被这种请求饿死。
 func TestCountTokensStormDoesNotStarveMessages(t *testing.T) {
-	gw, _ := newLimitedGateway(t, 2)
+	// burst=1 是有意的：桶只有一个令牌时，共用桶的旧行为下第一次 count_tokens 就
+	// 把它拿走了，后面那次 /v1/messages 必 429。写 2 的话这条断言就得靠「30 连打跑
+	// 得比 1 秒快」（qps=1，一秒回一个令牌）——机器一慢，被推翻的旧实现也能全绿。
+	gw, _ := newLimitedGateway(t, 1)
 
 	// 30 次是真机观测量级（26/24 次）的上取整。这里不看它们各自的状态码：
 	// count_tokens 自己那只桶被打空是应有的，要测的是它没动到生成面那只。
@@ -154,6 +163,14 @@ func TestRateLimitZeroQPSDisablesIt(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		if resp := gw.Post(t, "/v1/messages", anthropicRequest, nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("第 %d 个请求 = %d, 关了限流就不该有 429", i, resp.StatusCode)
+		}
+	}
+	// 两只桶都得关掉。它们共用同一份 rate_limit_qps，所以这是结构性的（都由
+	// newLimiter 回 nil），但「关限流」是配置项对外的承诺，两只都要有人看着。
+	// 只断言不是 429：count_tokens 打到桩上游回什么不是这条用例的事。
+	for i := 1; i <= 5; i++ {
+		if resp := gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil); resp.StatusCode == http.StatusTooManyRequests {
+			t.Fatalf("第 %d 次 count_tokens = 429, 关了限流就不该有", i)
 		}
 	}
 }

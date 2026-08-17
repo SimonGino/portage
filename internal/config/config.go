@@ -32,6 +32,8 @@ type Config struct {
 
 	// RateLimitQPS / RateLimitBurst 是全局令牌桶（口径层 §2.7，v0.15 定 10/20）。
 	// **配 0 即关闭限流**；只配了 qps 时 burst 由 newLimiter 兜底。
+	// v0.81 起桶是两只（生成面一只、count_tokens 一只，见 server.pickLimiter），
+	// 这一份配置同时是两只桶的参数——所以最坏总速率是 2× 这里写的数。
 	RateLimitQPS   int `yaml:"rate_limit_qps"`
 	RateLimitBurst int `yaml:"rate_limit_burst"`
 

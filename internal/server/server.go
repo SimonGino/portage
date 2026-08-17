@@ -106,9 +106,9 @@ type Server struct {
 	db  *sql.DB
 	up  *upstream.Client
 	log *slog.Logger
-	// lim 是生成面那三个端点共用的全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
-	lim *rate.Limiter
-	// countTokensLim 是 count_tokens 独占的那只（#16），配置同 lim。选桶见 pickLimiter。
+	// genLim 是生成面那三个端点共用的全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
+	genLim *rate.Limiter
+	// countTokensLim 是 count_tokens 独占的那只（#16），配置同 genLim。选桶见 pickLimiter。
 	countTokensLim *rate.Limiter
 	// queueRetryAfter 是并发闸 429 的 Retry-After 值（整秒字符串），启动时换算一次。
 	queueRetryAfter string
@@ -124,12 +124,12 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 		BaseDelay:   cfg.Retry.BaseDelay,
 		MaxDelay:    cfg.Retry.MaxDelay,
 	}
-	// 限流桶在这里造，**两只**：生成面那三条转发路由共用 lim，count_tokens 独占
-	// countTokensLim（#16，理由见 pickLimiter）。若改成在 rateLimit(ep) 里逐端点 new，
-	// 四个端点各得一只桶，全局 10 QPS 会变成 40 QPS——而且看不出来。
+	// 限流桶在这里造，**两只**：生成面那三条转发路由共用 genLim，count_tokens 独占
+	// countTokensLim（#16，理由见 pickLimiter）。桶数是刻意停在 2 的——若改成在
+	// rateLimit(ep) 里逐端点 new，四个端点各得一只，配 10 QPS 实收 40 而且看不出来。
 	s := &Server{
 		cfg: cfg, db: db, up: upstream.NewClient(retry), log: log,
-		lim:            newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
+		genLim:         newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 		countTokensLim: newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 	}
 	// key 层内环的 401 摘除挂在这里接到库上（口径层 v0.38）。upstream 不认识

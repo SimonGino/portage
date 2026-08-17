@@ -18,13 +18,13 @@ const retryAfterSeconds = "1"
 
 // newLimiter 按配置造全局令牌桶，qps <= 0 时回 nil 表示不限流。
 //
-// 口径层 §2.7（v0.15 定，#16 修订）：全局令牌桶，默认 10 QPS / 突发 20，不分 key/IP
-// 维度。目的只有一个——key 泄露或被扫时钳制上游账单损失，不是公平调度。所以它必须
-// 是进程级的桶：按端点各造一只会变成 4×10 QPS，按 key 造更是泄露了哪把 key 就
-// 白配了哪把桶。
+// 口径层 §2.7（v0.15 定，v0.81 修订桶数）：全局令牌桶，默认 10 QPS / 突发 20，不分
+// key/IP 维度。目的只有一个——key 泄露或被扫时钳制上游账单损失，不是公平调度。所以
+// 桶必须是进程级的、且少：无脑按端点各造一只就是 4 只、配 10 实收 40 QPS，按 key 造
+// 更是泄露了哪把 key 就白配了哪把桶。
 //
-// #16 挖开的**唯一**端点级例外：count_tokens 另有一只桶，见 pickLimiter。桶数从此
-// 是 2 不是 1，两只都用同一份 rate_limit_qps/burst 造，最坏总速率 2×10 QPS。
+// v0.81（#16）挖开的**唯一**端点级例外：count_tokens 另有一只，见 pickLimiter。桶数
+// 从此刻意停在 2，两只都用同一份 rate_limit_qps/burst 造，最坏总速率 2×10 QPS。
 func newLimiter(qps, burst int) *rate.Limiter {
 	if qps <= 0 {
 		return nil
@@ -80,5 +80,5 @@ func (s *Server) pickLimiter(ep protocol.Endpoint) *rate.Limiter {
 	if ep == protocol.EndpointCountTokens {
 		return s.countTokensLim
 	}
-	return s.lim
+	return s.genLim
 }
