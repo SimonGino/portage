@@ -49,7 +49,13 @@ type choiceBody struct {
 	// 官方 OpenAI 不发它——官方模型的推理过程根本不出上游。所以它只在兼容上游上
 	// 有值，零值即「这一帧没有推理正文」。
 	ReasoningContent string `json:"reasoning_content"`
-	ToolCalls        []struct {
+	// Reasoning 是同一份推理正文的另一种拼法：vLLM 较新版本的 CC 端点发
+	// `delta.reasoning`（实采自 PAI-EAS 上的 vLLM，同一部署的 /v1/responses 端点
+	// 反而发 reasoning_text，两个端点自己就不一致）。两个键同义，认哪个都不引入歧义，
+	// 所以按别名收（取值见 reasoningText）——不认的话这类上游的思考正文会被整段丢掉，
+	// 而且是静默丢：没有错误，只是 canonical 里一个 ThinkingDelta 都不出。
+	Reasoning string `json:"reasoning"`
+	ToolCalls []struct {
 		Index    *int   `json:"index"`
 		ID       string `json:"id"`
 		Function *struct {
@@ -57,6 +63,17 @@ type choiceBody struct {
 			Arguments string `json:"arguments"`
 		} `json:"function"`
 	} `json:"tool_calls"`
+}
+
+// reasoningText 取这一帧的推理正文，reasoning_content 优先。
+//
+// 两键同时有值的上游没见过；真出现时以事实标准那个为准，另一个当没看见——同一帧
+// 里把两份都放出去会让出口那边开两次思考块。
+func (b *choiceBody) reasoningText() string {
+	if b.ReasoningContent != "" {
+		return b.ReasoningContent
+	}
+	return b.Reasoning
 }
 
 type usagePayload struct {
@@ -220,8 +237,8 @@ func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
 	//
 	// 通道取 ThinkingBody 而非 ThinkingSummary：reasoning_content 是推理正文本身，
 	// 不是面向展示的摘要（Responses 的 reasoning_summary_* 才是）。
-	if body.ReasoningContent != "" {
-		out <- protocol.Event{Type: protocol.EvThinkingDelta, Text: body.ReasoningContent, Channel: protocol.ThinkingBody}
+	if text := body.reasoningText(); text != "" {
+		out <- protocol.Event{Type: protocol.EvThinkingDelta, Text: text, Channel: protocol.ThinkingBody}
 	}
 	if body.Content != "" {
 		out <- protocol.Event{Type: protocol.EvTextDelta, Text: body.Content}

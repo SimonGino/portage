@@ -138,3 +138,71 @@ func TestEncodeFullBodyOmitsEmptyReasoningContent(t *testing.T) {
 		t.Errorf("没有推理正文却写了 reasoning_content:\n%s", raw)
 	}
 }
+
+// 解码：`reasoning` 是 reasoning_content 的别名（vLLM 较新版本的 CC 端点发这个），
+// 两条路都要认，落的通道与断句都与事实标准那个键一致。
+func TestDecodeStreamReasoningAlias(t *testing.T) {
+	const raw = `data: {"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"model":"m","choices":[{"index":0,"delta":{"reasoning":" The user"},"finish_reason":null}]}
+
+data: {"model":"m","choices":[{"index":0,"delta":{"reasoning":" wants"},"finish_reason":null}]}
+
+data: {"model":"m","choices":[{"index":0,"delta":{"content":"答案"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	var thinking, text strings.Builder
+	for _, ev := range decodeStream(t, []byte(raw)) {
+		switch ev.Type {
+		case protocol.EvThinkingDelta:
+			if ev.Channel != protocol.ThinkingBody {
+				t.Errorf("通道 = %q，reasoning 是推理正文，该走 ThinkingBody", ev.Channel)
+			}
+			thinking.WriteString(ev.Text)
+		case protocol.EvTextDelta:
+			text.WriteString(ev.Text)
+		}
+	}
+	if thinking.String() != " The user wants" {
+		t.Errorf("推理正文 = %q，期望 \" The user wants\"", thinking.String())
+	}
+	if text.String() != "答案" {
+		t.Errorf("正文 = %q，期望 \"答案\"", text.String())
+	}
+}
+
+func TestDecodeFullBodyReasoningAlias(t *testing.T) {
+	const body = `{"id":"c1","model":"m","choices":[{"index":0,"message":
+		{"role":"assistant","reasoning":"想过了","content":"答案"},"finish_reason":"stop"}]}`
+
+	var thinking string
+	for _, ev := range decodeFull(t, []byte(body)) {
+		if ev.Type == protocol.EvThinkingDelta {
+			thinking += ev.Text
+		}
+	}
+	if thinking != "想过了" {
+		t.Errorf("推理正文 = %q，期望 \"想过了\"（非流式 message.reasoning 同样是别名）", thinking)
+	}
+}
+
+// 两键同时有值时只放一份：reasoning_content 优先，reasoning 当没看见。同一帧放两份
+// 会让出口那边开两次思考块。
+func TestDecodeReasoningAliasPrefersStandardKey(t *testing.T) {
+	const raw = `data: {"model":"m","choices":[{"index":0,"delta":{"reasoning_content":"标准","reasoning":"别名"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	var got []string
+	for _, ev := range decodeStream(t, []byte(raw)) {
+		if ev.Type == protocol.EvThinkingDelta {
+			got = append(got, ev.Text)
+		}
+	}
+	if len(got) != 1 || got[0] != "标准" {
+		t.Errorf("推理正文事件 = %v，期望恰好一条 [\"标准\"]", got)
+	}
+}
