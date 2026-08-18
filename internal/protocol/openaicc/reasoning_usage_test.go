@@ -10,8 +10,8 @@ import (
 // 编码侧：有数才写 completion_tokens_details。
 //
 // 与同一个函数里 prompt_tokens_details.cached_tokens「恒写出来哪怕是 0」相反——
-// 那边 0 是真的「一次都没命中」，这边 0 会被读成「这次没思考」，而上游多半是根本
-// 没报（Anthropic 一路没有这一格）。宁可不说，不能瞎说。
+// 那边 0 是真的「一次都没命中」，这边 0 会被读成「这次没思考」，而 canonical 侧
+// 零值即「上游没报」（没开思考的响应连 details 容器都不发）。宁可不说，不能瞎说。
 func TestUsageBodyOmitsReasoningWhenAbsent(t *testing.T) {
 	for _, c := range []struct {
 		name string

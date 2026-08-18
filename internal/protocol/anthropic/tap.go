@@ -27,6 +27,15 @@ type usage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// OutputTokensDetails 装思考 token。**键名三家各不同形**：容器名与 Responses
+	// 一样（output_tokens_details）、字段名与 CC 一样（reasoning_tokens）——而这一侧
+	// 两个都不能照抄，Anthropic 叫 thinking_tokens（口径层 v0.79，实采字节 249/310）。
+	//
+	// ThinkingTokens 用 *int：0 与「没这个键」要分得开（见 Summary 那边的
+	// HasReasoningTokens）。没开思考的响应连这个容器都不发，是同一档「没报」。
+	OutputTokensDetails *struct {
+		ThinkingTokens *int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 type message struct {
@@ -92,6 +101,12 @@ func applyUsage(sum *protocol.Summary, u *usage) {
 	}
 	if u.CacheCreationInputTokens != 0 {
 		sum.CacheWriteTokens = u.CacheCreationInputTokens
+	}
+	// 思考 token 不受上面那条「只覆盖非零值」管：判据是**键在不在**，不是值是不是 0。
+	// 流式下这一格只在 message_delta 里出现（message_start 那帧没有这个容器），报 0
+	// 的那一档若按非零覆盖就会被吃掉，落库退回 NULL——正是三档要分开的那两档。
+	if d := u.OutputTokensDetails; d != nil && d.ThinkingTokens != nil {
+		sum.ReasoningTokens, sum.HasReasoningTokens = *d.ThinkingTokens, true
 	}
 }
 

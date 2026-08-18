@@ -510,13 +510,24 @@ func decodeToolInput(args string) (any, error) {
 // cache_creation_input_tokens / cache_read_input_tokens 恒写出来（哪怕是 0）：
 // Claude Code 读这两个字段算缓存命中率，缺键与 0 在它那里不是一回事。CC 出口只有
 // 缓存读没有缓存写，所以写入侧恒 0——这是协议差异，不是漏填。
+//
+// output_tokens_details.thinking_tokens **有数才写**，与上面那两项相反，理由同 CC
+// 出口的 completion_tokens_details（openaicc/encode_response.go）：缓存那两项的 0 是
+// 真的「一次都没命中」，这里的 0 会被读成「这次没思考」，而 canonical 侧零值即
+// 「上游没报」（protocol.Usage.ReasoningTokens）——恒写就是把「没报」说成确凿的零
+// 思考成本。这一格是**呈现**不是记账（口径层 v0.66 ⑤：记的永远是上游报的数，落在
+// 流水那一列），所以它的缺失不吞成本可见性。
 func usageBody(u protocol.Usage) map[string]any {
-	return map[string]any{
+	body := map[string]any{
 		"input_tokens":                u.NetInput(),
 		"output_tokens":               u.OutputTokens,
 		"cache_creation_input_tokens": u.CacheWriteTokens,
 		"cache_read_input_tokens":     u.CacheReadTokens,
 	}
+	if u.ReasoningTokens != 0 {
+		body["output_tokens_details"] = map[string]any{"thinking_tokens": u.ReasoningTokens}
+	}
+	return body
 }
 
 // mapStopReason 把 canonical 取值映回 Anthropic（§5 坑清单）。

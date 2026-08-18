@@ -167,6 +167,12 @@ type usagePayload struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// 思考 token 的 Anthropic 载体（口径层 v0.79）。键名三家都不同形，见 tap.go 那份
+	// 结构体上的注释。这一侧不需要 *int：canonical 的 Usage 本就约定「零值即没报」
+	// （protocol.Usage.ReasoningTokens 的注释），报 0 与不报写给下游的字节一模一样。
+	OutputTokensDetails *struct {
+		ThinkingTokens int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 // canonical 把 usage 转成 canonical 形态；全零或缺失时给 nil（没什么可报的）。
@@ -191,6 +197,11 @@ func (u *usagePayload) canonical() *protocol.Usage {
 		OutputTokens:     u.OutputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,
+	}
+	// 思考数只在 message_delta 那帧带（message_start 没有这个容器），靠消费方的
+	// MergeSnapshot 非零覆盖攒到一起——与 output_tokens 同一条路径。
+	if d := u.OutputTokensDetails; d != nil {
+		out.ReasoningTokens = d.ThinkingTokens
 	}
 	if out == (protocol.Usage{}) {
 		return nil

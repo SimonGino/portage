@@ -22,14 +22,17 @@ type Summary struct {
 	// input + output，reasoning 一次都没进这个加法（CC 三份 + Responses 一份，
 	// 见 portage-legacy#97）。同 CacheRead/WriteTokens 之于 InputTokens。
 	//
-	// 载体各协议不同键：CC 是 completion_tokens_details.reasoning_tokens，
-	// Responses 是 output_tokens_details.reasoning_tokens，Anthropic 没有这一格。
+	// 载体**三家各不同形**，抄任何一边都对不上（口径层 v0.79）：CC 是
+	// completion_tokens_details.reasoning_tokens，Responses 是
+	// output_tokens_details.reasoning_tokens，Anthropic 是
+	// output_tokens_details.**thinking_tokens**——容器名 A 与 R 同、字段名 CC 与 R 同。
 	ReasoningTokens int
 	// HasReasoningTokens 区分**上游没报**与**上游报了 0**。
 	//
-	// 这一列上两者不是一回事：报 0 是「这次没思考」，没报是「这上游根本不报这个
-	// 数」（Anthropic 一路，以及 CC 上游挂非推理模型时整个 details 都不发）。只看
-	// 值的话，Anthropic 渠道的思考成本会恒显示为零——那正是口径层 v0.65
+	// 这一列上两者不是一回事：报 0 是「这次没思考」，没报是「这上游这一轮根本不报
+	// 这个数」——没开思考的 Anthropic 响应连 output_tokens_details 这个容器都不发，
+	// CC 上游挂非推理模型时整个 details 也不发。只看
+	// 值的话，没报的那些行会恒显示为零思考成本——那正是口径层 v0.65
 	// 「已发生的成本不得静默吞没」要防的静默。
 	//
 	// 用 bool 而不是 *int：Summary 全仓靠 `!=` 整体比对（golden 驱动与各 Tap 用例
