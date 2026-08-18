@@ -18,6 +18,9 @@ vendor/
 .env
 config.yaml
 channels.yaml
+# compose 的本机覆盖层：端口发布给谁、挂哪个宿主目录这类只对某台机器成立的
+# 配置写这里，不入库。样例是 deploy/docker-compose.override.yml.example。
+deploy/docker-compose.override.yml
 !*.example.yaml
 
 # frontend

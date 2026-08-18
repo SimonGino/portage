@@ -6,7 +6,7 @@
 
 # 前端单独一层。放在最前面而不是塞进 Go 那层：web/ 不动的时候整层走缓存，
 # 改 Go 代码不会连带重跑一次 npm ci。
-FROM node:22-slim AS webbuild
+FROM --platform=$BUILDPLATFORM node:22-slim AS webbuild
 WORKDIR /web
 # 同样先只拷依赖清单。用 npm ci 而不是 install：锁文件说了算，构建才可复现。
 COPY web/package.json web/package-lock.json ./
@@ -16,7 +16,7 @@ COPY web/ ./
 # 所以产物落在 /internal/webui/dist，不在 /web 底下。
 RUN npm run build
 
-FROM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 
 WORKDIR /src
 
@@ -34,6 +34,12 @@ COPY --from=webbuild /internal/webui/dist ./internal/webui/dist
 # 目标平台由 buildx 通过 TARGETOS/TARGETARCH 注入，交叉编译不需要额外工具链。
 # -tags webui 才会真的把上面那份 dist embed 进去；不带这个 tag 编出来的二进制
 # 转发照常，但 /admin 只回一页「管理端未编译进此二进制」的说明。
+#
+# 上面两个 FROM 的 `--platform=$BUILDPLATFORM` 是这句能成立的前提，别顺手删。
+# 少了它，buildx --platform linux/amd64 会把**整个构建阶段**当 amd64 跑——在
+# arm64 机器上就是 QEMU 模拟，于是这句 GOARCH 变成「在被模拟的 amd64 里原生编
+# amd64」，慢一个数量级。不报错，只是构建从两分钟变成二十分钟，看不出原因。
+# 前端那层同理，且 JS 产物本就与平台无关。
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \

@@ -1,0 +1,19 @@
+# 本机覆盖层样例。用法：拷成同目录的 docker-compose.override.yml（那个名字已在
+# .gitignore 里），`docker compose up` 会自动把它合并进 docker-compose.yml，不用加 -f。
+#
+# 这里只放「只对某台机器成立」的配置——绑哪张网卡、挂哪个宿主目录、某个内网才有
+# 的环境变量。主文件保持通用，将来改镜像名或加变量只改一处，两份不会漂移。
+#
+# 主文件的出厂默认是发布给**所有网卡**（内网直连是常态用法）。下面这段演示的是
+# 反过来那件事：把暴露面收窄。宿主有公网 IP 时这不是可选项——Docker 的端口发布
+# 绕过 ufw/firewalld，见主文件 ports: 上方那段。
+services:
+  portage:
+    # `!override` 不能省：compose 对 `ports` 这类列表默认是**追加**不是替换，
+    # 少了它主文件那条 8317:8317 会一起留下，两条都发布直接撞
+    # address already in use。需要 Compose v2.24+，可用 `docker compose config` 当场验。
+    ports: !override
+      # 只放给某一张内网网卡（把地址换成这台机器的）：
+      - "192.168.1.10:8317:8317"
+      # 公网机器请改用下面这条，并在前面挂 nginx 收 TLS 只放行 /v1：
+      # - "127.0.0.1:8317:8317"
