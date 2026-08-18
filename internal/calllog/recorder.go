@@ -1,4 +1,4 @@
-package server
+package calllog
 
 import (
 	"context"
@@ -7,85 +7,16 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
-	"github.com/SimonGino/portage/internal/store"
 )
 
-// bodyCaptureLimit 是 log_bodies 打开时单侧 body 的记录上限。开这个开关是为了排障，
-// 不是为了留档；一条长流的完整响应进日志只会把日志冲垮。
-const bodyCaptureLimit = 64 << 10
-
-// errorDetailLimit 是**落库**的上游错误原文上限（口径层 v0.53）。比 body 那个小两个
-// 数量级：错误体是给人读的一段话，2KB 之后基本只剩上游自己的请求快照与堆栈；而
-// 这一列每条失败流水都占一份，长期躺在库里。
-const errorDetailLimit = 2 << 10
-
-// upstreamErrorLimit 是上游错误原文的**内存**上限：转换路径读到这么多就停，透传路径的
-// 旁路收集器收到这么多就停。它防着一个巨大的 HTML 错误页把内存吃满。
-//
-// 比落库那个上限大两个数量级是口径层 v0.74 要的：`request_id` 在 Anthropic 错误信封里
-// 排在 `error` 对象**之后**，超长错误原文按 2KB 截完正好把它截在外面，而取键必须在
-// 截断前的字节上做。所以内存里收完整的一段，落库那一刻再截（captureWriter.truncatedTo）。
-const upstreamErrorLimit = 64 << 10
-
-// truncationMark 是截断说出口的那句。截断这件事本身要说出来——否则一段被砍掉一半的
-// JSON 看起来像上游发了个坏包。
-const truncationMark = "…[truncated]"
-
-// captureWriter 是挂在旁路上的定量收集器。和 Tap 一样：永不报错，否则 io.MultiWriter
-// 会把错误变成读错误、打断转发。
-//
-// limit 由构造处给，因为两种用途的合理上限差两个数量级（见 bodyCaptureLimit 与
-// errorDetailLimit）。
-type captureWriter struct {
-	limit     int
-	buf       []byte
-	truncated bool
-}
-
-func newCapture(limit int) *captureWriter { return &captureWriter{limit: limit} }
-
-func (c *captureWriter) Write(p []byte) (int, error) {
-	if room := c.limit - len(c.buf); room > 0 {
-		if len(p) > room {
-			c.buf = append(c.buf, p[:room]...)
-			c.truncated = true
-		} else {
-			c.buf = append(c.buf, p...)
-		}
-	} else if len(p) > 0 {
-		c.truncated = true
-	}
-	return len(p), nil
-}
-
-func (c *captureWriter) String() string {
-	if c.truncated {
-		return string(c.buf) + truncationMark
-	}
-	return string(c.buf)
-}
-
-// collected 是收下的原始字节，未经二次截断。给 request_id 取键用（口径层 v0.74）：
-// 那个键排在错误信封末尾，只有完整字节上取得到。
-func (c *captureWriter) collected() []byte { return c.buf }
-
-// truncatedTo 按一个更小的上限二次截断。错误原文用得到它：内存里要留完整字节给
-// request_id 取键（v0.74），落库只留 2KB（v0.53）。
-func (c *captureWriter) truncatedTo(limit int) string {
-	if len(c.buf) > limit {
-		return string(c.buf[:limit]) + truncationMark
-	}
-	return c.String()
-}
-
-// callRecord 攒够一次调用的日志字段，由 callLog 中间件的 defer 统一落一行 slog
-// 加一行 call_logs。放在中间件而不是 relay 里，是因为鉴权失败的请求也要留痕。
+// Recorder 是一次调用的流水记账本：沿途按事件收，收尾时落一行 slog 加一行
+// call_logs。由最外层的 callLog 中间件建、也由它的 defer 收尾——放在中间件而不是
+// relay 里，是因为鉴权失败的请求也要留痕。
 //
 // 里面**没有**渠道 base_url 与凭证，也不该被加进来：日志是最容易被复制粘贴出去的
 // 东西，上游密钥不进日志是硬约束。渠道用 name 指代已经够定位。
-type callRecord struct {
+type Recorder struct {
 	// log 与 sink 是收尾时的两个出口。Detached 的那条两者皆 nil，写进去的东西
 	// 哪儿也不去——那正是「取不到记录」该有的样子。
 	log  *slog.Logger
@@ -97,13 +28,13 @@ type callRecord struct {
 	firstByte time.Time
 
 	endpoint string
-	// upstreamEndpoint 是这次**打到上游**的那条路径（#20），在两个 s.up.Do 调用点
-	// 发请求之前的那一刻赋值——不是在 outEp 算出来的地方：解不动请求体、编不出出口
-	// 请求、压缩闸拒绝那些行都停在 Do 之前，它们同样没打上游，这一格该空着。
+	// upstreamEndpoint 是这次**打到上游**的那条路径（#20），由 Dialing 在发请求
+	// 之前的那一刻记上——不是在算出出口端点的地方：解不动请求体、编不出出口请求、
+	// 压缩闸拒绝那些行都停在发请求之前，它们同样没打上游，这一格该空着。
 	//
 	// 不变量：**非空 ⟺ 真的向上游发起过**（含拨不通、读超时那些——那些行有
 	// error_detail，恰恰要知道打的哪条路径）。反过来，401 / 429 / 501 / 并发闸队满
-	// 一律空串（队满那档由 writeQueueReject 清回去，见那里）。
+	// 一律空串（队满那档由 QueueRejected 清回去，见那里）。
 	upstreamEndpoint string
 	// apiKeyName 是网关 key 的**名字**，不是 key 本身，也不是它的 hash：
 	// 日志是最容易被复制粘贴出去的东西，凭证材料一概不进。
@@ -122,8 +53,8 @@ type callRecord struct {
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
 	//
-	// 词表与「哪个词落库、哪个词留 NULL」都关在 calllog.Outcome 里（口径层 v0.70）。
-	outcome calllog.Outcome
+	// 词表与「哪个词落库、哪个词留 NULL」都关在 Outcome 里（口径层 v0.70）。
+	outcome Outcome
 	// retries 是这次调用向上游重打了几次（含换凭证之后的那些，口径层 v0.38）。
 	// 不含首次尝试，0 是常态所以不打进日志——否则每一行都要背一个恒为 0 的字段。
 	// 非 0 才说明发生过退避重试或换过凭证，「这次怎么慢了三秒」有据可查。
@@ -138,8 +69,8 @@ type callRecord struct {
 	//
 	// 不是凭证材料，进日志无碍：这是上游自己给这次调用编的号，报障时官方文档就要它。
 	//
-	// 值由 resolveUpstreamRequestID 在收尾时从下面两档候选加错误体里那一档定下来
-	// （口径层 v0.74），别在别处直接赋值。
+	// 值由 resolveUpstreamRequestID 在 Finish 时从下面两档候选加错误体里那一档定
+	// 下来（口径层 v0.74），别在别处直接赋值。
 	upstreamRequestID string
 	// officialRequestID 是第一档：响应头里官方拼写的 `request-id`，Anthropic 自己写的。
 	officialRequestID string
@@ -159,7 +90,7 @@ type callRecord struct {
 	//
 	// 是 *captureWriter 而不是 string，因为透传路径上它得挂在旁路上边转发边收——
 	// 那条链路不允许为了记一份错误体把响应先读进内存再转出去。另外两个来源（转换
-	// 路径已经读到的原始字节、传输错误的 Redact 文本）用 setErrorDetail 写进来。
+	// 路径的 UpstreamRejected、传输错误的 Failed）都走 setErrorDetail。
 	//
 	// 它同时是 request_id 第二档的字节来源（口径层 v0.74）：那一档「复用 error_detail
 	// 已经读进来的字节」，不新开一次 body 读，因此不违反透传路径不 decode→encode。
@@ -176,56 +107,58 @@ type callRecord struct {
 // 顺序不变量在这里也从口口相传变成写下来的：谁先到先算数、谁后写覆盖先写，
 // 逐个动词的 doc 里说明。
 
-// newCallRecord 开一条流水。端点与入站协议在这一刻就写死——鉴权失败、限流那些行
+// New 开一条流水。端点与入站协议在这一刻就写死——鉴权失败、限流那些行
 // 别的什么都没有，只有这两格分得开它们。
+//
+// log 落 slog，sink 落库。两者都可以是 nil（见 Detached），收尾时什么都不做。
 //
 // outcome 的初值是 Rejected 而不是 OK：走到收尾还没被任何分支覆盖，说明这次调用
 // 停在某个早退分支上了，那确实是一次拒绝。反过来设成 OK 的话，任何漏写 outcome
 // 的新分支都会静默记成一次干净的成功。
-func newCallRecord(ep protocol.Endpoint, log *slog.Logger, sink Sink) *callRecord {
-	return &callRecord{
+func New(ep protocol.Endpoint, log *slog.Logger, sink Sink) *Recorder {
+	return &Recorder{
 		start:        time.Now(),
 		endpoint:     ep.Path,
 		inboundProto: ep.Proto,
-		outcome:      calllog.Rejected,
+		outcome:      Rejected,
 		log:          log,
 		sink:         sink,
 	}
 }
 
-// detachedCallRecord 是「上下文里取不到记录」时的兜底，一个黑洞：动词照常收，
+// Detached 是「上下文里取不到记录」时的兜底，一个黑洞：动词照常收，
 // 收尾什么都不做（没有 logger 也没有 sink）。
 //
 // 回它而不是 panic：三层中间件是在 Engine() 里一起注册的，取不到只可能是路由被
 // 改坏了，那不该顺带把请求也打成 500。日志少一行由 TestEveryRelayEndpointLogsOnce
 // 那类用例去逮。
-func detachedCallRecord() *callRecord {
-	return &callRecord{start: time.Now(), outcome: calllog.Rejected}
+func Detached() *Recorder {
+	return &Recorder{start: time.Now(), outcome: Rejected}
 }
 
 // Authenticated 记下认出来的网关 key 名。名字不是 key 本身也不是它的 hash——
 // 上下文里的东西迟早会被顺手打进日志。
-func (r *callRecord) Authenticated(keyName string) { r.apiKeyName = keyName }
+func (r *Recorder) Authenticated(keyName string) { r.apiKeyName = keyName }
 
 // RequestParsed 记下从请求体头部解出来的两格。这两格是同源的：走到这里就说明
 // 请求体读得动、是合法 JSON、且带了 model，三者缺一都在这之前返回了。
 //
 // 「有没有解析到请求」这条判据因此就是「这个动词有没有被调过」，别再借
 // requestedModel 非空去推——那是同一件事的影子，换个实现就对不上了。
-func (r *callRecord) RequestParsed(model string, stream bool) {
+func (r *Recorder) RequestParsed(model string, stream bool) {
 	r.requestedModel, r.stream = model, stream
 }
 
 // RecordRequestBody 记一份请求体（log_bodies 打开时）。字节已经拿在手里，
 // 不像响应侧那样要挂旁路。
-func (r *callRecord) RecordRequestBody(body []byte) {
+func (r *Recorder) RecordRequestBody(body []byte) {
 	r.requestBody = newCapture(bodyCaptureLimit)
 	_, _ = r.requestBody.Write(body)
 }
 
 // Routed 记下这次落到了哪条渠道、走哪个上游协议、翻成了哪个纳管模型名。
 // 只记渠道**名**：base_url 与凭证一概不进这条流水。
-func (r *callRecord) Routed(channel string, proto protocol.Protocol, upstreamModel string) {
+func (r *Recorder) Routed(channel string, proto protocol.Protocol, upstreamModel string) {
 	r.channel, r.channelProto, r.upstreamModel = channel, proto, upstreamModel
 }
 
@@ -234,20 +167,20 @@ func (r *callRecord) Routed(channel string, proto protocol.Protocol, upstreamMod
 // 不变量：这一格非空 ⟺ 真的向上游发起过（含拨不通、读超时那些）。所以它必须
 // 挨着发请求那一行调，不能在算出出口端点的地方就调——中间还夹着解不动请求体、
 // 编不出出口请求、压缩闸拒绝几条早退，那些行同样没打上游。
-func (r *callRecord) Dialing(upstreamEndpoint string) { r.upstreamEndpoint = upstreamEndpoint }
+func (r *Recorder) Dialing(upstreamEndpoint string) { r.upstreamEndpoint = upstreamEndpoint }
 
 // Attempted 记下一次上游尝试收场后的三个数：重打了几次、最后用的哪份凭证、
 // 在并发闸上排了多久。成功失败都要调——失败那些行恰恰最需要知道重打过几次。
 //
 // 收三个裸参数而不是 upstream.Attempt：本包绝不能 import internal/upstream
 // （upstream 已经 import 了 store，而 store 又 import 本包，收进来就成环）。
-func (r *callRecord) Attempted(retries int, credential string, queueWait time.Duration) {
+func (r *Recorder) Attempted(retries int, credential string, queueWait time.Duration) {
 	r.retries, r.channelKey, r.queueWait = retries, credential, queueWait
 }
 
 // RequestIDs 记下响应头里的两档 request id 候选（口径层 v0.74）。最终取哪一档
 // 由收尾时的 resolveUpstreamRequestID 定——中间那档在错误体里，那会儿还没收完。
-func (r *callRecord) RequestIDs(official, proxy string) {
+func (r *Recorder) RequestIDs(official, proxy string) {
 	r.officialRequestID, r.proxyRequestID = official, proxy
 }
 
@@ -255,13 +188,13 @@ func (r *callRecord) RequestIDs(official, proxy string) {
 //
 // 「有没有 summary」是 token 五列落值还是落 NULL 的判据，所以调没调过这个动词
 // 本身就是信息——上游回了一份全零的 usage 与压根没走到上游，不是一回事。
-func (r *callRecord) Summarized(sum protocol.Summary) {
+func (r *Recorder) Summarized(sum protocol.Summary) {
 	r.summary, r.haveSummary = sum, true
 }
 
 // TapResponseBody 开一路响应体旁路（log_bodies 打开时），返回挂进 io.MultiWriter
 // 的那个 writer。它永不报错——报错会被 MultiWriter 变成读错误、打断转发。
-func (r *callRecord) TapResponseBody() io.Writer {
+func (r *Recorder) TapResponseBody() io.Writer {
 	r.responseBody = newCapture(bodyCaptureLimit)
 	return r.responseBody
 }
@@ -274,58 +207,67 @@ func (r *callRecord) TapResponseBody() io.Writer {
 //
 // **副作用要知道**：占坑之后错误原文就算「已有」，此后 Failed 带来的 detail 不再
 // 覆盖它（先到先得）。那是想要的——旁路收的是上游原话，收尾分支给的是一句概括。
-func (r *callRecord) TapUpstreamErrorBody() io.Writer {
+func (r *Recorder) TapUpstreamErrorBody() io.Writer {
 	r.errorDetail = newCapture(upstreamErrorLimit)
 	return r.errorDetail
 }
 
 // FirstByte 记下首字节到达的时刻，只认第一次。它是 ttft 的唯一来源——别再拿
 // 「这个时刻是不是零值」当业务判据，那是 time.Time 的性质不是这条流水的语义。
-func (r *callRecord) FirstByte() {
+func (r *Recorder) FirstByte() {
 	if r.haveFirstByte() {
 		return
 	}
 	r.firstByte = time.Now()
 }
 
-func (r *callRecord) haveFirstByte() bool { return !r.firstByte.IsZero() }
+func (r *Recorder) haveFirstByte() bool { return !r.firstByte.IsZero() }
 
 // Succeeded 把收场记成一次干净的成功。在写出响应头之后调：那一刻格式承诺已经
 // 生效，之后再断只能记 stream_aborted，不能退回别的词。
-func (r *callRecord) Succeeded() { r.outcome = calllog.OK }
+func (r *Recorder) Succeeded() { r.outcome = OK }
 
 // Refused 记一次**网关自己回绝**的收场：鉴权不过、白名单挡下、限流、转换闸、
-// 压缩闸。这一半的词见 calllog.Outcome.Refusal。
-func (r *callRecord) Refused(o calllog.Outcome) { r.outcome = o }
+// 压缩闸。这一半的词见 Outcome.Refusal。
+func (r *Recorder) Refused(o Outcome) { r.outcome = o }
 
 // QueueRejected 记一次渠道并发闸的回绝，并把出站端点**清回空串**。
 //
 // 清回去是必须的：出站端点在发请求之前那一刻就记上了，而闸在拨号之前就回绝——
 // 这三档一个字节都没到上游，同 401 / 429 / 501 那批，空就是事实。清在这一个动词
 // 里而不是两个调用点各写一遍，是因为这本来就是那两条路共用的同一件事。
-func (r *callRecord) QueueRejected(o calllog.Outcome) {
+func (r *Recorder) QueueRejected(o Outcome) {
 	r.outcome = o
 	r.upstreamEndpoint = ""
 }
 
 // Failed 记一次**打过上游之后**的失败，顺带收下一段错误原文（口径层 v0.53）。
-// 这一半的词见 calllog.Outcome.Failure。
+// 这一半的词见 Outcome.Failure。
 //
 // detail 传空串即「这一支没有原文可记」。非空时走先到先得：透传路径的旁路收集器
 // 若已经占了坑，这里给的一句概括不覆盖它。
-func (r *callRecord) Failed(o calllog.Outcome, detail string) {
+func (r *Recorder) Failed(o Outcome, detail string) {
 	r.outcome = o
 	r.setErrorDetail(detail)
 }
 
-// UpstreamRejected 记一次「上游回了非 2xx，字节已经读全」的收场（转换路径）。
+// UpstreamRejected 收下上游的错误体（转换路径：上游回了非 2xx，字节还在流里），
+// 记下收场与原文，并把读到的那段字节还给调用方——它还要从里面取一句
+// error.message 回给客户端。
+//
+// 读多少由本包定（upstreamErrorLimit），不让调用方传上限：那个数是「一个巨大的
+// HTML 错误页别把内存吃满」与「request_id 在信封末尾、取键要在截断前的字节上做」
+// 两条约束的交点，散出去就会有人按落库那个 2KB 去读。
 //
 // 与 TapUpstreamErrorBody 是同一件事在两条链路上的两个名字，区别只是谁先拿到
-// 字节：透传那边要占坑边收边转，这边字节已经在手里了。合并它们要求两条链路的
+// 字节：透传那边要占坑边收边转，这边可以一口气读完。合并它们要求两条链路的
 // 错误处理先长得一样，那是 #9（attempt module）的活，不在这一层做。
-func (r *callRecord) UpstreamRejected(raw string) {
-	r.outcome = calllog.UpstreamError
-	r.setErrorDetail(raw)
+func (r *Recorder) UpstreamRejected(body io.Reader) []byte {
+	// 读错误不额外处理：读到多少算多少，那段字节本来就只是给人看的排障材料。
+	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))
+	r.outcome = UpstreamError
+	r.setErrorDetail(string(raw))
+	return raw
 }
 
 // QueueWaitMs 是排队耗时的毫秒数，给闸拒那两条 slog 用。
@@ -333,7 +275,7 @@ func (r *callRecord) UpstreamRejected(raw string) {
 // 这是这条流水唯一露出去的**读**口子：那两条日志要报「排了多久才被拒」，而这个数
 // 只有这里有。其余字段一律不开读口——流水的读者是库里那一行与收尾那一行 slog，
 // 沿途谁都不该回头查自己刚记了什么。
-func (r *callRecord) QueueWaitMs() int64 { return r.queueWait.Milliseconds() }
+func (r *Recorder) QueueWaitMs() int64 { return r.queueWait.Milliseconds() }
 
 // resolveUpstreamRequestID 按三档定下这次调用的上游请求 id（口径层 v0.74）：
 // `request-id`（头）→ 错误响应体里的 `request_id` → `x-request-id`（头）。
@@ -343,14 +285,14 @@ func (r *callRecord) QueueWaitMs() int64 { return r.queueWait.Milliseconds() }
 // 在收尾时才做而不是拿到响应头就做，是因为第二档要等错误体收完——透传路径上那份字节
 // 是边转发边攒的，最后一个字节到这一刻才齐。
 //
-// 第二档只有失败行有货：rec.errorDetail 只在失败时才被挂上（透传路径按 status >= 400
-// 挂旁路，转换路径在写错误时 setErrorDetail），成功行走不到这里的 json 解析。
-func (r *callRecord) resolveUpstreamRequestID() string {
+// 第二档只有失败行有货：errorDetail 只在失败时才被挂上（透传路径按 status >= 400
+// 走 TapUpstreamErrorBody，转换路径走 UpstreamRejected），成功行走不到这里的 json 解析。
+func (r *Recorder) resolveUpstreamRequestID() string {
 	if r.officialRequestID != "" {
 		return r.officialRequestID
 	}
 	if r.errorDetail != nil {
-		if id := calllog.ErrorBodyRequestID(r.errorDetail.collected()); id != "" {
+		if id := ErrorBodyRequestID(r.errorDetail.collected()); id != "" {
 			return id
 		}
 	}
@@ -359,7 +301,7 @@ func (r *callRecord) resolveUpstreamRequestID() string {
 
 // setErrorDetail 记下一段已经拿在手里的错误原文。**不覆盖已有的**：透传路径的旁路
 // 收集器先挂上，之后的收尾分支不该把它抹成一句概括。
-func (r *callRecord) setErrorDetail(s string) {
+func (r *Recorder) setErrorDetail(s string) {
 	if r.errorDetail != nil || s == "" {
 		return
 	}
@@ -372,7 +314,7 @@ func (r *callRecord) setErrorDetail(s string) {
 // 是个函数类型而不是直接调 store：本包被 store import（写侧行类型住在这里），
 // 反过来再 import store 就成环。顺带买到的是「不起 SQLite 也测得动收尾」——
 // 落库失败不 panic、Finish 幂等这些今天要架一整个网关加一个假上游才验得到。
-type Sink func(ctx context.Context, row calllog.Row) error
+type Sink func(ctx context.Context, row Row) error
 
 // persistTimeout 是落库的超时。给得短——它只是兜住库卡死，不是给慢查询留余量。
 const persistTimeout = 3 * time.Second
@@ -385,7 +327,7 @@ const persistTimeout = 3 * time.Second
 //
 // 幂等：只认第一次。中间件的 defer 保证它恰好被调一次，但 panic 展开路径上多一条
 // 保险不亏——重复落库的表现是账翻倍而所有断言照常绿。
-func (r *callRecord) Finish(status int) {
+func (r *Recorder) Finish(status int) {
 	if r.finished {
 		return
 	}
@@ -408,11 +350,12 @@ func (r *callRecord) Finish(status int) {
 // LogAttrs 摊出这一行 slog 的属性。
 //
 // **顺序即契约**：人眼扫日志靠它，按位置切分的下游（grep/awk 一把梭）也靠它。
-// 改动顺序要连 internal/server 的 golden 用例一起改，那不是重构是行为变更。
+// 改动顺序要连 internal/server 的 golden 用例（calllogorder_test.go）一起改，
+// 那不是重构是行为变更。
 //
 // 「有值才打」是这一侧的通例：没发到上游的行每一行都背一个空的 upstream_endpoint、
 // 恒为 0 的 retries，读起来只有噪声。库那一侧相反——列是定死的，空值靠 NULL 表达。
-func (r *callRecord) LogAttrs() []any {
+func (r *Recorder) LogAttrs() []any {
 	attrs := []any{
 		"endpoint", r.endpoint,
 		"api_key", r.apiKeyName,
@@ -420,7 +363,7 @@ func (r *callRecord) LogAttrs() []any {
 		"requested_model", r.requestedModel,
 		"stream", r.stream,
 		"status", r.status,
-		// .String() 不能省：slog 记的必须是 string 而不是 calllog.Outcome，
+		// .String() 不能省：slog 记的必须是 string 而不是 Outcome，
 		// 否则属性的动态类型变了，逐字段断言的读者（gatewaytest 的 LogLine.Str）
 		// 会集体扑空——而渲染出来的文本一个字都不差，看不出来。
 		"outcome", r.outcome.String(),
@@ -489,10 +432,10 @@ func (r *callRecord) LogAttrs() []any {
 // Row 装配落库的那一行。
 //
 // 三段可空映射（是不是流式、有没有首字节、有没有 usage）的判据都在这里。
-func (r *callRecord) Row() calllog.Row {
-	row := calllog.Row{
+func (r *Recorder) Row() Row {
+	row := Row{
 		APIKeyName: r.apiKeyName,
-		// 端点恒落（#17）：它在 callLog 中间件里就写死了，鉴权失败、限流、
+		// 端点恒落（#17）：它在 New 那一刻就写死了，鉴权失败、限流、
 		// count_tokens 撞非 Anthropic 渠道那些没走到上游的行也都有——那正是最需要
 		// 它的一批，那些行的模型、耗时、渠道全是空的，只有端点分得开它们。
 		Endpoint: r.endpoint,
@@ -543,7 +486,7 @@ func (r *callRecord) Row() calllog.Row {
 	}
 	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表，不是上游原文——上游错误
-	// 文案里可能带 base_url。词表与「哪个词落 NULL」见 calllog.Outcome.Column。
+	// 文案里可能带 base_url。词表与「哪个词落 NULL」见 Outcome.Column。
 	row.Error = r.outcome.Column()
 	// 上游原文另落一列（口径层 v0.53）。它与 error 列是两件事，也不同步出现：上游
 	// 透传 4xx 的 error 列是空的（透传成功不算网关侧错误，v0.28 纪律），detail 却有
@@ -561,7 +504,7 @@ func (r *callRecord) Row() calllog.Row {
 // 落库失败**不得影响请求**：这里跑的时候响应早已写出去了，改写不了也中断不了，
 // 只能记一条 slog error。口径层 §2.5 要的是「每请求一行落库」，但一次 SQLite 抖动
 // 不该把一次成功的转发变成客户端眼里的失败。
-func (r *callRecord) persist() {
+func (r *Recorder) persist() {
 	if r.sink == nil {
 		return
 	}
@@ -576,11 +519,4 @@ func (r *callRecord) persist() {
 
 func nullInt(v int) sql.NullInt64 {
 	return sql.NullInt64{Int64: int64(v), Valid: true}
-}
-
-// insertCallLog 是 Server 接给流水的落库出口（calllog.Sink）。
-//
-// 一层薄适配：本包知道 *sql.DB 在哪，流水那一侧只知道「有一行要落」。
-func (s *Server) insertCallLog(ctx context.Context, row calllog.Row) error {
-	return store.InsertCallLog(ctx, s.db, row)
 }

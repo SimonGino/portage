@@ -39,7 +39,7 @@ const compactionChannelMsg = "不支持 Codex 压缩（remote compaction）：�
 //
 // 只对 Responses 入口的**透传**渠道生效：compaction_trigger 是 Responses 独有的 item，
 // 别的入口的请求体里不会有它；而转换路径自己会合成（openairesponses 的 compaction.go）。
-func (s *Server) rejectCompaction(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, body []byte) bool {
+func (s *Server) rejectCompaction(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, body []byte) bool {
 	if ep != protocol.EndpointResponses {
 		return false
 	}

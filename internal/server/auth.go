@@ -27,7 +27,7 @@ const (
 // relay 根本不会执行，日志逻辑留在里面就等于「被刷的时候日志里什么都看不到」。
 func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rec := newCallRecord(ep, s.log, s.insertCallLog)
+		rec := calllog.New(ep, s.log, s.insertCallLog)
 		c.Set(ctxCallRecord, rec)
 		// defer 在 panic 展开时照常执行——首字节后断流那条路径也落得下日志。
 		defer func() { rec.Finish(c.Writer.Status()) }()
@@ -35,14 +35,14 @@ func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 	}
 }
 
-// callRecordFrom 取出本次调用的日志记录，取不到时回一个黑洞（见 detachedCallRecord）。
-func callRecordFrom(c *gin.Context) *callRecord {
+// recorderFrom 取出本次调用的日志记录，取不到时回一个黑洞（见 detachedCallRecord）。
+func recorderFrom(c *gin.Context) *calllog.Recorder {
 	if v, ok := c.Get(ctxCallRecord); ok {
-		if rec, ok := v.(*callRecord); ok {
+		if rec, ok := v.(*calllog.Recorder); ok {
 			return rec
 		}
 	}
-	return detachedCallRecord()
+	return calllog.Detached()
 }
 
 // authRelay 是四个转发端点的 key 鉴权。
@@ -53,7 +53,7 @@ func (s *Server) authRelay(ep protocol.Endpoint) gin.HandlerFunc {
 		key, err := auth.Resolve(c.Request.Context(), s.db, c.Request.Header)
 		switch {
 		case errors.Is(err, auth.ErrUnauthorized):
-			callRecordFrom(c).Refused(calllog.Unauthorized)
+			recorderFrom(c).Refused(calllog.Unauthorized)
 			// 回显里没有 key 本身，也不说是「不存在」还是「已停用」。
 			// 走协议原生格式：回 gin 默认 JSON 的话 harness 认不出来，
 			// 表现成解析失败而不是「key 不对」。
@@ -68,7 +68,7 @@ func (s *Server) authRelay(ep protocol.Endpoint) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		callRecordFrom(c).Authenticated(key.Name)
+		recorderFrom(c).Authenticated(key.Name)
 		// allowed_models 的校验**不在这里**：这一层还没读请求体，不知道客户端要哪个
 		// 接入点。把 key 传下去，由 relay 在解析出 head.Model 之后判（M3）。
 		c.Set(ctxAPIKey, key)

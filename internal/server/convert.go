@@ -54,7 +54,7 @@ func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 // 与透传路径共享的口径一条不改：首字节边界即承诺边界（写出去之后不改写、不重发，
 // 只能断连）、Tap 挂在**上游原始字节**上（usage 出自上游自己说的数，不是我们编出来
 // 的响应）、错误回显不带上游 key 与 base_url。
-func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, body []byte, stream bool) {
+func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, body []byte, stream bool) {
 	// 这两个实例要一路带到响应侧，**不能在编码时另 New 一个**：codec 允许携带每请求
 	// 状态，而入口 codec 的 DecodeRequest 与 EncodeStream/EncodeFullBody 服务的是同
 	// 一次请求。openairesponses 就靠这条把「客户端声明了哪些 custom 工具」从解码侧
@@ -135,7 +135,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	defer resp.Body.Close()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
 	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#2）。三档的取舍与
-	// 透传路径同一处（logCall），包括错误体那一档（v0.74）。
+	// 透传路径同一处（calllog.Recorder.Finish），包括错误体那一档（v0.74）。
 	rec.RequestIDs(upstream.RequestIDs(resp.Header))
 
 	// Tap 与 body 记录挂在上游原始字节上，与透传路径一致：usage 要的是上游自己
@@ -181,11 +181,10 @@ func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]
 // 重试决策的依据。
 // 回给客户端的只有 error.message 一句，但**落库落全**（截到 2KB，口径层 v0.53）：
 // 客户端拿到的是我们的错误契约，排障要的是上游到底说了什么，两者不该是同一份文本。
-func (s *Server) writeUpstreamError(c *gin.Context, rec *callRecord, ep protocol.Endpoint, status int, body io.Reader) {
-	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))
-	// 收场与原文一次记完：这一支的字节已经全读进来了，「上游说不行」与「它说了
-	// 什么」本来就是同一件事，分两处写只是因为它们以前落在两个函数里。
-	rec.UpstreamRejected(string(raw))
+func (s *Server) writeUpstreamError(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, status int, body io.Reader) {
+	// 收场与原文一次记完：「上游说不行」与「它说了什么」本来就是同一件事，
+	// 分两处写只是因为它们以前落在两个函数里。读多少由流水那一侧定。
+	raw := rec.UpstreamRejected(body)
 	msg := upstreamErrorMessage(raw)
 	if msg == "" {
 		msg = "上游返回 " + http.StatusText(status)
@@ -210,7 +209,7 @@ func upstreamErrorMessage(raw []byte) string {
 }
 
 // streamConverted 跑流式转换：上游 SSE → canonical 事件 → 入口协议 SSE。
-func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
+func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	events, err := outCodec.DecodeStream(src)
 	if err != nil {
 		rec.Failed(calllog.UpstreamError, "")
@@ -268,7 +267,7 @@ func drainEvents(events <-chan protocol.Event) {
 }
 
 // bufferConverted 跑非流式转换：上游完整响应体 → canonical 事件 → 入口协议响应体。
-func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
+func (s *Server) bufferConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
 		rec.Failed(calllog.UpstreamError, "")

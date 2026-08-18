@@ -151,7 +151,7 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 // 两个调用点的 Do 之前一刻就记上了，而闸在 Do 里面、拨号之前就回绝，这三档一个
 // 字节都没到上游，同 401 / 429 / 501 那批。返回 false 那档不走它，那是真打过上游
 // 之后的失败（拨不通、读超时）。
-func (s *Server) writeQueueReject(c *gin.Context, rec *callRecord, ep protocol.Endpoint, channel string, err error) bool {
+func (s *Server) writeQueueReject(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, channel string, err error) bool {
 	var word calllog.Outcome
 	var msg string
 	switch {
@@ -304,7 +304,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 记录由 callLog 中间件建、也由它落——鉴权失败时 relay 压根不执行，
 		// 日志逻辑留在这里就等于 401 不落库（portage-legacy#22）。
-		rec := callRecordFrom(c)
+		rec := recorderFrom(c)
 
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -409,7 +409,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		defer resp.Body.Close()
 		// 在写响应头之前取：之后 c.Writer.Header() 里也有同一个值，但从上游的
 		// resp.Header 拿才是「上游报的」，不受本地补头（X-Accel-Buffering）干扰。
-		// 只取两档头候选，最终取哪个由 logCall 收尾时定——中间那档在错误体里（v0.74）。
+		// 只取两档头候选，最终取哪个由流水收尾时定——中间那档在错误体里（v0.74）。
 		rec.RequestIDs(upstream.RequestIDs(resp.Header))
 
 		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
@@ -448,4 +448,11 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			panic(http.ErrAbortHandler)
 		}
 	}
+}
+
+// insertCallLog 是 Server 接给流水的落库出口（calllog.Sink）。
+//
+// 一层薄适配：本包知道 *sql.DB 在哪，流水那一侧只知道「有一行要落」。
+func (s *Server) insertCallLog(ctx context.Context, row calllog.Row) error {
+	return store.InsertCallLog(ctx, s.db, row)
 }
