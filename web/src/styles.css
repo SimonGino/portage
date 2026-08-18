@@ -1,23 +1,25 @@
-/* 手写而不是引框架。壳跟 A-v2：纸灰左栏 + 白画布大圆角。
+/* 手写而不是引框架。壳跟 A-v2：左栏比画布深一档，主画布是羊皮纸底。
    跟随系统深浅色——这东西多半开在一堆终端旁边。
    旧 token 名（--bg / --panel / --text / --muted）当别名留着，现有组件 class 不用改。 */
 :root {
-  --paper: #f3f3f1;
-  --canvas: #ffffff;
-  --ink: #161615;
-  --ink-2: #3c3c38;
-  --mute: #5e5e59;
-  --faint: #6f6f6a;
-  --line: #e6e6e2;
-  --line-soft: #ececea;
-  --sunken: #e8e8e4;
-  --chip: #efefe9;
-  --hover: rgba(22, 22, 21, 0.045);
-  --shadow: 0 18px 48px rgba(22, 22, 21, 0.08);
-  --r: 20px;
-  --r-sm: 16px;
+  --paper: #edece3;
+  --canvas: #f5f4ed;
+  --ink: #1c1a15;
+  --ink-2: #3f3a2f;
+  --mute: #6b6252;
+  --faint: #8a8172;
+  --line: #ddd9c9;
+  --line-soft: #e7e3d5;
+  --sunken: #eae7da;
+  --chip: #efece0;
+  --hover: rgba(28, 26, 21, 0.045);
+  --shadow: 0 1px 2px rgba(62, 52, 30, 0.05), 0 10px 30px rgba(62, 52, 30, 0.07);
+  --r: 10px;
+  --r-sm: 8px;
   --side: 248px;
-  --display: "Outfit", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  /* 衬线只给标题（页标题 / 区块标题 / 渠道身份条上的渠道名 / 空态首句）。
+     中文不加载衬线 webfont，落本机的宋体。 */
+  --serif: "Source Serif 4", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
   --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   --mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
 
@@ -26,50 +28,62 @@
   --text: var(--ink);
   --muted: var(--mute);
   --radius: var(--r);
-  --radius-sm: 12px;
-  --accent: var(--ink);
+  --radius-sm: 6px;
+  /* 墨蓝。落点只有三处：焦点环、文字链接、页面级合计/主指标那一个数。
+     主按钮仍实心墨色，导航选中仍 --sunken + 字重，徽章一律不给。 */
+  --accent: #1B365D;
 
-  --warn-bg: #fff8e8;
-  --warn-line: #ecc46a;
-  --warn-text: #7a5300;
-  --err-bg: #fdecec;
-  --err-line: #e79b9b;
-  --err-text: #b42318;
-  --ok-bg: #e9f7ef;
-  --ok-line: #a7d9bd;
-  --ok-text: #1a7f47;
-  --data-in: #0d9488;
-  --data-out: #c026d3;
+  --warn-bg: #f7efd9;
+  --warn-line: #dcc48a;
+  --warn-text: #7a5715;
+  --err-bg: #f6e5df;
+  --err-line: #d8a89e;
+  --err-text: #9c2f26;
+  --ok-bg: #eaf0e0;
+  --ok-line: #b9c8a4;
+  --ok-text: #41633c;
+  /* 「信息」这一档：§4 说语义色四个，此前 CSS 里只落了三个。这套暖底上唯一的蓝
+     就是墨蓝，信息没有理由再发明第二抹——它与强调色同源，靠 bg/line 与文案区分。
+     目前还没有消费者（现有 .field-hint / .picker-hint 都是纯灰文字，不是信息条）。 */
+  --info-bg: #e9edf3;
+  --info-line: #b6c2d2;
+  --info-text: #1b365d;
+  --data-in: #4a6b52;
+  --data-out: #8a6a3c;
 
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #141413;
-    --canvas: #1c1c1a;
-    --ink: #f0f0ec;
-    --ink-2: #c8c8c2;
-    --mute: #9a9a94;
-    --faint: #7a7a74;
-    --line: #2e2e2a;
-    --line-soft: #272724;
-    --sunken: #262624;
-    --chip: #2a2a26;
-    --hover: rgba(240, 240, 236, 0.055);
-    --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
-    --accent: var(--ink);
+    --paper: #17150f;
+    --canvas: #1e1c15;
+    --ink: #f0ede2;
+    --ink-2: #ccc6b6;
+    --mute: #9c9585;
+    --faint: #7b7566;
+    --line: #332f24;
+    --line-soft: #2b281f;
+    --sunken: #282419;
+    --chip: #2c281d;
+    --hover: rgba(240, 237, 226, 0.055);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.45);
+    /* 墨蓝在深底上提亮，保住对比度 */
+    --accent: #9db8dd;
     --warn-bg: #2e2408;
     --warn-line: #6b5314;
-    --warn-text: #e8c778;
-    --err-bg: #3a1a1a;
-    --err-line: #7a3030;
-    --err-text: #f5a3a3;
-    --ok-bg: #14301f;
-    --ok-line: #2c5c3f;
-    --ok-text: #86d6a8;
-    --data-in: #2dd4bf;
-    --data-out: #e879f9;
+    --warn-text: #e0c078;
+    --err-bg: #331a14;
+    --err-line: #6e332a;
+    --err-text: #e8a094;
+    --ok-bg: #1c2a18;
+    --ok-line: #3c5434;
+    --ok-text: #9bc48f;
+    --info-bg: #1c232c;
+    --info-line: #3a4757;
+    --info-text: #9db8dd;
+    --data-in: #86a98d;
+    --data-out: #c39a63;
   }
 }
 
@@ -104,8 +118,10 @@ button, input, textarea, select {
   color: inherit;
 }
 
+/* 白名单 ①：焦点环是墨蓝唯一的全局落点。输入框那几处 inset 的描边环不跟着换——
+   SPEC §3 点名的只有 :focus-visible，超出的一律回墨色。 */
 :focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -125,6 +141,7 @@ button, input, textarea, select {
 .empty {
   padding: 4px 0 8px;
   color: var(--mute);
+  font-family: var(--serif);
   font-size: 15px;
 }
 
@@ -156,7 +173,7 @@ button, input, textarea, select {
 }
 
 .brand b {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 17px;
   letter-spacing: -0.03em;
@@ -222,7 +239,7 @@ button, input, textarea, select {
   width: calc(100% - 16px);
   background: var(--sunken);
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 13px;
 }
@@ -299,7 +316,7 @@ button, input, textarea, select {
   width: calc(100% - 16px);
   padding: 8px 12px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: none;
   text-align: left;
   color: var(--mute);
@@ -339,7 +356,7 @@ button, input, textarea, select {
   background: var(--sunken);
   display: grid;
   place-items: center;
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 13px;
   letter-spacing: -0.03em;
@@ -369,7 +386,7 @@ button, input, textarea, select {
   font-size: 13px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: none;
   cursor: pointer;
 }
@@ -385,7 +402,7 @@ button, input, textarea, select {
   height: 100%;
   overflow: auto;
   background: var(--canvas);
-  border-radius: 24px 0 0 24px;
+  border-radius: 12px 0 0 12px;
   padding: 36px 32px 48px;
   max-width: none;
 }
@@ -425,7 +442,7 @@ button, input, textarea, select {
 
 .page-head h1 {
   margin: 0;
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 26px;
   line-height: 1.2;
@@ -440,7 +457,7 @@ button, input, textarea, select {
   height: 36px;
   flex-shrink: 0;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--canvas);
   overflow: hidden;
 }
@@ -481,7 +498,7 @@ button, input, textarea, select {
 
 .ch-bar {
   background: var(--sunken);
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 12px 16px;
   margin: 0 0 16px;
 }
@@ -511,7 +528,7 @@ button, input, textarea, select {
 
 .ch-bar-name {
   margin: 0;
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 19px;
   letter-spacing: -0.03em;
@@ -532,7 +549,7 @@ button, input, textarea, select {
 .well {
   margin: 14px 0 8px;
   background: var(--sunken);
-  border-radius: 20px;
+  border-radius: var(--r);
   padding: 18px 20px 20px;
 }
 
@@ -548,7 +565,7 @@ button, input, textarea, select {
 }
 
 .well .section-head h2 {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 18px;
   letter-spacing: -0.03em;
@@ -585,7 +602,7 @@ button, input, textarea, select {
 
 .section-head h2 {
   margin: 0;
-  font-family: var(--display);
+  font-family: var(--serif);
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -930,7 +947,7 @@ button, input, textarea, select {
   gap: 6px;
   margin: 4px 0 14px;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--paper);
   font-size: 13px;
 }
@@ -1176,7 +1193,7 @@ button, input, textarea, select {
   justify-content: center;
   gap: 8px;
   padding: 6px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   border: 0;
   background: var(--chip);
   color: var(--ink);
@@ -1200,7 +1217,6 @@ button, input, textarea, select {
 .btn-hero {
   background: var(--ink);
   color: var(--paper);
-  font-family: var(--display);
   font-weight: 500;
   letter-spacing: -0.02em;
 }
@@ -1208,27 +1224,21 @@ button, input, textarea, select {
 .btn-primary {
   padding: 10px 18px;
   font-size: 15px;
-  border-radius: 16px;
+  border-radius: var(--r-sm);
 }
 
 .btn-hero {
   padding: 14px 22px;
   font-size: 16px;
-  border-radius: 22px;
+  border-radius: 12px;
 }
 
+/* 悬停亮一档走 --ink-2，不写死 hex：亮色下它是浅一档的暖墨，暗色下它本来就比
+   --ink 暗一档，同一条规则在两个主题里都成立，原先那两块暗色覆写随之多余。 */
 .btn-primary:hover:not(:disabled),
 .btn-hero:hover:not(:disabled) {
-  background: #2a2a27;
+  background: var(--ink-2);
   opacity: 1;
-}
-
-@media (prefers-color-scheme: dark) {
-  .btn-primary:hover:not(:disabled),
-  .btn-hero:hover:not(:disabled) {
-    background: #d8d8d2;
-    color: var(--paper);
-  }
 }
 
 .btn-danger {
@@ -1302,7 +1312,7 @@ textarea {
   width: 100%;
   padding: 11px 14px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--paper);
   color: var(--ink);
   font: inherit;
@@ -1392,7 +1402,7 @@ textarea:focus {
   padding: 8px 10px;
   border: 0;
   background: var(--paper);
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .form-actions {
@@ -1423,7 +1433,7 @@ textarea:focus {
 .bar {
   margin: 12px 0 0;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 8px;
   border: 0;
   font-size: 14px;
   background: var(--paper);
@@ -1447,7 +1457,7 @@ textarea:focus {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(22, 22, 21, 0.18);
+  background: rgba(28, 26, 21, 0.18);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1459,7 +1469,7 @@ textarea:focus {
 .dialog {
   background: var(--canvas);
   border: 0;
-  border-radius: 24px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   width: 100%;
   max-width: 520px;
@@ -1685,7 +1695,7 @@ textarea:focus {
   gap: 14px;
   background: var(--canvas);
   border: 0;
-  border-radius: 24px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   padding: 32px 28px;
 }
@@ -1698,7 +1708,7 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   gap: 9px;
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 22px;
   letter-spacing: -0.03em;
@@ -1821,7 +1831,7 @@ textarea:focus {
   gap: 4px;
   background: var(--paper);
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .segment {
@@ -1998,7 +2008,7 @@ textarea:focus {
   width: 100%;
   padding: 10px 12px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--paper);
   color: var(--ink);
   font: inherit;
@@ -2055,7 +2065,7 @@ textarea:focus {
   right: 0;
   background: var(--canvas);
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--r-sm);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -2139,7 +2149,7 @@ textarea:focus {
   gap: 4px;
   padding: 8px 10px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--paper);
 }
 
@@ -2240,7 +2250,7 @@ textarea:focus {
   flex: 1;
   min-width: 0;
   padding: 7px 10px;
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--canvas);
 }
 
@@ -2404,7 +2414,9 @@ textarea:focus {
   gap: 9px;
 }
 
+/* 白名单 ③ 之一：页面级合计那一个数（排行页的 token 合计）。 */
 .stat-lead-value {
+  color: var(--accent);
   font-size: 30px;
   font-weight: 600;
   line-height: 1.1;
@@ -2586,7 +2598,10 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* 白名单 ③ 之二：每行的主指标那一个数。名字底下那行附注、右边的占比、表格里
+   的普通数字都不跟着——整列刷蓝就不是强调了。 */
 .rank-metric-value {
+  color: var(--accent);
   font-size: 15px;
   font-weight: 600;
 }
@@ -2601,7 +2616,7 @@ textarea:focus {
 .pill {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid var(--line);
   background: var(--sunken);
   font-size: 12px;
@@ -2662,12 +2677,21 @@ textarea:focus {
 }
 
 /* 「详情」按钮跟着状态右对齐，压成一枚小字：一行里已经有状态、重试、错误词三行
-   信息，它不该再抢一次注意力，只在人真的要看时才被找到。 */
+   信息，它不该再抢一次注意力，只在人真的要看时才被找到。
+   同时它是**白名单 ②**：全站唯一一处「可点的文字」（SPEC §3 点名的「详情」），
+   默认墨蓝无下划线，悬停才加下划线。渠道页那两个「上游设置 / 上游凭证」不算——
+   它们是带 is-on 选中态的展开开关，属于「选中态不给墨蓝」那一族。 */
 .log-detail-toggle {
   margin: 2px -6px 0 auto;
   display: block;
   font-size: 12px;
   padding: 0 6px;
+  color: var(--accent);
+}
+
+.log-detail-toggle:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* 弹框里那一小块「这是哪一条」。两列：标签一列窄的，值一列自适应。
@@ -2772,7 +2796,7 @@ textarea:focus {
 .page-head .segmented,
 .page-head .picker-trigger {
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 
 .page-head .btn-primary {
@@ -2826,7 +2850,7 @@ textarea:focus {
 }
 
 .dialog-head h3 {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-weight: 600;
   font-size: 22px;
   letter-spacing: -0.03em;
@@ -2835,27 +2859,19 @@ textarea:focus {
 .mpick-search {
   background: var(--paper);
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 
 .mpick-list {
   border: 0;
   background: var(--paper);
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 .keybox {
   border: 0;
   background: var(--paper);
-  border-radius: 16px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .btn-primary:hover:not(:disabled),
-  .btn-hero:hover:not(:disabled) {
-    background: #d8d8d2;
-    color: #141413;
-  }
+  border-radius: var(--r-sm);
 }
 
 @media (max-width: 860px) {

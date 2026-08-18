@@ -6,8 +6,8 @@
      ink/paper 对。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="Portage">
   <style>
-    path { fill: #111110; }
-    @media (prefers-color-scheme: dark) { path { fill: #f2f2ef; } }
+    path { fill: #1c1a15; }
+    @media (prefers-color-scheme: dark) { path { fill: #f0ede2; } }
   </style>
   <path d="M3,6 L21,6 L17,13 L7,13 Z M0,17 L9,17 L9,21 L0,21 Z M15,17 L24,17 L24,21 L15,21 Z"/>
 </svg>
