@@ -799,12 +799,11 @@ func (h *Handler) listLogs(c *gin.Context) {
 }
 
 // usage 汇总用量。by=model（默认，按请求的模型）/ by=key（按网关 API Key，v0.53）/
-// by=credential（按上游凭证，v0.38）。
+// by=credential（按上游凭证，v0.38）。时间范围见 usageRange。
 //
 // 认不得的 by 当默认处理而不是报错：这是个只影响展示的查询参数，写错了不该让整个
 // 页面打不开（同 clampQuery 的立论）。
 func (h *Handler) usage(c *gin.Context) {
-	days := clampQuery(c, "days", 7, 1, 365)
 	dim := store.UsageByModel
 	switch c.Query("by") {
 	case store.UsageByKey:
@@ -812,28 +811,87 @@ func (h *Handler) usage(c *gin.Context) {
 	case store.UsageByCredential:
 		dim = store.UsageByCredential
 	}
-	rows, err := store.UsageBy(c.Request.Context(), h.db, days, dim)
+	rng, ok := usageRange(c)
+	if !ok {
+		return
+	}
+	rows, err := store.UsageBy(c.Request.Context(), h.db, rng, dim)
 	if err != nil {
 		h.log.Error("汇总用量失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"days": days, "by": dim, "rows": rows})
+	// 走 from/to 那条路时不回 days：这一发算的是那一段，回一个没参与的窗口档位是撒谎。
+	if !rng.Spanned() {
+		c.JSON(http.StatusOK, gin.H{"days": rng.Days, "by": dim, "rows": rows})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"by":   dim,
+		"from": rng.From.Unix(),
+		"to":   rng.To.Unix(),
+		"rows": rows,
+	})
 }
 
-// usageDaily 把最近 days 天按本地自然日分桶，用量图用它。
+// usageRange 解析用量查询的记账范围：默认「近 days 个自然日」，`from`/`to` 两个都给
+// 时顶掉 days（unix 秒，半开区间 [from, to)），只给一个当没给。
 //
-// 与 usage 分成两个端点而不是塞进同一份回包：分桶只跟 days 有关、与聚合维度无关，
-// 合在一起的话每切一次「按模型 / 按 API Key / 按上游凭证」都得把它重算一遍。
-func (h *Handler) usageDaily(c *gin.Context) {
-	days := clampQuery(c, "days", 7, 1, 365)
-	rows, err := store.UsageDaily(c.Request.Context(), h.db, days)
+// **解析失败回 400，不走「认不得就忽略」那条**：clampQuery 与 by 的立论是「写错了不该
+// 让整个页面打不开」，那条管的是只影响**展示**的参数；from/to 定的是**记账范围**，
+// 静默忽略会拿整窗的合计去回答「这一小时」——那不是显示得不对，是数字本身错了且看不
+// 出来。例外只开给这两个参数，days / by / unit 照旧忽略。
+//
+// 解析不出就自己回 400 并返回 false——调用方直接 return。
+func usageRange(c *gin.Context) (store.UsageRange, bool) {
+	r := store.UsageRange{Days: clampQuery(c, "days", 7, 1, 365)}
+	from, okFrom := unixQuery(c, "from")
+	to, okTo := unixQuery(c, "to")
+	switch {
+	case !okFrom || !okTo: // 写错了
+	case from.IsZero() || to.IsZero(): // 只给一端，或一端都没给：照 days 走
+		return r, true
+	case to.After(from):
+		r.From, r.To = from, to
+		return r, true
+	}
+	// 措辞里不带数字：这条 400 的要害是「一个数都别给」——给了就有人当成结果读。
+	fail(c, http.StatusBadRequest, "from/to 必须是 unix 秒，且 to 晚于 from")
+	return r, false
+}
+
+// unixQuery 读一个 unix 秒的查询参数。缺失（含空串）回零值 + true，解析失败回 false。
+func unixQuery(c *gin.Context, name string) (time.Time, bool) {
+	raw := c.Query(name)
+	if raw == "" {
+		return time.Time{}, true
+	}
+	sec, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		h.log.Error("按天汇总用量失败", "err", err)
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
+}
+
+// usageBuckets 把最近 days 天按 unit 分桶，排行页第一层「节律带」用它。
+//
+// 与 usage 分成两个端点而不是塞进同一份回包：分桶只跟 days / unit 有关、与聚合维度
+// 无关，合在一起的话每切一次「按模型 / 按 API Key / 按上游凭证」都得把它重算一遍。
+//
+// 认不得的 unit 当 day 处理而不是报错：同 by，这是个只影响展示的查询参数。
+func (h *Handler) usageBuckets(c *gin.Context) {
+	days := clampQuery(c, "days", 7, 1, 365)
+	unit := store.BucketDay
+	if c.Query("unit") == store.BucketHour {
+		unit = store.BucketHour
+	}
+	rows, err := store.UsageBuckets(c.Request.Context(), h.db, days, unit, time.Now())
+	if err != nil {
+		h.log.Error("按区间分桶汇总用量失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"days": days, "rows": rows})
+	c.JSON(http.StatusOK, gin.H{"days": days, "unit": unit, "rows": rows})
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────

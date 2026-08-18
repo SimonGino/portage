@@ -888,7 +888,9 @@ const (
 // 三个维度一起动。
 const UnknownModelLabel = "(未记录模型)"
 
-// UsageBy 汇总最近 days 天（本地自然日，见 windowStart）的用量，按 dim 指定的维度聚合。
+// UsageBy 汇总一段时间的用量，按 dim 指定的维度聚合。时间范围由 r 定：默认是「近
+// r.Days 个自然日」（本地时区，见 windowStart），r 的两个端点都给时则是那个半开
+// 区间（口径层 v0.86，排行页点中节律带上某一格之后按那一格重算）。
 //
 // 按凭证聚合是 v0.38 加的：「这个号跑了多少、还剩多少」是个聚合问题，只给逐行的
 // 日志表等于把 group by 留给人的肉眼做。凭证名为空串的行不丢掉——藏起来会让两个维度
@@ -916,58 +918,127 @@ func windowStart(days int) string {
 	return fmt.Sprintf("datetime('now', 'localtime', 'start of day', '-%d days', 'utc')", days-1)
 }
 
-// DailyUsage 是用量图上的一根柱子：某个自然日的调用数与 token。
-type DailyUsage struct {
-	// Day 是本地时区的 YYYY-MM-DD。
-	Day          string `json:"day"`
-	Calls        int64  `json:"calls"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
+// UsageRange 定用量查询的**记账范围**：要么「近 Days 个自然日」（windowStart），
+// 要么一段 unix 秒的半开区间 [From, To)。两端都非零时走后者，Days 不参与
+// （口径层 v0.86）——排行页点中节律带上的某一格之后，要按那一格重新聚合。
+type UsageRange struct {
+	// Days 至少是 1（windowStart 里「今天算一天」，0 会拼出一条 SQLite 认不得的
+	// 时间修饰符、筛出空结果而不报错）。走 From/To 那条路时它不参与，可以留零值。
+	Days int
+	From time.Time
+	To   time.Time
 }
 
-// UsageDaily 把最近 days 天按本地自然日分桶，恒返回 days 行（口径层 v0.55）。
+// Spanned 报这个范围走不走 From/To 那条路。只给一端当没给：一端定不出区间。
+func (r UsageRange) Spanned() bool { return !r.From.IsZero() && !r.To.IsZero() }
+
+// where 拼时间条件与它的参数（不含 WHERE 关键字）。
 //
-// 没有调用的那天也给一行零值：SQL 的 GROUP BY 只会吐出有行的日子，照那份结果画图，
-// 空着的那几天会从横轴上消失、剩下的柱子挤在一起，看起来像是一直在用——那几天空着
-// 才是实话，而「什么时候没在用」正是这张图要回答的问题之一。
-func UsageDaily(ctx context.Context, db Queryer, days int) ([]DailyUsage, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT date(created_at, 'localtime') AS day,
+// From/To 在 Go 侧折成 UTC datetime 串再比，**不在 SQL 里对 created_at 套函数**：
+// 理由与 windowStart 那条同一个——整列过一遍函数，idx_call_logs_created_at 就废了。
+func (r UsageRange) where() (string, []any) {
+	if r.Spanned() {
+		return "created_at >= ? AND created_at < ?", []any{sqlTime(r.From), sqlTime(r.To)}
+	}
+	return "created_at >= " + windowStart(r.Days), nil
+}
+
+// sqlTime 把时刻折成 created_at 那一列的存储形态：UTC，CURRENT_TIMESTAMP 的格式。
+func sqlTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
+
+// 分桶粒度（口径层 v0.86）。1 天窗口要 24 个小时桶、7 天窗口要 168 个。
+const (
+	BucketDay  = "day"
+	BucketHour = "hour"
+)
+
+// BucketUsage 是节律带上的一格：某个区间里的调用数、失败数与四个 token 列。
+//
+// errors 与缓存两列必须给：切片井摆的是缓存 / 净输入 / 输出三段，而**净输入 =
+// 毛值 − 缓存两项**（口径层 v0.71）；节律带每格的 tooltip 要报失败数。
+type BucketUsage struct {
+	// Bucket 是本地时区的桶起点：unit=day 为 YYYY-MM-DD，unit=hour 为 YYYY-MM-DD HH:00。
+	Bucket       string `json:"bucket"`
+	Calls        int64  `json:"calls"`
+	Errors       int64  `json:"errors"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	CacheRead    int64  `json:"cache_read_tokens"`
+	CacheWrite   int64  `json:"cache_write_tokens"`
+}
+
+// UsageBuckets 把最近 days 天（本地自然日，见 windowStart）按 unit 分桶。
+//
+// **空桶补零**：SQL 的 GROUP BY 只吐有行的桶，照那份结果画图，空着的那几格会从横轴上
+// 消失、剩下的挤在一起，看起来像是一直在用——而「什么时候没在用」正是这张图要回答的
+// 问题之一。小时粒度下这条只会更硬：一天 24 格里空着十几格是常态。
+//
+// **未到的区间不给**（口径层 v0.86 ③）：桶只补到 now，不补到窗口右端。今天 15 点看
+// 「今天」，活跃区间的分母是 16 不是 24；把 24 格都吐出来的话，前端要么自己再算一次
+// 「哪些是未来」，要么就把分母算错。格子怎么排是前端的事，这里只答「已经发生了什么」。
+//
+// now 补的是桶序列，SQL 里的窗口下界仍走 datetime('now')——两者必须是**同一天**
+// （测试里可以钉死钟点，但别钉到别的日期上，否则补齐序列与窗口对不上）。
+func UsageBuckets(ctx context.Context, db Queryer, days int, unit string, now time.Time) ([]BucketUsage, error) {
+	expr, layout := `date(created_at, 'localtime')`, "2006-01-02"
+	if unit == BucketHour {
+		expr, layout = `strftime('%Y-%m-%d %H:00', created_at, 'localtime')`, "2006-01-02 15:00"
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s AS bucket,
 		       COUNT(*),
-		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),
+		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
 		FROM call_logs
-		WHERE created_at >= `+windowStart(days)+`
-		GROUP BY day ORDER BY day`)
+		WHERE created_at >= %s
+		GROUP BY bucket ORDER BY bucket`, expr, windowStart(days)))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	got := map[string]DailyUsage{}
+	got := map[string]BucketUsage{}
 	for rows.Next() {
-		var u DailyUsage
-		if err := rows.Scan(&u.Day, &u.Calls, &u.InputTokens, &u.OutputTokens); err != nil {
+		var u BucketUsage
+		if err := rows.Scan(&u.Bucket, &u.Calls, &u.Errors,
+			&u.InputTokens, &u.OutputTokens, &u.CacheRead, &u.CacheWrite); err != nil {
 			return nil, err
 		}
-		got[u.Day] = u
+		got[u.Bucket] = u
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// 补齐用 time.Now() 的本地日期，与 SQL 里那个 'localtime' 同源（都取进程所在时区）。
-	out := make([]DailyUsage, 0, days)
-	today := time.Now()
-	for i := days - 1; i >= 0; i-- {
-		day := today.AddDate(0, 0, -i).Format("2006-01-02")
-		if u, ok := got[day]; ok {
+	// 补齐用 now 的本地日历，与 SQL 里那两个 'localtime' 同源（都取进程所在时区）。
+	out := []BucketUsage{}
+	for t := bucketStart(now, days); !t.After(now); t = nextBucket(t, unit) {
+		key := t.Format(layout)
+		if u, ok := got[key]; ok {
 			out = append(out, u)
 			continue
 		}
-		out = append(out, DailyUsage{Day: day})
+		out = append(out, BucketUsage{Bucket: key})
 	}
 	return out, nil
 }
 
-func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow, error) {
+// bucketStart 是补齐序列的第一格：本地时区的「days 个自然日前那天的 00:00」，
+// 与 windowStart 拼出来的下界同一个时刻。
+func bucketStart(now time.Time, days int) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).
+		AddDate(0, 0, -(days - 1))
+}
+
+// nextBucket 往后挪一格。天用 AddDate 而不是加 24 小时：有夏令时的时区里那两者不等，
+// 会把某一天的标签挪到前一天上去。
+func nextBucket(t time.Time, unit string) time.Time {
+	if unit == BucketHour {
+		return t.Add(time.Hour)
+	}
+	return t.AddDate(0, 0, 1)
+}
+
+func UsageBy(ctx context.Context, db Queryer, r UsageRange, dim string) ([]UsageRow, error) {
 	// 模型这一档的兜底文案走参数而不是拼进 SQL：它在 Go 侧还要给 CallLogFilter 用，
 	// 两边照着同一个常量走才不会一边改了另一边筛不到。
 	label, args := `CASE WHEN model_requested <> '' THEN model_requested ELSE ? END`,
@@ -982,6 +1053,9 @@ func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow,
 		           ELSE '(未走到上游)'
 		         END`, nil
 	}
+	// 范围的参数排在标签之后：SELECT 里那个 ? 先于 WHERE 里的两个出现。
+	where, rangeArgs := r.where()
+	args = append(args, rangeArgs...)
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS label,
 		       COUNT(*),
@@ -989,8 +1063,8 @@ func UsageBy(ctx context.Context, db Queryer, days int, dim string) ([]UsageRow,
 		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
 		FROM call_logs
-		WHERE created_at >= %s
-		GROUP BY label ORDER BY COUNT(*) DESC`, label, windowStart(days)), args...)
+		WHERE %s
+		GROUP BY label ORDER BY COUNT(*) DESC`, label, where), args...)
 	if err != nil {
 		return nil, err
 	}

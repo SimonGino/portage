@@ -315,7 +315,7 @@ func TestOpenBackfillsCredentialNames(t *testing.T) {
 		}
 		// 真的在**迁移过的库**上跑一遍按凭证聚合——验收要的是「用量页不炸」，只查列值
 		// 查不出这件事。老流水走到过上游（它有渠道名），所以不能被归进「(未走到上游)」。
-		rows, err := store.UsageBy(context.Background(), db, 7, store.UsageByCredential)
+		rows, err := store.UsageBy(context.Background(), db, store.UsageRange{Days: 7}, store.UsageByCredential)
 		if err != nil {
 			t.Fatalf("第 %d 遍在迁移库上按凭证聚合失败: %v", round, err)
 		}

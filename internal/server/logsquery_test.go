@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,38 +263,164 @@ func TestUsageByGatewayKey(t *testing.T) {
 	}
 }
 
-// 按天分桶恒返回 days 行、最后一行是**本地时区的今天**（口径层 v0.55）。
+// 按天分桶恒返回 days 行、最后一行是**本地时区的今天**（口径层 v0.55；v0.86 起端点
+// 是 /usage/buckets，unit=day 完全覆盖已作废的 /usage/daily）。
 //
 // 两件事一起钉：①没有调用的那天也占一格——只吐有行的日子的话，空着的几天会从横轴上
 // 消失、剩下的柱子挤在一起，看起来像是一直在用。②桶按本地日历切，而 created_at 存的
 // 是 UTC；UTC+8 下这两者差 8 小时，照 UTC 分桶的话「今天」要到本地早上八点才开始。
-func TestUsageDailyBuckets(t *testing.T) {
+func TestUsageBucketsByDay(t *testing.T) {
 	gw, _ := seedTwoModelGateway(t)
 	postModel(t, gw, "model-a")
 	gw.WaitCallRows(t, 1)
 
 	var daily struct {
-		Days int `json:"days"`
+		Days int    `json:"days"`
+		Unit string `json:"unit"`
 		Rows []struct {
-			Day          string `json:"day"`
+			Bucket       string `json:"bucket"`
 			Calls        int64  `json:"calls"`
+			Errors       int64  `json:"errors"`
 			OutputTokens int64  `json:"output_tokens"`
 		} `json:"rows"`
 	}
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage/daily?days=7", "", &daily)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=7&unit=day", "", &daily)
+	if daily.Unit != "day" {
+		t.Fatalf("unit = %q, 期望 day", daily.Unit)
+	}
 	if len(daily.Rows) != 7 {
 		t.Fatalf("回了 %d 行, 「7 天」恒是 7 行", len(daily.Rows))
 	}
 	last := daily.Rows[6]
-	if today := time.Now().Format("2006-01-02"); last.Day != today {
-		t.Errorf("最后一行是 %q, 期望本地时区的今天 %q", last.Day, today)
+	if today := time.Now().Format("2006-01-02"); last.Bucket != today {
+		t.Errorf("最后一行是 %q, 期望本地时区的今天 %q", last.Bucket, today)
 	}
 	if last.Calls != 1 {
 		t.Errorf("今天这一桶 = %d 次调用, 期望 1", last.Calls)
 	}
 	for _, r := range daily.Rows[:6] {
 		if r.Calls != 0 {
-			t.Errorf("%s 这一桶有 %d 次调用, 这几天本该是空的", r.Day, r.Calls)
+			t.Errorf("%s 这一桶有 %d 次调用, 这几天本该是空的", r.Bucket, r.Calls)
 		}
+	}
+}
+
+// 小时桶接得上，且认不得的 unit 当 day（同 by：只影响展示的查询参数写错了不该让整个
+// 页面打不开）。
+func TestUsageBucketsUnit(t *testing.T) {
+	gw, _ := seedTwoModelGateway(t)
+	postModel(t, gw, "model-a")
+	gw.WaitCallRows(t, 1)
+
+	var got struct {
+		Unit string `json:"unit"`
+		Rows []struct {
+			Bucket string `json:"bucket"`
+			Calls  int64  `json:"calls"`
+		} `json:"rows"`
+	}
+	a := gw.LoggedIn(t)
+	// 前后各取一次时刻：整点恰好在这一发请求中间翻过去时两者差一，那不是缺陷。
+	before := time.Now()
+	a.JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=1&unit=hour", "", &got)
+	after := time.Now()
+	if got.Unit != "hour" {
+		t.Fatalf("unit = %q, 期望 hour", got.Unit)
+	}
+	// 桶只补到「现在」，不补到窗口右端（口径层 v0.86 ③）：从今天 00:00 到此刻的整点数。
+	if n := len(got.Rows); n < before.Hour()+1 || n > after.Hour()+1 {
+		t.Fatalf("回了 %d 格, 期望从 00:00 补到此刻共 %d 格", n, before.Hour()+1)
+	}
+	last := got.Rows[len(got.Rows)-1].Bucket
+	if last != before.Format("2006-01-02 15:00") && last != after.Format("2006-01-02 15:00") {
+		t.Errorf("最后一格是 %q, 期望此刻所在的整点", last)
+	}
+
+	a.JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=7&unit=fortnight", "", &got)
+	if got.Unit != "day" || len(got.Rows) != 7 {
+		t.Errorf("认不得的 unit 回了 unit=%q / %d 行, 期望当成 day 的 7 行", got.Unit, len(got.Rows))
+	}
+}
+
+// from/to 顶掉 days，且与 days 那条路径口径一致——取同一段时间，合计必须相等。
+func TestUsageFromTo(t *testing.T) {
+	gw, _ := seedTwoModelGateway(t)
+	postModel(t, gw, "model-a")
+	gw.WaitCallRows(t, 1)
+
+	type usageResp struct {
+		Days int   `json:"days"`
+		From int64 `json:"from"`
+		To   int64 `json:"to"`
+		Rows []struct {
+			Label string `json:"label"`
+			Calls int64  `json:"calls"`
+		} `json:"rows"`
+	}
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	from, to := today.Unix(), today.AddDate(0, 0, 1).Unix()
+
+	a := gw.LoggedIn(t)
+	var byDays, byRange usageResp
+	a.JSONInto(t, http.MethodGet, "/admin/api/usage?days=1", "", &byDays)
+	a.JSONInto(t, http.MethodGet,
+		"/admin/api/usage?days=7&from="+strconv.FormatInt(from, 10)+"&to="+strconv.FormatInt(to, 10),
+		"", &byRange)
+
+	if len(byDays.Rows) != 1 || len(byRange.Rows) != 1 || byDays.Rows[0] != byRange.Rows[0] {
+		t.Fatalf("同一段时间两条路径不等: days %+v / from-to %+v", byDays.Rows, byRange.Rows)
+	}
+	// 顶掉 days 之后回包里就不该再有 days：这一发算的是那一段，回一个没参与的窗口
+	// 档位是撒谎（请求里给的还是 days=7）。
+	if byRange.Days != 0 || byRange.From != from || byRange.To != to {
+		t.Errorf("回包是 days=%d from=%d to=%d, 期望不带 days 且原样回那一段",
+			byRange.Days, byRange.From, byRange.To)
+	}
+}
+
+// from/to 解析失败回 400，不走「认不得就忽略」那条（口径层 v0.86）：它们定的是**记账
+// 范围**，静默忽略会拿整窗的合计去回答「这一小时」——那不是显示得不对，是数字本身错了
+// 且看不出来。所以回包里一个数字都不能有，更不能有 rows。
+func TestUsageFromToRejectsGarbage(t *testing.T) {
+	gw, _ := seedTwoModelGateway(t)
+	postModel(t, gw, "model-a")
+	gw.WaitCallRows(t, 1)
+
+	a := gw.LoggedIn(t)
+	for _, q := range []string{
+		"from=abc&to=123", // 非数字
+		"from=123&to=xyz", // 非数字
+		"from=abc",        // 只给一个，照样是写错了
+		"from=200&to=200", // to == from，空区间
+		"from=300&to=200", // to < from
+	} {
+		status, body := a.Do(t, http.MethodGet, "/admin/api/usage?"+q, "")
+		if status != http.StatusBadRequest {
+			t.Errorf("%s 回了 %d, 期望 400", q, status)
+		}
+		if strings.Contains(body, `"rows"`) || strings.ContainsAny(body, "0123456789") {
+			t.Errorf("%s 的回包带了数字或 rows: %s", q, body)
+		}
+	}
+}
+
+// 只给一端当没给：一端定不出区间，于是照 days 走。
+func TestUsageLoneBoundIgnored(t *testing.T) {
+	gw, _ := seedTwoModelGateway(t)
+	postModel(t, gw, "model-a")
+	gw.WaitCallRows(t, 1)
+
+	var got struct {
+		Days int `json:"days"`
+		Rows []struct {
+			Calls int64 `json:"calls"`
+		} `json:"rows"`
+	}
+	// 一个远在将来的 from，单给不该把结果清空。
+	future := strconv.FormatInt(time.Now().AddDate(1, 0, 0).Unix(), 10)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage?days=1&from="+future, "", &got)
+	if got.Days != 1 || len(got.Rows) != 1 || got.Rows[0].Calls != 1 {
+		t.Errorf("单给 from 回了 days=%d / %+v, 期望照 days=1 走出一行一次", got.Days, got.Rows)
 	}
 }
