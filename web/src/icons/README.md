@@ -1,7 +1,7 @@
 # 供应商图标资产
 
 `svg/` 下是各家 AI 供应商的品牌方块，取自 [cherry-studio](https://github.com/CherryHQ/cherry-studio)
-的 `packages/ui/icons/providers/{light,dark}`。
+的 `packages/ui/icons/providers/light`。
 
 ## 为什么可以取
 
@@ -19,13 +19,13 @@ cherry-studio 仓库整体是 AGPL-3.0，但 `packages/ui` 这个 workspace 包�
 - **超过 16 KB 的丢掉**。有些图标是几百个 path 的写实描摹（`dangbei` 700 KB、
   `gemini` 254 KB），一个顶得上其余全部。管理端是 embed 进单二进制的，为一枚图标
   换半兆不划算。落选的用最近的替身（Gemini → `ai-studio`，智谱 → `z-ai`）。
-- **深色版只有少数几个有**。浅色版是纯黑描摹的那些才需要，带底色的品牌方块两种主题
-  下通用。
+- **只取 light，不取 dark**。管理端只做亮色（DESIGN §1.5 / v0.29），深色版没有落点；
+  原先那 20 份 `*.dark.svg` 随暗色主题一并摘掉。
 
 ## 加一枚新图标
 
-1. 从 cherry-studio 的 `packages/ui/icons/providers/light/<name>.svg` 复制到 `svg/`；
-   有 `dark/<name>.svg` 就一并复制成 `svg/<name>.dark.svg`。
+1. 从 cherry-studio 的 `packages/ui/icons/providers/light/<name>.svg` 复制到 `svg/`。
+   一家一份，不复制 `dark/` 那份。
 2. 渠道图标加 `CHANNEL_HOSTS` / `CHANNEL_NAMES`（只给官方那几家）；模型图标加
    `MODEL_PATTERNS`。两套不许互为兜底。**顺序即优先级，特化的排前面。**
 3. 不用改别的：`svg/*.svg` 是 glob 进来的。

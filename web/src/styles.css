@@ -1,5 +1,5 @@
 /* 手写而不是引框架。壳跟 A-v2：左栏比画布深一档，主画布是羊皮纸底。
-   跟随系统深浅色——这东西多半开在一堆终端旁边。
+   只做亮色：这套暖底羊皮纸是唯一一套表面，不跟随系统深浅色（DESIGN v0.29）。
    旧 token 名（--bg / --panel / --text / --muted）当别名留着，现有组件 class 不用改。 */
 :root {
   --paper: #edece3;
@@ -51,40 +51,7 @@
   --data-in: #4a6b52;
   --data-out: #8a6a3c;
 
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #17150f;
-    --canvas: #1e1c15;
-    --ink: #f0ede2;
-    --ink-2: #ccc6b6;
-    --mute: #9c9585;
-    --faint: #7b7566;
-    --line: #332f24;
-    --line-soft: #2b281f;
-    --sunken: #282419;
-    --chip: #2c281d;
-    --hover: rgba(240, 237, 226, 0.055);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.45);
-    /* 墨蓝在深底上提亮，保住对比度 */
-    --accent: #9db8dd;
-    --warn-bg: #2e2408;
-    --warn-line: #6b5314;
-    --warn-text: #e0c078;
-    --err-bg: #331a14;
-    --err-line: #6e332a;
-    --err-text: #e8a094;
-    --ok-bg: #1c2a18;
-    --ok-line: #3c5434;
-    --ok-text: #9bc48f;
-    --info-bg: #1c232c;
-    --info-line: #3a4757;
-    --info-text: #9db8dd;
-    --data-in: #86a98d;
-    --data-out: #c39a63;
-  }
+  color-scheme: light;
 }
 
 * {
@@ -1233,8 +1200,8 @@ button, input, textarea, select {
   border-radius: 12px;
 }
 
-/* 悬停亮一档走 --ink-2，不写死 hex：亮色下它是浅一档的暖墨，暗色下它本来就比
-   --ink 暗一档，同一条规则在两个主题里都成立，原先那两块暗色覆写随之多余。 */
+/* 悬停走 --ink-2 而不写死 hex：它是比 --ink 浅一档的暖墨，实心墨按钮压上去就变浅一点，
+   不需要为按钮再单开一个 hex。 */
 .btn-primary:hover:not(:disabled),
 .btn-hero:hover:not(:disabled) {
   background: var(--ink-2);
@@ -1741,25 +1708,6 @@ textarea:focus {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-/* 深浅两版靠 CSS 显隐而不是 JS 选，跟随系统主题切换时没有「图标还是上一套」的窗口。
-   只有一份标记的（大多数带底色的方块）压根不带这两个类，两种主题下都显示。
-   选择器必须写成 `.avatar > .avatar-dark`：只写 `.avatar-dark` 的话特指度低于上面那条
-   `.avatar > span`，display:block 会赢，两版同时显示——而 .avatar 是定宽 flex，
-   两个 width:100% 的孩子各被压成一半，看起来就是「一枚图标裂成两个小的」。 */
-.avatar > .avatar-dark {
-  display: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  .avatar > .avatar-light {
-    display: none;
-  }
-
-  .avatar > .avatar-dark {
-    display: block;
-  }
 }
 
 /* 没匹配到图标时的首字母块。原先色相由名字散出来，一行一个颜色——那正是 §8 说的

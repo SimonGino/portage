@@ -47,14 +47,11 @@ function namespaceIds(svg: string, prefix: string) {
   return out
 }
 
-/** light/dark 两份标记分开存：深色版只有少数几个（浅色版是纯黑描摹的那些）才有。 */
-const LIGHT = new Map<string, string>()
-const DARK = new Map<string, string>()
+/** 一家一份标记。管理端只做亮色（DESIGN §1.5 / v0.29），没有第二套。 */
+const ICONS = new Map<string, string>()
 for (const [path, svg] of Object.entries(RAW)) {
   const file = path.slice(path.lastIndexOf('/') + 1, -4)
-  const marked = namespaceIds(svg, file.replace(/\./g, '_'))
-  if (file.endsWith('.dark')) DARK.set(file.slice(0, -5), marked)
-  else LIGHT.set(file, marked)
+  ICONS.set(file, namespaceIds(svg, file))
 }
 
 /**
@@ -154,7 +151,7 @@ const CHANNEL_NAMES: ReadonlyArray<readonly [RegExp, string]> = [
 
 function matchFirst(patterns: ReadonlyArray<readonly [RegExp, string]>, text: string) {
   for (const [re, key] of patterns) {
-    if (re.test(text) && LIGHT.has(key)) return key
+    if (re.test(text) && ICONS.has(key)) return key
   }
   return null
 }
@@ -184,10 +181,6 @@ export function vendorForChannel(channel: { name: string; base_url: string }): s
  * Avatar 是那枚方块本身。没匹配到图标时退回首字母块，而不是留个空洞——列表里每一行
  * 都得占同样宽度，否则名字会参差不齐。品牌色在 CSS 里统一 grayscale 掉（DESIGN.md
  * §1.4 / §3），这里不管颜色，只管取哪一份标记。
- *
- * 深色版靠 CSS 显隐而不是 JS 选：跟随系统主题切换时不用监听 media query，也就不会有
- * 「切了主题但图标还是上一套」的窗口。只有一份标记的（大多数带底色的品牌方块深浅色
- * 通用）两种主题下都显示同一份。
  */
 export function Avatar({
   vendor,
@@ -201,23 +194,18 @@ export function Avatar({
   title?: string
 }) {
   const style = { width: size, height: size }
-  const light = vendor === null ? undefined : LIGHT.get(vendor)
-  if (light === undefined || vendor === null) {
+  const icon = vendor === null ? undefined : ICONS.get(vendor)
+  if (icon === undefined || vendor === null) {
     return (
       <span className="avatar avatar-text" style={style} title={title}>
         {initialOf(fallback)}
       </span>
     )
   }
-  const dark = DARK.get(vendor)
   return (
     <span className="avatar" style={style} title={title ?? vendor ?? undefined}>
-      <span
-        className={dark ? 'avatar-light' : undefined}
-        // 图标是构建期就固定在仓库里的静态资产，不是任何用户输入。
-        dangerouslySetInnerHTML={{ __html: light }}
-      />
-      {dark && <span className="avatar-dark" dangerouslySetInnerHTML={{ __html: dark }} />}
+      {/* 图标是构建期就固定在仓库里的静态资产，不是任何用户输入。 */}
+      <span dangerouslySetInnerHTML={{ __html: icon }} />
     </span>
   )
 }
