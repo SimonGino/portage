@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,7 @@ func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 			start:        time.Now(),
 			endpoint:     ep.Path,
 			inboundProto: ep.Proto,
-			outcome:      "rejected",
+			outcome:      calllog.Rejected,
 		}
 		c.Set(ctxCallRecord, rec)
 		// defer 在 panic 展开时照常执行——首字节后断流那条路径也落得下日志。
@@ -66,7 +67,7 @@ func (s *Server) authRelay(ep protocol.Endpoint) gin.HandlerFunc {
 		switch {
 		case errors.Is(err, auth.ErrUnauthorized):
 			rec := callRecordFrom(c)
-			rec.outcome = "unauthorized"
+			rec.outcome = calllog.Unauthorized
 			// 回显里没有 key 本身，也不说是「不存在」还是「已停用」。
 			// 走协议原生格式：回 gin 默认 JSON 的话 harness 认不出来，
 			// 表现成解析失败而不是「key 不对」。

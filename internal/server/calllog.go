@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
@@ -112,7 +113,9 @@ type callRecord struct {
 	status        int
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
-	outcome string
+	//
+	// 词表与「哪个词落库、哪个词留 NULL」都关在 calllog.Outcome 里（口径层 v0.70）。
+	outcome calllog.Outcome
 	// retries 是这次调用向上游重打了几次（含换凭证之后的那些，口径层 v0.38）。
 	// 不含首次尝试，0 是常态所以不打进日志——否则每一行都要背一个恒为 0 的字段。
 	// 非 0 才说明发生过退避重试或换过凭证，「这次怎么慢了三秒」有据可查。
@@ -200,7 +203,10 @@ func (s *Server) logCall(rec *callRecord) {
 		"requested_model", rec.requestedModel,
 		"stream", rec.stream,
 		"status", rec.status,
-		"outcome", rec.outcome,
+		// .String() 不能省：slog 记的必须是 string 而不是 calllog.Outcome，
+		// 否则属性的动态类型变了，逐字段断言的读者（gatewaytest 的 LogLine.Str）
+		// 会集体扑空——而渲染出来的文本一个字都不差，看不出来。
+		"outcome", rec.outcome.String(),
 		"duration_ms", time.Since(rec.start).Milliseconds(),
 	}
 	if rec.channel != "" {
@@ -323,14 +329,9 @@ func (s *Server) persistCall(rec *callRecord) {
 		}
 	}
 	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
-	// 正是 error 列该承载的。写的是我们自己的固定词表（upstream_error /
-	// stream_aborted / unauthorized / rejected，并发闸批加 queue_full /
-	// queue_timeout / queue_abandoned，口径层 v0.52；压缩止血批加
-	// compaction_unsupported，口径层 v0.54），不是上游原文——上游错误
-	// 文案里可能带 base_url。
-	if rec.outcome != "ok" {
-		row.Error = sql.NullString{String: rec.outcome, Valid: true}
-	}
+	// 正是 error 列该承载的。写的是我们自己的固定词表，不是上游原文——上游错误
+	// 文案里可能带 base_url。词表与「哪个词落 NULL」见 calllog.Outcome.Column。
+	row.Error = rec.outcome.Column()
 	// 上游原文另落一列（口径层 v0.53）。它与 error 列是两件事，也不同步出现：上游
 	// 透传 4xx 的 error 列是空的（透传成功不算网关侧错误，v0.28 纪律），detail 却有
 	// 值——「可展开」的判据因此是 status >= 400，不是 error 非空。

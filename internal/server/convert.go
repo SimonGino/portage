@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/codecs"
 	"github.com/SimonGino/portage/internal/protocol/openairesponses"
@@ -125,7 +126,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 		if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
 			return
 		}
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		// 与透传路径同：这一支没有响应体，落库的原文就是传输错误本身（v0.53）。
 		rec.setErrorDetail(upstream.Redact(err).Error())
 		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
@@ -155,7 +156,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		s.writeUpstreamError(c, rec, ep, resp.StatusCode, src)
 		return
 	}
@@ -213,7 +214,7 @@ func upstreamErrorMessage(raw []byte) string {
 func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	events, err := outCodec.DecodeStream(src)
 	if err != nil {
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流无法解析")
 		return
@@ -227,20 +228,20 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 	h.Set("Connection", "keep-alive")
 	setNoBuffering(h)
 	c.Writer.WriteHeader(http.StatusOK)
-	rec.outcome = "ok"
+	rec.outcome = calllog.OK
 
 	w := &clientStream{w: c.Writer, rc: http.NewResponseController(c.Writer), onFirstByte: func() {
 		rec.firstByte = time.Now()
 	}}
 	if err := w.advance(); err != nil {
-		rec.outcome = "stream_aborted"
+		rec.outcome = calllog.StreamAborted
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
 		panic(http.ErrAbortHandler)
 	}
 
 	if err := inCodec.EncodeStream(w, events); err != nil {
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
-		rec.outcome = "stream_aborted"
+		rec.outcome = calllog.StreamAborted
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		// 上游流还没读完时 EncodeStream 提前返回，会把解码 goroutine 卡在发送上。
 		// 后台读空事件通道让它能写完退出；真正让它停下来的是 relayConverted 里
@@ -256,7 +257,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 	// 路径上同一件事记的是 stream_aborted。
 	if r, ok := outCodec.(protocol.StreamReadReporter); ok {
 		if err := r.StreamReadError(); err != nil {
-			rec.outcome = "stream_aborted"
+			rec.outcome = calllog.StreamAborted
 			// 与上游传输错误那一支同源：落库的原文就是脱敏后的错误本身（v0.53）。
 			rec.setErrorDetail(upstream.Redact(err).Error())
 			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
@@ -274,21 +275,21 @@ func drainEvents(events <-chan protocol.Event) {
 func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		s.log.Error("读上游响应失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应读取失败")
 		return
 	}
 	events, err := outCodec.DecodeFullBody(raw)
 	if err != nil {
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		s.log.Error("上游响应解码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法解析")
 		return
 	}
 	out, err := inCodec.EncodeFullBody(events)
 	if err != nil {
-		rec.outcome = "upstream_error"
+		rec.outcome = calllog.UpstreamError
 		s.log.Error("响应编码失败", "inbound", ep.Proto, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法转换")
 		return
@@ -296,10 +297,10 @@ func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.En
 
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(http.StatusOK)
-	rec.outcome = "ok"
+	rec.outcome = calllog.OK
 	rec.firstByte = time.Now()
 	if _, err := c.Writer.Write(out); err != nil {
-		rec.outcome = "stream_aborted"
+		rec.outcome = calllog.StreamAborted
 		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
 	}
 }

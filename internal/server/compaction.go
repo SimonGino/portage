@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 	"github.com/SimonGino/portage/internal/store"
@@ -54,7 +55,7 @@ func (s *Server) rejectCompaction(c *gin.Context, rec *callRecord, ep protocol.E
 	}
 
 	// 流水 error 列里的固定词（同 queue_full 那批，见 calllog.go 的词表注释）。
-	rec.outcome = "compaction_unsupported"
+	rec.outcome = calllog.CompactionUnsupported
 	// 这条日志就是口径要的「drop 日志」：以前 trigger 是被静默丢掉的，现在丢不丢都
 	// 有一行说得清是哪个渠道。
 	s.log.Warn("拒绝 Codex 压缩 turn：透传渠道未声明支持 compaction",
