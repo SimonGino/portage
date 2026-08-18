@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"io"
 	"time"
 
 	"github.com/SimonGino/portage/internal/calllog"
@@ -157,6 +158,159 @@ type callRecord struct {
 	// 已经读进来的字节」，不新开一次 body 读，因此不违反透传路径不 decode→encode。
 	errorDetail *captureWriter
 }
+
+// —— 生命周期事件 ————————————————————————————————————————————————
+//
+// 下面这一组方法是这条流水对外的**全部**写入口。它们不是字段的 setter 包装：
+// 一次调用沿途会发生的事就这么些，每件事一个有名字的动词，参数即那件事**当时**
+// 才知道的东西。沿途的调用方因此不必知道这些事分别落在哪几个字段上，也就不可能
+// 只写一半（漏掉 haveSummary、忘了把 upstreamEndpoint 清回去）。
+//
+// 顺序不变量在这里也从口口相传变成写下来的：谁先到先算数、谁后写覆盖先写，
+// 逐个动词的 doc 里说明。
+
+// newCallRecord 开一条流水。端点与入站协议在这一刻就写死——鉴权失败、限流那些行
+// 别的什么都没有，只有这两格分得开它们。
+//
+// outcome 的初值是 Rejected 而不是 OK：走到收尾还没被任何分支覆盖，说明这次调用
+// 停在某个早退分支上了，那确实是一次拒绝。反过来设成 OK 的话，任何漏写 outcome
+// 的新分支都会静默记成一次干净的成功。
+func newCallRecord(ep protocol.Endpoint) *callRecord {
+	return &callRecord{
+		start:        time.Now(),
+		endpoint:     ep.Path,
+		inboundProto: ep.Proto,
+		outcome:      calllog.Rejected,
+	}
+}
+
+// Authenticated 记下认出来的网关 key 名。名字不是 key 本身也不是它的 hash——
+// 上下文里的东西迟早会被顺手打进日志。
+func (r *callRecord) Authenticated(keyName string) { r.apiKeyName = keyName }
+
+// RequestParsed 记下从请求体头部解出来的两格。这两格是同源的：走到这里就说明
+// 请求体读得动、是合法 JSON、且带了 model，三者缺一都在这之前返回了。
+//
+// 「有没有解析到请求」这条判据因此就是「这个动词有没有被调过」，别再借
+// requestedModel 非空去推——那是同一件事的影子，换个实现就对不上了。
+func (r *callRecord) RequestParsed(model string, stream bool) {
+	r.requestedModel, r.stream = model, stream
+}
+
+// RecordRequestBody 记一份请求体（log_bodies 打开时）。字节已经拿在手里，
+// 不像响应侧那样要挂旁路。
+func (r *callRecord) RecordRequestBody(body []byte) {
+	r.requestBody = newCapture(bodyCaptureLimit)
+	_, _ = r.requestBody.Write(body)
+}
+
+// Routed 记下这次落到了哪条渠道、走哪个上游协议、翻成了哪个纳管模型名。
+// 只记渠道**名**：base_url 与凭证一概不进这条流水。
+func (r *callRecord) Routed(channel string, proto protocol.Protocol, upstreamModel string) {
+	r.channel, r.channelProto, r.upstreamModel = channel, proto, upstreamModel
+}
+
+// Dialing 记下这次**打到上游**的那条路径，在发请求之前的那一刻调（#20）。
+//
+// 不变量：这一格非空 ⟺ 真的向上游发起过（含拨不通、读超时那些）。所以它必须
+// 挨着发请求那一行调，不能在算出出口端点的地方就调——中间还夹着解不动请求体、
+// 编不出出口请求、压缩闸拒绝几条早退，那些行同样没打上游。
+func (r *callRecord) Dialing(upstreamEndpoint string) { r.upstreamEndpoint = upstreamEndpoint }
+
+// Attempted 记下一次上游尝试收场后的三个数：重打了几次、最后用的哪份凭证、
+// 在并发闸上排了多久。成功失败都要调——失败那些行恰恰最需要知道重打过几次。
+//
+// 收三个裸参数而不是 upstream.Attempt：本包绝不能 import internal/upstream
+// （upstream 已经 import 了 store，而 store 又 import 本包，收进来就成环）。
+func (r *callRecord) Attempted(retries int, credential string, queueWait time.Duration) {
+	r.retries, r.channelKey, r.queueWait = retries, credential, queueWait
+}
+
+// RequestIDs 记下响应头里的两档 request id 候选（口径层 v0.74）。最终取哪一档
+// 由收尾时的 resolveUpstreamRequestID 定——中间那档在错误体里，那会儿还没收完。
+func (r *callRecord) RequestIDs(official, proxy string) {
+	r.officialRequestID, r.proxyRequestID = official, proxy
+}
+
+// Summarized 收下 Tap 从上游原始字节里旁路解出来的 usage。
+//
+// 「有没有 summary」是 token 五列落值还是落 NULL 的判据，所以调没调过这个动词
+// 本身就是信息——上游回了一份全零的 usage 与压根没走到上游，不是一回事。
+func (r *callRecord) Summarized(sum protocol.Summary) {
+	r.summary, r.haveSummary = sum, true
+}
+
+// TapResponseBody 开一路响应体旁路（log_bodies 打开时），返回挂进 io.MultiWriter
+// 的那个 writer。它永不报错——报错会被 MultiWriter 变成读错误、打断转发。
+func (r *callRecord) TapResponseBody() io.Writer {
+	r.responseBody = newCapture(bodyCaptureLimit)
+	return r.responseBody
+}
+
+// TapUpstreamErrorBody 把错误原文的接管权**先占下来**，返回边转发边收的那个 writer。
+//
+// 与 setErrorDetail 语义不同，这正是它不得不绕过后者的原因：setErrorDetail 是
+// 「原文已经拿在手里」，这个是「原文还没产生，先占坑」。透传路径上响应字节属于
+// 客户端，不能为了记一份错误体把它先攒进内存，所以只能挂旁路。
+//
+// **副作用要知道**：占坑之后错误原文就算「已有」，此后 Failed 带来的 detail 不再
+// 覆盖它（先到先得）。那是想要的——旁路收的是上游原话，收尾分支给的是一句概括。
+func (r *callRecord) TapUpstreamErrorBody() io.Writer {
+	r.errorDetail = newCapture(upstreamErrorLimit)
+	return r.errorDetail
+}
+
+// FirstByte 记下首字节到达的时刻，只认第一次。它是 ttft 的唯一来源——别再拿
+// 「这个时刻是不是零值」当业务判据，那是 time.Time 的性质不是这条流水的语义。
+func (r *callRecord) FirstByte() {
+	if r.haveFirstByte() {
+		return
+	}
+	r.firstByte = time.Now()
+}
+
+func (r *callRecord) haveFirstByte() bool { return !r.firstByte.IsZero() }
+
+// Succeeded 把收场记成一次干净的成功。在写出响应头之后调：那一刻格式承诺已经
+// 生效，之后再断只能记 stream_aborted，不能退回别的词。
+func (r *callRecord) Succeeded() { r.outcome = calllog.OK }
+
+// Refused 记一次**网关自己回绝**的收场：鉴权不过、白名单挡下、限流、转换闸、
+// 压缩闸。这一半的词见 calllog.Outcome.Refusal。
+func (r *callRecord) Refused(o calllog.Outcome) { r.outcome = o }
+
+// QueueRejected 记一次渠道并发闸的回绝，并把出站端点**清回空串**。
+//
+// 清回去是必须的：出站端点在发请求之前那一刻就记上了，而闸在拨号之前就回绝——
+// 这三档一个字节都没到上游，同 401 / 429 / 501 那批，空就是事实。清在这一个动词
+// 里而不是两个调用点各写一遍，是因为这本来就是那两条路共用的同一件事。
+func (r *callRecord) QueueRejected(o calllog.Outcome) {
+	r.outcome = o
+	r.upstreamEndpoint = ""
+}
+
+// Failed 记一次**打过上游之后**的失败，顺带收下一段错误原文（口径层 v0.53）。
+// 这一半的词见 calllog.Outcome.Failure。
+//
+// detail 传空串即「这一支没有原文可记」。非空时走先到先得：透传路径的旁路收集器
+// 若已经占了坑，这里给的一句概括不覆盖它。
+func (r *callRecord) Failed(o calllog.Outcome, detail string) {
+	r.outcome = o
+	r.setErrorDetail(detail)
+}
+
+// UpstreamRejected 记一次「上游回了非 2xx，字节已经读全」的收场（转换路径）。
+//
+// 与 TapUpstreamErrorBody 是同一件事在两条链路上的两个名字，区别只是谁先拿到
+// 字节：透传那边要占坑边收边转，这边字节已经在手里了。合并它们要求两条链路的
+// 错误处理先长得一样，那是 #9（attempt module）的活，不在这一层做。
+func (r *callRecord) UpstreamRejected(raw string) {
+	r.outcome = calllog.UpstreamError
+	r.setErrorDetail(raw)
+}
+
+// Finish 封盘：记下最终发出去的状态码。
+func (r *callRecord) Finish(status int) { r.status = status }
 
 // resolveUpstreamRequestID 按三档定下这次调用的上游请求 id（口径层 v0.74）：
 // `request-id`（头）→ 错误响应体里的 `request_id` → `x-request-id`（头）。
