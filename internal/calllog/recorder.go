@@ -24,7 +24,23 @@ type Recorder struct {
 	// finished 让收尾幂等：重复落库的表现是账翻倍而所有断言照常绿。
 	finished bool
 
-	start     time.Time
+	start time.Time
+
+	// —— 三段可空映射的判据 ——
+	//
+	// 这三格回答的是同一类问题：「这件事到底发生过没有」。它们必须是**显式**的
+	// 标志位，不能借别的字段的影子去推——借来的判据换个实现就对不上，而且改错了
+	// 一条测试都不会红（那正是收编前的原样）。
+	//
+	// haveRequest：解析到请求头部没有。它决定 is_stream 落值还是落 NULL。
+	// haveFirstByte：首字节来过没有。它决定 ttfb_ms 打不打、ttft_ms 落不落。
+	//   不看 firstByte.IsZero()——那是 time.Time 的性质不是本模块的语义，何况同一个
+	//   表达式在两处的含义还不同（slog 侧「来过就打」，落库侧「流式且来过才落」）。
+	// haveSummary：Tap 交过 usage 没有。它决定 token 五列落值还是落 NULL。
+	haveRequest   bool
+	haveFirstByte bool
+	haveSummary   bool
+
 	firstByte time.Time
 
 	endpoint string
@@ -79,8 +95,7 @@ type Recorder struct {
 	// 记中转的流水号，拿去问官方什么都查不到，比空着更误导。
 	proxyRequestID string
 
-	summary     protocol.Summary
-	haveSummary bool
+	summary protocol.Summary
 
 	requestBody  *captureWriter
 	responseBody *captureWriter
@@ -143,10 +158,13 @@ func (r *Recorder) Authenticated(keyName string) { r.apiKeyName = keyName }
 // RequestParsed 记下从请求体头部解出来的两格。这两格是同源的：走到这里就说明
 // 请求体读得动、是合法 JSON、且带了 model，三者缺一都在这之前返回了。
 //
-// 「有没有解析到请求」这条判据因此就是「这个动词有没有被调过」，别再借
-// requestedModel 非空去推——那是同一件事的影子，换个实现就对不上了。
+// 「有没有解析到请求」这条判据因此就是「这个动词有没有被调过」（haveRequest），
+// 不借 requestedModel 非空去推——那是同一件事的影子，换个实现就对不上了。
+//
+// 两者今天逐字等价：这个动词挂在「model 为空就 400 返回」那一行的后面，所以
+// requestedModel 非空 ⟺ 走到过这里。等价不等于同一件事，判据要说自己的话。
 func (r *Recorder) RequestParsed(model string, stream bool) {
-	r.requestedModel, r.stream = model, stream
+	r.requestedModel, r.stream, r.haveRequest = model, stream, true
 }
 
 // RecordRequestBody 记一份请求体（log_bodies 打开时）。字节已经拿在手里，
@@ -215,13 +233,12 @@ func (r *Recorder) TapUpstreamErrorBody() io.Writer {
 // FirstByte 记下首字节到达的时刻，只认第一次。它是 ttft 的唯一来源——别再拿
 // 「这个时刻是不是零值」当业务判据，那是 time.Time 的性质不是这条流水的语义。
 func (r *Recorder) FirstByte() {
-	if r.haveFirstByte() {
+	if r.haveFirstByte {
 		return
 	}
+	r.haveFirstByte = true
 	r.firstByte = time.Now()
 }
-
-func (r *Recorder) haveFirstByte() bool { return !r.firstByte.IsZero() }
 
 // Succeeded 把收场记成一次干净的成功。在写出响应头之后调：那一刻格式承诺已经
 // 生效，之后再断只能记 stream_aborted，不能退回别的词。
@@ -396,7 +413,7 @@ func (r *Recorder) LogAttrs() []any {
 	if r.upstreamRequestID != "" {
 		attrs = append(attrs, "upstream_request_id", r.upstreamRequestID)
 	}
-	if r.haveFirstByte() {
+	if r.haveFirstByte {
 		attrs = append(attrs, "ttfb_ms", r.firstByte.Sub(r.start).Milliseconds())
 	}
 	if r.haveSummary {
@@ -457,14 +474,13 @@ func (r *Recorder) Row() Row {
 	}
 	// stream 是解析请求体那一步才知道的，没走到那一步的行（鉴权失败、限流、body
 	// 不是合法 JSON、缺 model）留 NULL——落一个 false 会把「不知道」说成「同步」。
-	// 判据眼下借 requestedModel（两者同源，空串即没解析到），C12 换成显式标志位。
-	if r.requestedModel != "" {
+	if r.haveRequest {
 		row.IsStream = sql.NullBool{Bool: r.stream, Valid: true}
 	}
 	// 只记流式（展开层 §7 该列原文「首字节耗时（流式）」）。非流式也填的话它约等于
 	// 总耗时，混合流量下「平均首字延迟」就成了一个没有意义的数。非流式的首字节耗时
 	// 仍在 slog 的 ttfb_ms 里，没有丢。
-	if r.stream && r.haveFirstByte() {
+	if r.stream && r.haveFirstByte {
 		row.TTFTMs = sql.NullInt64{Int64: r.firstByte.Sub(r.start).Milliseconds(), Valid: true}
 	}
 	// #6 的接缝在这里：Anthropic 渠道的 input 是净值，要加回缓存两项才是流水那一列
