@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/SimonGino/portage/internal/gatewaytest"
@@ -18,6 +19,14 @@ import (
 // 而所有既有用例照绿。
 //
 // 钉的是**键的序列**不是整行文本：值里有时间戳、端口、随机 id，钉死会天天红。
+//
+// 三条 golden 之间的分工：一次跑满的流式调用走满常规分支，一次 401 只剩恒打的那批，
+// 一次重试 + 思考 token 覆盖夹在中间的两个条件属性。**剩下四个条件属性没有钉住**，
+// 各有各的理由：`queue_wait_ms` 要让并发闸上真排出一个非零毫秒数（钉它等于钉一场
+// 时序赛跑，会天天红）；`tap_degraded` 要造一份解不动的 usage；`request_body` 与
+// `response_body` 要开 log_bodies，而下面那个正则在开着的时候本就不可靠（见 callLogKeys）。
+// 它们各自的**存在与否**仍有既有用例管（retry_test.go、闸拒那几条、TestLogBodiesSwitch），
+// 这里漏的只是「顺序」这一维。
 
 var logKey = regexp.MustCompile(`(?:^|\s)([a-z_]+)=`)
 
@@ -92,4 +101,51 @@ func TestCallLogAttributeOrderOnAnUnauthorizedCall(t *testing.T) {
 		"endpoint", "api_key", "inbound_protocol", "requested_model",
 		"stream", "status", "outcome", "duration_ms",
 	})
+}
+
+// 一次重试之后成功的思考调用：把夹在中间的 retries 与排在 usage 之后的
+// reasoning_tokens 补进顺序契约里。上面那条跑满的流式调用两个都走不到——它一次
+// 打成，上游也没报思考数。
+func TestCallLogAttributeOrderWithRetriesAndReasoning(t *testing.T) {
+	gw, up := newLoggingGateway(t, gatewaytest.Options{Retry: fastRetry(2)})
+	var calls atomic.Int32
+	up.Handler = func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			// 503 是可重试的那一档，重试一次之后这一行就有 retries=1。
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("request-id", "req_018EeWyXxfu5pfWkrYcMdjWG")
+		w.WriteHeader(http.StatusOK)
+		for _, f := range anthropicThinkingStreamFrames() {
+			_, _ = w.Write([]byte(f))
+			w.(http.Flusher).Flush()
+		}
+	}
+
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", streamRequest, nil))
+	gw.LastCall(t)
+
+	assertKeyOrder(t, callLogKeys(t, gw.RawLog()), []string{
+		"time", "level", "msg",
+		"endpoint", "api_key", "inbound_protocol", "requested_model",
+		"stream", "status", "outcome", "duration_ms",
+		"channel", "channel_protocol", "upstream_model",
+		"channel_key", "upstream_endpoint",
+		"retries",
+		"upstream_request_id", "ttfb_ms",
+		"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+		"stop_reason", "upstream_reported_model",
+		"reasoning_tokens",
+	})
+}
+
+// anthropicThinkingStreamFrames 是同一条流，只是 message_delta 那一帧多报了思考数
+// （Anthropic 的载体是 output_tokens_details.**thinking_tokens**，口径层 v0.79）。
+func anthropicThinkingStreamFrames() []string {
+	frames := anthropicStreamFrames()
+	frames[2] = sseFrame("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},`+
+		`"usage":{"output_tokens":57,"output_tokens_details":{"thinking_tokens":249}}}`)
+	return frames
 }

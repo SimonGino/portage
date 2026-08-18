@@ -54,7 +54,7 @@ func (s *Server) rejectCompaction(c *gin.Context, rec *calllog.Recorder, ep prot
 		return false
 	}
 
-	// 流水 error 列里的固定词（同 queue_full 那批，见 calllog.go 的词表注释）。
+	// 流水 error 列里的固定词（同 queue_full 那批，词表见 internal/calllog/outcome.go）。
 	rec.Refused(calllog.CompactionUnsupported)
 	// 这条日志就是口径要的「drop 日志」：以前 trigger 是被静默丢掉的，现在丢不丢都
 	// 有一行说得清是哪个渠道。

@@ -23,7 +23,7 @@ type Recorder struct {
 	sink Sink
 	// finished 让收尾幂等：重复落库的表现是账翻倍而所有断言照常绿。
 	finished bool
-	// misuse 攒下沿途用错半区的收场词（见 complain）。正常路径恒空。
+	// misuse 攒下沿途用错半区的收场词（见 noteMisuse）。正常路径恒空。
 	misuse []string
 
 	start time.Time
@@ -250,7 +250,7 @@ func (r *Recorder) Succeeded() { r.outcome = OK }
 // 压缩闸。这一半的词见 Outcome.Refusal。
 func (r *Recorder) Refused(o Outcome) {
 	if !o.Refusal() {
-		r.complain("Refused", o)
+		r.noteMisuse("Refused", o)
 	}
 	r.outcome = o
 }
@@ -262,7 +262,7 @@ func (r *Recorder) Refused(o Outcome) {
 // 里而不是两个调用点各写一遍，是因为这本来就是那两条路共用的同一件事。
 func (r *Recorder) QueueRejected(o Outcome) {
 	if !o.Refusal() {
-		r.complain("QueueRejected", o)
+		r.noteMisuse("QueueRejected", o)
 	}
 	r.outcome = o
 	r.upstreamEndpoint = ""
@@ -275,7 +275,7 @@ func (r *Recorder) QueueRejected(o Outcome) {
 // 若已经占了坑，这里给的一句概括不覆盖它。
 func (r *Recorder) Failed(o Outcome, detail string) {
 	if !o.Failure() {
-		r.complain("Failed", o)
+		r.noteMisuse("Failed", o)
 	}
 	r.outcome = o
 	r.setErrorDetail(detail)
@@ -368,22 +368,23 @@ func (r *Recorder) Finish(status int) {
 	// 转换）也都只经过这一处——对账与走哪条路无关（v0.56 原则）。
 	r.upstreamRequestID = r.resolveUpstreamRequestID()
 
-	// log 与 sink 为 nil 的只有 Detached()：那条流水是给「ctx 里取不到记录」兜底的
-	// 黑洞，写进去的东西哪儿也不去，收尾自然也没有出口。
-	if r.log == nil {
-		return
+	// 两个出口**各自判空**，不共用一个前置 return。今天走到这里 log 为 nil 的只有
+	// Detached()（它两个出口都是 nil），所以两种写法的行为一模一样；但共用一个
+	// return 等于把「没有 logger」当成「不落库」，将来真给出一个只落库不打日志的
+	// 组合，那一行账会静默丢掉，而没有一条断言会红。
+	if r.log != nil {
+		// 抱怨排在 call 那一行**之前**：读日志的人先看到「这一行的收场词可能是错
+		// 的」，再看那一行本身。放后面的话，扫过去的人多半已经信了它。
+		for _, m := range r.misuse {
+			r.log.Error("流水收场词用错了半区：回绝与失败是两半，见 calllog.Outcome",
+				"call", m, "endpoint", r.endpoint)
+		}
+		r.log.Info("call", r.LogAttrs()...)
 	}
-	// 抱怨排在 call 那一行**之前**：读日志的人先看到「这一行的收场词可能是错的」，
-	// 再看那一行本身。放后面的话，扫过去的人多半已经信了它。
-	for _, m := range r.misuse {
-		r.log.Error("流水收场词用错了半区：回绝与失败是两半，见 calllog.Outcome",
-			"call", m, "endpoint", r.endpoint)
-	}
-	r.log.Info("call", r.LogAttrs()...)
 	r.persist()
 }
 
-// complain 记下一次「收场词用错了半区」：Refused 收到失败半区的词，或反过来。
+// noteMisuse 记下一次「收场词用错了半区」：Refused 收到失败半区的词，或反过来。
 //
 // 攒着不当场发作，收尾时多打一行 slog.Error。三种处置里选它的理由：
 //
@@ -393,7 +394,7 @@ func (r *Recorder) Finish(status int) {
 //     个信源——那正是本次收编要治的病。
 //   - 正常路径**零输出**，所以它不改变任何既有行为；重构期它是一张免费的探针，
 //     加第 11 个词而忘了给它分半区时也会当场说话。
-func (r *Recorder) complain(verb string, o Outcome) {
+func (r *Recorder) noteMisuse(verb string, o Outcome) {
 	r.misuse = append(r.misuse, verb+"("+o.String()+")")
 }
 
@@ -561,7 +562,7 @@ func (r *Recorder) persist() {
 	// 而被打断恰恰是最需要留痕的时候。
 	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
 	defer cancel()
-	if err := r.sink(ctx, r.Row()); err != nil {
+	if err := r.sink(ctx, r.Row()); err != nil && r.log != nil {
 		r.log.Error("调用流水落库失败", "err", err)
 	}
 }

@@ -35,7 +35,7 @@ func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 	}
 }
 
-// recorderFrom 取出本次调用的日志记录，取不到时回一个黑洞（见 detachedCallRecord）。
+// recorderFrom 取出本次调用的日志记录，取不到时回一个黑洞（见 calllog.Detached）。
 func recorderFrom(c *gin.Context) *calllog.Recorder {
 	if v, ok := c.Get(ctxCallRecord); ok {
 		if rec, ok := v.(*calllog.Recorder); ok {
