@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
@@ -715,7 +716,11 @@ type CallLogRow struct {
 	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的明细而非另一笔。
 	// null 是「上游不报这个数」，0 是「这次没思考」——前端据此决定露不露这一格。
 	ReasoningTokens *int64 `json:"reasoning_tokens"`
-	Error           string `json:"error"`
+	// Error 是网关自己的固定词表（`calllog.Outcome`）。string 而不是指针：库里
+	// NULL 即「这行没有错误词」，对外统一给空串（口径层 v0.67 ⑤，同
+	// UpstreamRequestID 的成例）。可空性规则的唯一定义处是 `calllog.Outcome.Column`
+	// 与它的反向 `calllog.ErrorWord`，这里不再复述一遍。
+	Error string `json:"error"`
 	// ErrorDetail 是上游错误原文（口径层 v0.53），只在失败行有值。
 	//
 	// 指针而不是 string：null 是「没存过」，空串是「上游回了 4xx 但响应体是空的」
@@ -816,7 +821,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens,
-		       COALESCE(error, ''), error_detail, upstream_request_id
+		       error, error_detail, upstream_request_id
 		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
@@ -827,14 +832,18 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		var r CallLogRow
 		var ttft, in, outTok, cr, cw, reasoning sql.NullInt64
 		var stream sql.NullBool
-		var detail sql.NullString
+		var errWord, detail sql.NullString
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.UpstreamEndpoint,
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &reasoning,
-			&r.Error, &detail, &r.UpstreamRequestID); err != nil {
+			&errWord, &detail, &r.UpstreamRequestID); err != nil {
 			return nil, err
 		}
+		// NULL → 空串在 Go 侧抹，不在 SQL 里 COALESCE：这一列的可空性规则只该有
+		// 一个定义处（calllog.Outcome.Column 的反向），写在 SQL 里等于把它复制到
+		// 一处类型系统看不见、也没有单测的地方。
+		r.Error = calllog.ErrorWord(errWord)
 		r.TTFTMs, r.InputTokens, r.OutputTokens = nullable(ttft), nullable(in), nullable(outTok)
 		r.CacheReadTokens, r.CacheWriteTokens = nullable(cr), nullable(cw)
 		r.ReasoningTokens = nullable(reasoning)

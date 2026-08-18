@@ -48,7 +48,10 @@ type CallLog struct {
 	// （整个 details 容器都不发——老式兼容上游、中转裁剪、CC 挂非推理模型），0 是
 	// 「上游报了，这次没思考」——抹成一个，那些调用的思考成本就显示为确凿的零。
 	ReasoningTokens sql.NullInt64
-	Error           sql.NullString
+	// Error 是网关固定词表落库后的形态。可空性规则见 `calllog.Outcome.Column`
+	// （写向）与 `calllog.ErrorWord`（读向）——那里是唯一的定义处，别在这里
+	// 再论证一遍：同一条规则抄第二份就会漂。
+	Error sql.NullString
 	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#2），
 	// 拿去找上游对账用。没走到上游、或上游没回这个头时是空串——这一列上两者同档。
 	UpstreamRequestID string
