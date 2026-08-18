@@ -53,7 +53,7 @@ func (s *Server) rateLimit(ep protocol.Endpoint) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		callRecordFrom(c).outcome = calllog.RateLimited
+		callRecordFrom(c).Refused(calllog.RateLimited)
 		// Retry-After 要赶在 WriteError 之前设：那里面就 WriteHeader 了，
 		// 之后再往 Header() 里写什么都不会发出去。
 		c.Writer.Header().Set("Retry-After", retryAfterSeconds)
