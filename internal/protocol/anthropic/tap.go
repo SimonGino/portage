@@ -32,7 +32,7 @@ type usage struct {
 	// 两个都不能照抄，Anthropic 叫 thinking_tokens（口径层 v0.79，实采字节 249/310）。
 	//
 	// ThinkingTokens 用 *int：0 与「没这个键」要分得开（见 Summary 那边的
-	// HasReasoningTokens）。**不带思考的调用两种形态都实见过**（口径层 v0.80）——
+	// HasReasoningTokens）。**不带思考的调用两种形态都实见过**（口径层 v0.85）——
 	// 本库六份非思考转录连这个容器都不发，#5 现场则是容器在、值为 0——所以判据只能
 	// 是键在不在，不能预设上游发哪一种。
 	OutputTokensDetails *struct {
