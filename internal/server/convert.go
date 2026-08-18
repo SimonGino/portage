@@ -116,19 +116,18 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 
 	// 出站端点在这一刻才记（#20），不在上面算出 outEp 的地方：中间还夹着解码 400、
 	// 编码 500 两条早退，那些行同样没打上游，记了就是在说一件没发生的事。
-	rec.upstreamEndpoint = outEp.Path
+	rec.Dialing(outEp.Path)
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
 	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。portage-legacy#20 定的
 	//「整串照抄」管的是同协议透传那条路（那是拆库前的编号，与上一段的 #20 无关）。
 	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
-	rec.retries, rec.channelKey, rec.queueWait = at.Retries(), at.Credential, at.QueueWait
+	rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
 	if err != nil {
 		if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
 			return
 		}
-		rec.outcome = calllog.UpstreamError
 		// 与透传路径同：这一支没有响应体，落库的原文就是传输错误本身（v0.53）。
-		rec.setErrorDetail(upstream.Redact(err).Error())
+		rec.Failed(calllog.UpstreamError, upstream.Redact(err).Error())
 		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
 		return
@@ -137,18 +136,17 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
 	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#2）。三档的取舍与
 	// 透传路径同一处（logCall），包括错误体那一档（v0.74）。
-	rec.officialRequestID, rec.proxyRequestID = upstream.RequestIDs(resp.Header)
+	rec.RequestIDs(upstream.RequestIDs(resp.Header))
 
 	// Tap 与 body 记录挂在上游原始字节上，与透传路径一致：usage 要的是上游自己
 	// 报的数，不是网关重编出来的响应。
 	var observers []io.Writer
 	if tap := taps.New(cand.Protocol, stream); tap != nil {
 		observers = append(observers, tap)
-		defer func() { rec.summary, rec.haveSummary = tap.Summary(), true }()
+		defer func() { rec.Summarized(tap.Summary()) }()
 	}
 	if s.cfg.LogBodies {
-		rec.responseBody = newCapture(bodyCaptureLimit)
-		observers = append(observers, rec.responseBody)
+		observers = append(observers, rec.TapResponseBody())
 	}
 	src := io.Reader(resp.Body)
 	if len(observers) > 0 {
@@ -156,7 +154,6 @@ func (s *Server) relayConverted(c *gin.Context, rec *callRecord, ep protocol.End
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		rec.outcome = calllog.UpstreamError
 		s.writeUpstreamError(c, rec, ep, resp.StatusCode, src)
 		return
 	}
@@ -186,7 +183,9 @@ func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]
 // 客户端拿到的是我们的错误契约，排障要的是上游到底说了什么，两者不该是同一份文本。
 func (s *Server) writeUpstreamError(c *gin.Context, rec *callRecord, ep protocol.Endpoint, status int, body io.Reader) {
 	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))
-	rec.setErrorDetail(string(raw))
+	// 收场与原文一次记完：这一支的字节已经全读进来了，「上游说不行」与「它说了
+	// 什么」本来就是同一件事，分两处写只是因为它们以前落在两个函数里。
+	rec.UpstreamRejected(string(raw))
 	msg := upstreamErrorMessage(raw)
 	if msg == "" {
 		msg = "上游返回 " + http.StatusText(status)
@@ -214,7 +213,7 @@ func upstreamErrorMessage(raw []byte) string {
 func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	events, err := outCodec.DecodeStream(src)
 	if err != nil {
-		rec.outcome = calllog.UpstreamError
+		rec.Failed(calllog.UpstreamError, "")
 		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流无法解析")
 		return
@@ -228,20 +227,18 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 	h.Set("Connection", "keep-alive")
 	setNoBuffering(h)
 	c.Writer.WriteHeader(http.StatusOK)
-	rec.outcome = calllog.OK
+	rec.Succeeded()
 
-	w := &clientStream{w: c.Writer, rc: http.NewResponseController(c.Writer), onFirstByte: func() {
-		rec.firstByte = time.Now()
-	}}
+	w := &clientStream{w: c.Writer, rc: http.NewResponseController(c.Writer), onFirstByte: rec.FirstByte}
 	if err := w.advance(); err != nil {
-		rec.outcome = calllog.StreamAborted
+		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
 		panic(http.ErrAbortHandler)
 	}
 
 	if err := inCodec.EncodeStream(w, events); err != nil {
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
-		rec.outcome = calllog.StreamAborted
+		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		// 上游流还没读完时 EncodeStream 提前返回，会把解码 goroutine 卡在发送上。
 		// 后台读空事件通道让它能写完退出；真正让它停下来的是 relayConverted 里
@@ -257,9 +254,8 @@ func (s *Server) streamConverted(c *gin.Context, rec *callRecord, ep protocol.En
 	// 路径上同一件事记的是 stream_aborted。
 	if r, ok := outCodec.(protocol.StreamReadReporter); ok {
 		if err := r.StreamReadError(); err != nil {
-			rec.outcome = calllog.StreamAborted
 			// 与上游传输错误那一支同源：落库的原文就是脱敏后的错误本身（v0.53）。
-			rec.setErrorDetail(upstream.Redact(err).Error())
+			rec.Failed(calllog.StreamAborted, upstream.Redact(err).Error())
 			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		}
 	}
@@ -275,21 +271,21 @@ func drainEvents(events <-chan protocol.Event) {
 func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		rec.outcome = calllog.UpstreamError
+		rec.Failed(calllog.UpstreamError, "")
 		s.log.Error("读上游响应失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应读取失败")
 		return
 	}
 	events, err := outCodec.DecodeFullBody(raw)
 	if err != nil {
-		rec.outcome = calllog.UpstreamError
+		rec.Failed(calllog.UpstreamError, "")
 		s.log.Error("上游响应解码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法解析")
 		return
 	}
 	out, err := inCodec.EncodeFullBody(events)
 	if err != nil {
-		rec.outcome = calllog.UpstreamError
+		rec.Failed(calllog.UpstreamError, "")
 		s.log.Error("响应编码失败", "inbound", ep.Proto, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法转换")
 		return
@@ -297,10 +293,10 @@ func (s *Server) bufferConverted(c *gin.Context, rec *callRecord, ep protocol.En
 
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(http.StatusOK)
-	rec.outcome = calllog.OK
-	rec.firstByte = time.Now()
+	rec.Succeeded()
+	rec.FirstByte()
 	if _, err := c.Writer.Write(out); err != nil {
-		rec.outcome = calllog.StreamAborted
+		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
 	}
 }
