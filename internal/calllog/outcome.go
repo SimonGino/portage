@@ -21,8 +21,9 @@ import "database/sql"
 // 一档一个词，不叠加：一次调用只落一个。后写覆盖先写——收尾分支比早退分支知道得多。
 type Outcome string
 
-// 词表全集。分两半列（见 Refusal / Failure），加第 11 个词时「它属于哪一半」是
-// 必答题——两个谓词都不认的词会被 outcome_test.go 的全覆盖断言逮住。
+// 词表全集。分两半列出只是给人读的，判半区的那份数据在下面的 halves 表里——
+// 加第 11 个词时「它属于哪一半」是必答题，漏填的词两个谓词都不认，会被
+// outcome_test.go 的全覆盖断言逮住。
 const (
 	// OK 是**哨兵，不落库**：库里留 NULL，NULL 即「这行没有错误词」。它既不是
 	// 拒绝也不是失败，两个谓词都回假。
@@ -94,25 +95,42 @@ func ErrorWord(col sql.NullString) string {
 	return col.String
 }
 
+// half 是词表的两个半区。零值 halfUnclassified 是**故意**留给「新加的词还没分
+// 半区」这一档的：漏进 halves 表的词两个谓词都回假，outcome_test.go 的全覆盖
+// 断言随即变红。
+type half int
+
+const (
+	halfUnclassified half = iota
+	halfRefusal
+	halfFailure
+)
+
+// halves 是「哪个词属于哪一半」的**唯一定义处**。
+//
+// 一张表而不是两个 switch：分半区这件事是一份数据，写成两处判断就得两处一起改，
+// 而「只改了一处」的表现是某个词同时不属于任何一半——那正是加第 11 个词时最容易
+// 犯的错。`ok` 不在表里：它是哨兵，既不是回绝也不是失败。
+var halves = map[Outcome]half{
+	Unauthorized:          halfRefusal,
+	Rejected:              halfRefusal,
+	ModelNotAllowed:       halfRefusal,
+	RateLimited:           halfRefusal,
+	CompactionUnsupported: halfRefusal,
+	QueueFull:             halfRefusal,
+	QueueTimeout:          halfRefusal,
+	QueueAbandoned:        halfRefusal,
+
+	UpstreamError: halfFailure,
+	StreamAborted: halfFailure,
+}
+
 // Refusal 报告这个词是不是「网关自己回绝、一个字节都没到上游」那一半。
 //
 // 这条线与 `upstream_endpoint` 列的不变量是同一条：回绝的行那一列必然是空串。
-func (o Outcome) Refusal() bool {
-	switch o {
-	case Unauthorized, Rejected, ModelNotAllowed, RateLimited,
-		CompactionUnsupported, QueueFull, QueueTimeout, QueueAbandoned:
-		return true
-	}
-	return false
-}
+func (o Outcome) Refusal() bool { return halves[o] == halfRefusal }
 
 // Failure 报告这个词是不是「真的向上游发起过之后出的事」那一半。
 //
 // 含拨不通、读超时——那些行有 error_detail，恰恰要知道打的是哪条路径。
-func (o Outcome) Failure() bool {
-	switch o {
-	case UpstreamError, StreamAborted:
-		return true
-	}
-	return false
-}
+func (o Outcome) Failure() bool { return halves[o] == halfFailure }

@@ -248,12 +248,7 @@ func (r *Recorder) Succeeded() { r.outcome = OK }
 
 // Refused 记一次**网关自己回绝**的收场：鉴权不过、白名单挡下、限流、转换闸、
 // 压缩闸。这一半的词见 Outcome.Refusal。
-func (r *Recorder) Refused(o Outcome) {
-	if !o.Refusal() {
-		r.noteMisuse("Refused", o)
-	}
-	r.outcome = o
-}
+func (r *Recorder) Refused(o Outcome) { r.refuse("Refused", o) }
 
 // QueueRejected 记一次渠道并发闸的回绝，并把出站端点**清回空串**。
 //
@@ -261,11 +256,20 @@ func (r *Recorder) Refused(o Outcome) {
 // 这三档一个字节都没到上游，同 401 / 429 / 501 那批，空就是事实。清在这一个动词
 // 里而不是两个调用点各写一遍，是因为这本来就是那两条路共用的同一件事。
 func (r *Recorder) QueueRejected(o Outcome) {
+	r.refuse("QueueRejected", o)
+	r.upstreamEndpoint = ""
+}
+
+// refuse 是上面两个回绝动词共用的那一步：守卫加记词。
+//
+// 抽出来是因为守卫的判断本来就该只有一份——将来它变了（多一个半区、换个处置），
+// 两个动词各写一遍的话必然有一处漏改。verb 由调用方传进来而不是在这里推：抱怨
+// 那一行要说得出**是哪个动词**用错了，合并成一个名字就等于把定位信息丢了。
+func (r *Recorder) refuse(verb string, o Outcome) {
 	if !o.Refusal() {
-		r.noteMisuse("QueueRejected", o)
+		r.noteMisuse(verb, o)
 	}
 	r.outcome = o
-	r.upstreamEndpoint = ""
 }
 
 // Failed 记一次**打过上游之后**的失败，顺带收下一段错误原文（口径层 v0.53）。
