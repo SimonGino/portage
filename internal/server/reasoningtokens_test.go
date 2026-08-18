@@ -217,6 +217,32 @@ func TestAnthropicThinkingTokensReachConvertedOutlets(t *testing.T) {
 			t.Errorf("output_tokens = %d, 期望 1110", out.Usage.OutputTokens)
 		}
 	})
+
+	// 流式那半边单独钉：上游只在 message_delta 那一帧带思考数，转换出口的 usage
+	// 帧却是自己另攒的——非流式过了不代表这条过。
+	t.Run("A→CC 出口/流式", func(t *testing.T) {
+		gw, up := newCC2AGateway(t)
+		streamUpstream(t, up, anthropicThinkingStream(`,"output_tokens_details":{"thinking_tokens":310}`))()
+
+		resp := gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", true), nil)
+		body := gatewaytest.ReadBody(t, resp)
+
+		if !strings.Contains(body, `"reasoning_tokens":310`) {
+			t.Errorf("usage 帧里没有上游报的思考数:\n%s", body)
+		}
+	})
+
+	t.Run("A→R 出口/流式", func(t *testing.T) {
+		gw, up := newR2AGateway(t)
+		streamUpstream(t, up, anthropicThinkingStream(`,"output_tokens_details":{"thinking_tokens":310}`))()
+
+		resp := gw.Post(t, "/v1/responses", convertResponsesRequest, nil)
+		body := gatewaytest.ReadBody(t, resp)
+
+		if !strings.Contains(body, `"reasoning_tokens":310`) {
+			t.Errorf("这一格恒写，丢了就是个确凿的假数 0:\n%s", body)
+		}
+	})
 }
 
 func ptr[T any](v T) *T { return &v }

@@ -120,8 +120,8 @@ func TestTapDoneSentinelIsNotADegradation(t *testing.T) {
 //     里减掉——它是 completion 的明细而非另一笔加数（真实字节里 total 恒等于
 //     prompt + completion，reasoning 一次都没进这个加法）。
 //   - 报了 0：上游挂非推理模型时会照发 details 但值为 0，那是「这次没思考」。
-//   - 没报：整个 details 都不发（Anthropic 一路、老式兼容上游），那是「这上游不报
-//     这个数」。后两者在观测页上不是一回事，故 Has 与值分开存。
+//   - 没报：整个 details 都不发（老式兼容上游、或挂在非推理模型上），那是「这上游
+//     这一轮不报这个数」。后两者在观测页上不是一回事，故 Has 与值分开存。
 func TestTapReasoningTokens(t *testing.T) {
 	const frame = `data: {"model":"m","choices":[],"usage":{"prompt_tokens":10,` +
 		`"completion_tokens":100%s}}

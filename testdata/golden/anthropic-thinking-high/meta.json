@@ -19,5 +19,5 @@
     "Degraded": false
   },
   "verified": true,
-  "source": "同 anthropic-stream-thinking 一批（pollo-sub2api，claude-sonnet-5，2026-08-15，#99/#4），差别只在 stream:false——非流式那半边的形态：content[0] 是 thinking 块（thinking 空串 + 真 signature），content[1] 是正文。expect 独立重算，缓存两项为 0，毛值等于净值 564。\n\n**thinking 正文同样整段为空**，与流式那份是同一个成因（只发 output_config.effort，未带 thinking.display）。采集时只拿到 high 这一档，low 那一份没采到——「不同档位是否影响正文可见性」这个问题本库现有样本答不了。\n\nsignature 保留、请求体按原样入库两条与流式那份逐字同理，详见 anthropic-stream-thinking/meta.json 的 source。上游 output_tokens_details.thinking_tokens=310 在顶层 usage 里（非流式的落点），expect 从原先的 0/false 改成 310/true（口径层 v0.66 落地，#5，2026-08-18）。"
+  "source": "同 anthropic-stream-thinking 一批（pollo-sub2api，claude-sonnet-5，2026-08-15，#99/#4），差别只在 stream:false——非流式那半边的形态：content[0] 是 thinking 块（thinking 空串 + 真 signature），content[1] 是正文。expect 独立重算，缓存两项为 0，毛值等于净值 564。\n\n**thinking 正文同样整段为空**，与流式那份是同一个成因（只发 output_config.effort，未带 thinking.display）。采集时只拿到 high 这一档，low 那一份没采到——「不同档位是否影响正文可见性」这个问题本库现有样本答不了。\n\nsignature 保留、请求体按原样入库，这两条与流式那份逐字同理，详见 anthropic-stream-thinking/meta.json 的 source。上游 output_tokens_details.thinking_tokens=310 在顶层 usage 里（非流式的落点），expect 从原先的 0/false 改成 310/true（口径层 v0.66 落地，#5，2026-08-18）。"
 }

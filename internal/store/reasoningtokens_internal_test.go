@@ -12,7 +12,8 @@ import (
 //
 // 与 upstream_request_id 那条的关键差别：这一列**可空**，存量行落在 NULL 上。
 // NULL 不是「还没回填」，是「那时候网关不认这一格，上游报没报都无从知道」——与新行
-// 里「上游不报这个数」（Anthropic 一路）同一档，恰恰不能记成 0：记 0 会让那些调用
+// 里「上游这一轮不报这个数」（没开思考的响应连 details 容器都不发）同一档，恰恰
+// 不能记成 0：记 0 会让那些调用
 // 的思考成本显示为确凿的零。
 func TestMigrateAddsReasoningTokens(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "old.db"))

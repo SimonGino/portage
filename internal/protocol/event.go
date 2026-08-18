@@ -117,8 +117,9 @@ type Usage struct {
 	//
 	// 三个出口都有承接它的位置，键名各不同形（见 Summary.ReasoningTokens 那份对照）。
 	// CC 与 Anthropic 两侧**有数才写**——零值在这里等于「上游没报」，写成 0 是把没报
-	// 说成确凿的零思考成本；Responses 那侧的键恒在（契约必有项，理由记在 encode.go 的
-	// usageBody 上），于是那一条路上「没报」只能落回 0。成本可见性一律由流水那一列
+	// 说成确凿的零思考成本；Responses 那侧的键恒在（契约必有项，理由记在
+	// openairesponses/encode.go 的 usageBody 上），于是那条路上「没报」只能落回 0。
+	// 成本可见性一律由流水那一列
 	// 兜底，那一列才分得开三档（口径层 v0.66 ⑤）。
 	ReasoningTokens int
 }
