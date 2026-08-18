@@ -12,8 +12,8 @@ import (
 // 本文件钉的是调用日志那一行的**属性顺序**。
 //
 // 为什么单开一条 golden：属性顺序是 slog 文本输出里唯一不被逐字段断言覆盖的东西
-// ——gatewaytest 的 LogLine 把属性摊成 map，顺序在那一层就没了。而 #11 要把
-// logCall 整体搬进 calllog.Recorder，搬家最容易悄悄改的恰恰是 append 的先后。
+// ——gatewaytest 的 LogLine 把属性摊成 map，顺序在那一层就没了。#11 把 logCall
+// 整体搬进了 calllog.Recorder.LogAttrs，搬家最容易悄悄改的恰恰是 append 的先后。
 // 顺序变了，人眼扫日志的肌肉记忆与任何按位置切分的下游（grep/awk 一把梭）都会坏，
 // 而所有既有用例照绿。
 //

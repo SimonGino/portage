@@ -242,7 +242,7 @@ func TestNonJSONErrorBodyLeavesRequestIDEmptyAndDoesNotDisturbPassthrough(t *tes
 }
 
 // 转换路径与透传路径同一套取值（v0.56 原则：对账与走哪条路无关）。三档的取舍收在
-// logCall 一处，这条钉的就是「转换路径也走得到第二档」。
+// calllog.Recorder.resolveUpstreamRequestID 一处，这条钉的就是「转换路径也走得到第二档」。
 func TestConvertedCallReadsRequestIDFromErrorBody(t *testing.T) {
 	gw, up := newConvertGateway(t)
 	up.RespondWith(http.StatusTooManyRequests, map[string]string{
