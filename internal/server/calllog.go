@@ -315,9 +315,9 @@ func (s *Server) persistCall(rec *callRecord) {
 		row.CacheReadTokens = nullInt(rec.summary.CacheReadTokens)
 		row.CacheWriteTokens = nullInt(rec.summary.CacheWriteTokens)
 		// 思考 token 单独判（口径层 v0.66）：上面四个是「有 summary 就一定有
-		// 数」，这一格不是——Anthropic 协议里根本没有它，CC 上游挂非推理模型时也
-		// 整个 details 都不发。没报就留 NULL，别落 0：落 0 是在说「上游报了，这次
-		// 没思考」，而我们其实什么都不知道。
+		// 数」，这一格不是——上游可能整个 details 容器都不发（老式兼容上游、中转
+		// 裁剪、CC 挂非推理模型）。没报就留 NULL，别落 0：落 0 是在说「上游报了，
+		// 这次没思考」，而我们其实什么都不知道。
 		if rec.summary.HasReasoningTokens {
 			row.ReasoningTokens = nullInt(rec.summary.ReasoningTokens)
 		}

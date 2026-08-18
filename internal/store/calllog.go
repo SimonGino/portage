@@ -45,9 +45,8 @@ type CallLog struct {
 	CacheWriteTokens sql.NullInt64
 	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的**明细**
 	// 而非另一笔。可空的理由与上面几个不同：这一列上 NULL 是「上游这一轮不报这个数」
-	// （没开思考的 Anthropic 响应连 output_tokens_details 容器都不发、CC 挂非推理模型
-	// 时整个 details 也不发），0 是「上游报了，这次没思考」——抹成一个，那些调用的
-	// 思考成本就显示为确凿的零。
+	// （整个 details 容器都不发——老式兼容上游、中转裁剪、CC 挂非推理模型），0 是
+	// 「上游报了，这次没思考」——抹成一个，那些调用的思考成本就显示为确凿的零。
 	ReasoningTokens sql.NullInt64
 	Error           sql.NullString
 	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#2），

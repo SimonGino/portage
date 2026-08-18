@@ -373,8 +373,8 @@ type toolAccum struct {
 // 那里不是一回事。CC 没有缓存写入的概念，CacheWriteTokens 在这一侧无处可去。
 // completion_tokens_details 与上面那句相反——**有数才写**（口径层 v0.66）。
 // cached_tokens 的 0 是真的「一次都没命中」，而这里的 0 会被读成「这次没思考」，
-// 可 canonical 侧零值即「上游没报」（没开思考的响应连 details 容器都不发，A / CC
-// 两侧都是这样）。宁可不说，不能瞎说；
+// 可 canonical 侧零值即「上游没报」（上游整个 details 容器都不发时就是这一档，
+// A / CC 两侧都见得到）。宁可不说，不能瞎说；
 // 那笔成本的可见性由流水那一列兜底。它不从 completion_tokens 里减：是明细不是加数。
 func usageBody(u protocol.Usage) map[string]any {
 	body := map[string]any{
