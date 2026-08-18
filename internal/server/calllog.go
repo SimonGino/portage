@@ -312,6 +312,13 @@ func (r *callRecord) UpstreamRejected(raw string) {
 // Finish 封盘：记下最终发出去的状态码。
 func (r *callRecord) Finish(status int) { r.status = status }
 
+// QueueWaitMs 是排队耗时的毫秒数，给闸拒那两条 slog 用。
+//
+// 这是这条流水唯一露出去的**读**口子：那两条日志要报「排了多久才被拒」，而这个数
+// 只有这里有。其余字段一律不开读口——流水的读者是库里那一行与收尾那一行 slog，
+// 沿途谁都不该回头查自己刚记了什么。
+func (r *callRecord) QueueWaitMs() int64 { return r.queueWait.Milliseconds() }
+
 // resolveUpstreamRequestID 按三档定下这次调用的上游请求 id（口径层 v0.74）：
 // `request-id`（头）→ 错误响应体里的 `request_id` → `x-request-id`（头）。
 //
