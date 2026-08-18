@@ -1,6 +1,9 @@
 package calllog
 
-import "database/sql"
+import (
+	"database/sql"
+	"encoding/json"
+)
 
 // Row is one row of call_logs: a single relayed call as it ended.
 //
@@ -71,4 +74,31 @@ type Row struct {
 	// 自己说的那段话，不可控、只给人看。可空是为了分开「没存」与「上游回了 4xx 但
 	// 体是空的」——后者本身就是排障信息。
 	ErrorDetail sql.NullString
+}
+
+// ErrorBodyRequestID 从上游**错误**响应体里取顶层 `request_id`（口径层 v0.74）。
+//
+// 这一档是实测撞出来的：应用层中转会把官方响应头裁掉（小写 `request-id` 与
+// anthropic-ratelimit-* 一个都不到），只回一个自己编号的 `X-Request-Id`；而官方那个号
+// 还在错误信封里——`{"type":"error","error":{…},"request_id":"req_011Ce2…"}`。
+//
+// 住在这个包而不是 internal/upstream：它唯一的用处是给流水那一列的三档取值供第二
+// 档，而三档取值在收尾时才做得了（错误体是边转发边收的）。本包又绝不能反过来
+// import upstream——那会成环（store → calllog → upstream → store）。头上那两档
+// 仍归 upstream 取（它读的是响应头，那是 upstream 的事）。
+//
+// 只在失败行调用：2026-08-15 五份真实响应实测，成功响应的体里（流式与非流式）都没有
+// 这个字段，成功行不该为它多解一次 body。
+//
+// 解不出来一律回空串，不报错也不告警：不是 JSON（HTML 错误页）、截断的字节、没有这个
+// 键、流式错误帧（本库无样本，形状未知）——这几种情况在对账上是同一件事，都是「没有
+// 可用的 id」。
+func ErrorBodyRequestID(raw []byte) string {
+	var payload struct {
+		RequestID string `json:"request_id"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	return payload.RequestID
 }

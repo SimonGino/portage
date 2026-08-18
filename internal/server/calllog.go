@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
-	"github.com/SimonGino/portage/internal/upstream"
 )
 
 // bodyCaptureLimit 是 log_bodies 打开时单侧 body 的记录上限。开这个开关是为了排障，
@@ -86,6 +86,13 @@ func (c *captureWriter) truncatedTo(limit int) string {
 // 里面**没有**渠道 base_url 与凭证，也不该被加进来：日志是最容易被复制粘贴出去的
 // 东西，上游密钥不进日志是硬约束。渠道用 name 指代已经够定位。
 type callRecord struct {
+	// log 与 sink 是收尾时的两个出口。Detached 的那条两者皆 nil，写进去的东西
+	// 哪儿也不去——那正是「取不到记录」该有的样子。
+	log  *slog.Logger
+	sink Sink
+	// finished 让收尾幂等：重复落库的表现是账翻倍而所有断言照常绿。
+	finished bool
+
 	start     time.Time
 	firstByte time.Time
 
@@ -175,13 +182,25 @@ type callRecord struct {
 // outcome 的初值是 Rejected 而不是 OK：走到收尾还没被任何分支覆盖，说明这次调用
 // 停在某个早退分支上了，那确实是一次拒绝。反过来设成 OK 的话，任何漏写 outcome
 // 的新分支都会静默记成一次干净的成功。
-func newCallRecord(ep protocol.Endpoint) *callRecord {
+func newCallRecord(ep protocol.Endpoint, log *slog.Logger, sink Sink) *callRecord {
 	return &callRecord{
 		start:        time.Now(),
 		endpoint:     ep.Path,
 		inboundProto: ep.Proto,
 		outcome:      calllog.Rejected,
+		log:          log,
+		sink:         sink,
 	}
+}
+
+// detachedCallRecord 是「上下文里取不到记录」时的兜底，一个黑洞：动词照常收，
+// 收尾什么都不做（没有 logger 也没有 sink）。
+//
+// 回它而不是 panic：三层中间件是在 Engine() 里一起注册的，取不到只可能是路由被
+// 改坏了，那不该顺带把请求也打成 500。日志少一行由 TestEveryRelayEndpointLogsOnce
+// 那类用例去逮。
+func detachedCallRecord() *callRecord {
+	return &callRecord{start: time.Now(), outcome: calllog.Rejected}
 }
 
 // Authenticated 记下认出来的网关 key 名。名字不是 key 本身也不是它的 hash——
@@ -309,9 +328,6 @@ func (r *callRecord) UpstreamRejected(raw string) {
 	r.setErrorDetail(raw)
 }
 
-// Finish 封盘：记下最终发出去的状态码。
-func (r *callRecord) Finish(status int) { r.status = status }
-
 // QueueWaitMs 是排队耗时的毫秒数，给闸拒那两条 slog 用。
 //
 // 这是这条流水唯一露出去的**读**口子：那两条日志要报「排了多久才被拒」，而这个数
@@ -334,7 +350,7 @@ func (r *callRecord) resolveUpstreamRequestID() string {
 		return r.officialRequestID
 	}
 	if r.errorDetail != nil {
-		if id := upstream.ErrorBodyRequestID(r.errorDetail.collected()); id != "" {
+		if id := calllog.ErrorBodyRequestID(r.errorDetail.collected()); id != "" {
 			return id
 		}
 	}
@@ -351,57 +367,97 @@ func (r *callRecord) setErrorDetail(s string) {
 	_, _ = r.errorDetail.Write([]byte(s))
 }
 
-func (s *Server) logCall(rec *callRecord) {
-	// 三档取值到这一刻才定得下来（口径层 v0.74）：中间那档在错误体里，而错误体是边
-	// 转发边收的。定一次写回 rec，下面的 slog 与 persistCall 因此同源，两条转发路径
-	// （透传 / 转换）也都只经过这一处——对账与走哪条路无关（v0.56 原则）。
-	rec.upstreamRequestID = rec.resolveUpstreamRequestID()
+// Sink 是这条流水的落库出口。
+//
+// 是个函数类型而不是直接调 store：本包被 store import（写侧行类型住在这里），
+// 反过来再 import store 就成环。顺带买到的是「不起 SQLite 也测得动收尾」——
+// 落库失败不 panic、Finish 幂等这些今天要架一整个网关加一个假上游才验得到。
+type Sink func(ctx context.Context, row calllog.Row) error
 
+// persistTimeout 是落库的超时。给得短——它只是兜住库卡死，不是给慢查询留余量。
+const persistTimeout = 3 * time.Second
+
+// Finish 封盘：记下最终发出去的状态码，落一行 slog 加一行 call_logs。
+//
+// **顺序是 slog 在前、落库在后**，且两者各自调一次 time.Since——今天
+// duration_ms（slog）与 total_ms（库）就是两次调用、相差几微秒。冻结一个 end 让
+// 两值恒等是可观测的行为改变，#11 不做；这是现状不是设计。
+//
+// 幂等：只认第一次。中间件的 defer 保证它恰好被调一次，但 panic 展开路径上多一条
+// 保险不亏——重复落库的表现是账翻倍而所有断言照常绿。
+func (r *callRecord) Finish(status int) {
+	if r.finished {
+		return
+	}
+	r.finished = true
+	r.status = status
+	// 三档取值到这一刻才定得下来（口径层 v0.74）：中间那档在错误体里，而错误体是边
+	// 转发边收的。定一次写回，下面的 slog 与 Row 因此同源，两条转发路径（透传 /
+	// 转换）也都只经过这一处——对账与走哪条路无关（v0.56 原则）。
+	r.upstreamRequestID = r.resolveUpstreamRequestID()
+
+	// log 与 sink 为 nil 的只有 Detached()：那条流水是给「ctx 里取不到记录」兜底的
+	// 黑洞，写进去的东西哪儿也不去，收尾自然也没有出口。
+	if r.log == nil {
+		return
+	}
+	r.log.Info("call", r.LogAttrs()...)
+	r.persist()
+}
+
+// LogAttrs 摊出这一行 slog 的属性。
+//
+// **顺序即契约**：人眼扫日志靠它，按位置切分的下游（grep/awk 一把梭）也靠它。
+// 改动顺序要连 internal/server 的 golden 用例一起改，那不是重构是行为变更。
+//
+// 「有值才打」是这一侧的通例：没发到上游的行每一行都背一个空的 upstream_endpoint、
+// 恒为 0 的 retries，读起来只有噪声。库那一侧相反——列是定死的，空值靠 NULL 表达。
+func (r *callRecord) LogAttrs() []any {
 	attrs := []any{
-		"endpoint", rec.endpoint,
-		"api_key", rec.apiKeyName,
-		"inbound_protocol", string(rec.inboundProto),
-		"requested_model", rec.requestedModel,
-		"stream", rec.stream,
-		"status", rec.status,
+		"endpoint", r.endpoint,
+		"api_key", r.apiKeyName,
+		"inbound_protocol", string(r.inboundProto),
+		"requested_model", r.requestedModel,
+		"stream", r.stream,
+		"status", r.status,
 		// .String() 不能省：slog 记的必须是 string 而不是 calllog.Outcome，
 		// 否则属性的动态类型变了，逐字段断言的读者（gatewaytest 的 LogLine.Str）
 		// 会集体扑空——而渲染出来的文本一个字都不差，看不出来。
-		"outcome", rec.outcome.String(),
-		"duration_ms", time.Since(rec.start).Milliseconds(),
+		"outcome", r.outcome.String(),
+		"duration_ms", time.Since(r.start).Milliseconds(),
 	}
-	if rec.channel != "" {
-		attrs = append(attrs, "channel", rec.channel,
-			"channel_protocol", string(rec.channelProto),
-			"upstream_model", rec.upstreamModel)
+	if r.channel != "" {
+		attrs = append(attrs, "channel", r.channel,
+			"channel_protocol", string(r.channelProto),
+			"upstream_model", r.upstreamModel)
 	}
-	if rec.channelKey != "" {
-		attrs = append(attrs, "channel_key", rec.channelKey)
+	if r.channelKey != "" {
+		attrs = append(attrs, "channel_key", r.channelKey)
 	}
 	// 出站端点只在有值时进 slog（#20），同 retries / channel_key 那条惯例：没发到上游
 	// 的行这一格恒空，每行背一个空字段没意义。**入站那条恒落**（它由中间件写死，
 	// 每行都有），两者不对称是因为两者的空值含义不同。打它的理由：channel_protocol
 	// 推不出这条路径——同协议透传的 count_tokens 就没有出口对应物，而排障时「转成
 	// 了哪条路径」正是跨协议那批要看的第一眼。
-	if rec.upstreamEndpoint != "" {
-		attrs = append(attrs, "upstream_endpoint", rec.upstreamEndpoint)
+	if r.upstreamEndpoint != "" {
+		attrs = append(attrs, "upstream_endpoint", r.upstreamEndpoint)
 	}
-	if rec.retries > 0 {
-		attrs = append(attrs, "retries", rec.retries)
+	if r.retries > 0 {
+		attrs = append(attrs, "retries", r.retries)
 	}
-	if rec.queueWait > 0 {
-		attrs = append(attrs, "queue_wait_ms", rec.queueWait.Milliseconds())
+	if r.queueWait > 0 {
+		attrs = append(attrs, "queue_wait_ms", r.queueWait.Milliseconds())
 	}
 	// 与 retries 同理，只在有值时进 slog：上游不回这个头的部署（自建、部分中转）
 	// 每一行都背一个空字段没有意义。落库则恒落（列不可空，空串就是「没有」）。
-	if rec.upstreamRequestID != "" {
-		attrs = append(attrs, "upstream_request_id", rec.upstreamRequestID)
+	if r.upstreamRequestID != "" {
+		attrs = append(attrs, "upstream_request_id", r.upstreamRequestID)
 	}
-	if !rec.firstByte.IsZero() {
-		attrs = append(attrs, "ttfb_ms", rec.firstByte.Sub(rec.start).Milliseconds())
+	if r.haveFirstByte() {
+		attrs = append(attrs, "ttfb_ms", r.firstByte.Sub(r.start).Milliseconds())
 	}
-	if rec.haveSummary {
-		sum := rec.summary
+	if r.haveSummary {
+		sum := r.summary
 		attrs = append(attrs,
 			"input_tokens", sum.InputTokens,
 			"output_tokens", sum.OutputTokens,
@@ -421,92 +477,110 @@ func (s *Server) logCall(rec *callRecord) {
 			attrs = append(attrs, "tap_degraded", true)
 		}
 	}
-	if rec.requestBody != nil {
-		attrs = append(attrs, "request_body", rec.requestBody.String())
+	if r.requestBody != nil {
+		attrs = append(attrs, "request_body", r.requestBody.String())
 	}
-	if rec.responseBody != nil {
-		attrs = append(attrs, "response_body", rec.responseBody.String())
+	if r.responseBody != nil {
+		attrs = append(attrs, "response_body", r.responseBody.String())
 	}
-	s.log.Info("call", attrs...)
-	s.persistCall(rec)
+	return attrs
 }
 
-// persistCall 把同一条流水写进 call_logs。
+// Row 装配落库的那一行。
 //
-// 落库失败**不得影响请求**：这里跑的时候响应早已写出去了，改写不了也中断不了，
-// 只能记一条 slog error。口径层 §2.5 要的是「每请求一行落库」，但一次 SQLite 抖动
-// 不该把一次成功的转发变成客户端眼里的失败。
-func (s *Server) persistCall(rec *callRecord) {
-	// 不用请求 ctx：客户端断开时它已经 canceled，拿它来写等于「一断线就不记账」，
-	// 而被打断恰恰是最需要留痕的时候。超时给得短——它只是兜住库卡死。
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	row := store.CallLog{
-		APIKeyName: rec.apiKeyName,
+// 三段可空映射（是不是流式、有没有首字节、有没有 usage）的判据都在这里。
+func (r *callRecord) Row() calllog.Row {
+	row := calllog.Row{
+		APIKeyName: r.apiKeyName,
 		// 端点恒落（#17）：它在 callLog 中间件里就写死了，鉴权失败、限流、
 		// count_tokens 撞非 Anthropic 渠道那些没走到上游的行也都有——那正是最需要
 		// 它的一批，那些行的模型、耗时、渠道全是空的，只有端点分得开它们。
-		Endpoint: rec.endpoint,
+		Endpoint: r.endpoint,
 		// 出站端点相反，**只有真发过上游的行才有**（#20）：上面那批正是没有它的，
 		// 空就是事实，不从 upstream_protocol 反推补一条没打过的路径。
-		UpstreamEndpoint: rec.upstreamEndpoint,
-		ClientProtocol:   string(rec.inboundProto),
-		UpstreamProtocol: string(rec.channelProto),
-		ModelRequested:   rec.requestedModel,
-		ModelUpstream:    rec.upstreamModel,
-		ChannelName:      rec.channel,
-		ChannelKeyName:   rec.channelKey,
-		Status:           rec.status,
-		RetryCount:       rec.retries,
+		UpstreamEndpoint: r.upstreamEndpoint,
+		ClientProtocol:   string(r.inboundProto),
+		UpstreamProtocol: string(r.channelProto),
+		ModelRequested:   r.requestedModel,
+		ModelUpstream:    r.upstreamModel,
+		ChannelName:      r.channel,
+		ChannelKeyName:   r.channelKey,
+		Status:           r.status,
+		RetryCount:       r.retries,
 		// 三档都落空、或根本没走到上游时是空串（口径层 v0.56、v0.74）。
-		UpstreamRequestID: rec.upstreamRequestID,
-		TotalMs:           time.Since(rec.start).Milliseconds(),
-		QueueWaitMs:       rec.queueWait.Milliseconds(),
+		UpstreamRequestID: r.upstreamRequestID,
+		TotalMs:           time.Since(r.start).Milliseconds(),
+		QueueWaitMs:       r.queueWait.Milliseconds(),
 	}
-	// stream 是解析请求体那一步才知道的（server.go 里与 requestedModel 同一行赋值），
-	// 没走到那一步的行（鉴权失败、body 不是合法 JSON）留 NULL——落一个 false 会把
-	// 「不知道」说成「同步」。判据借 requestedModel：两者同源，空串即没解析到。
-	if rec.requestedModel != "" {
-		row.IsStream = sql.NullBool{Bool: rec.stream, Valid: true}
+	// stream 是解析请求体那一步才知道的，没走到那一步的行（鉴权失败、限流、body
+	// 不是合法 JSON、缺 model）留 NULL——落一个 false 会把「不知道」说成「同步」。
+	// 判据眼下借 requestedModel（两者同源，空串即没解析到），C12 换成显式标志位。
+	if r.requestedModel != "" {
+		row.IsStream = sql.NullBool{Bool: r.stream, Valid: true}
 	}
 	// 只记流式（展开层 §7 该列原文「首字节耗时（流式）」）。非流式也填的话它约等于
 	// 总耗时，混合流量下「平均首字延迟」就成了一个没有意义的数。非流式的首字节耗时
 	// 仍在 slog 的 ttfb_ms 里，没有丢。
-	if rec.stream && !rec.firstByte.IsZero() {
-		row.TTFTMs = sql.NullInt64{Int64: rec.firstByte.Sub(rec.start).Milliseconds(), Valid: true}
+	if r.stream && r.haveFirstByte() {
+		row.TTFTMs = sql.NullInt64{Int64: r.firstByte.Sub(r.start).Milliseconds(), Valid: true}
 	}
-	if rec.haveSummary {
-		row.InputTokens = nullInt(rec.summary.InputTokens)
-		row.OutputTokens = nullInt(rec.summary.OutputTokens)
-		row.CacheReadTokens = nullInt(rec.summary.CacheReadTokens)
-		row.CacheWriteTokens = nullInt(rec.summary.CacheWriteTokens)
+	// #6 的接缝在这里：Anthropic 渠道的 input 是净值，要加回缓存两项才是流水那一列
+	// 的毛值口径（口径层 v0.71）。归一函数由 internal/protocol 暴露，本包只在这里调
+	// 一次。**本票不接线**——接了 Anthropic 行的 input_tokens 就会变，与「行为一字
+	// 不变」直接冲突。
+	if r.haveSummary {
+		row.InputTokens = nullInt(r.summary.InputTokens)
+		row.OutputTokens = nullInt(r.summary.OutputTokens)
+		row.CacheReadTokens = nullInt(r.summary.CacheReadTokens)
+		row.CacheWriteTokens = nullInt(r.summary.CacheWriteTokens)
 		// 思考 token 单独判（口径层 v0.66）：上面四个是「有 summary 就一定有
 		// 数」，这一格不是——上游可能整个 details 容器都不发（老式兼容上游、中转
 		// 裁剪、CC 挂非推理模型）。没报就留 NULL，别落 0：落 0 是在说「上游报了，
 		// 这次没思考」，而我们其实什么都不知道。
-		if rec.summary.HasReasoningTokens {
-			row.ReasoningTokens = nullInt(rec.summary.ReasoningTokens)
+		if r.summary.HasReasoningTokens {
+			row.ReasoningTokens = nullInt(r.summary.ReasoningTokens)
 		}
 	}
 	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表，不是上游原文——上游错误
 	// 文案里可能带 base_url。词表与「哪个词落 NULL」见 calllog.Outcome.Column。
-	row.Error = rec.outcome.Column()
+	row.Error = r.outcome.Column()
 	// 上游原文另落一列（口径层 v0.53）。它与 error 列是两件事，也不同步出现：上游
 	// 透传 4xx 的 error 列是空的（透传成功不算网关侧错误，v0.28 纪律），detail 却有
 	// 值——「可展开」的判据因此是 status >= 400，不是 error 非空。
 	// 落库这一刻才截到 2KB：内存里收的是完整的一段（upstreamErrorLimit），因为
 	// request_id 取键要在截断前的字节上做（v0.74）。
-	if rec.errorDetail != nil {
-		row.ErrorDetail = sql.NullString{String: rec.errorDetail.truncatedTo(errorDetailLimit), Valid: true}
+	if r.errorDetail != nil {
+		row.ErrorDetail = sql.NullString{String: r.errorDetail.truncatedTo(errorDetailLimit), Valid: true}
 	}
+	return row
+}
 
-	if err := store.InsertCallLog(ctx, s.db, row); err != nil {
-		s.log.Error("调用流水落库失败", "err", err)
+// persist 把这一行写进 call_logs。
+//
+// 落库失败**不得影响请求**：这里跑的时候响应早已写出去了，改写不了也中断不了，
+// 只能记一条 slog error。口径层 §2.5 要的是「每请求一行落库」，但一次 SQLite 抖动
+// 不该把一次成功的转发变成客户端眼里的失败。
+func (r *callRecord) persist() {
+	if r.sink == nil {
+		return
+	}
+	// 不用请求 ctx：客户端断开时它已经 canceled，拿它来写等于「一断线就不记账」，
+	// 而被打断恰恰是最需要留痕的时候。
+	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+	defer cancel()
+	if err := r.sink(ctx, r.Row()); err != nil {
+		r.log.Error("调用流水落库失败", "err", err)
 	}
 }
 
 func nullInt(v int) sql.NullInt64 {
 	return sql.NullInt64{Int64: int64(v), Valid: true}
+}
+
+// insertCallLog 是 Server 接给流水的落库出口（calllog.Sink）。
+//
+// 一层薄适配：本包知道 *sql.DB 在哪，流水那一侧只知道「有一行要落」。
+func (s *Server) insertCallLog(ctx context.Context, row calllog.Row) error {
+	return store.InsertCallLog(ctx, s.db, row)
 }

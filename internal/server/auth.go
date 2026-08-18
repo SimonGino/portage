@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
 	"github.com/SimonGino/portage/internal/calllog"
@@ -28,29 +27,22 @@ const (
 // relay 根本不会执行，日志逻辑留在里面就等于「被刷的时候日志里什么都看不到」。
 func (s *Server) callLog(ep protocol.Endpoint) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rec := newCallRecord(ep)
+		rec := newCallRecord(ep, s.log, s.insertCallLog)
 		c.Set(ctxCallRecord, rec)
 		// defer 在 panic 展开时照常执行——首字节后断流那条路径也落得下日志。
-		defer func() {
-			rec.Finish(c.Writer.Status())
-			s.logCall(rec)
-		}()
+		defer func() { rec.Finish(c.Writer.Status()) }()
 		c.Next()
 	}
 }
 
-// callRecordFrom 取出本次调用的日志记录。
-//
-// 三层中间件是在 Engine() 里一起注册的，取不到只可能是路由被改坏了。这里回一个
-// 临时记录而不是 panic：链路挂了不该顺带把请求也打成 500，日志少一行由
-// TestEveryRelayEndpointLogsOnce 那类用例去逮。
+// callRecordFrom 取出本次调用的日志记录，取不到时回一个黑洞（见 detachedCallRecord）。
 func callRecordFrom(c *gin.Context) *callRecord {
 	if v, ok := c.Get(ctxCallRecord); ok {
 		if rec, ok := v.(*callRecord); ok {
 			return rec
 		}
 	}
-	return &callRecord{start: time.Now()}
+	return detachedCallRecord()
 }
 
 // authRelay 是四个转发端点的 key 鉴权。
