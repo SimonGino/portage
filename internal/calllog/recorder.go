@@ -23,6 +23,8 @@ type Recorder struct {
 	sink Sink
 	// finished 让收尾幂等：重复落库的表现是账翻倍而所有断言照常绿。
 	finished bool
+	// misuse 攒下沿途用错半区的收场词（见 complain）。正常路径恒空。
+	misuse []string
 
 	start time.Time
 
@@ -246,7 +248,12 @@ func (r *Recorder) Succeeded() { r.outcome = OK }
 
 // Refused 记一次**网关自己回绝**的收场：鉴权不过、白名单挡下、限流、转换闸、
 // 压缩闸。这一半的词见 Outcome.Refusal。
-func (r *Recorder) Refused(o Outcome) { r.outcome = o }
+func (r *Recorder) Refused(o Outcome) {
+	if !o.Refusal() {
+		r.complain("Refused", o)
+	}
+	r.outcome = o
+}
 
 // QueueRejected 记一次渠道并发闸的回绝，并把出站端点**清回空串**。
 //
@@ -254,6 +261,9 @@ func (r *Recorder) Refused(o Outcome) { r.outcome = o }
 // 这三档一个字节都没到上游，同 401 / 429 / 501 那批，空就是事实。清在这一个动词
 // 里而不是两个调用点各写一遍，是因为这本来就是那两条路共用的同一件事。
 func (r *Recorder) QueueRejected(o Outcome) {
+	if !o.Refusal() {
+		r.complain("QueueRejected", o)
+	}
 	r.outcome = o
 	r.upstreamEndpoint = ""
 }
@@ -264,6 +274,9 @@ func (r *Recorder) QueueRejected(o Outcome) {
 // detail 传空串即「这一支没有原文可记」。非空时走先到先得：透传路径的旁路收集器
 // 若已经占了坑，这里给的一句概括不覆盖它。
 func (r *Recorder) Failed(o Outcome, detail string) {
+	if !o.Failure() {
+		r.complain("Failed", o)
+	}
 	r.outcome = o
 	r.setErrorDetail(detail)
 }
@@ -360,8 +373,28 @@ func (r *Recorder) Finish(status int) {
 	if r.log == nil {
 		return
 	}
+	// 抱怨排在 call 那一行**之前**：读日志的人先看到「这一行的收场词可能是错的」，
+	// 再看那一行本身。放后面的话，扫过去的人多半已经信了它。
+	for _, m := range r.misuse {
+		r.log.Error("流水收场词用错了半区：回绝与失败是两半，见 calllog.Outcome",
+			"call", m, "endpoint", r.endpoint)
+	}
 	r.log.Info("call", r.LogAttrs()...)
 	r.persist()
+}
+
+// complain 记下一次「收场词用错了半区」：Refused 收到失败半区的词，或反过来。
+//
+// 攒着不当场发作，收尾时多打一行 slog.Error。三种处置里选它的理由：
+//
+//   - **不 panic**：这些动词多数跑在 panic 展开路径上（首字节后断流那条），
+//     在这里 panic 会把一次日志分类错误升级成 500，或者打断一条正在输出的流。
+//   - **不静默吞**：吞掉就产出一行「看起来挺正常」的流水，而流水的读者没有第二
+//     个信源——那正是本次收编要治的病。
+//   - 正常路径**零输出**，所以它不改变任何既有行为；重构期它是一张免费的探针，
+//     加第 11 个词而忘了给它分半区时也会当场说话。
+func (r *Recorder) complain(verb string, o Outcome) {
+	r.misuse = append(r.misuse, verb+"("+o.String()+")")
 }
 
 // LogAttrs 摊出这一行 slog 的属性。
