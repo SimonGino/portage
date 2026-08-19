@@ -15,12 +15,29 @@ import (
 // 回一个 400，那本身就是要报出来的信息。
 const probeTimeout = 8 * time.Second
 
-// ProbeResult 是一次协议可达性探测的结论（口径层 v0.33 §2.2）。
+// ProbeState 是一格探测的三态结论（模型级 v0.43 立的口径，子路径层 v0.89 跟上）。
+//
+// 刻意不是二态：把 429 画成「不通」、把 400 画成「通」、把超时画成「不存在」都是
+// 撒谎，而探测的口径是只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
+type ProbeState string
+
+const (
+	// ProbeOK：子路径层指「这条子路径存在」，模型级指「上游 2xx 真回了话」。
+	ProbeOK ProbeState = "ok"
+	// ProbeMissing：404/405。模型不存在与子路径不存在合并——对使用者是同一个
+	// 结论：这一格当下不能用。
+	ProbeMissing ProbeState = "missing"
+	// ProbeUnclear：没拿到响应（超时、握手失败、我方压根没发出去），以及模型级
+	// 那些既不能算通也不能算不通的状态码（400/401/403/429/5xx）。
+	ProbeUnclear ProbeState = "unclear"
+)
+
+// ProbeResult 是一次协议可达性探测的结论（口径层 v0.33 §2.2，三态见 v0.89）。
 type ProbeResult struct {
 	Protocol protocol.Protocol `json:"protocol"`
-	// Reachable=false 只代表「这个子路径看起来不存在」，不代表模型能不能用。
-	Reachable bool `json:"reachable"`
-	// Status 是上游的 HTTP 状态码，0 表示没连上。
+	// State=ok 只代表「这个子路径看起来存在」，不代表模型能不能用。
+	State ProbeState `json:"state"`
+	// Status 是上游的 HTTP 状态码，0 表示没拿到响应。
 	Status int    `json:"status"`
 	Detail string `json:"detail"`
 }
@@ -36,9 +53,12 @@ type ProbeResult struct {
 // 都会拿 400「缺 model」或 401「key 不对」回绝它——而那恰恰证明路由存在。要求 2xx
 // 就得发一个真请求，那要花钱，还会把「模型名写错了」混进来当成协议不支持。
 //
+// 但「任何真实上游都会回绝它」这句话有例外，所以结论是三态而不是两态（v0.89）：
+// 没拿到响应落 ProbeUnclear，与 404/405 的 ProbeMissing 分开。
+//
 // 空 body 也是为了不花钱：`{}` 过不了任何上游的参数校验，不会产生一次推理。
 func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential string) ProbeResult {
-	res := ProbeResult{Protocol: p}
+	res := ProbeResult{Protocol: p, State: ProbeUnclear}
 	ep, ok := protocol.UpstreamEndpoint(p)
 	if !ok {
 		res.Detail = "没有对应的上游端点"
@@ -60,6 +80,11 @@ func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential 
 
 	resp, err := (&http.Client{Timeout: probeTimeout}).Do(req)
 	if err != nil {
+		// 留在 ProbeUnclear，不并进 ProbeMissing（v0.89）：实测有上游（阿里云 PAI-EAS
+		// 上挂的 llm-gateway）过了鉴权之后对缺 `messages` 的请求体既不 400 也不 401，
+		// 直接挂着不回，而它那两条子路径带上真实请求体全都 200。二态时这种上游被
+		// 画成「客户端打过来会 404」，是对着一个好渠道喊狼来了。
+		//
 		// Redact 摘掉传输错误里内嵌的 URL——这段文案会进管理端页面（CLAUDE.md：
 		// 错误回显严禁泄露上游 key 与 base_url）。
 		res.Detail = "连不上：" + Redact(err).Error()
@@ -70,11 +95,12 @@ func Probe(ctx context.Context, baseURL string, p protocol.Protocol, credential 
 
 	switch resp.StatusCode {
 	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		res.State = ProbeMissing
 		res.Detail = "上游没有这个子路径（" + ep.Path + "）"
 	default:
-		res.Reachable = true
+		res.State = ProbeOK
 		res.Detail = "子路径存在"
-		// 非 2xx 但仍判 reachable 的那些，把状态码翻成一句话带上。判据不变
+		// 非 2xx 但仍判存在的那些，把状态码翻成一句话带上。判据不变
 		// （404/405 之外都算路由存在），但「路由在」与「这把凭证打过去被 401」
 		// 是两件事：只报前一句，一个每条子路径都回 401 的渠道在页面上显示的是
 		// 「探测通过」。摘要仍走我方固定词表，不带上游原文（口径层 v0.43 ②）。
@@ -105,26 +131,12 @@ func subpathNote(status int) string {
 	return ""
 }
 
-// ModelProbeState 是模型级探测一格的三态结论（口径层 v0.43）。
+// ModelProbeResult 是「这个模型在这一侧通不通」的一格答案（口径层 v0.43）。
 //
-// 刻意不是二态：把 429 画成「不通」、把 400 画成「通」都是撒谎，而探测的口径是
-// 只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
-type ModelProbeState string
-
-const (
-	// ModelOK：上游 2xx，这个模型在这一侧真实回了话。
-	ModelOK ModelProbeState = "ok"
-	// ModelMissing：404/405。模型不存在与子路径不存在合并——对使用者是同一个
-	// 结论：这一格当下不能用。
-	ModelMissing ModelProbeState = "missing"
-	// ModelUnclear：其余一切（400/401/403/429/5xx/连不上）。
-	ModelUnclear ModelProbeState = "unclear"
-)
-
-// ModelProbeResult 是「这个模型在这一侧通不通」的一格答案。
+// 三态与子路径层共用 ProbeState：同一张卡片上两段结论并排出现，两套词表会打架。
 type ModelProbeResult struct {
 	Protocol protocol.Protocol `json:"protocol"`
-	State    ModelProbeState   `json:"state"`
+	State    ProbeState        `json:"state"`
 	// Status 是上游的 HTTP 状态码，0 表示没连上。
 	Status int    `json:"status"`
 	Detail string `json:"detail"`
@@ -139,7 +151,7 @@ type ModelProbeResult struct {
 //
 // 结论沿 v0.33 血统：只提示、不落库、不进路由。
 func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, credential, model string) ModelProbeResult {
-	res := ModelProbeResult{Protocol: p, State: ModelUnclear}
+	res := ModelProbeResult{Protocol: p, State: ProbeUnclear}
 	ep, ok := protocol.UpstreamEndpoint(p)
 	if !ok {
 		res.Detail = "没有对应的上游端点"
@@ -167,10 +179,10 @@ func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, creden
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		res.State = ModelOK
+		res.State = ProbeOK
 		res.Detail = "通"
 	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusMethodNotAllowed:
-		res.State = ModelMissing
+		res.State = ProbeMissing
 		res.Detail = "这一侧没有这个模型（或子路径不存在）"
 	default:
 		// 摘要用我们自己的固定词表，**不带上游原文**——上游错误文案里可能带

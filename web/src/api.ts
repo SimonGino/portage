@@ -95,10 +95,19 @@ export const PROTOCOL_SOON: { value: string; label: string; hint: string }[] = [
   { value: 'gemini', label: 'Gemini', hint: '暂未支持' },
 ]
 
+/**
+ * 一格探测的三态结论。子路径层与模型级共用（口径层 v0.43 立，v0.89 子路径层跟上）。
+ *
+ * 刻意不是二态：把 429 画成「不通」、把 400 画成「通」、把超时画成「不存在」都是
+ * 撒谎，而探测的口径是只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
+ */
+export type ProbeState = 'ok' | 'missing' | 'unclear'
+
 /** 一次协议可达性探测的结果。只提示，不落库、不参与路由（口径层 v0.33）。 */
 export interface ProbeResult {
   protocol: Protocol
-  reachable: boolean
+  /** ok=子路径存在、missing=404/405、unclear=没拿到响应。 */
+  state: ProbeState
   status: number
   detail: string
 }
@@ -115,17 +124,9 @@ export interface ProbeGroup {
   results: ProbeResult[]
 }
 
-/**
- * 模型级探测一格的三态结论（口径层 v0.43）。
- *
- * 刻意不是二态：把 429 画成「不通」、把 400 画成「通」都是撒谎，而探测的口径是
- * 只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
- */
-export type ModelProbeState = 'ok' | 'missing' | 'unclear'
-
 export interface ModelProbeResult {
   protocol: Protocol
-  state: ModelProbeState
+  state: ProbeState
   status: number
   detail: string
 }

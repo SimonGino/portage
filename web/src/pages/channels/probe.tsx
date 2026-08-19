@@ -2,47 +2,49 @@ import { PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
 import type { ModelProbeRow, ProbeGroup } from '../../api'
 
 /**
- * ProbeRow 是一份凭证的探测结论（口径层 v0.33 / v0.38）。
+ * ProbeRow 是一份凭证的探测结论（口径层 v0.33 / v0.38，三态见 v0.89）。
  *
- * 三段而不是两段：全通、子路径不存在、**子路径存在但上游回了非 2xx**。第三段原先
- * 是哑的——`Probe` 把 404/405 之外的一切都判 reachable（那正是它的判据：任何真实
- * 上游都会拿 400/401 回绝一个空 `{}`，而那恰恰证明路由存在），于是一个每条子路径
- * 都回 401 的渠道在页面上显示「探测通过」。路由确实通，凭证确实是坏的，两句话都得说。
- * 400 不算：空 `{}` 被拒是这次探测的正常结果，不是异常。
+ * 四段而不是两段：全通、子路径不存在、**没拿到响应**、子路径存在但上游回了非 2xx。
+ *
+ * 「没拿到响应」单列是 v0.89 的口径修正：它原先并进「不存在」那一段，于是超时被
+ * 照实画成「这个协议的客户端打过来会 404」——而实测有上游（EAS 上挂的 llm-gateway）
+ * 对探测用的空 `{}` 既不 400 也不 401，直接挂着不回，它的子路径其实条条可用。
+ * 所以这一段也不转警告色：只有确定的「不通」才配亮灯，与模型矩阵同一条纪律。
+ *
+ * 非 2xx 那一段也不是哑的：`Probe` 把 404/405 之外的一切都判存在（那正是它的判据
+ * ——任何真实上游都会拿 400/401 回绝一个空 `{}`，而那恰恰证明路由存在），于是一个
+ * 每条子路径都回 401 的渠道在页面上显示「探测通过」。路由确实通，凭证确实是坏的，
+ * 两句话都得说。400 不算：空 `{}` 被拒是这次探测的正常结果，不是异常。
  */
 export function ProbeRow({ group, multi }: { group: ProbeGroup; multi: boolean }) {
-  const unreachable = group.results.filter((r) => !r.reachable)
+  const missing = group.results.filter((r) => r.state === 'missing')
+  const unclear = group.results.filter((r) => r.state === 'unclear')
   // 401/403/429/5xx：路由在，但这一把凭证这一刻打过去是这个下场。
-  const notable = group.results.filter((r) => r.reachable && r.status > 400)
+  const notable = group.results.filter((r) => r.state === 'ok' && r.status > 400)
   const who = group.credential ? group.credential + (group.disabled ? '（已停用）' : '') : ''
   const prefix = multi && who ? `${who}：` : ''
+  const listed = [...missing, ...unclear, ...notable]
 
   return (
-    <div className={'probe' + (unreachable.length > 0 || notable.length > 0 ? ' probe-bad' : '')}>
-      {unreachable.length === 0 ? (
-        <span>
-          {prefix}
-          {notable.length === 0
-            ? `探测通过：勾选的 ${group.results.length} 个协议子路径上游都有`
-            : `子路径都在，但上游回了非 2xx——路由没问题，是这把凭证或上游状态的问题：`}
-        </span>
-      ) : (
-        <span>
-          {prefix}探测未通过 {unreachable.length}{' '}
-          项——只是提示，不影响保存与路由，但这些协议的客户端打过来会 404：
-        </span>
-      )}
-      {(unreachable.length > 0 || notable.length > 0) && (
+    <div className={'probe' + (missing.length > 0 || notable.length > 0 ? ' probe-bad' : '')}>
+      <span>
+        {prefix}
+        {missing.length > 0
+          ? `探测未通过 ${missing.length} 项——只是提示，不影响保存与路由，但这些协议的客户端打过来会 404：`
+          : unclear.length > 0
+            ? `${unclear.length} 项说不清：上游没回话。可能是网络不通，也可能是这家上游对探测用的空请求体不作答——后者不影响真实请求，跑一次模型探测就能分辨：`
+            : notable.length === 0
+              ? `探测通过：勾选的 ${group.results.length} 个协议子路径上游都有`
+              : `子路径都在，但上游回了非 2xx——路由没问题，是这把凭证或上游状态的问题：`}
+      </span>
+      {listed.length > 0 && (
         <ul>
-          {unreachable.map((r) => (
+          {listed.map((r) => (
             <li key={r.protocol}>
               <code>{PROTOCOL_PATH[r.protocol] ?? r.protocol}</code> {r.detail}
-              {r.status > 0 && ` (HTTP ${r.status})`}
-            </li>
-          ))}
-          {notable.map((r) => (
-            <li key={r.protocol}>
-              <code>{PROTOCOL_PATH[r.protocol] ?? r.protocol}</code> {r.detail}
+              {/* 只给「不存在」补状态码：非 2xx 那段的固定词表自带括号里的数字，
+                  「说不清」压根没有状态码可补（status 是 0）。 */}
+              {r.state === 'missing' && r.status > 0 && ` (HTTP ${r.status})`}
             </li>
           ))}
         </ul>

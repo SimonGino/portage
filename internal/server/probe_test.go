@@ -23,10 +23,10 @@ type probeResponse struct {
 		Credential string `json:"credential"`
 		Disabled   bool   `json:"disabled"`
 		Results    []struct {
-			Protocol  string `json:"protocol"`
-			Reachable bool   `json:"reachable"`
-			Status    int    `json:"status"`
-			Detail    string `json:"detail"`
+			Protocol string `json:"protocol"`
+			State    string `json:"state"`
+			Status   int    `json:"status"`
+			Detail   string `json:"detail"`
 		} `json:"results"`
 	} `json:"credentials"`
 	Models []struct {
@@ -43,10 +43,10 @@ type probeResponse struct {
 
 // only 取唯一那一组凭证的结果——单凭证渠道的用例都只关心那一组。
 func (p probeResponse) only(t *testing.T) []struct {
-	Protocol  string `json:"protocol"`
-	Reachable bool   `json:"reachable"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail"`
+	Protocol string `json:"protocol"`
+	State    string `json:"state"`
+	Status   int    `json:"status"`
+	Detail   string `json:"detail"`
 } {
 	t.Helper()
 	if len(p.Credentials) != 1 {
@@ -86,15 +86,42 @@ func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("期望两个协议各一条结果，得到 %+v", results)
 	}
-	byProto := map[string]bool{}
+	byProto := map[string]string{}
 	for _, r := range results {
-		byProto[r.Protocol] = r.Reachable
+		byProto[r.Protocol] = r.State
 	}
-	if !byProto["openai"] {
-		t.Error("上游回 400 说明子路径存在，不该判成不可达")
+	if byProto["openai"] != "ok" {
+		t.Errorf("上游回 400 说明子路径存在，不该判成不可达：%q", byProto["openai"])
 	}
-	if byProto["openai_responses"] {
-		t.Error("上游回 404，应判为子路径不存在")
+	if byProto["openai_responses"] != "missing" {
+		t.Errorf("上游回 404，应判为子路径不存在：%q", byProto["openai_responses"])
+	}
+}
+
+// 拿不到响应 ≠ 子路径不存在（口径层 v0.89）。真实把这条逼出来的是阿里云 PAI-EAS 上
+// 挂的 llm-gateway：过了鉴权之后，它对缺 messages 的请求体既不 400 也不 401，直接挂着
+// 不回，而那个渠道的两条子路径带上真实请求体全都 200。二态时这种上游被画成「客户端
+// 打过来会 404」——对着一个好渠道喊狼来了。
+//
+// 这里拿一个必然连不上的地址走同一条分支：真挂死要等满 probeTimeout，测试等不起。
+func TestProbeKeepsNoResponseApartFromMissingSubPath(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "dead", "openai", "http://127.0.0.1:1", "sk-upstream")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var got probeResponse
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", &got)
+
+	results := got.only(t)
+	if len(results) != 1 {
+		t.Fatalf("期望一条结果，得到 %+v", results)
+	}
+	if results[0].State != "unclear" {
+		t.Errorf("没拿到响应应判「说不清」而不是 %q——超时并进「子路径不存在」是撒谎", results[0].State)
+	}
+	if results[0].Status != 0 {
+		t.Errorf("没拿到响应时状态码该是 0：%+v", results[0])
 	}
 }
 
@@ -137,8 +164,8 @@ func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &got); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
-	if results := got.only(t); len(results) != 1 || results[0].Reachable {
-		t.Errorf("连不上的渠道应判为不可达：%+v", results)
+	if results := got.only(t); len(results) != 1 || results[0].State != "unclear" {
+		t.Errorf("连不上的渠道应判为说不清：%+v", results)
 	}
 	if len(got.Models) != 1 || len(got.Models[0].Results) != 1 {
 		t.Fatalf("期望模型矩阵一行一格，得到 %+v", got.Models)
