@@ -226,16 +226,16 @@ type ChannelInput struct {
 //
 // 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
 // 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
-func (in ChannelInput) normalized() (string, error) {
+func (in ChannelInput) normalized() (protocol.Set, error) {
 	if strings.Contains(in.Name, "/") {
-		return "", InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+		return nil, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
 			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
 	}
 	set, err := protocol.ParseSet(in.Protocols.String())
 	if err != nil {
-		return "", InvalidInput{Reason: err.Error()}
+		return nil, InvalidInput{Reason: err.Error()}
 	}
-	return set.String(), nil
+	return set, nil
 }
 
 // keyMode 归一化选取模式，**空串原样返回**表示「这次请求没提这个字段」——建渠道时
@@ -266,7 +266,7 @@ func (in ChannelInput) maxConcurrency() (*int, error) {
 
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
-	protocols, err := in.normalized()
+	set, err := in.normalized()
 	if err != nil {
 		return 0, err
 	}
@@ -297,11 +297,19 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if in.SupportsStatefulResponses != nil {
 		stateful = *in.SupportsStatefulResponses
 	}
+	// 协议不含 Responses 时两个位一律落默认值，请求体里带来的不作数（#33）：这两位
+	// 只对 openai_responses 有意义，UI 也只在勾了它时才渲染——不含协议还写着非默认值
+	// 的行是一个界面上看不见、也改不掉的状态。守在这里而不是指望前端不发，是因为
+	// 换个 UI 或直接打 API 就绕过去了。
+	if !set.Has(protocol.OpenAIResponses) {
+		compaction = false
+		stateful = true
+	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, protocols, base_url, key_mode, max_concurrency,
 		                      supports_compaction, supports_stateful_responses, disabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, protocols, in.BaseURL, mode, conc,
+		in.Name, set.String(), in.BaseURL, mode, conc,
 		boolInt(compaction), boolInt(stateful), boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
@@ -312,7 +320,7 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 // UpdateChannel 覆盖渠道的可写字段，改名也走这里（合并渠道之后要给它起个不带协议
 // 后缀的新名字，口径层 v0.33 不做旧限定名的兼容期）。
 func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) error {
-	protocols, err := in.normalized()
+	set, err := in.normalized()
 	if err != nil {
 		return err
 	}
@@ -328,7 +336,7 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	// 的注释）。其余字段仍是整体覆盖——它们从第一版起就在表单里，请求体里没有等于
 	// 人真把它清空了。
 	sets := `name = ?, protocols = ?, base_url = ?, disabled = ?`
-	args := []any{in.Name, protocols, in.BaseURL, boolInt(in.Disabled)}
+	args := []any{in.Name, set.String(), in.BaseURL, boolInt(in.Disabled)}
 	if mode != "" {
 		sets += `, key_mode = ?`
 		args = append(args, mode)
@@ -337,13 +345,23 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 		sets += `, max_concurrency = ?`
 		args = append(args, *maxConc)
 	}
-	if in.SupportsCompaction != nil {
-		sets += `, supports_compaction = ?`
-		args = append(args, boolInt(*in.SupportsCompaction))
-	}
-	if in.SupportsStatefulResponses != nil {
-		sets += `, supports_stateful_responses = ?`
-		args = append(args, boolInt(*in.SupportsStatefulResponses))
+	if set.Has(protocol.OpenAIResponses) {
+		if in.SupportsCompaction != nil {
+			sets += `, supports_compaction = ?`
+			args = append(args, boolInt(*in.SupportsCompaction))
+		}
+		if in.SupportsStatefulResponses != nil {
+			sets += `, supports_stateful_responses = ?`
+			args = append(args, boolInt(*in.SupportsStatefulResponses))
+		}
+	} else {
+		// 协议不含 Responses 时两个位强制归位默认值（#33，PO 2026-08-19 裁定选 A）：
+		// UI 只在勾了 Responses 时才渲染这两位，取消协议后前端整个不发字段，沿用
+		// 「nil = 整列不写」会把一个界面上再也够不着的旧值留在库里——哪天把协议勾
+		// 回来它原样复活，supports_compaction 残留 1 正是 v0.54 ⑨ 要杀的那格（上游
+		// 忽略 compaction_trigger，Codex 收 0 个 compaction item 即 Fatal）。归位值
+		// 各按各的默认：compaction 取否（v0.54 ⑨）、stateful 取是（v0.88 ②）。
+		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
 	}
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
