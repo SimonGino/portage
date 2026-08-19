@@ -1292,7 +1292,7 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 
 ## 12. 参考对照
 
-仓库索引与各仓库定位、许可证注意事项见本仓库 `CLAUDE.md`「参考仓库」一节，**可参考的仓库集合以那一节为准**（下表只是逐文件路径对照，不必逐仓库补齐）；下表 new-api 路径均为 `~/Code/GitHub/new-api`（上游）相对路径，已逐一核实存在。
+仓库索引与各仓库定位、许可证注意事项见 `docs/agents/reference-repos.md`，**可参考的仓库集合以那份为准**（下表只是逐文件路径对照，不必逐仓库补齐）；下表 new-api 路径均为 `~/Code/GitHub/new-api`（上游）相对路径，已逐一核实存在。
 
 | 参考仓库 / 位置 | 参考什么 |
 |---|---|

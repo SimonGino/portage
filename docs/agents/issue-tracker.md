@@ -24,15 +24,9 @@ Infer the repo from `git remote -v` — `gh` does this automatically when run in
 
 ## Pull requests as a triage surface
 
-**PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
+**PRs as a request surface: no.** 外部 PR 不作为 triage 入口，`/triage` 读的就是这一行。若改判 `yes`，PR 走与 issue 同一套标签与状态，把上面 Conventions 那节的 `gh issue` 换成 `gh pr` 等价物即可。
 
-When set to `yes`, PRs run through the same labels and states as issues, using the `gh pr` equivalents:
-
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
-- **Comment / label / close**: `gh pr comment`, `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
-
-GitHub shares one number space across issues and PRs, so a bare `#42` may be either — resolve with `gh pr view 42` and fall back to `gh issue view 42`.
+GitHub 的 issue 与 PR 共用一个号段，裸 `#42` 可能是任一个：先 `gh pr view 42`，认不出再回落 `gh issue view 42`。
 
 ## When a skill says "publish to the issue tracker"
 
