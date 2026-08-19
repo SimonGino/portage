@@ -2941,14 +2941,15 @@ button.cal-day,
 }
 
 /* 排布③：30 天 = 窗口盖住的那六周日历（口径层 v0.86 ⑤，不做 53 周画布——本项目
-   这个数据量下一年画布 94% 的格子是灰的）。窗口外那几格仍画成灰底占位：一周
-   七格的结构不能缺角。 */
+   这个数据量下一年画布 94% 的格子是灰的），按 GitHub 贡献图式裁切画（DESIGN v0.31）：
+   13px 小格 + 3px 隙、左对齐；窗口外格裁成透明占位（位仍占着，一周七格不缺角）；
+   星期只标一/三/五。右侧空白照实留——把窗口拉长撑满是口径变更，PO 2026-08-20 否了。 */
 .cal {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0 10px;
-  --cell: 34px;
-  --cal-gap: 7px;
+  --cell: 13px;
+  --cal-gap: 3px;
 }
 
 .cal-months {
@@ -2982,17 +2983,17 @@ button.cal-day,
 .cal-day {
   width: var(--cell);
   height: var(--cell);
-  border-radius: 5px;
+  border-radius: 2.5px;
   background: var(--heat-none);
   box-shadow: inset 0 0 0 1px var(--line-soft);
   padding: 0;
 }
 
-/* 窗口外只描一圈最淡的线占位——一周七格的结构不能缺角。这里**不能**填灰底：
-   填了它就比窗口内「没调用」的空格更实，「窗口外 / 没调用 / 有量」的深浅阶梯会反过来。 */
-.cal-day.is-out {
+/* 窗口外是透明占位——一周七格的结构不能缺角，但**不描边、不填底**：留任何痕迹
+   裁切就假了，也比窗口内「没调用」的空格更实，深浅阶梯会反过来。 */
+.cal-day.is-gap {
   background: none;
-  box-shadow: inset 0 0 0 1px var(--line-soft);
+  box-shadow: none;
 }
 
 /* 窗口内的格子一律靠填色说话，不描边——没有调用也有 --heat-none 那层最淡的底。 */
@@ -3013,7 +3014,7 @@ button.cal-day,
   display: grid;
   grid-template-rows: repeat(7, var(--cell));
   gap: var(--cal-gap);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
   text-align: right;
 }

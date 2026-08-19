@@ -139,10 +139,11 @@ export function SkyMatrix({ list, scale, sel, onPick }: SkyProps) {
 }
 
 /**
- * 排布③：30 天 = 窗口盖住的那六周日历（口径层 v0.86 ⑤，不做 53 周画布）。
+ * 排布③：30 天 = 窗口盖住的那六周日历（口径层 v0.86 ⑤，不做 53 周画布），
+ * 按 GitHub 贡献图式裁切画（DESIGN v0.31）。
  *
- * 窗口外那几格只描一圈线占位——一周七格的结构不能缺角，但不能填灰，填了就比
- * 窗口内「没有调用」的格子更实。
+ * 小格、窄隙、左对齐；窗口外的格裁成透明——位仍占着（一周七格不能缺角），但
+ * 不描边、不填底、无悬停：留任何痕迹裁切就假了。星期只标一/三/五。
  */
 export function SkyCalendar({
   list,
@@ -155,16 +156,20 @@ export function SkyCalendar({
   return (
     <div className="cal">
       <div />
-      <div className="cal-months" style={{ gridTemplateColumns: `repeat(${weeks.length},41px)` }}>
+      <div
+        className="cal-months"
+        style={{ gridTemplateColumns: `repeat(${weeks.length},calc(var(--cell) + var(--cal-gap)))` }}
+      >
         {months.map((m) => (
           <span key={m.col} style={{ gridColumn: m.col }}>
             {m.label}
           </span>
         ))}
       </div>
+      {/* 这个密度下只标一/三/五，与 GitHub 贡献图同一节奏。 */}
       <div className="cal-wdays">
-        {WD.map((w) => (
-          <span key={w}>{w}</span>
+        {['', '一', '', '三', '', '五', ''].map((w, i) => (
+          <span key={i}>{w}</span>
         ))}
       </div>
       <div className="cal-body">
@@ -173,13 +178,7 @@ export function SkyCalendar({
             {week.map((c) => {
               const b = c.index >= 0 ? list[c.index] : null
               if (!b) {
-                return (
-                  <span
-                    className="cal-day is-out"
-                    key={c.date.getTime()}
-                    title={`${md(c.date)} · 不在这个窗口里`}
-                  />
-                )
+                return <span className="cal-day is-gap" key={c.date.getTime()} />
               }
               const lv = scale(b)
               return (
