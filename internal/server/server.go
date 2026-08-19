@@ -368,6 +368,13 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
+		// Responses 有状态续链闸（口径层 v0.88），位置同上：它只管**透传**那半边，
+		// 转换那半边由 codec 在 DecodeRequest 里无条件拒。这两条闸与下面的 RewriteModel
+		// 400 一样都在 rec.Dialing 之前——它们一个字节都没打上游。见 stateful.go。
+		if s.rejectStatefulResponses(c, rec, ep, cand, body) {
+			return
+		}
+
 		// 转换闸。portage-legacy#80 九宫格全开后，这里能拦下的只剩「没有上游对应端点」的入口端点
 		// （count_tokens），501 是**没得做**而不是「还没做」——见 conversionOpen 的注释。
 		if cand.Protocol != ep.Proto {

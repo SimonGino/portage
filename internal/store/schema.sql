@@ -17,6 +17,14 @@ CREATE TABLE IF NOT EXISTS channels (
   -- 上游回 0 个 compaction item，Codex 照样 Fatal。为否时压缩 turn 明确拒绝。
   -- 转换路径（R→A / R→CC）与这一列无关：那条路上 trigger 根本到不了上游，一律拒。
   supports_compaction INTEGER NOT NULL DEFAULT 0,
+  -- 这个渠道的上游认不认 Responses 的有状态语义 `previous_response_id`（口径层
+  -- v0.88）：1 = 认（**默认**，与上一列相反）。同样只保护透传路径，为否时带
+  -- previous_response_id 的请求回 400（code previous_response_not_found）。
+  -- 默认取是的立论：这一位配错成是，上游自己会回一句明确的 unsupported/not_found，
+  -- 客户端看得见；配错成否则会打断一条本来正常工作的续链。而 supports_compaction
+  -- 配错成是的代价是 Codex 静默 Fatal，两者不对称的方向正相反。
+  -- 转换路径（R→A / R→CC）与这一列无关：那条路上有状态语义物理不成立，一律拒。
+  supports_stateful_responses INTEGER NOT NULL DEFAULT 1,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

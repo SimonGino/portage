@@ -93,15 +93,58 @@ func UpstreamEndpoint(p Protocol) (Endpoint, bool) {
 	return Endpoint{}, false
 }
 
+// RequestError 是「入站请求本身不合法」这一类**可逐字回显**的错误。
+//
+// 它存在的理由只有一个：codec 的 DecodeRequest 认出的某些问题，客户端有既定的降级
+// 动作可做（第一例是 previous_response_id → 重发完整 input），而那个动作是由错误体
+// 里的 code 触发的。普通的解码失败仍然走裸 error——那一档客户端除了「请求体坏了」
+// 之外读不出别的，多一个 code 也没人认。
+//
+// 承载它的状态码恒为 400：这个类型的定义就是「客户端的问题」。真要一个非 400 的
+// 可回显错误时，先想清楚它是不是同一件事，不要顺手给这个结构加 Status。
+//
+// Message 与 WriteError 的 msg 受同一条硬约束：**不许带上游 key 与 base_url**。
+type RequestError struct {
+	// Message 是给人读的那句话，要带可执行指引（「改成什么就能过」）。
+	Message string
+	// Code 是给程序读的那一位，落进 OpenAI 系错误体的 `code`。取值要挑客户端**已经
+	// 认得**的那个——自造一个新词等于回到只有文案可读。
+	Code string
+	// Param 是出问题的字段名，落进 OpenAI 系错误体的 `param`。
+	Param string
+}
+
+func (e *RequestError) Error() string { return e.Message }
+
 // WriteError renders msg in the protocol's own error shape so a harness can
 // parse it. Callers must never pass upstream credentials or base_url in msg.
 func (p Protocol) WriteError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(p.errorBody(status, msg))
+	p.writeError(w, status, msg, "", "")
 }
 
-func (p Protocol) errorBody(status int, msg string) any {
+// WriteRequestError 回一条带 code/param 的 400。
+//
+// 与 WriteError 分成两个动词而不是加两个参数：带 code 的错误是**契约**（客户端按
+// code 决定怎么降级），而绝大多数调用点回的是一句给人读的话，让它们统统多写两个空串
+// 只会让「这两位有没有人认」变得看不出来。
+func (p Protocol) WriteRequestError(w http.ResponseWriter, e *RequestError) {
+	p.writeError(w, http.StatusBadRequest, e.Message, e.Code, e.Param)
+}
+
+func (p Protocol) writeError(w http.ResponseWriter, status int, msg, code, param string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(p.errorBody(status, msg, code, param))
+}
+
+// errorBody 造出错误体。
+//
+// code/param 只有 OpenAI 系（Chat Completions 与 Responses 共用同一个 error 对象）
+// 有位置放。Anthropic 的 error 对象只有 type 与 message 两键，**不给它塞** ——那两个
+// 键没有任何 Anthropic 客户端会读，凭空多出来的字段只会让「回显与官方同形」这条不再
+// 成立。今天这不构成损失：带 code 的那条错误只从 Responses 入口发出（有状态续链是
+// Responses 独有的），而入口协议决定回显形状。
+func (p Protocol) errorBody(status int, msg, code, param string) any {
 	if p == Anthropic {
 		return map[string]any{
 			"type": "error",
@@ -115,10 +158,19 @@ func (p Protocol) errorBody(status int, msg string) any {
 		"error": map[string]any{
 			"message": msg,
 			"type":    openaiErrorType(status),
-			"param":   nil,
-			"code":    nil,
+			"param":   nilIfEmpty(param),
+			"code":    nilIfEmpty(code),
 		},
 	}
+}
+
+// nilIfEmpty 让没填的那位落成 JSON null 而不是空串：这两键的官方形态就是「要么有
+// 值、要么 null」，空串会让按真值判断的客户端把「没有 code」读成一个空 code。
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func anthropicErrorType(status int) string {

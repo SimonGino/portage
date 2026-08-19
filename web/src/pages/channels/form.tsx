@@ -50,6 +50,10 @@ export function ChannelForm({
   // compaction 能力位（口径层 v0.54）。只在勾了 Responses 时露出来：它问的是「这个
   // 上游认不认 compaction_trigger」，而只有 Responses 透传那条路会去问。
   const [compaction, setCompaction] = useState(channel?.supports_compaction ?? false)
+  // 有状态续链能力位（口径层 v0.88）。同样只在勾了 Responses 时露出来，默认取**是**
+  // ——与上一位相反：关错会打断一条本来能用的续链，而开错只是让上游自己回一句客户端
+  // 读得懂的 not_found。
+  const [stateful, setStateful] = useState(channel?.supports_stateful_responses ?? true)
   // 凭证只在**新建**时出现在这张表单里。编辑走凭证池，这样「改个名字」不可能顺手把
   // 凭证清空——后端的修改接口本来就不看这个字段。
   const [credential, setCredential] = useState('')
@@ -72,6 +76,8 @@ export function ChannelForm({
   // 那一列不动，同 key_mode 的整体覆盖陷阱）。取消勾 Responses 之后不去清那一列：
   // 清了也读不到，而勾回来时人还得再想一遍这个上游支不支持压缩。
   const showCompaction = protos.includes('openai_responses')
+  // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。
+  const showStateful = showCompaction
 
   const dirty =
     channel !== null &&
@@ -79,6 +85,7 @@ export function ChannelForm({
       baseURL !== channel.base_url ||
       maxConcValue !== channel.max_concurrency ||
       (showCompaction && compaction !== channel.supports_compaction) ||
+      (showStateful && stateful !== channel.supports_stateful_responses) ||
       protos.join(',') !== (channel.protocols ?? []).join(','))
 
   async function submit(e: React.FormEvent) {
@@ -98,6 +105,7 @@ export function ChannelForm({
         base_url: baseURL,
         max_concurrency: maxConcValue,
         ...(showCompaction ? { supports_compaction: compaction } : {}),
+        ...(showStateful ? { supports_stateful_responses: stateful } : {}),
         disabled: channel?.disabled ?? false,
       }
       if (channel) {
@@ -200,6 +208,24 @@ export function ChannelForm({
               { value: 'no', label: '不支持' },
             ]}
             onChange={(v) => setCompaction(v === 'yes')}
+          />
+        </Field>
+      )}
+      {/* Responses 有状态续链能力位（口径层 v0.88）。默认「支持」，只有明确知道这个
+          上游不做有状态续链时才关——关错会把一条本来能用的续链打断，而开错只是让上游
+          自己回一句客户端读得懂的错误。 */}
+      {showStateful && (
+        <Field
+          label="Responses 有状态续链（previous_response_id）"
+          hint="这个上游认不认 Responses 请求里的 previous_response_id。说「不支持」时，带这个字段的请求会被网关明确拒绝并让客户端重发完整 input；跨协议转换那条路无论这里怎么选都一律拒绝"
+        >
+          <Segmented
+            value={stateful ? 'yes' : 'no'}
+            options={[
+              { value: 'yes', label: '支持' },
+              { value: 'no', label: '不支持' },
+            ]}
+            onChange={(v) => setStateful(v === 'yes')}
           />
         </Field>
       )}

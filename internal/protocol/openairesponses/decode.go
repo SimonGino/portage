@@ -28,7 +28,8 @@ var topLevelKnown = map[string]bool{
 	"model": true, "stream": true, "max_output_tokens": true,
 	"instructions": true, "input": true, "tools": true, "tool_choice": true,
 	"temperature": true,
-	// previous_response_id 列在这里是为了**不让它进 Extras**，见下面的丢弃理由。
+	// previous_response_id 列在这里是为了**不让它进 Extras**：带值的请求在下面就被
+	// 拒了，剩下的形态（null / 空串）同样不该被带出去，见 stateful.go。
 	"previous_response_id": true,
 }
 
@@ -60,11 +61,20 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		req.System = []protocol.Block{{Kind: protocol.BlockText, Text: instructions}}
 	}
 
-	// previous_response_id 直接丢，不进 Extras（口径层 §5 待澄清 #2 已决：v1 只支持
-	// 无状态用法，失配时删掉它改用完整 input 重建上下文，同 sub2api 的
-	// RemovePreviousResponseIDFromBody）。进 Extras 反而危险——那等于把一个**上一个
-	// 上游**才认得的句柄留在 canonical 里，任何编码侧一旦顺手带出去，上游要么报
-	// 找不到、要么接到别人的会话上。丢在这里，丢得干净。
+	// previous_response_id 无条件拒（口径层 v0.88 推翻 v1 的「静默丢弃」）。
+	//
+	// DecodeRequest 只跑在**转换路径**上，而那条路上有状态续链物理不成立：这个 id 是
+	// 某个 Responses 上游发的句柄，转出去的 Anthropic / CC 上游不认；网关又不存会话
+	// 历史，展不开成完整 input。以前是丢掉它照常发——请求成功、内容静默劣化成单轮，
+	// 没有任何信号能让人归因。现在就地回一条带 code 的 400，客户端照它重发完整 input。
+	// 判据与文案见 stateful.go。
+	var previousResponseID string
+	if err := unmarshalIf(root, "previous_response_id", &previousResponseID); err != nil {
+		return nil, err
+	}
+	if previousResponseID != "" {
+		return nil, PreviousResponseRejection()
+	}
 
 	if raw, ok := root["tools"]; ok {
 		tools, err := decodeTools(raw)

@@ -90,6 +90,9 @@ func migrate(db *sql.DB) error {
 	if err := addSupportsCompaction(db); err != nil {
 		return err
 	}
+	if err := addSupportsStatefulResponses(db); err != nil {
+		return err
+	}
 	if err := addUpstreamRequestID(db); err != nil {
 		return err
 	}
@@ -214,6 +217,27 @@ func addSupportsCompaction(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN supports_compaction INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("迁移 channels.supports_compaction: %w", err)
+	}
+	return nil
+}
+
+// addSupportsStatefulResponses 补 v0.88 的 channels.supports_stateful_responses。
+//
+// 默认 1（支持），存量行一律落 1——与上面那位的「存量一律落否」**相反**，是 PO 明确
+// 裁的，理由同样是代价不对称、只是方向反过来：这一位配错成是，上游自己会回一句明确的
+// unsupported / not_found，客户端看得见也知道该重发完整 input；配错成否，则会把一条
+// 本来正常工作的续链当场打断。所以迁移后行为一字不变，要挡的人再去关它。
+func addSupportsStatefulResponses(db *sql.DB) error {
+	has, err := hasColumn(db, "channels", "supports_stateful_responses")
+	if err != nil {
+		return fmt.Errorf("检查 channels.supports_stateful_responses: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(
+		`ALTER TABLE channels ADD COLUMN supports_stateful_responses INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("迁移 channels.supports_stateful_responses: %w", err)
 	}
 	return nil
 }
@@ -394,6 +418,11 @@ type Candidate struct {
 	// （口径层 v0.54）。只在 Responses 透传那条路上被问到——转换路径上 trigger 到不了
 	// 上游，与渠道能力无关。
 	SupportsCompaction bool
+	// SupportsStatefulResponses 记这个渠道的上游认不认 Responses 的有状态语义
+	// （previous_response_id，口径层 v0.88）。默认取**是**。同样只在 Responses 透传
+	// 那条路上被问到——转换路径上有状态语义物理不成立（那个 id 是另一套协议的上游
+	// 不认的句柄，网关又不存会话历史），一律拒，与渠道能力无关。
+	SupportsStatefulResponses bool
 	// Protocol 是**这次请求**选定的上游协议，不是渠道的全部能力——渠道支持协议集
 	// （口径层 v0.33）在解析时就按入站协议收成了一个（见 pickProtocol）。下游拿它
 	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
@@ -525,7 +554,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	c := Candidate{RequestedModel: model}
 	var protocols, modelProtocols string
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
@@ -533,7 +562,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
@@ -589,7 +618,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 	c := Candidate{RequestedModel: model, Direct: true}
 	var protocols, modelProtocols string
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction
+		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
@@ -597,7 +626,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 	if err == nil {
 		if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 			return Candidate{}, err

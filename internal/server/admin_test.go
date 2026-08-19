@@ -160,13 +160,14 @@ func TestConfigPasswordDoesNotOverrideChangedOne(t *testing.T) {
 // ── 配置 CRUD ───────────────────────────────────────────────────────────
 
 type adminChannel struct {
-	ID                 int64  `json:"id"`
-	Name               string `json:"name"`
-	KeyMode            string `json:"key_mode"`
-	SupportsCompaction bool   `json:"supports_compaction"`
-	EnabledKeys        int    `json:"enabled_keys"`
-	DisabledKeys       int    `json:"disabled_keys"`
-	Models             []struct {
+	ID                        int64  `json:"id"`
+	Name                      string `json:"name"`
+	KeyMode                   string `json:"key_mode"`
+	SupportsCompaction        bool   `json:"supports_compaction"`
+	SupportsStatefulResponses bool   `json:"supports_stateful_responses"`
+	EnabledKeys               int    `json:"enabled_keys"`
+	DisabledKeys              int    `json:"disabled_keys"`
+	Models                    []struct {
 		ID            int64  `json:"id"`
 		UpstreamModel string `json:"upstream_model"`
 	} `json:"models"`
@@ -323,6 +324,54 @@ func TestUpdateChannelKeepsCompactionBitWhenAbsent(t *testing.T) {
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
 	if channels[0].SupportsCompaction {
 		t.Errorf("显式取消没生效：%+v", channels)
+	}
+}
+
+// 有状态续链位（口径层 v0.88）与 compaction 位同一个陷阱、默认方向相反：它默认是
+// **true**，所以拿零值当哨兵会让每一次「只改名字」的保存都把渠道静默关掉续链——那
+// 正是这一位配错时最贵的方向（打断一条本来能用的续链，页面上看不出来）。
+func TestUpdateChannelKeepsStatefulBitWhenAbsent(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"resp","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"credential":"sk-x"}`, &created)
+
+	var channels []adminChannel
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if len(channels) != 1 || !channels[0].SupportsStatefulResponses {
+		t.Fatalf("新建渠道的有状态续链位默认该是是（PO 裁定）：%+v", channels)
+	}
+
+	id := itoa(created.ID)
+	// 显式关掉。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"supports_stateful_responses":false}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if channels[0].SupportsStatefulResponses {
+		t.Fatalf("显式关掉没生效：%+v", channels)
+	}
+
+	// 一次只改名字的保存，请求体里没有这个字段：关掉的那一位也不该被「不动」翻回去。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp-renamed","protocols":["openai_responses"],"base_url":"https://api.example.com"}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if channels[0].SupportsStatefulResponses {
+		t.Errorf("缺省的字段把关掉的能力位翻回去了：%+v", channels)
+	}
+
+	// 勾回来仍然要生效。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
+		"name":"resp-renamed","protocols":["openai_responses"],"base_url":"https://api.example.com",
+		"supports_stateful_responses":true}`, nil)
+	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	if !channels[0].SupportsStatefulResponses {
+		t.Errorf("勾回来没生效：%+v", channels)
 	}
 }
 

@@ -2,8 +2,10 @@ package openairesponses
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -220,20 +222,50 @@ func TestDecodeRequestParksResponsesOnlyFieldsInExtras(t *testing.T) {
 	}
 }
 
-// previous_response_id 直接丢，连 Extras 都不进（口径层 §5 待澄清 #2：v1 只支持
-// 无状态用法）。留着它等于把一个上一个上游才认得的句柄带在身上，被顺手发出去就是
-// 「找不到」或者接错会话。
-func TestDecodeRequestDropsPreviousResponseID(t *testing.T) {
+// previous_response_id 在转换路径上无条件拒（口径层 v0.88 推翻 v1 的静默丢弃）。
+// DecodeRequest 只跑在转换路径上，而那条路上有状态续链物理不成立：那个 id 是另一个
+// 上游发的句柄，网关又不存会话历史。丢掉它照常发的失败模式最恶劣——请求成功、内容
+// 静默劣化成单轮，客户端无从归因。
+func TestDecodeRequestRejectsPreviousResponseID(t *testing.T) {
 	body := []byte(`{"model":"m","previous_response_id":"resp_abc","input":"hi"}`)
-	req, err := NewCodec().DecodeRequest(body, false)
-	if err != nil {
-		t.Fatal(err)
+	_, err := NewCodec().DecodeRequest(body, false)
+	if err == nil {
+		t.Fatal("带 previous_response_id 的请求解成功了，应当被拒")
 	}
-	if _, ok := req.Extras["previous_response_id"]; ok {
-		t.Error("previous_response_id 进了 Extras")
+	// 客户端要按 code 决定降级动作，所以这条错误必须是可识别的 RequestError，
+	// 不是一句只有人读得懂的话。
+	var reqErr *protocol.RequestError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("错误不是 *protocol.RequestError（回不成 400 带 code）: %T %v", err, err)
 	}
-	if len(req.Messages) != 1 || req.Messages[0].Content[0].Text != "hi" {
-		t.Errorf("字符串形态的 input 没退化成一条 user 消息: %+v", req.Messages)
+	if reqErr.Code != CodePreviousResponseNotFound {
+		t.Errorf("code = %q, 期望 %q", reqErr.Code, CodePreviousResponseNotFound)
+	}
+	if reqErr.Param != ParamPreviousResponseID {
+		t.Errorf("param = %q, 期望 %q", reqErr.Param, ParamPreviousResponseID)
+	}
+	if !strings.Contains(reqErr.Message, "重发") {
+		t.Errorf("文案没给可执行指引: %s", reqErr.Message)
+	}
+}
+
+// 空值形态不算「带了」：`null` 与空串都是客户端把字段位留着但没填，拒了只会误伤。
+// 它们同样不许进 Extras——留着一个别的上游才认得的句柄，被顺手带出去就是接错会话。
+func TestDecodeRequestAcceptsEmptyPreviousResponseID(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"m","previous_response_id":null,"input":"hi"}`,
+		`{"model":"m","previous_response_id":"","input":"hi"}`,
+	} {
+		req, err := NewCodec().DecodeRequest([]byte(body), false)
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if _, ok := req.Extras["previous_response_id"]; ok {
+			t.Errorf("%s: previous_response_id 进了 Extras", body)
+		}
+		if len(req.Messages) != 1 || req.Messages[0].Content[0].Text != "hi" {
+			t.Errorf("%s: 字符串形态的 input 没退化成一条 user 消息: %+v", body, req.Messages)
+		}
 	}
 }
 

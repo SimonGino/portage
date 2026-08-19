@@ -189,6 +189,14 @@ export interface Channel {
    * 压缩，原样透传只会让 Codex 收到 0 个 compaction item 然后 Fatal。
    */
   supports_compaction: boolean
+  /**
+   * 这个渠道的上游认不认 Responses 的有状态语义 `previous_response_id`（口径层
+   * v0.88）：**默认是**，与上一位相反。为否时 Responses 透传对带 previous_response_id
+   * 的请求回 400（code `previous_response_not_found`，客户端照它重发完整 input）。
+   * 默认取是是因为代价不对称的方向反过来了：配错成是，上游自己会回一句明确的
+   * not_found；配错成否，会打断一条本来正常工作的续链，而那种打断在页面上看不出来。
+   */
+  supports_stateful_responses: boolean
   disabled: boolean
   /**
    * 可用/停用凭证计数（口径层 v0.38）。这里只有计数，没有凭证值——值由凭证池那一个

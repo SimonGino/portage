@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.96
+> 状态：草案 v0.97
+> v0.97 变更（口径层 v0.88 落地：`previous_response_id` 由静默丢弃改判显式拒绝 + 渠道能力位，2026-08-19）：①**§2 的 P1-① 那条改写**——portage-legacy#12 的最简形态（`DecodeRequest` 直接丢字段、连 `Extras` 都不进）只保住了「不带出去」那半句，「丢掉之后照常发上游」这半边被推翻，改为非空即 400。②**闸分成两处、口径是一份**（新增 §7.8）：转换半边由 codec 在 `DecodeRequest` 里就地拒（`openairesponses/stateful.go`），透传半边在 `server.relay` 选完渠道之后拒（`server/stateful.go`），两处共用同一句可执行指引与同一个 `code`。③**§5 的「decode 必须是全函数」多了唯一一处例外**，写进接口那一节：`DecodeRequest` 现在会对一份**合法** Responses 字节报错。这与 v0.48 ① 给 compaction 闸选位置时的理由正面冲突，先指出再执行——两者的差别在于 compaction 那条**两条路判据不同**（透传要看能力位，codec 看不见它），而这一条转换路径是无条件拒、判据不含任何 codec 之外的输入。为此新增 `protocol.RequestError`（可逐字回显的 400，带 `code`/`param`），`relayConverted` 按类型分两档回。④**`channels` 加 `supports_stateful_responses`**（`INTEGER NOT NULL DEFAULT 1`，§7 DDL），走 `store.migrate` 的既有 ALTER 模式，存量行落 1——与 `supports_compaction` 反向的默认值（口径层 v0.88 ②），**这批迁移因此不改任何存量渠道的行为**。管理端 PUT 缺省不动列，哨兵用 `nil` 不用零值：这里 `true` 是有意义的默认取值，借零值当哨兵会让一个被显式关掉的渠道在别处保存一次就被静默打开。⑤**流水不加新词**：这一档记既有的 `rejected`（早退分支的缺省词）。outcome 词表是口径层 v0.70 逐词钉死的对外契约，加第 11 个词要 PO 先裁——**记在这里当待办**，与 v0.48 ③ 给 compaction 单开 `compaction_unsupported` 的做法不同。⑥**§5 坑清单补四条**（调研五个参考实现的收获，都与将来任何形式的降级/展开有关）：`function_call_output` 覆盖度红线、`store=false` 连带炸 item id、展开缓存的两类脏轮（原 v0.47 那条同主题的扩写成两条，不重复列）、会话粘连键取 `prompt_cache_key` 不取 `previous_response_id`。⑦**新增 §9.7** 记三条用例分工与两处已知缺口。⑧**本地展开不做**，opencodex 与 litellm 的展开实现降级为成本对照（§12 补四行路径）。修改人 jinpenga。
 > v0.96 变更（[#22](https://github.com/SimonGino/portage/issues/22) 的评审回修，2026-08-19）：**口径未变，改的是与既有口径对不上的三处落地**。①**选中一格之后取不到那一段就不出数**：切片回包比对不上自己的 key（在飞、或者取失败）时，环、两条堆叠条、排行列表一律留白，不再退回整窗那一份——退回会让同一屏出现「上面是这一小时、下面是整窗」两套数，而下面那句还写着「只看选中的那个区间」，正是口径层 v0.86 ③ 点名要避的；取失败时那份错的还不会自己消失。§8.3 补一条记这个。②`styles.css` 补回照搬样稿时漏掉的 `.cal-day.is-in { box-shadow: none }`：漏掉之后 30 天日历上窗口内那 30 格全多描一圈 1px 底框，与验收基准不符。③§8.3 的样稿差异清单从两处补全到五处（票面要求「逐条能说出为什么不一样」）：新记顶部 `.stat-tokens` 那格没落地、样稿 `heatScale` 空数据时把三档压成一档、样稿读数带直接读 `s.peak.tokens` 会抛；并把差异 1 的依据补齐——DESIGN §5.2 ⑤ 也写着「五个统计量」，追认之后 ⑤ 与口径层 v0.86 ④ 都要跟着改口。另把 §8.3「切一样只重取该重取的那一路」收成实情：切到「按上游凭证」确实会把 `by=model` / `by=key` 一并重取，记为已知的多取一发，不修。修改人 jinpenga。
 > v0.95 变更（[#22](https://github.com/SimonGino/portage/issues/22) 落地：排行页的前端那半，2026-08-19）：**后端一行未动**，动的全在 `web/`。①新增 §8.3 记五条前端实现口径（桶键靠字符串对齐、三路取数各有各的 key、色映射出自整窗、纯模块与它的测试基建、两处与样稿的差异）。②`web/src/pages/rankings/` 拆成两个文件加一份用例：`intervals.ts` 是**不 import React 的纯模块**（铺格子 / 未到区间 / 分位切档 / 五个读数 / 色映射 / 日历排布），`sky.tsx` 只管把 `Interval[]` 摆成柱、点阵、日历、环、堆叠条与切片井，`Rankings.tsx` 只管取数与状态。③**`web/` 从此有测试基建**（PO 2026-08-19 裁）：加 `vitest` 一个 dev 依赖与 `npm test`，只覆盖 `intervals.ts`——那里面全是「数字错了且看不出来」的一类（今天 15 点看「1 天」分母是 16 不是 24、分位切档而不是等分、色跟着实体走不跟名次走）。**CI 暂不动**，仍只跑 Go；要不要进 CI 另开票。④`api.ts` 加 `BucketUsage`；`styles.css` 加 `--cat-1…5` / `--cat-other` 与 `--heat-0…4` / `--heat-none` / `--heat-out`（值照样稿逐字，已跑过校验器，改值必须重跑），删掉随两个 Segmented 合并进页头而失去消费者的 `.rank-controls`。⑤**节律带上每一格都是 `button`**（可点、可聚焦、进 tab 序），`styles.css` 里给它们单独去掉 UA 的边框与底色——本仓没有裸 `button` 的全局重置（样稿有，那是它自己那份 CSS 里的），照搬样稿的类名而不带这一条，24×7 的点阵会长成 168 个按钮框。修改人 jinpenga。
 > v0.94 变更（[#21](https://github.com/SimonGino/portage/issues/21) 落地：排行页取数的后端那半，2026-08-18）：**v0.92 定的契约按原样实现**，`GET /admin/api/usage/buckets` 上线、`/usage` 收 `from`/`to`、`/usage/daily` 与 `store.UsageDaily` / `store.DailyUsage` / `api.ts` 的 `DailyUsage` / `Overview.tsx` 一并删除。落地过程补两处票面没定的：①**`/usage` 走 `from`/`to` 时回包不带 `days`**，改回 `from`/`to` 原值（PO 2026-08-18 裁）——「顶掉 `days`」管的是算法不管出线，回一个没参与计算的窗口档位（请求里可能还写着 `days=7`）是撒谎；代价是回包形状随参数变，#22 那边两个字段都得写成可选。②**只给一端且那一端解析不出来，照样回 400**：「只给一个当没给」管的是**合法**参数，写错了就是写错了，一个本想给两端却手滑了一端的客户端该当场听见。另有两处实现层的整理：`store.UsageBy` 的时间范围收成 `store.UsageRange`（`Days` 与 `From`/`To` 两条路一个类型表达，`from`/`to` 在 Go 侧折成 UTC 串再比，不在 SQL 里对 `created_at` 套函数）；`Overview.tsx` 独占的样式 `.usage-chart`…`.usage-dot` 与 `.stat-tokens` 随页面一起删（v0.92 的连带清单只点到 TS，没点到 CSS）。**`.stat-side` 仍在 `styles.css` 里且已无人用，但它不是这一票删出来的，留给下次顺手**。修改人 jinpenga。
@@ -149,7 +150,7 @@
 
 - 分批号 ①~④ 即口径层 §2.1 实现优先级：**①** A→CC、R→CC（主诉求：harness 挂第三方便宜模型）；**②** R→A（Codex 用 Claude）；**③** CC→A、CC→R；**④** A→R（允许滑到最后）。
 - 首批特性集 = 纯文本 + tool calls（含并行调用）+ system prompt + 停止原因 + usage；图片、count_tokens 估算、thinking 精细策略等横切增强随 ③④ 批排期。
-- Responses 无状态化（`previous_response_id` 处理）随 ① 的 R→CC 一并落地。**（portage-legacy#12 已落地）** 实现是最简形态：`DecodeRequest` 直接丢掉 `previous_response_id`，连 `Extras` 都不进——留着它等于把一个**上一个上游**才认得的句柄带在身上，任何编码侧顺手带出去，上游要么报找不到、要么接到别人的会话上。上下文靠 harness 全量携带的 `input` 重建，与 sub2api 的 `RemovePreviousResponseIDFromBody` 同路子。
+- Responses 无状态化（`previous_response_id` 处理）随 ① 的 R→CC 一并落地。**（portage-legacy#12 已落地，口径层 v0.88 改判）** portage-legacy#12 落的是最简形态：`DecodeRequest` 直接丢掉 `previous_response_id`，连 `Extras` 都不进。**「不带出去」那半句仍然成立**（留着它等于把一个**上一个上游**才认得的句柄带在身上，任何编码侧顺手带出去，上游要么报找不到、要么接到别人的会话上），**「丢掉之后照常发上游」这半边被推翻**：口径层 v0.88 判非空即拒——转换路径无条件 400，透传看渠道能力位。理由是丢弃的失败模式最恶劣：客户端以为历史生效、实际每轮单轮，产出静默劣化且无从归因。sub2api 的 `RemovePreviousResponseIDFromBody` 那条路子**不再是参照物**（它自己的 HTTP `/v1/responses` 入口也是直接 400）。闸的实现见 §7.8，用例见 §9.7。
 
 **「设计态考虑」落为三条硬约束：**
 1. **管线 seam 现在就定型**（§6）：同协议走原始字节透传，异协议走 canonical 编解码；P1 只是填充后一路，seam 位置不变。
@@ -397,7 +398,7 @@ const (
 
 ```go
 type Codec interface {
-    DecodeRequest(body []byte, stream bool) (*Request, error)   // 入口请求 → canonical，必须是全函数
+    DecodeRequest(body []byte, stream bool) (*Request, error)   // 入口请求 → canonical，必须是全函数（唯一例外见下）
     EncodeRequest(req *Request, stream bool) ([]byte, error)    // canonical → 出口请求
     DecodeStream(r io.Reader) (<-chan Event, error)             // 上游 SSE → 事件流，实现负责关 channel
     DecodeFullBody(body []byte) ([]Event, error)                // 上游非流式响应体 → 完整事件序列（v0.26 补）
@@ -407,6 +408,7 @@ type Codec interface {
 }
 ```
 
+- **「decode 必须是全函数」有且只有一处例外**（v0.97，口径层 v0.88）：`openairesponses.DecodeRequest` 见到非空 `previous_response_id` 就地返回 `*protocol.RequestError`——一份**合法**的 Responses 字节被 decode 拒了。这与 v0.48 ① 给 compaction 闸选位置时给出的理由正面冲突，先指出再执行：两条闸的差别在**判据要不要 codec 之外的输入**。compaction 那条透传半边要看渠道能力位，codec 是纯函数看不见它，所以两条路只能在 relay 上一处判；而有状态续链的转换半边是**无条件**拒，判据只有请求体自己，放在 decode 里最靠近事实、也顺带保证任何新入口都自动被覆盖。透传半边照旧在 relay 上判（§7.8）。为此新增的 `protocol.RequestError` 是「可逐字回显的 400」，带 `code`/`param`——普通解码失败仍回通用文案那一档，因为那一档客户端除了「请求体坏了」读不出别的。
 - **`DecodeFullBody` 是 v0.26 补进来的**（PO 裁定 jinpenga，2026-08-08）：v0.25 定稿只有 `EncodeFullBody`，非流式转换路径的**解码侧因此无处落脚**。备选方案是「非流式也向上游发流式请求再自行聚合」，被否——上游看到的请求与客户端发的不是一回事（计费与限流口径可能不同），且流中途断连时手里只剩半截事件序列，而客户端等的是一个完整 JSON，无法收场。实现上两侧共用同一台状态机（`openaicc` 的 `message` 与 `delta` 结构同形），解析逻辑只存在一处。
 - 可选接口 `RequestEncodeReporter`（`EncodeRequestReport` 额外回一串丢弃字段名）不进主接口：只有转换路径需要它，同协议透传路径拿不到也用不上。丢弃项由 relay 侧写 warning 日志，见 §4.5。
 - 可选接口 `StreamReadReporter`（`StreamReadError` 交出「这次流式解码是不是读上游读断了」）同理不进主接口。**为什么需要它**：转换路径上读断是带内往下传的——`DecodeStream` 放一条 `EvError` 就收摊，入口 codec 照常把错误帧写给客户端然后正常返回，`streamConverted` 从返回值里看不出这次断在半路，流水就会把它记成一次干净的 `200/ok`（透传路径没有这个问题：那边读错误是 `relayBody` 的返回值，直接记 `stream_aborted`）。客户端自己提前断开（Ctrl-C、超时）走的就是这条，实测在观测页上是一串「200 / ok / 0 token」——CC 的 usage 只在最后一帧，断在它之前就是 0/0。**只报传输失败，不报上游在流里回的错误对象**：后者透传路径同样记 `ok`（上游把话说完了，只是说的是坏消息），硬要在转换路径降级会让两条路的收场词表再次分叉。实现是 `protocol.StreamReadFlag` 内嵌进各 codec（带锁：编码侧遇 `EvError` 是提前 return 的，那之后解码 goroutine 还在跑）。用例：`TestConvertedStreamAbortIsLoggedAsAborted` 与 `TestConvertedInStreamErrorObjectKeepsOkOutcome`。
@@ -448,7 +450,7 @@ type Codec interface {
 | 并行只在 code-mode 内部 | 同一实测：Codex 的并行工具调用发生在那段 JS 的 `Promise.all` 里，线上永远只有一个 `custom_tool_call`，`parallel_tool_calls` 恒 false。别拿 Codex 样本去验证「多路 tool_call 交错重组」——那条路径要用 CC 语料（`testdata/golden/cc-stream-parallel-tools`）验 |
 | 厂商私有推理字段 | DeepSeek 系 `reasoning_content` 等非标字段不建模，走 `Request.Extras` 透传 |
 | Responses reasoning 的 `encrypted_content`（M0 实测） | Codex CLI 的 `/v1/responses` 请求会在 `input` 里回带上一轮的 reasoning item，其 `encrypted_content` 是**上游侧不透明密文**，只有原上游解得开。P0 透传无影响；**P1 一旦跨协议转换就必然作废**——转成 CC/Anthropic 时它无处安放，转回来也已换了上游。落到口径上：这就是「thinking **回带**跨协议丢弃」的具体形态之一，转换路径不得伪造或复用该字段，只能丢（口径层 v0.62 只改出向，回带这一半原样保留），且丢了会让 Codex 失去上一轮的推理上下文（表现为质量下降而非报错）。M2 做 R→CC / R→A 时须有专门用例钉住「带 `encrypted_content` 的 input 不使转换报错」 |
-| Responses 无状态化（P1-①，R 入口转换即需） | `previous_response_id` / store 语义需自行承接；参考 `sub2api backend/internal/pkg/apicompat/responses_namespace.go` |
+| Responses 有状态续链一律拒绝（P1-①，口径层 v0.88） | `previous_response_id` 非空即 400，不静默丢弃：转换路径无条件拒（有状态语义在这条路上物理不成立），透传看 `channels.supports_stateful_responses`（默认是）。判据只认**非空字符串**——缺失 / `null` / 空串都不算，空串是客户端「显式表示没有上一轮」的常见写法，误拒即拒掉正常首轮。`store` 字段本身不构成拒绝理由（它只影响上游存不存，不影响本轮算不算得出来）。落点 §7.8、用例 §9.7 |
 | Responses SSE 线格式（portage-legacy#12 拿真实上游转录复核） | 事件名与 sub2api 一致，无出入。三条实测细节：① 正文 item 比工具 item **多一层 `content_part`**（`output_item.added → content_part.added → output_text.delta* → output_text.done → content_part.done → output_item.done`），工具 item 没有；② 每帧 data 里都带 `sequence_number`，**从 0 起全流连号**（102 帧无一例外），客户端拿它判丢帧；③ 流**不发 `data: [DONE]`**——那是 Chat Completions 的收尾，Responses 以 `response.completed` 为终点。截断另发 `response.incomplete`（`status: incomplete` + `incomplete_details.reason`），流内错误发 `response.failed`。转录在 `testdata/golden/raw/resp-{text,tool,parallel}`（未脱敏，未纳入 git；用例照它定形状后把期望写死在测试里，不回放文件——`raw/` 在 .gitignore 里，回放式用例在 CI 上会集体 skip 成假绿）|
 | 解码侧的丢弃没有告警通道（portage-legacy#12 记账，待 PO 裁决） | 口径层 §2.6 要求跨协议丢弃须有日志警告，但现有的 `RequestEncodeReporter` 只挂在**编码**侧。`openairesponses.decodeInput` 遇到认不得的 input item 类型（如 `web_search_call`）是静默跳过：不报错、不进 Extras、不留日志。跳过本身是对的（decode 必须是全函数；同协议路径不进 codec，未知 item 在转换路径上的唯一去向就是被丢），缺的是那条日志。**建议先保持静默**——decode 层刻意不持有 logger，而对称补一个 `RequestDecodeReporter` 属于只有一个消费方的机械。跳过时不 flush 攒消息缓冲，否则未知 item 会把前后两条同侧 item 劈成两条同 role 消息，撞上严格 CC 上游的连发限制（用例：`TestDecodeRequestSkipsUnknownItemWithoutSplittingMessages`）|
 | Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
@@ -459,7 +461,11 @@ type Codec interface {
 | stop reason 映射 | `end_turn`↔`stop`、`tool_use`↔`tool_calls`/`function_call`、`max_tokens`↔`length` 查表，未知值统一 `stop` |
 | Codex 压缩：恰好一个 compaction item（v0.47 记，v0.54 落地） | Codex `collect_compaction_output` 要求压缩 turn 的响应里 compaction item **count==1**，0 个或多个都 `Fatal` 且不重试不降级。本地合成时截断 / 内容过滤 / **改去调工具** / 零字摘要 / **上游断流兜底收尾**的 turn **绝不产出 item**（宁可报错也不把残缺摘要装成替换历史，opencodex #422 同款裁定），且这五支一律不许发 `response.completed`。判据要对停因全集完备（v0.56）：非 `stop` 的停因漏掉哪个，都等于把「上游没写完」当成「上游写完了」。断流那支最阴：解码器把它兜成 `stop_reason=stop`，wire 上与正常收尾同形，靠 `EvDone.Truncated` 才分得开（v0.55；非流式两条路 v0.56 补齐）——**「completed + 零 item」就是那个静默 Fatal 形态本身**。自造信封定为 **`ptg1:` + base64(摘要)**，这是**长期兼容约束**：它进了客户端的会话历史，改前缀等于让所有在途会话的回带摘要解不开、降级成占位；要改只能加新前缀、旧前缀的解码永远留着 |
 | Codex 压缩：合成期 SSE 静默（v0.47 记，v0.54 落地） | 本地合成期间下行零字节直到摘要生成完；portage 无 wire keepalive 层（`writeDeadline` 不发心跳），前置反代的空闲超时会掐线，故按 15 秒下限发 SSE 注释行心跳（sub2api #3887 教训；其 failover 判定须扣心跳字节的坑一并留意）。**只盖得住「增量在流、被我们吞掉」这一种静默**——正文增量与思考增量都算（思考那段往往最长，v0.55 补），但上游整体卡住时心跳也不发，那种情况该由上游超时接管 |
-| 压缩 turn 排除在 previous_response_id 展开缓存外（v0.47） | 若将来做 `previous_response_id` 本地展开（按 id 拼回前缀），压缩 turn 必须显式排除在缓存外——否则把刚被替换掉的旧长历史重新灌回来（opencodex 实测坑） |
+| `function_call_output` 覆盖度红线（v0.97 记，sub2api） | input 里存在 `function_call_output`、且不是每个 `call_id` 都能在 input 内找到配对的 `function_call` / `item_reference` 时，**绝不能丢 `previous_response_id`**——配对信息只在上游那份历史里，丢了上游回 `No tool call found for function call output`，这个 400 极难从现象反推原因（客户端看到的是「工具明明调过」）。portage 现在无条件拒绝，不受影响；但透传路径上一旦做任何「失配就剥离」的降级，这条判据必须先落地 |
+| `store=false` 会连带炸 item id（v0.97 记，opencodex / CLIProxyAPI） | 关掉 store 之后，input 里带 `id` 的 item 会被上游当成「引用一个不存在的已存储项」直接 404。两家的解法都是发之前剥 id：opencodex 剥 input 里所有 item 的 `id`（照抄 codex-rs `core/src/client.rs:918-925`），CLIProxyAPI 只剥孤儿 reasoning 的 id。做 reasoning 回带保真时会正面撞上——回带的 reasoning item 天然带 id |
+| 压缩 turn 不得入 previous_response_id 展开缓存（v0.47 记，v0.97 拆条） | 若将来重开 `previous_response_id` 本地展开（按 id 拼回前缀），压缩 turn 必须显式排除在缓存外——它的原始 body 还带着完整的**前压缩**历史，入了缓存就是把刚被替换掉的旧长历史重新灌回来（opencodex 实测坑） |
+| 展开失败的那一轮同样不得入缓存（v0.97 记，opencodex 显式修过） | 与上条同一个缓存、另一种脏数据：`previous_response_id` 展开未命中的那一轮，input 是个 **delta**（客户端以为前缀在上游那边），把它当成完整历史缓存下来，后续展开出的是一段被截断的历史。两条合起来的判据是「只有自带完整历史的普通轮才配进缓存」 |
+| 会话粘连键取 `prompt_cache_key`，不取 `previous_response_id`（v0.97 记） | CLIProxyAPI 与 new-api 独立地都选了 `prompt_cache_key`：它**首轮就有**，而 `previous_response_id` 第一轮必然为空——拿它当粘连键，第一轮必然打散、第二轮才粘上，正好粘在续链最需要粘住的那一刻之后。portage 目前单渠道路由没有这个问题，这条是**将来做多渠道会话亲和时的前置知识**，不是当下的待办 |
 
 ## 6. 主链路时序
 
@@ -625,6 +631,7 @@ CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职
   key_mode TEXT NOT NULL DEFAULT 'polling',  -- polling | random：凭证池选取模式
   max_concurrency INTEGER NOT NULL DEFAULT 0,  -- 渠道并发上限（口径层 v0.49）：in-flight 上限，0 = 不限；老库靠 store.migrate 的既有 ALTER 模式补列。见 §7.5
   supports_compaction INTEGER NOT NULL DEFAULT 0,  -- 上游认不认 Codex 的 compaction_trigger（口径层 v0.54）：默认 0 = 不认，存量行同。只在 Responses 透传路径上被问到。见 §7.6
+  supports_stateful_responses INTEGER NOT NULL DEFAULT 1,  -- 上游认不认 Responses 的有状态语义 previous_response_id（口径层 v0.88）：默认 1 = 认，存量行随迁移一律落 1（与上一列默认值相反，理由是代价不对称的方向相反）。只在 Responses 透传路径上被问到，转换路径无条件拒。见 §7.8
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -862,6 +869,19 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - **G2 回带还原**：`compaction` / `compaction_summary` / `context_compaction` 三种 item 走 `compactionItemText`——信封解得开还原成 `summaryPrefix + 摘要` 的 user 消息，解不开（真 OpenAI 密文、别家信封）降级成固定占位并把 type 记进 `CompactionDrops`，日志由 `relayConverted` 打。**那行日志不能罩在「本次是压缩 turn」里面**（v0.56 修）：Codex 只在需要压缩的那一轮发 trigger，回带解不开发生在**之后的普通请求**上，`CompactionTurn()` 为假；罩着的话混路场景的头一次——也正是最该归因的那次——完全无声。不带 `encrypted_content` 的 `context_compaction` 是 codex-rs **本地**压缩的标记，没有摘要可还原，跳过而不占位。这一条单独也治混路失忆（先经透传渠道压缩成功、后续被路由到 A/CC 渠道）。
 - **静默期心跳**：合成期吞掉增量时按 15 秒下限发一行 SSE 注释（`: portage compaction in progress`）。注释行是 SSE 规范里的合法帧、合规解析器忽略，不进 `sequence_number` 连号。**正文增量与思考增量都发**（v0.55 补）：`rewriteAsSummarizer` 有意留着 `reasoning`，开思考的上游会先想上几十秒才写第一个摘要 token，那段静默通常是整轮里最长的一截，恰恰落在这条心跳自称覆盖的范围里。它盖得住的仍只有「增量在流、被我们吞掉」这种静默——上游整体卡住时它也不发，那种情况该由上游超时接管，不该由一条假装还活着的心跳掩盖。
 - **验收**：`internal/protocol/openairesponses/compaction_test.go`（信封往返与拒收外来信封、改写、还原三态、五种不产 item、心跳节奏用注入时钟含思考段、透传闸判据表）+ `internal/server/compaction_test.go` 三条端到端（合成、回带还原、回带解不开的丢弃日志）+ 两个解码器各一条流式 `Truncated` 置位用例、`anthropic` 另一条非流式的（含 `stop_reason` 缺失与 `null` 两格）。**golden 已补**（2026-08-13，口径层 v0.59）：`compaction_golden_test.go` 四条拿真转录（`responses-stream-compact-turn1/trigger/replay`）驱动解码半边——压缩 turn 认得出且工具剥净、回带轮不是压缩 turn 且真 OpenAI 密文降级占位并登记、压缩前普通轮放行、compaction item 线格形状。手搭 fixture 原样留着：**两者钉的不是同一件事**，fixture 钉我们的口径自洽（五种不产 item、心跳节奏这些上游不会主动演给你看），转录钉「Codex 真的这么发包」。**采样的前置条件在口径层 v0.59**：客户端 provider 的 `name` 必须是 `"OpenAI"`，否则 `/compact` 静默走本地压缩。
+
+### 7.8 Responses 有状态续链的拒绝闸（口径层 v0.88 落地）
+
+口径层已裁：转换路径遇非空 `previous_response_id` 无条件 400；渠道加 `supports_stateful_responses` 能力位（默认**是**），位为否的**透传**渠道同样拒绝，位为是维持字节直传；本地展开不做。
+
+- **判据**：顶层 `previous_response_id` 是**非空字符串**即真。缺失、`null`、空串、非字符串都不算——空串是客户端「显式表示没有上一轮」的常见写法，拒它等于拒掉正常首轮；解不动请求体也一律当「没带」（它是**拒绝**的判据，宁可漏判让请求照常走，上游自己会回一句明确的 not_found）。不解 `input`、不看 `store`（`store` 只影响上游存不存，不影响本轮算不算得出来），也不按 ID 形态分类（sub2api 那套诊断服务的是它的展开路径，无条件拒的话形态对不对不改变收场）。
+- **闸分两处，口径是一份**：转换半边在 codec 里就地拒（`openairesponses/stateful.go` + `decode.go`，`DecodeRequest` 返回 `*protocol.RequestError`，由 `relayConverted` 逐字回显 400）；透传半边在 `server.relay` 选完渠道之后、`rec.Dialing` 之前判（`server/stateful.go` 的 `rejectStatefulResponses`，判据函数 `openairesponses.PreviousResponseID` 独立于 codec——透传根本不进 codec）。**为什么与 §7.6 的 compaction 闸选了不同的位置**，见 §5 那条「全函数唯一例外」：差别在判据要不要 codec 之外的输入，compaction 的透传半边要看能力位所以两条路只能合在 relay 上判，而这里转换半边是无条件拒。能力位为是的渠道（默认值）一个字节都不扫。
+- **收场**：发上游之前的普通 400，按**入口协议**原生错误形状回，带 `code: previous_response_not_found` 与 `param: previous_response_id`。code 挑这个而不是 `unsupported_parameter`：前者是客户端**已经认得**的信号，它对这个 code 的既定降级动作正是我们要的那个（重发完整 input）；后者没有既定降级语义，拿到多半只会把整次请求当失败上报。`code`/`param` 只有 OpenAI 系错误体有位置放，Anthropic 的 error 对象只有 `type` 与 `message` 两键、**不给它塞**——今天这不构成损失，带 code 的这条错误只从 Responses 入口发出。
+- **文案两条、指引一句**：可执行指引（「请把完整对话历史放进 input 重发，不要带 `previous_response_id`」）两条路共用一份常量——客户端要做的动作与「为什么拒」无关，两处各写一句迟早漂成两种说法。转换路径那条**不提渠道名与能力位**（这条路上拒绝与渠道怎么配无关，指人去勾一个改不了结果的开关只会浪费一次往返）；透传那条报渠道名并指向渠道页那一栏。两条都不带 base_url 与上游 key。
+- **流水记既有的 `rejected`，不加新词**（与 v0.48 ③ 给 compaction 单开 `compaction_unsupported` 的做法不同）：outcome 词表是口径层 v0.70 逐词钉死的对外契约，加第 11 个词要 PO 先裁。**代价记在明处**：流水上这一档与其他早退分支混在一格，只能靠日志分辨（`拒绝 Responses 有状态续链：透传渠道未声明支持 previous_response_id`，带 `channel` / `channel_protocol`；转换那条打 `入站请求被拒` 带 `code` / `param`）。要不要单开一词是**待 PO 裁的一件事**。
+- **能力位**：`channels.supports_stateful_responses`，默认**是**（§7 DDL）。管理端 PUT 缺省不动列，哨兵用 `nil` 不用零值——这里 `true` 是有意义的默认取值，借零值当哨兵会让一个被显式关掉的渠道在别处保存一次就被静默打开（`supports_compaction` 那条陷阱的镜像，方向更险）。表单那一栏只在勾了 Responses 时露出、也只有露着才传；取消勾 Responses 不去清那一列。
+- **不做本地展开**：真做就是独立 session 存储那个量级——litellm 是五个参考实现里唯一在转换路径展开的，代价是一张记完整请求体的日志表 + session 串联字段 + 按 session 全量重放 + 冷存储回捞，且它自己默认关闭。portage 走 HTTP，没有 opencodex / CLIProxyAPI / sub2api 那个「连接内本来就有全量历史」的前提。将来若重开，先看 §5 坑清单里展开缓存的那两条与 `function_call_output` 覆盖度红线。
+- **验收**：见 §9.7。
 
 ## 8. 最小管理接口
 
@@ -1167,6 +1187,23 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 - **`response.reasoning_text.delta`（推理正文流）没有样本。** 九份 Responses 转录里一次都没出现（线上两条 R 上游只回摘要），那一支只保形态完备，覆盖靠构造帧。评审判这一支是 #4 票面之外的多做，**PO 于 2026-08-17 裁定保留**：它与 `reasoning_summary_text.delta` 是同一入口的姊妹事件，不认它就是遇上时静默丢内容。
 - **真机验收挂 [#3](https://github.com/SimonGino/portage/issues/3)。** 按票裁定，本批不把真机跑通当合并闸。
 
+### 9.7 `previous_response_id` 拒绝闸的用例分工（口径层 v0.88，2026-08-19）
+
+闸的实现见 §7.8。三条主用例，形制照 `internal/server/compaction_test.go`：
+
+| 用例 | 输入 | 钉什么 |
+|---|---|---|
+| 转换路径无条件拒 | 带非空 `previous_response_id` 的 Responses 请求 → 非 Responses 渠道（R→CC 与 R→A 各一遍） | 回 400、**假上游收到 0 个请求**、错误体带 `code: previous_response_not_found` 与 `param`、文案含那句可执行指引且不含 base_url 与上游 key；**渠道能力位取任何值都拒**（这条路不看位） |
+| 透传位为否也拒 | 同一请求体 → Responses 渠道、`supports_stateful_responses = 0` | 回 400、假上游收到 0 个请求、文案报渠道名并指向渠道页那一栏、日志一行带 `channel` / `channel_protocol` |
+| 透传位为是直传 | 同一请求体 → Responses 渠道、位为 1（默认值，即迁移后的存量渠道） | 放行且请求体除顶层 model 外**逐字节保真**，`previous_response_id` 原样到达假上游 |
+
+另有三条边界与两条配套：**缺失 / `null` / 空串都不触发**（各一格，空串那格是回归——误拒即拒掉正常首轮）；同一渠道上不带该字段的普通 turn 不受影响（这一位不是「Responses 透传总开关」）；管理端 PUT 缺省不动列一条（`admin_test.go`，断言的是**关掉之后在别处保存一次不会被静默打开**，与 `supports_compaction` 那条的方向相反）；老库 ALTER 后存量行读作 1 一条（`store` 内部测试）。`protocol.RequestError` 的回显另有一条：`code`/`param` 落进 OpenAI 系错误体、没填时是 JSON `null` 不是空串，Anthropic 错误体不多这两键。
+
+**已知缺口，不装作没有**：
+
+- **没有真机字节。** 手上两个 harness 都不发这个字段——Codex CLI 每轮携带完整 `input`，opencode 走 CC。用例全部手搭请求体；这不违反「真机可采的路径不得以构造样本代替」，因为要采到它得先有一个真用有状态用法的客户端，本机没有。
+- **上游对「位配错成是」的回话形态没有转录。** 口径层 v0.88 ② 的立论依赖「上游自己会回一句明确的 unsupported / not_found」，这一句本库无字节，依据是三个参考实现的处置（CLIProxyAPI 的 409 + `previous_response_not_found` 是其中唯一有逐字文案的，我们回的 code 正是从那里取的）。真撞上时补录。
+
 ## 10. harness 验收清单
 
 必过档挡里程碑验收；顺带档不挡、坏了再修（#7 已决）。
@@ -1275,6 +1312,10 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 | `CLIProxyAPI/internal/translator/openai/claude/` | thinking 出向合成：`reasoning_content` → `thinking` 块（不带 signature）；请求侧回带处置同目录 |
 | `CLIProxyAPI/internal/signature/provider_compatibility.go` | 回带侧按 signature provenance 的逐 provider 决策表（本项目取「一律丢」，此表作对照，见 portage-legacy#91） |
 | `CLIProxyAPI/internal/thinking/` | 思考参数 canonical 层：`ThinkingConfig{Mode,Budget,Level}` 把「思考多少」与「展示与否」拆成正交两维 |
+| `new-api` 的 `validateResponsesRequestChatUnsupportedFields`（Responses→CC 转换器共用） | `previous_response_id` / `conversation` / `prompt` / `context_management` 撞到即 400 + SkipRetry——「转换路径上有状态字段一律拒」的同构先例（口径层 v0.88 ①）；它也是「粘连键取 `prompt_cache_key`」的两个独立出处之一 |
+| `sub2api/backend/internal/service/openai_previous_response_id.go` | ID 形态分类诊断与 `RemovePreviousResponseIDFromBody`。**v0.88 起只作对照**：portage 不取「删字段重建」，而 sub2api 自己的 HTTP `/v1/responses` 入口也是直接 400（它强制 `store=false`，续链在那条路上物理不可能，只有 Responses WebSocket v2 那条路支持）；其 `apicompat` 转换库整个不读这个字段，与 portage 的原状一致 |
+| `CLIProxyAPI` 的 Codex HTTP 路径（删 `previous_response_id` + 强制 `store=false`）与 WS 冷启动 409 分支 | 「上游名义支持 Responses ≠ 有状态语义可用」的一手证据：上游就是 ChatGPT Codex 后端却照样不能续链，因为它不持久化 item。WS 带锚点冷启动回 409 + `previous_response_not_found` + 可执行指引，是 §7.8 那条错误的 code 与文案形制的出处 |
+| `opencodex` 的 forward 展开分支 / `litellm` 的 session 重放 | 本地展开的两种成本形态（**均不取**，口径层 v0.88 ③）：前者以本地展开为主路线，但上游展开未命中时提前 400 失败关闭、不静默转发一段失去上下文的 delta；后者是五家里唯一在转换路径做展开的，依赖一张记完整请求体的日志表 + session 串联字段 + 按 session 全量重放 + 冷存储回捞，且默认关闭 |
 
 ## 附录：开放问题记录
 

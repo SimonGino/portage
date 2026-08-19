@@ -496,6 +496,21 @@ func SetChannelCompaction(t *testing.T, db *sql.DB, channelID int64, supports bo
 	}
 }
 
+// SetChannelStateful 设渠道的 Responses 有状态续链能力位（口径层 v0.88）。库里的
+// 默认是 true，所以只有「上游明确不做有状态」的用例需要调它——与 SetChannelCompaction
+// 的默认方向正相反。
+func SetChannelStateful(t *testing.T, db *sql.DB, channelID int64, supports bool) {
+	t.Helper()
+	v := 0
+	if supports {
+		v = 1
+	}
+	if _, err := db.Exec(
+		`UPDATE channels SET supports_stateful_responses = ? WHERE id = ?`, v, channelID); err != nil {
+		t.Fatalf("设渠道有状态续链能力位失败: %v", err)
+	}
+}
+
 // SeedCredential 往渠道的凭证池里追加一份，名字自动给 `凭证 N`（渠道内唯一，
 // 口径层 v0.38）。要指定名字（按凭证归因的用例要）用 SeedNamedCredential。
 func SeedCredential(t *testing.T, db *sql.DB, channelID int64, credential string) {

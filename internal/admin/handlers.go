@@ -180,9 +180,13 @@ type channelInput struct {
 	MaxConcurrency *int `json:"max_concurrency"`
 	// SupportsCompaction 是 compaction 能力位（口径层 v0.54）：上游认不认 Codex 的
 	// compaction_trigger。指针的 nil 同 MaxConcurrency——缺省不动那一列。
-	SupportsCompaction *bool  `json:"supports_compaction"`
-	Disabled           bool   `json:"disabled"`
-	Credential         string `json:"credential"`
+	SupportsCompaction *bool `json:"supports_compaction"`
+	// SupportsStatefulResponses 是有状态续链能力位（口径层 v0.88）：上游认不认
+	// previous_response_id。指针的 nil 同上——缺省不动那一列；这一位默认是 true，
+	// 借零值当哨兵会让每次保存都把渠道悄悄关掉。
+	SupportsStatefulResponses *bool  `json:"supports_stateful_responses"`
+	Disabled                  bool   `json:"disabled"`
+	Credential                string `json:"credential"`
 }
 
 func (in channelInput) toStore() store.ChannelInput {
@@ -191,13 +195,14 @@ func (in channelInput) toStore() store.ChannelInput {
 		set = append(set, protocol.Protocol(strings.TrimSpace(p)))
 	}
 	return store.ChannelInput{
-		Name:               strings.TrimSpace(in.Name),
-		Protocols:          set,
-		BaseURL:            strings.TrimSpace(in.BaseURL),
-		KeyMode:            strings.TrimSpace(in.KeyMode),
-		MaxConcurrency:     in.MaxConcurrency,
-		SupportsCompaction: in.SupportsCompaction,
-		Disabled:           in.Disabled,
+		Name:                      strings.TrimSpace(in.Name),
+		Protocols:                 set,
+		BaseURL:                   strings.TrimSpace(in.BaseURL),
+		KeyMode:                   strings.TrimSpace(in.KeyMode),
+		MaxConcurrency:            in.MaxConcurrency,
+		SupportsCompaction:        in.SupportsCompaction,
+		SupportsStatefulResponses: in.SupportsStatefulResponses,
+		Disabled:                  in.Disabled,
 	}
 }
 
