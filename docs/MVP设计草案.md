@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.94
+> 状态：草案 v0.95
+> v0.95 变更（[#22](https://github.com/SimonGino/portage/issues/22) 落地：排行页的前端那半，2026-08-19）：**后端一行未动**，动的全在 `web/`。①新增 §8.3 记五条前端实现口径（桶键靠字符串对齐、三路取数各有各的 key、色映射出自整窗、纯模块与它的测试基建、两处与样稿的差异）。②`web/src/pages/rankings/` 拆成两个文件加一份用例：`intervals.ts` 是**不 import React 的纯模块**（铺格子 / 未到区间 / 分位切档 / 五个读数 / 色映射 / 日历排布），`sky.tsx` 只管把 `Interval[]` 摆成柱、点阵、日历、环、堆叠条与切片井，`Rankings.tsx` 只管取数与状态。③**`web/` 从此有测试基建**（PO 2026-08-19 裁）：加 `vitest` 一个 dev 依赖与 `npm test`，只覆盖 `intervals.ts`——那里面全是「数字错了且看不出来」的一类（今天 15 点看「1 天」分母是 16 不是 24、分位切档而不是等分、色跟着实体走不跟名次走）。**CI 暂不动**，仍只跑 Go；要不要进 CI 另开票。④`api.ts` 加 `BucketUsage`；`styles.css` 加 `--cat-1…5` / `--cat-other` 与 `--heat-0…4` / `--heat-none` / `--heat-out`（值照样稿逐字，已跑过校验器，改值必须重跑），删掉随两个 Segmented 合并进页头而失去消费者的 `.rank-controls`。⑤**节律带上每一格都是 `button`**（可点、可聚焦、进 tab 序），`styles.css` 里给它们单独去掉 UA 的边框与底色——本仓没有裸 `button` 的全局重置（样稿有，那是它自己那份 CSS 里的），照搬样稿的类名而不带这一条，24×7 的点阵会长成 168 个按钮框。修改人 jinpenga。
 > v0.94 变更（[#21](https://github.com/SimonGino/portage/issues/21) 落地：排行页取数的后端那半，2026-08-18）：**v0.92 定的契约按原样实现**，`GET /admin/api/usage/buckets` 上线、`/usage` 收 `from`/`to`、`/usage/daily` 与 `store.UsageDaily` / `store.DailyUsage` / `api.ts` 的 `DailyUsage` / `Overview.tsx` 一并删除。落地过程补两处票面没定的：①**`/usage` 走 `from`/`to` 时回包不带 `days`**，改回 `from`/`to` 原值（PO 2026-08-18 裁）——「顶掉 `days`」管的是算法不管出线，回一个没参与计算的窗口档位（请求里可能还写着 `days=7`）是撒谎；代价是回包形状随参数变，#22 那边两个字段都得写成可选。②**只给一端且那一端解析不出来，照样回 400**：「只给一个当没给」管的是**合法**参数，写错了就是写错了，一个本想给两端却手滑了一端的客户端该当场听见。另有两处实现层的整理：`store.UsageBy` 的时间范围收成 `store.UsageRange`（`Days` 与 `From`/`To` 两条路一个类型表达，`from`/`to` 在 Go 侧折成 UTC 串再比，不在 SQL 里对 `created_at` 套函数）；`Overview.tsx` 独占的样式 `.usage-chart`…`.usage-dot` 与 `.stat-tokens` 随页面一起删（v0.92 的连带清单只点到 TS，没点到 CSS）。**`.stat-side` 仍在 `styles.css` 里且已无人用，但它不是这一票删出来的，留给下次顺手**。修改人 jinpenga。
 > v0.93 变更（口径层 v0.87 落地：容器端口发布出厂即所有网卡，2026-08-18）：**纯部署配置，Go 代码一行未动。**①`deploy/docker-compose.yml` 的 `ports` 恒为 `8317:8317`；要收窄（公网机器**必须**收窄）走 `deploy/docker-compose.override.yml`，该文件名进 `.gitignore`，compose 原生自动合并、不用 `-f`，样例 `deploy/docker-compose.override.yml.example` 入库当文档。②**`ports: !override` 那个标签不能省**（Compose v2.24+）：`ports` 是列表，合并语义是**追加**不是替换，漏了标签就是主文件那条与 override 那条同时发布、起容器直接 `address already in use`——这一格是本批实测撞出来的，`docker compose config` 能当场验（合并后应只剩一条）。③§11.1 第三个坑那行随之改写：原文「compose 里默认 `127.0.0.1:8317:8317`，改成 `8317:8317` 就是整个局域网」两半都已过时，现按新默认重写，并补上 **Docker 端口发布绕过 ufw/firewalld** 这一条；同处「TLS 与全局限流都还在 M3」订正为限流已落地（10 QPS / 突发 20，口径层 §2.7），仍缺的只有 TLS。④`Dockerfile` 两个 `FROM` 补 `--platform=$BUILDPLATFORM`：少了它 `buildx --platform linux/amd64` 会把**整个构建阶段**当 amd64 跑，在 arm64 机器上就是 QEMU 模拟，于是那句 `GOARCH` 交叉编译退化成「在被模拟的 amd64 里原生编 amd64」——不报错，只是构建慢一个数量级，看不出原因。修改人 jinpenga。
 > v0.92 变更（口径层 v0.86 的接口面：排行页扩成三层下钻，[#21](https://github.com/SimonGino/portage/issues/21) / [#22](https://github.com/SimonGino/portage/issues/22)，2026-08-18）：**只改文档，`internal/` 与 `web/` 一行未动**——实现在那两张票里（同 v0.83 的形制）。①§8.1 加 `GET /admin/api/usage/buckets?days=&unit=hour|day`：按区间分桶的时间序列，行里带 `errors` 与缓存两列（切片井要算净输入 = 毛值 − 缓存两项，口径层 v0.71）。②§8.1 的 `/usage` 加 `from`/`to`（unix 秒的半开区间），两个都给时顶掉 `days`——排行页点中某一格之后，排行列表 / 环形图 / 堆叠条用它重取那一格的构成；**二维聚合那条路（bucket × model）已被裁掉**，替代就是这一次多余的请求。③**`GET /admin/api/usage/daily` 作废**（v0.52 加）：`unit=day` 完全覆盖它，其唯一消费者 `Overview.tsx` 自口径层 v0.75 去掉概览页起已是死代码（`App.tsx` 把 `/overview` 与 `/usage` 都重定向到 `/rankings`，全仓无人 import）。连带删 `store.UsageDaily` / `store.DailyUsage` / `api.ts` 的 `DailyUsage`；`TestUsageDailyBuckets` 改测新端点，空桶补零与窗口边界两条断言不许丢。④新增 §8.2 记三条实现口径：未到的区间后端不给、`from`/`to` 解析失败回 400（对「认不得就忽略」开的例外，只给这两个参数）、`WHERE` 子句不许套函数（v0.52 ① 那条索引理由原样管这里）。⑤页面形态见 `DESIGN.md` v0.30 §5.2 与样稿 `design-demos/redesign/rankings-v2.html`，本文不重复。修改人 jinpenga。
@@ -910,6 +911,21 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - **`WHERE` 子句不许动**：`created_at >= windowStart(days)` 原样用，分桶表达式（`strftime('%Y-%m-%d %H:00', created_at, 'localtime')`）只出现在 `SELECT` / `GROUP BY`。v0.52 ① 记过为什么——写成 `date(created_at,'localtime') >= …` 一样对，但整列要过一遍函数，`idx_call_logs_created_at` 就用不上了。`from`/`to` 那条路径同理：unix 秒在 Go 侧折成 UTC datetime 串再比，不在 SQL 里对 `created_at` 套函数。
 
 **明确不做**：bucket × model 的二维聚合（逐模型时间序列）与费用，PO 2026-08-18 两裁「不做」，口径层 v0.86 ⑦。前者的替代是「点一格再取一次 `/usage?from=&to=`」，一次点击一次请求；后者要一张价目表，且 v0.71 之后 `input_tokens` 是毛值，不减缓存直接乘单价会系统性高估。
+
+### 8.3 排行页前端的五条实现口径（口径层 v0.86，[#22](https://github.com/SimonGino/portage/issues/22)）
+
+- **桶键靠字符串对齐，前端从不解析后端那个时间串**：`/usage/buckets` 回的 `bucket` 是本地时区的 `YYYY-MM-DD` / `YYYY-MM-DD HH:00`，**不是 ISO 串**——`new Date("2026-08-12 00:00")` 各家浏览器的时区口径不一致，Safari 上直接 Invalid Date。前端按本地时间自己铺格子（窗口左端 = 本地自然日 00:00 往回数 `days-1` 天，口径层 v0.55），把每个格子的起点格式化成同样两种形态去查 Map。**窗口必须对齐自然日、不能拿「最后 168 个小时桶」顶替**：那样第 0 列是「七天前的 16 点」而不是 0 点，点阵横轴那排 00/03/06 会整体错位——图还在，但它说的每一句都是假的。
+- **「还没到」是第三档，判据是格子起点晚于此刻**：不是「0 次调用」的同义词。后端只回已经发生的桶（§8.2），铺不满的那几格是**空位**不进活跃分母。天粒度下今天那一格的起点是今天 00:00，属于**已过去**（一天没走完不影响它已经开始）。
+- **三路取数各有各的 key，切一样只重取该重取的那一路**：`/usage/buckets` 只跟窗口档位有关（切聚合维度不重取）；`/usage?days=` 是整窗聚合；`/usage?from=&to=` 只在选中某一格之后发。`buckets` 的回包里**带上这一发用的窗口档位与「现在」**再交给铺格子的那个纯函数——不带的话，请求在飞的那一刻会拿新档位配旧数据，用 24 行去铺 168 格、闪一帧空图。环与两条堆叠条恒要 `by=model` 与 `by=key`（口径层 v0.86 ⑧），排行列表要当前那个维度，故一个 scope 最多发三发、最少两发。
+- **色映射出自整窗聚合，之后只查表**：选中某个区间会让排行重新排序，按名次上色的话整排条会同时改色，「蓝色那条」在两次点击之间就不是同一个东西了（DESIGN §4）。第六名起并进「其余（N）」的中性灰，不发第六个色相。**归不归「其余」看的是色映射不是这一段自己的名次**——名次跟着 scope 变而色不变，两者混用会让某个模型在切片里突然分到一个色相。
+- **区间数学抽成不 import React 的纯模块**（`pages/rankings/intervals.ts`）：这一票的验收条目基本都落在那里面，而它们是「数字错了且看不出来」的一类，`tsc` 与肉眼都挡不住。测试基建见 v0.95 ③。
+
+**两处与样稿 `design-demos/redesign/rankings-v2.html` 的差异，均待 PO 追认**（其余排布、文案、交互逐条照样稿）：
+
+1. **读数带只摆四个，合计不在里面**。样稿把合计同时摆在顶部指标条与读数带，同一个数在一屏里出现两遍（DESIGN §6）。DESIGN §5.2 ⑥「只留一个合计当占比分母」比口径层 v0.86 ④ 那句「五个统计量」更具体，故取前者：合计留在顶部那条指标条（也是 §4 白名单 ③ 那个墨蓝数），读数带只留每区间均值 / 峰值区间 / 活跃区间 / 最长连续。
+2. **顶部那个合计跟着 scope 走，不是恒为整窗**。样稿里它恒报整窗，于是选中一格之后它就不再是下面每一行占比的分母了——那一屏上会同时有「整窗 15.5M」与一份按「这一小时」算出来的百分比，正是口径层 v0.86 ③ 要避免的两套数。代价是选中之后它与切片井那个大数是同一个值（隔着一段距离各说一遍）；两害相权取轻。
+
+另有两处样稿自己前后不一致，按**跑起来的样子**落地（票面写明「样稿是验收基准」，指的是它的行为）：样稿末尾的说明写「30 天不放环形图」，而它的 `render()` 与 CSS 注释都说三档都走同一个两栏、并写明了为什么（参照面板收掉环是因为那张 53 周画布要占满整行，画布收成六周后特例没依据）——落地照后者；读数带在样稿里叫「五个统计量」而模板里的第一格与顶部重复，见上。
 
 ## 9. Golden 测试方案
 

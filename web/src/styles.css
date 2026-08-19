@@ -54,6 +54,40 @@
   color-scheme: light;
 }
 
+/* 分类色盘：DESIGN §4 给排行页开的**唯一**口子（口径层 v0.86 ⑨）。这五个色承载的是
+   「身份」不是语义——环形图与两条堆叠条要把同一个模型 / 同一把 key 在两块图里认成同
+   一个东西，灰阶做不到。**用途封死在构成图里**，不进表格数字、不进徽章、不进状态、
+   不与四个语义色混用；节律带仍是墨色单色（热度是量不是身份）。
+
+   取值出自 dataviz 参考色板的前五槽，在羊皮纸画布 #f5f4ed 上跑过校验器：
+     五槽全过；最差相邻 CVD ΔE 9.1（阈值 8）、常视 ΔE 19.6（阈值 15）。
+     四个色对羊皮纸不足 3:1（实测 2.9 / 2.55 / 1.96 / 2.44）→ 触发 relief 条款，
+     办法是每个系列都直标名字 + 百分比（.cat-legend 那一行），已满足。
+   **改任何一个值都要重跑校验器**，别凭眼睛调。
+
+   第六名及以后一律并进「其余（N）」的中性灰，不生成第六个色相。 */
+:root {
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-other: color-mix(in srgb, var(--ink) 28%, var(--canvas));
+}
+
+/* 热度五档 + 两档「不是量」。墨色与画布混出来，与 §4「单色是默认态」同一条。
+   三档语义必须分开：--heat-none 是没有调用（空格），--heat-0 是有调用但上游没报
+   token（最浅一档，仍占位），1…4 才是按分位切的量。--heat-out 给窗口之外的占位格。 */
+:root {
+  --heat-0: color-mix(in srgb, var(--ink) 7%, var(--canvas));
+  --heat-1: color-mix(in srgb, var(--ink) 16%, var(--canvas));
+  --heat-2: color-mix(in srgb, var(--ink) 31%, var(--canvas));
+  --heat-3: color-mix(in srgb, var(--ink) 50%, var(--canvas));
+  --heat-4: color-mix(in srgb, var(--ink) 72%, var(--canvas));
+  --heat-none: transparent;
+  --heat-out: color-mix(in srgb, var(--ink) 5%, var(--canvas));
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2699,15 +2733,6 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
-.rank-controls {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .dialog-head {
   border-bottom: 0;
   padding: 22px 22px 8px;
@@ -2738,6 +2763,532 @@ textarea:focus {
   border-radius: var(--r-sm);
 }
 
+/* ── 排行页：节律带 → 切片井 → 排行列表（口径层 v0.86，DESIGN §5.2）────────
+   一个桶数组喂三种排布：1 天画柱、7 天画点阵、30 天画日历。三种排布共用 .sky 这
+   一段的头、提示与读数带，不是三个各带一套壳的组件。 */
+
+.sky {
+  padding: 18px 0 4px;
+}
+
+/* 节律带上每一格都是 button（可点、可聚焦、进 tab 序），但它不该长得像按钮：
+   UA 的边框、底色、内边距一并去掉，这张图唯一的编码是尺寸与深浅。焦点环仍由
+   全局 :focus-visible 给，键盘用得着。 */
+.sky-bar-col,
+.sky-dot-hit,
+.cal-day,
+.slice-x {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
+button.sky-bar-col,
+button.sky-dot-hit,
+button.cal-day,
+.slice-x {
+  cursor: pointer;
+}
+
+.sky-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sky-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sky-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: block;
+}
+
+/* 环在左、节律在右。三档窗口都走这个两栏：参照面板在 30 天那屏把环收掉，是因为
+   它那张 53 周画布要占满整行；画布收成六周之后那个特例就没依据了。 */
+.sky-split {
+  display: grid;
+  grid-template-columns: 236px 1fr;
+  gap: 12px 30px;
+  align-items: start;
+}
+
+.sky-hint {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* 排布①：1 天 = 24 根柱，横轴小时。柱靠**高度**说话，不叠热度色——同一个量
+   编码两遍不多给一分信息。 */
+.sky-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 132px;
+}
+
+.sky-bar-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.sky-bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--heat-3);
+  transition: background 0.12s ease;
+}
+
+.sky-bar-col:hover .sky-bar,
+.sky-bar-col.is-sel .sky-bar {
+  background: var(--ink);
+}
+
+/* 「有调用但上游没报 token」那一格留一线高度仍占位，颜色退到最浅；
+   「没有调用」是真的 0，画不出东西。 */
+.sky-bar-col.is-empty .sky-bar {
+  background: var(--heat-out);
+}
+
+/* 横轴刻度。每三格一个标签，24 个全标会糊成一条。 */
+.sky-ticks {
+  display: grid;
+  justify-items: center;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sky-ticks span {
+  white-space: nowrap;
+}
+
+/* 排布②：7 天 = 7 行 × 24 列点阵，**尺寸 + 深浅双编码**。两条腿是刻意的：小屏与
+   低对比屏上深浅先糊、尺寸还在，打印出来反过来。 */
+.sky-grid {
+  display: grid;
+  gap: 0;
+}
+
+.sky-rowlab-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 0 10px;
+  align-items: center;
+}
+
+.sky-rowlab {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sky-row {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  height: 26px;
+  align-items: center;
+  justify-items: center;
+}
+
+.sky-row.sky-ticks {
+  height: auto;
+  margin-top: 6px;
+}
+
+.sky-dot-hit {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 26px;
+  border-radius: 6px;
+}
+
+.sky-dot-hit:hover {
+  background: var(--hover);
+}
+
+.sky-dot-hit.is-sel {
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+
+.sky-dot {
+  border-radius: 50%;
+  background: var(--heat-2);
+  display: block;
+}
+
+/* 排布③：30 天 = 窗口盖住的那六周日历（口径层 v0.86 ⑤，不做 53 周画布——本项目
+   这个数据量下一年画布 94% 的格子是灰的）。窗口外那几格仍画成灰底占位：一周
+   七格的结构不能缺角。 */
+.cal {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 10px;
+  --cell: 34px;
+  --cal-gap: 7px;
+}
+
+.cal-months {
+  display: grid;
+  font-size: 11px;
+  color: var(--muted);
+  height: 18px;
+}
+
+.cal-months span {
+  grid-row: 1;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+/* justify-content:start 必须写：.cal-body 占 1fr，不钉住起点的话 grid 会把那六列
+   摊满整行，立刻散成一片。 */
+.cal-body {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: start;
+  gap: var(--cal-gap);
+}
+
+.cal-week {
+  display: grid;
+  grid-template-rows: repeat(7, var(--cell));
+  gap: var(--cal-gap);
+}
+
+.cal-day {
+  width: var(--cell);
+  height: var(--cell);
+  border-radius: 5px;
+  background: var(--heat-none);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  padding: 0;
+}
+
+.cal-day.is-out {
+  background: var(--heat-out);
+  box-shadow: none;
+}
+
+.cal-day.is-in:hover {
+  box-shadow: 0 0 0 1.5px var(--line);
+}
+
+.cal-day.is-sel,
+.cal-day.is-in.is-sel:hover {
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+
+.cal-wdays {
+  display: grid;
+  grid-template-rows: repeat(7, var(--cell));
+  gap: var(--cal-gap);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.cal-wdays span {
+  line-height: var(--cell);
+}
+
+/* ── 环 + 两条占比堆叠条 ─────────────────────────────────────────────── */
+
+.donut-wrap {
+  position: relative;
+  width: 176px;
+  margin: 4px auto 0;
+}
+
+.donut-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.donut-mid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-mid b {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.donut-mid span {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.breakdown {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 34px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.cat-title {
+  font-size: 12px;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+}
+
+/* 段与段之间留 2px 画布色的缝，段界不靠色差自己撑。
+   **圆角与裁切放容器上**：段宽是百分比、缝是 2px 定值，加起来必然超过 100%，
+   末段会被挤出去；容器裁一刀最省事，而 flex 的收缩按基准宽等比分摊，比例不会
+   因为这一刀走样。 */
+.stack {
+  display: flex;
+  gap: 2px;
+  height: 9px;
+  margin: 4px 0 9px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.stack i {
+  border-radius: 2px;
+  min-width: 2px;
+}
+
+/* 每个系列都直标名字 + 百分比：这五个色对羊皮纸有四个不足 3:1，dataviz 的
+   relief 条款要的就是这个，只摆色块不成立。 */
+.cat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.cat-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cat-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.cat-legend b {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 15em;
+}
+
+.cat-legend em {
+  font-style: normal;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 切片井：点一格展开，答「这一段是怎么构成的」──────────────────────
+   §4 允许的第③种表面（展开井）。三段是缓存 / 净输入 / 输出，不列 reasoning
+   （口径层 v0.66：思考在 output 里面，单列会被读成第四笔加数）。 */
+.slice {
+  position: relative;
+  margin: 18px 0 4px;
+  padding: 18px 20px;
+  background: var(--sunken);
+  border-radius: var(--r);
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(260px, 1.4fr) auto;
+  gap: 12px 28px;
+  align-items: start;
+}
+
+/* 尖角指向被选中那一格，左偏移由 JS 量出来（三种排布的列宽各不相同）。 */
+.slice::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: var(--caret, 40px);
+  width: 12px;
+  height: 12px;
+  background: var(--sunken);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+.slice-when {
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.slice-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.slice-total b {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.slice-calls {
+  font-size: 13px;
+  color: var(--mute);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 有失败才上错误色，「失败」两个字同时留着当非颜色线索（DESIGN §3）。 */
+.slice-bad {
+  color: var(--err-text);
+}
+
+.comp-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 6px 0 12px;
+}
+
+.comp-legend {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.comp-legend div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comp-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.comp-legend span {
+  margin-left: auto;
+  color: var(--mute);
+}
+
+/* 三段沿用既有的两个数据色（输入绿 / 输出褐），缓存是墨色一档——它们不是分类
+   色盘那五个，构成条上分的是「哪种 token」不是「谁」。 */
+.comp-cache {
+  background: color-mix(in srgb, var(--ink) 26%, var(--canvas));
+}
+
+.comp-in {
+  background: var(--data-in);
+}
+
+.comp-out {
+  background: var(--data-out);
+}
+
+.slice-x {
+  color: var(--mute);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+}
+
+.slice-x:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* ── 读数带：同一个桶数组的几个读数 ────────────────────────────────────
+   **不是**「指标堆砌成一排等大方块」（§9 点名的反模式）：无框、无底、字号有主次，
+   合计不在这里再报一遍——它在上面那条指标行里当占比的分母（§5.2 ⑥）。 */
+.ivstats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px 24px;
+  padding: 18px 0 4px;
+  margin: 14px 0 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ivstat dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ivstat dd {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ivstat small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 排行列表的头：左边一句话说清这一列现在算的是哪一段，右边是聚合维度。 */
+.rank-scope {
+  margin: 22px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rank-scope-note {
+  font-size: 13px;
+  color: var(--mute);
+}
+
 @media (max-width: 860px) {
   .page-head,
   .ch-bar-row {
@@ -2747,15 +3298,17 @@ textarea:focus {
   .form-row {
     grid-template-columns: 1fr;
   }
-  .rank-controls {
-    justify-content: flex-start;
-  }
   .page-head h1 {
     font-size: 22px;
   }
   .main {
     border-radius: 0;
     padding: 28px 18px 40px;
+  }
+  .sky-split,
+  .slice,
+  .breakdown {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -333,6 +333,25 @@ export interface UsageRow {
   cache_write_tokens: number
 }
 
+/**
+ * 节律带上的一格（`GET /usage/buckets`，#21）。
+ *
+ * `bucket` 是**本地时区**的桶起点，`unit=day` 为 `YYYY-MM-DD`、`unit=hour` 为
+ * `YYYY-MM-DD HH:00`——不是 ISO 串，别拿 `new Date()` 去解析它，前端按本地时间
+ * 自己铺格子再拿这个键去查（见 pages/rankings/intervals.ts）。
+ *
+ * 后端只回**已经发生**的桶：空桶补零，未到的区间一个都不给（口径层 v0.86 ③）。
+ */
+export interface BucketUsage {
+  bucket: string
+  calls: number
+  errors: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+}
+
 export interface SessionState {
   authenticated: boolean
   password_set: boolean

@@ -1,10 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import type { UsageRow } from '../api'
+import type { BucketUsage, UsageRow } from '../api'
 import { Card, Empty, ErrorBar, fmtCompact, fmtInt, useList } from '../ui'
 import { Segmented } from '../fields'
 import { ModelIcon } from '../icons'
-import { DAY_OPTIONS, sumUsage } from './usage-common'
+import { DAY_OPTIONS } from './usage-common'
+import {
+  buildIntervals,
+  calendarWeeks,
+  colorMap,
+  composition,
+  heatScale,
+  intervalRange,
+  ivStats,
+  rankSort,
+  sliceComposition,
+  tokensOf,
+  windowSpec,
+} from './rankings/intervals'
+import {
+  Donut,
+  SkyBars,
+  SkyCalendar,
+  SkyMatrix,
+  SliceWell,
+  Stack,
+  md,
+  whenLabel,
+} from './rankings/sky'
 
 // 聚合维度（v0.38 加了上游凭证，v0.53 加了 API Key）。
 //
@@ -16,74 +39,281 @@ const DIM_OPTIONS = [
   { value: 'credential' as const, label: '按上游凭证' },
 ]
 
+type Dim = (typeof DIM_OPTIONS)[number]['value']
+
 /** 一行行数按维度换个量词，别让「3 个模型」和「3 份凭证」长成同一句。 */
-const DIM_UNIT: Record<string, string> = {
+const DIM_UNIT: Record<Dim, string> = {
   model: '个模型',
   key: '把 API Key',
   credential: '份上游凭证',
 }
 
+/** 一个 scope 下的几个维度汇总。环与堆叠条恒要 model + key，排行列表要当前那个维度。 */
+type DimRows = Partial<Record<Dim, UsageRow[]>>
+
+async function fetchDims(query: string, dims: Dim[]): Promise<DimRows> {
+  const out: DimRows = {}
+  await Promise.all(
+    dims.map(async (d) => {
+      const r = await api.get<{ rows: UsageRow[] | null }>(`/usage?${query}&by=${d}`)
+      out[d] = r.rows ?? []
+    }),
+  )
+  return out
+}
+
 /**
- * 排行：这段时间**谁在烧**（口径层 v0.58 定形态，v0.60 单独成页）。
+ * 排行：**什么时候烧的 → 那一段是怎么构成的 → 谁在烧**，一条下钻链（口径层 v0.86）。
  *
- * 取的只有 new-api 模型广场 / OpenRouter rankings 的那个**形态**：名次 + 图标 +
- * 名字 + 一个主指标 + 占比。参照页上另外三块——热门榜、厂商市场份额、↑8500% 那种
- * 环比——仍不做：那三块要的是分母或上一周期，这里两样都没有。占比是例外，它的分母
- * 就是这一页自己的合计，说的是自己这段时间的构成，不是「别人在用什么」。
+ * 三层同一屏从上往下读；点中节律带上一格之后**三层共用一个 scope**——否则同一屏上
+ * 会出现「上面是整窗、下面是这一小时」两套数。
+ *
+ * 取数分三路，各有各的 key：
+ *   - `/usage/buckets` 只跟窗口档位有关，切维度不重取（节律带与那几个读数都吃它）。
+ *   - `/usage?days=` 整窗聚合，色映射的出处；没选中区间时它也是三处共用的 scope。
+ *   - `/usage?from=&to=` 选中那一格之后按那一格重算（#21 给的那两个参数）。
  */
 export default function Rankings() {
   const [days, setDays] = useState('7')
-  const [dim, setDim] = useState('model')
-  const usage = useList(
-    () => api.get<{ days: number; rows: UsageRow[] | null }>(`/usage?days=${days}&by=${dim}`),
-    [days, dim], // 天数或维度一变就重拉
+  const [dim, setDim] = useState<Dim>('model')
+  const [sel, setSel] = useState<number | null>(null)
+
+  // 环与两条堆叠条恒要 model + key（口径层 v0.86 ⑧），排行列表要当前维度。
+  // 按凭证看时才多取一路，前两档不多发一次请求。
+  const dims = useMemo<Dim[]>(
+    () => (dim === 'credential' ? ['model', 'key', 'credential'] : ['model', 'key']),
+    [dim],
   )
+  const dimsKey = dims.join(',')
 
-  const rows = usage.data?.rows ?? []
-  const total = useMemo(() => sumUsage(rows), [rows])
-  const totalTokens = total.input + total.output
+  // 回包里带上这一发用的窗口档位与「现在」：在飞的那一刻拿新档位配旧数据铺格子，
+  // 会用 24 行去铺 168 格、闪一帧空图。带着一起换，旧图就原样留到新数据落地。
+  const buckets = useList(async () => {
+    const n = Number(days)
+    const { unit } = windowSpec(n)
+    const r = await api.get<{ rows: BucketUsage[] | null }>(
+      `/usage/buckets?days=${days}&unit=${unit}`,
+    )
+    return { days: n, rows: r.rows ?? [], now: new Date() }
+  }, [days])
 
-  // 名次按 **token 总量** 排，不按后端那句 `ORDER BY COUNT(*)`：这一页问的是「谁在烧」，
-  // 而调用次数与 token 能差一个量级（93 次烧 317 万，5 次烧 40 万，DESIGN v0.11 记过）。
-  // 并列时退回调用次数——上游整段不报 usage 时所有行的 token 都是 0，那时次数是唯一还
-  // 有区分度的数，名次至少不是随机的。排序放前端：行数是模型数量级，且同一个端点还给
-  // 调用记录页那个模型下拉供选项，改 SQL 会把两处绑在一起。
-  const ranked = useMemo(
+  const winUsage = useList(() => fetchDims(`days=${days}`, dims), [days, dimsKey])
+
+  const { unit, list } = useMemo(
     () =>
-      [...rows].sort(
-        (a, b) =>
-          b.input_tokens + b.output_tokens - (a.input_tokens + a.output_tokens) ||
-          b.calls - a.calls,
-      ),
-    [rows],
+      buckets.data
+        ? buildIntervals(buckets.data.days, buckets.data.rows, buckets.data.now)
+        : { unit: 'hour' as const, list: [] },
+    [buckets.data],
   )
+
+  const picked = sel != null ? (list[sel] ?? null) : null
+  const range = picked ? intervalRange(picked) : null
+  const sliceUsage = useList(
+    () => (range ? fetchDims(`from=${range.from}&to=${range.to}`, dims) : Promise.resolve(null)),
+    [range?.from, range?.to, dimsKey],
+  )
+
+  // 选中之后三处（环、堆叠条、排行列表）看同一个 scope。切片还在飞时留着上一份，
+  // 与切窗口同一条：宁可慢半拍，不要闪一下空。
+  const scope: DimRows = (picked ? sliceUsage.data : winUsage.data) ?? winUsage.data ?? {}
+
+  const stats = useMemo(() => ivStats(list), [list])
+  const scale = useMemo(() => heatScale(list), [list])
+  const cal = useMemo(
+    () => (unit === 'day' && buckets.data ? calendarWeeks(list, buckets.data.now) : null),
+    [unit, list, buckets.data],
+  )
+
+  // 色跟着**实体**走不跟名次走：整窗聚合算一次映射，之后只查表。切一个区间名次会变，
+  // 按名次上色会让整排条同时改色，「蓝色那条」在两次点击之间就不是同一个东西了。
+  const colors = useMemo(
+    () => ({
+      model: colorMap(winUsage.data?.model ?? []),
+      key: colorMap(winUsage.data?.key ?? []),
+    }),
+    [winUsage.data],
+  )
+  const byModel = useMemo(() => composition(scope.model ?? [], colors.model), [scope, colors])
+  const byKey = useMemo(() => composition(scope.key ?? [], colors.key), [scope, colors])
+
+  const ranked = useMemo(() => rankSort(scope[dim] ?? []), [scope, dim])
+  // 这一页只有这一个合计，它同时是下面每一行占比的**分母**（DESIGN §5.2 ⑥），
+  // 所以它跟着 scope 走：选中一格之后它说的就是那一格。
+  const rankTotal = ranked.reduce((a, r) => a + tokensOf(r), 0)
+
+  /** 换窗口时旧下标指向另一格，必须清掉；换维度不清——问的还是同一段时间。 */
+  function pickDays(v: string) {
+    setSel(null)
+    setDays(v)
+  }
+
+  /** 再点一次同一格就是取消。 */
+  const pick = (i: number) => setSel((cur) => (cur === i ? null : i))
+
+  useEffect(() => {
+    if (sel == null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSel(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [sel])
+
+  // 尖角指向被选中那一格。按窗口各推一套公式（列宽 × 下标）要写三份，且日历那版的
+  // 列宽还跟着 --cell 变；渲染完直接量一次省事也不会错。
+  const skyRef = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    const root = skyRef.current
+    const cell = root?.querySelector<HTMLElement>('[data-iv].is-sel')
+    const well = root?.querySelector<HTMLElement>('.slice')
+    if (!cell || !well) return
+    const a = cell.getBoundingClientRect()
+    const b = well.getBoundingClientRect()
+    // 夹在井两端之内：选中最左 / 最右那格时，尖角不该跑到圆角外面去。
+    well.style.setProperty(
+      '--caret',
+      `${Math.max(16, Math.min(b.width - 28, a.left + a.width / 2 - b.left - 6))}px`,
+    )
+  })
+
+  const winDays = buckets.data?.days ?? Number(days)
+  const unitWord = unit === 'hour' ? '小时' : '天'
+  /** 量词跟着粒度换：「30 个天」不是中文，「154 个小时」才是。 */
+  const countWord = (n: number) => (unit === 'hour' ? `${n} 个小时` : `${n} 天`)
+  const first = list[0]
+  const last = list[list.length - 1]
+  const rangeText = !first
+    ? ''
+    : winDays === 1
+      ? `${md(first.start)} 00:00 起的 24 小时`
+      : `${md(first.start)} – ${md(last.start)}`
+  const scopeWord = picked ? whenLabel(picked, unit, true) : `这 ${winDays} 天`
+  // 柱靠高度说话，其余两档靠深浅；色阶图例只在后者出现。
+  const usesHeat = winDays !== 1
 
   return (
     <>
-      <ErrorBar message={usage.error} />
+      <ErrorBar message={buckets.error || winUsage.error || sliceUsage.error} />
       <Card
         title="排行"
-        action={
-          <div className="rank-controls">
-            <Segmented value={dim} options={DIM_OPTIONS} onChange={setDim} />
-            <Segmented value={days} options={DAY_OPTIONS} onChange={setDays} />
-          </div>
-        }
+        action={<Segmented value={days} options={DAY_OPTIONS} onChange={pickDays} />}
       >
-        {/* 只摆合计一个数，不重复概览页那条指标条（DESIGN §6 同一份数据不画两遍）：
-            它在这里的身份是**下面每一行占比的分母**，没有它，「57.9%」没有出处。 */}
+        {/* 只摆合计一个数，不重复下面那排读数（DESIGN §6 同一份数据不画两遍）：
+            它在这里的身份是**每一行占比的分母**，没有它，「57.9%」没有出处。 */}
         <div className="stats">
           <div className="stat-lead">
-            <span
-              className="stat-lead-value"
-              title={`输入 ${fmtInt(total.input)} · 输出 ${fmtInt(total.output)}`}
-            >
-              {fmtCompact(totalTokens)}
+            <span className="stat-lead-value" title={fmtInt(rankTotal)}>
+              {fmtCompact(rankTotal)}
             </span>
             <span className="stat-lead-label">
-              token 合计 · {rows.length} {DIM_UNIT[dim] ?? '个模型'}
+              token 合计 · {scopeWord} · {ranked.length} {DIM_UNIT[dim]}
             </span>
           </div>
+        </div>
+
+        <section className="sky" aria-label="节律" ref={skyRef}>
+          <div className="sky-head">
+            <div>
+              {rangeText} · 一格 = 1 {unitWord}
+            </div>
+            {usesHeat && (
+              <div className="sky-legend">
+                <span>少</span>
+                {[1, 2, 3, 4].map((l) => (
+                  <i key={l} style={{ background: `var(--heat-${l})` }} />
+                ))}
+                <span>多</span>
+              </div>
+            )}
+          </div>
+
+          {/* 环在左、节律在右，三档窗口都走这个两栏。环这一栏**不带图例**（PO
+              2026-08-18 裁）：名字与百分比由下面那条「按模型」堆叠条给一次。 */}
+          <div className="sky-split">
+            <div>
+              {byModel.total > 0 ? (
+                <Donut slices={byModel.slices} total={byModel.total} />
+              ) : (
+                <p className="sky-hint">这段时间还没有调用。</p>
+              )}
+            </div>
+            {/* 头一次渲染时桶还没到，list 是空的：三种排布一律等数据落地再画，
+                别让点阵去切一个空数组（切出来是七个空行，取 row[0] 就炸）。 */}
+            <div>
+              {list.length === 0 ? null : winDays === 1 ? (
+                <SkyBars list={list} sel={sel} onPick={pick} />
+              ) : unit === 'hour' ? (
+                <SkyMatrix list={list} scale={scale} sel={sel} onPick={pick} />
+              ) : cal ? (
+                <SkyCalendar
+                  list={list}
+                  scale={scale}
+                  sel={sel}
+                  onPick={pick}
+                  weeks={cal.weeks}
+                  months={cal.months}
+                />
+              ) : null}
+            </div>
+          </div>
+
+          <p className="sky-hint">点一格，看那一段是谁在烧。</p>
+          {picked && (
+            <SliceWell
+              iv={picked}
+              unit={unit}
+              comp={sliceComposition(picked)}
+              onClose={() => setSel(null)}
+            />
+          )}
+
+          {/* 参照图底下那两条。「BY MEMBER」在单人网关里没有对应物，最近的是
+              「按 API Key」——它答的是「哪个客户端在烧」。 */}
+          {byModel.total > 0 && (
+            <div className="breakdown">
+              <Stack title="按模型" slices={byModel.slices} total={byModel.total} />
+              <Stack title="按 API Key" slices={byKey.slices} total={byKey.total} />
+            </div>
+          )}
+
+          {/* 节律带的几个读数，全部出自同一个桶数组，一套文案吃三档窗口。
+              **分母只数已经过去的区间**：今天 15 点看「1 天」是 N/16 不是 N/24。
+              合计不在这里再报一遍，它在上面那条指标行里当占比的分母。 */}
+          <dl className="ivstats">
+            <div className="ivstat">
+              <dt>每{unitWord}均值</dt>
+              <dd>{fmtCompact(stats.avg)}</dd>
+            </div>
+            <div className="ivstat">
+              <dt>峰值区间</dt>
+              <dd>
+                {stats.peak ? fmtCompact(stats.peak.tokens) : '—'}
+                <small>{stats.peak ? whenLabel(stats.peak, unit) : '整段没有报出 token'}</small>
+              </dd>
+            </div>
+            <div className="ivstat">
+              <dt>活跃区间</dt>
+              <dd>
+                {stats.activeN}
+                <small>共 {countWord(stats.n)}</small>
+              </dd>
+            </div>
+            <div className="ivstat">
+              <dt>最长连续</dt>
+              <dd>
+                {stats.streak}
+                <small>连着 {countWord(stats.streak)}有调用</small>
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <div className="rank-scope">
+          <div className="rank-scope-note">
+            {picked ? '只看选中的那个区间。再点一次或按 Esc 回到整窗。' : `这 ${winDays} 天全部。`}
+          </div>
+          <Segmented value={dim} options={DIM_OPTIONS} onChange={setDim} />
         </div>
 
         {ranked.length === 0 ? (
@@ -91,7 +321,7 @@ export default function Rankings() {
         ) : (
           <ol className="rank-list">
             {ranked.map((r, i) => {
-              const t = r.input_tokens + r.output_tokens
+              const t = tokensOf(r)
               return (
                 <li className="rank-row" key={r.label}>
                   {/* 名次单独一格、等宽右对齐：它是这份列表唯一的序，让它自己成一列，
@@ -133,7 +363,7 @@ export default function Rankings() {
                     {/* 上游整段不报 usage 时全列都是 0，占比算出来是 0.0% 而不是「不知道」
                         ——那时写「—」，名次此刻靠的是调用次数。 */}
                     <div className="sub tnum">
-                      {totalTokens ? `${((t / totalTokens) * 100).toFixed(1)}%` : '—'}
+                      {rankTotal ? `${((t / rankTotal) * 100).toFixed(1)}%` : '—'}
                     </div>
                   </div>
                 </li>
