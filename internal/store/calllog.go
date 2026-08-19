@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/SimonGino/portage/internal/calllog"
 )
@@ -42,4 +43,38 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 		l.ReasoningTokens, l.Error, l.ErrorDetail,
 		l.UpstreamRequestID)
 	return err
+}
+
+// DeleteCallLogsBefore 删掉 cutoff 之前的流水，返回删了多少行（口径层 v0.93，#35）。
+//
+// **刻意不跟 VACUUM**（v0.93 ③ 钉死）：删掉的页被 SQLite 复用，库文件不缩但停止
+// 增长，这是设计行为不是漏了。同一条立论也管着这里的形状——**分批删、每批各自
+// 成事务**：本库单写连接（SetMaxOpenConns(1)），一条无上限的 DELETE 对着存量大库
+// 会把写连接占到删完为止，转发请求全排在它后面，裁掉 VACUUM 防的正是这件事。
+// 批间放行其他写入，代价只是清理慢一点，而它本来就不赶时间。
+//
+// 条件是 <（恰好等于 cutoff 的行留下），比较走 sqlTime 折成的 UTC 串——与用量聚合
+// 同一条纪律：不在 SQL 里对 created_at 套函数，否则 idx_call_logs_created_at 废掉，
+// 这条 DELETE 就要全表扫。
+func DeleteCallLogsBefore(ctx context.Context, db *sql.DB, cutoff time.Time) (int64, error) {
+	return deleteCallLogsBefore(ctx, db, cutoff, 10_000)
+}
+
+func deleteCallLogsBefore(ctx context.Context, db *sql.DB, cutoff time.Time, batch int) (int64, error) {
+	var total int64
+	for {
+		res, err := db.ExecContext(ctx, `DELETE FROM call_logs WHERE id IN
+			(SELECT id FROM call_logs WHERE created_at < ? LIMIT ?)`, sqlTime(cutoff), batch)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(batch) {
+			return total, nil
+		}
+	}
 }

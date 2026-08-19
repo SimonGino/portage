@@ -220,3 +220,32 @@ func TestRateLimitZeroIsHonoured(t *testing.T) {
 		})
 	}
 }
+
+// call_log_retention_days 的零值陷阱与 rate_limit_qps 同（#35）：没写是「用默认 90 天」，
+// 显式写 0 是「永久保留」。补零值的后果是想永久留账的人发现 90 天前的流水被静默删了——
+// 而删流水不可逆，这一格混淆的代价比关不掉限流更重。
+func TestLoadDistinguishesAbsentRetentionFromExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{name: "整块缺席", yaml: "db_path: /tmp/a.db\n", want: 90},
+		{name: "显式写 0 即永久保留", yaml: "call_log_retention_days: 0\n", want: 0},
+		{name: "显式调短", yaml: "call_log_retention_days: 30\n", want: 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("加载失败: %v", err)
+			}
+			if cfg.CallLogRetentionDays != tc.want {
+				t.Errorf("call_log_retention_days = %d, 期望 %d", cfg.CallLogRetentionDays, tc.want)
+			}
+		})
+	}
+}

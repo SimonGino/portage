@@ -175,4 +175,5 @@ CREATE TABLE IF NOT EXISTS call_logs (
   upstream_request_id TEXT NOT NULL DEFAULT ''
 );
 
+-- 用量查询与保留期清理（口径层 v0.93 的 DELETE）共用这一个索引。
 CREATE INDEX IF NOT EXISTS idx_call_logs_created_at ON call_logs(created_at);

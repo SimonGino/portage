@@ -37,3 +37,7 @@ retry:
 # 写 0 关掉。10 QPS 的取值依据见口径层 v0.15：agent 会话峰值 <5 QPS，留了双会话余量。
 rate_limit_qps: 10
 rate_limit_burst: 20
+
+# 流水保留期：启动清一次 + 每天清一次 N 天前的 call_logs（口径层 v0.93，#35）。
+# 写 0 即永久保留。删行不跟 VACUUM——库文件不缩但停止增长，稳定在保留期内的峰值。
+call_log_retention_days: 90

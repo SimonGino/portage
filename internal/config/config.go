@@ -37,6 +37,12 @@ type Config struct {
 	RateLimitQPS   int `yaml:"rate_limit_qps"`
 	RateLimitBurst int `yaml:"rate_limit_burst"`
 
+	// CallLogRetentionDays 是流水保留期（#35，v0.93 定 90 天）：启动时清一次、
+	// 之后每天清一次 90 天前的 call_logs。**配 0 即永久保留**——零值语义与
+	// rate_limit_qps 同一个形状，Load 里不得补零值，否则「写了 0」被悄悄改回 90，
+	// 而删掉的流水回不来。
+	CallLogRetentionDays int `yaml:"call_log_retention_days"`
+
 	// M0 接受但不使用，留给后续里程碑。
 	DefaultMaxTokens int `yaml:"default_max_tokens"`
 }
@@ -77,6 +83,8 @@ func Default() Config {
 		DefaultMaxTokens: 8192,
 		RateLimitQPS:     10,
 		RateLimitBurst:   20,
+		// 90 天覆盖「回头看上一季度用量」的个人需求；再长的账不如导出来另存。
+		CallLogRetentionDays: 90,
 		// 取值参照 M0 实测（portage-legacy#6）：Codex 对 5xx 的退避是 0.22→0.45→0.84→1.62s，
 		// 量级相仿。重试 2 次是「够救瞬时限流、又不至于让客户端干等太久」的折中；
 		// 真实 429 通常带 Retry-After，那时以它为下界。

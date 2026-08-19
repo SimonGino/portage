@@ -116,6 +116,38 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 			"要管理面就填 config.yaml 的 admin_password 或设 PORTAGE_ADMIN_PASSWORD 后重启")
 	}
 
+	// 流水保留期（口径层 v0.93，#35）：启动清一次 + 之后每 24h 一次，ctx 取消即退。
+	// 常年不重启的实例正是这个缺口的主场景，所以不能只在启动时清。循环放这儿不放
+	// store——goroutine、ticker、日志是进程生命周期编排，store 只留纯删除。
+	//
+	// <= 0 整个不起：0 是「永久保留」不是「每天删光」；负数也必须落在这一侧——
+	// 它折出来的 cutoff 在未来，那条 DELETE 会把流水清空，不能给它任何跑起来的机会。
+	if days := cfg.CallLogRetentionDays; days > 0 {
+		go func() {
+			prune := func() {
+				n, err := store.DeleteCallLogsBefore(ctx, db, time.Now().AddDate(0, 0, -days))
+				if err != nil {
+					log.Error("call_logs 保留期清理失败", "err", err)
+					return
+				}
+				if n > 0 {
+					log.Info("call_logs 保留期清理", "deleted", n, "retain_days", days)
+				}
+			}
+			prune()
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					prune()
+				}
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: server.New(cfg, db, log).Engine(),
