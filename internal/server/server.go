@@ -224,7 +224,23 @@ func (s *Server) Engine() *gin.Engine {
 	r.POST("/v1/responses/compact", compactUnsupported)
 	// 管理面自己挂自己的路由与鉴权（cookie 会话），与上面这套 key 鉴权互不相干。
 	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
-	admin.New(s.db, s.log).Mount(r)
+	//
+	// **形态闸（口径层 §2.9 #27）：没有管理密码就没有管理面。** 整个 Mount 不调，于是
+	// /admin 页面、/admin/api/* 与登录会话全部**不注册**——404 是路由级的，不是鉴权级。
+	//
+	// 口径一句话：**值只用于初始化，存在性用于形态**。这是给 v0.28「密码只用来初始化」
+	// 加一半，不推翻它。
+	//
+	// 闸只看 cfg（配置文件或 PORTAGE_ADMIN_PASSWORD），**不看库**：形态是进程属性，
+	// 而库是共享资源——看库的话，一台带 UI 的观测实例往 settings 里写的密码，会把生产
+	// 那台纯转发机的管理面一起打开。
+	//
+	// 顺带一提 webui 那个 build tag 管的是**另一件事**：它只决定前端资产 embed 不 embed，
+	// 路由本来是无条件挂的，凭证回读接口照常活着。「编译期去掉 UI」从来不等于「有了
+	// 无 UI 的部署形态」，这道运行期的闸才是。
+	if strings.TrimSpace(s.cfg.AdminPassword) != "" {
+		admin.New(s.db, s.log).Mount(r)
+	}
 	return r
 }
 
