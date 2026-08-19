@@ -193,7 +193,7 @@ func (u *usagePayload) canonical() *protocol.Usage {
 		return nil
 	}
 	out := protocol.Usage{
-		InputTokens:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
+		InputTokens:      protocol.GrossInput(u.InputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens),
 		OutputTokens:     u.OutputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,

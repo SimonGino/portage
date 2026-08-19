@@ -25,10 +25,10 @@ import (
 // 而 CC 的 input 本来就是毛值、一个字都不该动——只有两条并排放着，才分得出归一
 // 有没有误伤到不该动的那一侧。
 
-// Anthropic 渠道：input_tokens 今天落的是上游原样的**净值**（与缓存两项互不相交）。
+// Anthropic 渠道：上游报的 input_tokens 是**净值**（与缓存两项互不相交），落流水
+// 前经 protocol.GrossSummaryInput 归一成毛值（#6，口径层 v0.71）。
 //
-// 31 这个数在 #6 落地后会变成 2091（31 + 12 + 2048，口径层 v0.71 的毛值口径）。
-// 那一票改这条断言是**预期内的**，改下面那条 CC 的则不是。
+// 2091 = 31 + 12 + 2048。缓存两项照旧原样落列，明细不因归一而丢。
 func TestAnthropicTokenColumnsLandInCallLogs(t *testing.T) {
 	gw, up := newAnthropicGateway(t)
 	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"},
@@ -40,7 +40,7 @@ func TestAnthropicTokenColumnsLandInCallLogs(t *testing.T) {
 	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", anthropicRequest, nil))
 
 	row := gw.LastCallRow(t)
-	assertNullInt(t, "input_tokens", row.InputTokens, 31)
+	assertNullInt(t, "input_tokens", row.InputTokens, 2091)
 	assertNullInt(t, "output_tokens", row.OutputTokens, 57)
 	assertNullInt(t, "cache_read_tokens", row.CacheReadTokens, 2048)
 	assertNullInt(t, "cache_write_tokens", row.CacheWriteTokens, 12)
@@ -48,8 +48,9 @@ func TestAnthropicTokenColumnsLandInCallLogs(t *testing.T) {
 
 // CC 渠道：input_tokens 本来就是**毛值**（prompt_tokens 已含缓存命中那部分）。
 //
-// 2079 = 31 + 2048，与上面那条 Anthropic 是同一次调用的两种记法。#6 之后两条要
-// 落成同一个数，而这条的 2079 从头到尾不动。
+// 2079 = 31 + 2048，与上面那条 Anthropic 是同一次调用的两种记法（CC 没有缓存写
+// 一项，所以差 12）。#6 归一只该动 Anthropic 那条——这条的 2079 从头到尾不动，
+// 动了即归一误伤。
 //
 // cache_write_tokens 落 0 而不是 NULL：CC 协议没有缓存写入的概念，上游一定不报，
 // 但只要走到了 summary 这一列就恒落（口径层 v0.66 只给思考那一格开了「没报就

@@ -521,12 +521,12 @@ func (r *Recorder) Row() Row {
 	if r.stream && r.haveFirstByte {
 		row.TTFTMs = sql.NullInt64{Int64: r.firstByte.Sub(r.start).Milliseconds(), Valid: true}
 	}
-	// #6 的接缝在这里：Anthropic 渠道的 input 是净值，要加回缓存两项才是流水那一列
-	// 的毛值口径（口径层 v0.71）。归一函数由 internal/protocol 暴露，本包只在这里调
-	// 一次。**本票不接线**——接了 Anthropic 行的 input_tokens 就会变，与「行为一字
-	// 不变」直接冲突。
+	// 毛值归一（#6，口径层 v0.71）：Anthropic Tap 的 Summary 存上游原样的净值，
+	// 落流水前把缓存两项加回去，跨协议 SUM 才是同一种单位。规则住在
+	// protocol.GrossSummaryInput，本包只调这一次——在这里再写一遍加法即不合格
+	// （票面原话）。slog 那一侧仍打 Summary 原样，它是排障线索不是记账。
 	if r.haveSummary {
-		row.InputTokens = nullInt(r.summary.InputTokens)
+		row.InputTokens = nullInt(protocol.GrossSummaryInput(r.channelProto, r.summary))
 		row.OutputTokens = nullInt(r.summary.OutputTokens)
 		row.CacheReadTokens = nullInt(r.summary.CacheReadTokens)
 		row.CacheWriteTokens = nullInt(r.summary.CacheWriteTokens)
