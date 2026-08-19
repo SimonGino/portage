@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v0.98
+> 状态：草案 v0.99
+> v0.99 变更（口径层 v0.91 落地的**落点**：声明文件 `channels.yaml` 与无 UI 纯转发形态，[#24](https://github.com/SimonGino/portage/issues/24) 整图收敛，2026-08-19）：**只改文档，`internal/` 与 `web/` 一行未动**——实现另起 effort（同 v0.92 的形制）。①**新增 §7.9**，把口径层 §2.9 的八条裁决落成实现落点：新模块 `internal/declcfg/`（加载/校验/apply/导出四合一，**不并进 `internal/config`**，理由是两份文件的严格度按口径刻意不同、并进去后那条口径没有载体）、装配顺序（`Open → declcfg.Apply → Validate`，两道闸不合并）、路径由 `-channels` flag + `PORTAGE_CHANNELS` env 给（**不落 `config.applyEnv`**，声明文件路径不进 `Config`）、逐字段对齐 DDL 列名的文件骨架、apply 的 upsert 与删除顺序、校验与失败模式、导出的字典序与往返闸。②**新记两处会绊人的实现细节**，此前两层文档都没有：`channel_keys` 的凭证名唯一是**独立索引且建在 `store.migrate` 里**（upsert 的冲突目标是它不是表内约束）；`api_keys` 除 `name` 外还有 `key_hash` UNIQUE，两条不同 name 写了同一个明文时**自然键不冲突而 `key_hash` 冲突**，这属静态可判定、要在 apply 前自校验里点名，留给 SQLite 的约束错误就没有实体名可报。③**顶层 `version` 字段不做**（PO 2026-08-19 裁）：这一格从 #31/#32 转出挂到 #34，而 #34 的问题正文漏列了它，收敛时补裁。代价记在 §7.9：`KnownFields(true)` 之下加字段安全、删字段与改名不安全，字段改名必须与导出器同批走。④**§7 那句「业务配置全部落 DB」与 §3 模块表同批改写**——前者加上「挂了声明文件时文件才是事实源」这另一半，后者加 `internal/declcfg/`。⑤**留一条请 PO 追认的推论**：`main.go` 今天对空 `api_keys` 只警告不拒启，注释里的理由是「配 key 得先有个跑着的网关」，而挂了声明文件之后这条理由整个不成立（唯一入口就是文件，且 API Key 必须显式给值），于是它变成静态可判定的错——落法定为「挂了文件时拒启、没挂时维持警告」，但这改的是启动行为，实现前请 PO 追认。⑥**两处过期注释本批不改**：仓库根 `config.yaml` 与 `deploy/config.docker.yaml` 头部的「业务配置全部落 DB，不写这里」，在挂了文件的形态下是假的，但今天那句话还是真的，随实现同批改。修改人 jinpenga。
 > v0.98 变更（口径层 v0.89 落地：子路径层探测三态化，2026-08-19）：口径见口径层 v0.89，这里只记实现层落点。①`upstream.ProbeResult` 的 `Reachable bool` **换成** `State ProbeState`（JSON 由 `reachable` 改 `state`），`ok`/`missing`/`unclear` 三值；没拿到响应的三条分支（传输错误、请求构造失败、协议没有对应上游端点）一律落 `unclear`——最后那条是我方配置问题，同样属于「压根没问过上游」。②三态类型**上提为 `upstream.ProbeState` 由两层共用**，原 `ModelProbeState` 与 `ModelOK`/`ModelMissing`/`ModelUnclear` 三个常量随之改名 `ProbeOK`/`ProbeMissing`/`ProbeUnclear`；线上 JSON 取值一字未变，前端 `ModelProbeState` 同步并成 `ProbeState`。③前端 `ProbeRow` 由三段扩成四段（全通 / 不存在 / **没拿到响应** / 存在但非 2xx），`probe-bad` 的触发条件**不含**说不清那一档；补状态码的条件收紧成 `state === "missing"`——非 2xx 那段的固定词表自带括号里的数字，说不清那段的 `status` 恒为 0。④新增 `TestProbeKeepsNoResponseApartFromMissingSubPath`：用必然连不上的地址走同一条分支断言 `unclear` + `status=0`（真挂死的上游要等满 8 秒 `probeTimeout`，测试等不起），注释里记着把这条逼出来的真实上游形态。`TestProbeNeverEchoesTheUpstreamAddress` 里那句「连不上应判不可达」跟着改成判 `unclear`。⑤`probeTimeout`、探测请求体、判据、`Redact` 一处未动。修改人 jinpenga。
 > v0.97 变更（口径层 v0.88 落地：`previous_response_id` 由静默丢弃改判显式拒绝 + 渠道能力位，2026-08-19）：①**§2 的 P1-① 那条改写**——portage-legacy#12 的最简形态（`DecodeRequest` 直接丢字段、连 `Extras` 都不进）只保住了「不带出去」那半句，「丢掉之后照常发上游」这半边被推翻，改为非空即 400。②**闸分成两处、口径是一份**（新增 §7.8）：转换半边由 codec 在 `DecodeRequest` 里就地拒（`openairesponses/stateful.go`），透传半边在 `server.relay` 选完渠道之后拒（`server/stateful.go`），两处共用同一句可执行指引与同一个 `code`。③**§5 的「decode 必须是全函数」多了唯一一处例外**，写进接口那一节：`DecodeRequest` 现在会对一份**合法** Responses 字节报错。这与 v0.48 ① 给 compaction 闸选位置时的理由正面冲突，先指出再执行——两者的差别在于 compaction 那条**两条路判据不同**（透传要看能力位，codec 看不见它），而这一条转换路径是无条件拒、判据不含任何 codec 之外的输入。为此新增 `protocol.RequestError`（可逐字回显的 400，带 `code`/`param`），`relayConverted` 按类型分两档回。④**`channels` 加 `supports_stateful_responses`**（`INTEGER NOT NULL DEFAULT 1`，§7 DDL），走 `store.migrate` 的既有 ALTER 模式，存量行落 1——与 `supports_compaction` 反向的默认值（口径层 v0.88 ②），**这批迁移因此不改任何存量渠道的行为**。管理端 PUT 缺省不动列，哨兵用 `nil` 不用零值：这里 `true` 是有意义的默认取值，借零值当哨兵会让一个被显式关掉的渠道在别处保存一次就被静默打开。⑤**流水不加新词**：这一档记既有的 `rejected`（早退分支的缺省词）。outcome 词表是口径层 v0.70 逐词钉死的对外契约，加第 11 个词要 PO 先裁——**记在这里当待办**，与 v0.48 ③ 给 compaction 单开 `compaction_unsupported` 的做法不同。⑥**§5 坑清单补四条**（调研五个参考实现的收获，都与将来任何形式的降级/展开有关）：`function_call_output` 覆盖度红线、`store=false` 连带炸 item id、展开缓存的两类脏轮（原 v0.47 那条同主题的扩写成两条，不重复列）、会话粘连键取 `prompt_cache_key` 不取 `previous_response_id`。⑦**新增 §9.7** 记三条用例分工与两处已知缺口。⑧**本地展开不做**，opencodex 与 litellm 的展开实现降级为成本对照（§12 补四行路径）。修改人 jinpenga。
 > v0.96 变更（[#22](https://github.com/SimonGino/portage/issues/22) 的评审回修，2026-08-19）：**口径未变，改的是与既有口径对不上的三处落地**。①**选中一格之后取不到那一段就不出数**：切片回包比对不上自己的 key（在飞、或者取失败）时，环、两条堆叠条、排行列表一律留白，不再退回整窗那一份——退回会让同一屏出现「上面是这一小时、下面是整窗」两套数，而下面那句还写着「只看选中的那个区间」，正是口径层 v0.86 ③ 点名要避的；取失败时那份错的还不会自己消失。§8.3 补一条记这个。②`styles.css` 补回照搬样稿时漏掉的 `.cal-day.is-in { box-shadow: none }`：漏掉之后 30 天日历上窗口内那 30 格全多描一圈 1px 底框，与验收基准不符。③§8.3 的样稿差异清单从两处补全到五处（票面要求「逐条能说出为什么不一样」）：新记顶部 `.stat-tokens` 那格没落地、样稿 `heatScale` 空数据时把三档压成一档、样稿读数带直接读 `s.peak.tokens` 会抛；并把差异 1 的依据补齐——DESIGN §5.2 ⑤ 也写着「五个统计量」，追认之后 ⑤ 与口径层 v0.86 ④ 都要跟着改口。另把 §8.3「切一样只重取该重取的那一路」收成实情：切到「按上游凭证」确实会把 `by=model` / `by=key` 一并重取，记为已知的多取一发，不修。修改人 jinpenga。
@@ -169,6 +170,7 @@
 ```
 cmd/gateway/main.go        # 装配：config → store → server
 internal/config/           # 最小启动配置加载；业务配置读 DB，校验 + 变更热生效
+internal/declcfg/          # 声明文件 channels.yaml：加载 / 校验 / apply / 导出（口径层 v0.91，落点见 §7.9，实现未起）
 internal/auth/             # API key 中间件：hash 校验、allowed_models 过滤
 internal/router/           # 模型名 → 有序渠道列表解析
 internal/protocol/         # canonical 事件模型（P0 定稿，§4）；codec 接口（P0 定稿，P1 实现，§5）
@@ -608,7 +610,7 @@ concurrency_queue:                 # 渠道并发闸的有界排队（口径层 
 
 > **`retry` 块缺席 = 用默认（重试 2 次），显式写 `max_retries: 0` = 关闭**。两者在 YAML 里都解出 0，靠「先填默认值再 Unmarshal 覆盖」区分：加载后不许再给 `max_retries` 补零值，否则「写了 0」被悄悄改回 2，重试就关不掉了。两个退避间隔反过来必须兜底——只写 `max_retries` 时不补就退了个寂寞。
 
-业务配置（渠道/接入点/key）全部落 DB，由管理端维护（M3）；管理端就绪前（M0~M2）用 SQL 手工维护（口径层 C2 收敛，v0.8）。
+业务配置（渠道/接入点/key）落 DB，由管理端维护（M3）；管理端就绪前（M0~M2）用 SQL 手工维护（口径层 C2 收敛，v0.8）。**口径层 v0.91 给这句话加了另一半**：挂了声明文件 `channels.yaml` 时，那份文件才是业务配置的唯一事实源，启动时 apply 进 DB、管理端对业务配置全只读；没挂则完全是本段原话。两种形态下 DB 都是运行期唯一被读的那份。文件形状与装配落点见 §7.9。
 
 > **配置校验规则（临时闸，随转换批次逐步放开）**：候选渠道协议与入口协议不同、且对应转换路径尚未实现时报错。这不是 v1 边界——全互转属 v1 承诺（口径层 C1 已收敛）。**portage-legacy#80 之后这道闸已无「尚未实现」可拦**：九格全开，剩下的只有 `count_tokens` 这个没有上游对应端点的入口，见下方 §2 与 §9.4。
 >
@@ -883,6 +885,76 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - **能力位**：`channels.supports_stateful_responses`，默认**是**（§7 DDL）。管理端 PUT 缺省不动列，哨兵用 `nil` 不用零值——这里 `true` 是有意义的默认取值，借零值当哨兵会让一个被显式关掉的渠道在别处保存一次就被静默打开（`supports_compaction` 那条陷阱的镜像，方向更险）。表单那一栏只在勾了 Responses 时露出、也只有露着才传；取消勾 Responses 不去清那一列。
 - **不做本地展开**：真做就是独立 session 存储那个量级——litellm 是五个参考实现里唯一在转换路径展开的，代价是一张记完整请求体的日志表 + session 串联字段 + 按 session 全量重放 + 冷存储回捞，且它自己默认关闭。portage 走 HTTP，没有 opencodex / CLIProxyAPI / sub2api 那个「连接内本来就有全量历史」的前提。将来若重开，先看 §5 坑清单里展开缓存的那两条与 `function_call_output` 覆盖度红线。
 - **验收**：见 §9.7。
+
+### 7.9 声明文件 `channels.yaml` 的实现落点（口径层 v0.91，[#24](https://github.com/SimonGino/portage/issues/24)）
+
+> **本节只钉落点与形状，代码一行未写**（同 §8.2 / §8.3 在各自实现票之前的形制）。口径见口径层 §2.9 与 v0.91，此处不复述立论，只记「照那份口径实现时落在哪、长什么样、哪几处会绊人」。
+
+**模块落点**：新增 `internal/declcfg/`，加载 / 校验 / apply / 导出四件事收在一个包。**不并进 `internal/config`**：那个包管的是**进程级**配置，而两份文件的严格度按口径层 §2.9 是**刻意不同的**（声明文件 `KnownFields(true)`，`config.yaml` 保持裸 `Unmarshal`）——并进去之后这条口径没有载体，只剩一句「别搞混」的注释在挡。
+
+**装配顺序**（`cmd/portage/main.go`，现状是 `config.Load → store.Open → store.Validate → CountAPIKeys 警告 → admin.Bootstrap → server.New`）：
+
+```
+config.Load
+store.Open
+declcfg.Load(path)        ← 路径为空则整段跳过（= 没挂，完全是现状形态）
+declcfg.Apply(db, file)   ← 单事务。口径层 §2.9 #30 定的位置：Open 之后、Validate 之前
+store.Validate            ← 既有六项不变，不与上面那道合并
+（形态闸）server 装配时，管理密码为空则 admin.Mount 整个不调
+```
+
+**路径**：`-channels` flag（默认空串）+ 环境变量 `PORTAGE_CHANNELS` 覆盖（env > flag）。**`config.applyEnv` 不是它的落点**——那个函数在 `config.Load` 里、只认 `Config` 结构体，而声明文件路径按口径层 §2.9 不进 `config.yaml`，落在 `main` 里读一次即可。
+
+**文件骨架**（字段名逐个对齐上方 DDL 的列名，不另造一套词表）：
+
+```yaml
+channels:
+  - name: qwen                      # 自然键；同时是限定名的前半，改它 = 删旧建新
+    protocols: [openai]             # 存库时逗号分隔（channels.protocols）
+    base_url: https://example.internal/v1
+    credential_type: api_key        # api_key | service_account
+    key_mode: polling               # polling | random
+    max_concurrency: 4              # 0 = 不限
+    supports_compaction: false
+    supports_stateful_responses: true
+    disabled: false                 # 意图列，进文件
+    credentials:                    # → channel_keys，name 在渠道内唯一
+      - name: 主号
+        credential: sk-...          # 明文（口径层 §2.9 #28）
+        disabled: false             # 意图列；disabled_reason / disabled_at 是运行期状态，不进文件
+    models:                         # → channel_models
+      - upstream_model: Qwen3-27B
+        protocols: []               # 空 = 继承渠道全集（对齐 DDL 里空串的语义）
+        disabled: false
+access_points:
+  - model: claude-sonnet-4          # 自然键
+    disabled: false
+    candidates:
+      - target: qwen/Qwen3-27B      # 限定名 = 渠道名/上游模型名；apply 前校验存在
+        weight: 100                 # 0 是意图（临时摘除）不是缺席
+api_keys:
+  - name: laptop
+    key: sk-ptg-...                 # 明文，必须显式给；key_hash 由 apply 现算
+    allowed_models: ["*"]           # 不做存在性校验
+    disabled: false
+```
+
+**无顶层 `version` 字段**（PO 2026-08-19 裁；这一格从 #31 / #32 转出挂到 #34，而 #34 的问题正文漏列了它）：导出与 apply 是同一个二进制同一个版本，不存在「新网关读旧文件」的跨版本场景；将来真出不兼容，那时加 `version` 与现在加代价相同（没有这个字段的旧文件当第一版）。**代价照记**：`KnownFields(true)` 之下**加**字段是安全的（旧文件缺字段走零值），**删**字段与**改名**不是（旧文件带着已删的字段会当场拒启），所以字段改名必须与导出器同批走。
+
+**apply 语义**（口径层 §2.9 #29）：整个 apply 一个事务；按自然键 upsert、**只覆盖意图列**（四张表的 `disabled` 与 `candidates.weight`）；文件里没有的库内实体一律删，删按依赖顺序 `candidates → channel_models`——**那条外键没有 `ON DELETE CASCADE`**（`channels` / `access_points` 那几条有）；增删改按实体名打进启动日志，**日志里不含 `credential` 与 `key`**。
+
+**两处会绊人的实现细节**：
+
+- `channel_keys` 的凭证名唯一是**独立索引 `idx_channel_keys_name`、建在 `store.migrate` 里**，不在建表语句内（理由见 DDL 注释：老库要靠 ALTER 补列，而 ALTER 加不了约束）。upsert 挂的冲突目标是这个索引，不是表内约束。
+- `api_keys` 除 `name` 外还有 `key_hash` UNIQUE。两条不同 `name` 写了同一个明文时，**自然键不冲突而 `key_hash` 冲突**——这属于静态可判定，归口径层 §2.9 #31 的「启动即拒、一次报全」，要在 apply 前的自校验里点名两把 key，不要留给 SQLite 的约束错误（那句话里没有实体名，而纯转发形态下没有第二个地方能查）。
+
+**校验与失败模式**（口径层 §2.9 #31）：`yaml.Decoder` 开 `KnownFields(true)`；两道闸不合并但 problems 合并报，一次报全，退出码 1。路径三档语义写死：**空 = 没挂**（合法，走现状形态）、**非空但读不到 = 拒启**、**读到但内容不合法 = 拒启**。
+
+**由已裁口径直接推出、请 PO 追认的一条**：`main.go` 今天对空 `api_keys` **只警告不拒启**，理由写在注释里——「配 key 得先有个跑着的网关（开 /admin 或对着它建的库灌 SQL）」。**挂了声明文件之后这条理由整个不成立**：唯一入口就是那份文件，而 API Key 必须在文件里显式给值（§2.9 #28）。于是空 `api_keys` 在那个形态下变成静态可判定的错。落法：**挂了文件时拒启，没挂时维持现状的警告**。这是从已裁口径推出的推论而不是新裁决，但它改的是启动行为，实现前请 PO 追认（同 §3 两条「实现偏离待裁」的形制）。
+
+**导出**（口径层 §2.9 #32）：管理端一个按钮，沿用现有会话、不加 step-up。输出**按自然键字典序**排——渠道按 `name`、凭证按 `name`、纳管模型按 `upstream_model`、接入点按 `model`、候选按限定名、API Key 按 `name`——**不能按 id**，往返闸的字节相等全靠这一条。过滤运行期状态列（`channel_keys.disabled_reason` / `disabled_at`）。`key_plain` 为空串的存量 API Key **当场失败并点名是哪几把**。落盘 0600。**往返闸写成测试**：`export → 空库 apply → export` 字节相等；`channels.example.yaml` 就是这个导出器拿假数据跑出来的产物，由同一条测试钉住，不手写。
+
+**实现时须同批改掉的两处过期注释**：仓库根 `config.yaml`（gitignore 覆盖，本机那份）与 `deploy/config.docker.yaml`，头部都写着「业务配置……全部落 DB，不写这里」，那句在挂了文件的形态下是假的。**本批不改**——它们是运行中的产物，今天那句话还是真的，现在改是另一个方向的撒谎。
 
 ## 8. 最小管理接口
 
