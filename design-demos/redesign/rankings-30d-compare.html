@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portage · 排行 30 天节律带 · 排布对比</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!--
+  30 天节律带排布对比（PO 2026-08-19：排行页 30 天视图红框内不顺眼）。
+
+  同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂三种排布：
+    ① 现状        6 周画布 · 34px 方格 · 左对齐 · 窗口外描边占位
+    ② 方案 A 月条  30 格一行 · 周界大间隙 · 格下日期号（推荐）
+    ③ 方案 B 日历压缩  6 周画布 · 22px 方格 · 居中 · 窗口外无描边
+  布局卡内宽 920px，与生产页 main 等宽；token 逐字同源 web/src/styles.css（含生产 heat-* 值）。
+  点任一格，三处同时选中。数据为构造数据（种子固定），只用于看排布，不代表真实分布。
+-->
+<style>
+:root {
+  --paper: #edece3; --canvas: #f5f4ed; --ink: #1c1a15; --ink-2: #3f3a2f;
+  --mute: #6b6252; --faint: #8a8172; --line: #ddd9c9; --line-soft: #e7e3d5;
+  --sunken: #eae7da; --chip: #efece0; --hover: rgba(28,26,21,.045);
+  --display: "Outfit", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1baf7a; --cat-4: #eda100; --cat-5: #e87ba4;
+  --cat-other: color-mix(in srgb, var(--ink) 28%, var(--canvas));
+  /* 热度阶：逐字同源 web/src/styles.css（生产值） */
+  --heat-0: color-mix(in srgb, var(--ink) 11%, var(--canvas));
+  --heat-1: color-mix(in srgb, var(--ink) 16%, var(--canvas));
+  --heat-2: color-mix(in srgb, var(--ink) 31%, var(--canvas));
+  --heat-3: color-mix(in srgb, var(--ink) 50%, var(--canvas));
+  --heat-4: color-mix(in srgb, var(--ink) 72%, var(--canvas));
+  --heat-none: color-mix(in srgb, var(--ink) 6%, var(--canvas));
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+.wrap { max-width: 976px; margin: 0 auto; padding: 36px 24px 64px; }
+.page-head { margin-bottom: 22px; }
+.page-head h1 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; font-size: 26px; letter-spacing: -0.025em; }
+.page-head p { margin: 0; color: var(--mute); font-size: 13px; }
+
+.card { background: var(--canvas); border-radius: 24px; padding: 26px 28px 22px; margin-bottom: 26px; }
+.phead-row { display: flex; align-items: center; gap: 10px; }
+.phead-name { font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: -0.02em; }
+.tag { font-size: 11px; font-weight: 500; padding: 2px 9px; border-radius: 999px; background: var(--chip); color: var(--ink-2); }
+.tag.rec { background: color-mix(in srgb, var(--cat-3) 18%, var(--canvas)); color: #11674a; }
+.phead-spec { margin-top: 4px; font-size: 12.5px; color: var(--mute); }
+.phead-note { margin-top: 2px; font-size: 12.5px; color: var(--faint); }
+
+/* ===== 顶部带（与生产 Rankings.tsx 的 sky 区同构） ===== */
+.sky { padding-top: 16px; }
+.sky-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; color: var(--mute); }
+.sky-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.sky-legend i { width: 11px; height: 11px; border-radius: 3px; display: block; }
+.sky-split { display: grid; grid-template-columns: 236px 1fr; gap: 12px 30px; align-items: start; }
+.sky-hint { margin: 14px 0 0; font-size: 13px; color: var(--mute); }
+
+/* 环形（三处同构，只作陪衬） */
+.donut-wrap { position: relative; width: 176px; margin: 4px auto 0; }
+.donut-wrap svg { display: block; width: 100%; height: auto; }
+.donut-mid { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.donut-mid b { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.donut-mid span { margin-top: 2px; font-size: 10px; letter-spacing: .08em; color: var(--mute); }
+
+/* ===== 周历（① 现状 / ③ 压缩） ===== */
+.cal { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; --cell: 34px; --cal-gap: 7px; }
+.cal-months { display: grid; font-size: 11px; color: var(--mute); height: 18px; }
+.cal-months span { grid-row: 1; white-space: nowrap; }
+.cal-body { display: grid; grid-auto-flow: column; justify-content: start; gap: var(--cal-gap); }
+.cal-week { display: grid; grid-template-rows: repeat(7, var(--cell)); gap: var(--cal-gap); }
+.cal-day { width: var(--cell); height: var(--cell); border-radius: 5px; background: var(--heat-none); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.cal-day.is-out { background: none; }
+.cal-day.is-in { box-shadow: none; }
+.cal-day.is-in:hover { box-shadow: 0 0 0 1.5px var(--line); }
+.cal-day.is-sel { box-shadow: 0 0 0 1.5px var(--ink); }
+.cal-wdays { display: grid; grid-template-rows: repeat(7, var(--cell)); gap: var(--cal-gap); font-size: 11px; color: var(--mute); text-align: right; }
+.cal-wdays span { line-height: var(--cell); }
+/* ③ 压缩：格缩小、居中、窗口外无描边 */
+.cal.tight { --cell: 22px; --cal-gap: 6px; }
+.cal.tight .cal-day { border-radius: 4px; }
+.cal.tight .cal-body { justify-content: center; }
+.cal.tight .cal-day.is-out { box-shadow: none; }
+.cal.tight .cal-day.is-out:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.cal.tight .cal-wdays { font-size: 10px; }
+
+/* ===== 月条（②） ===== */
+.strip-row { display: grid; }
+.strip-months { height: 18px; font-size: 11px; color: var(--mute); align-items: end; }
+.strip-cells { margin-top: 3px; }
+.strip-cells button { aspect-ratio: 1; border-radius: 4px; }
+.strip-cells button:hover { box-shadow: 0 0 0 1.5px var(--line); }
+.strip-cells button.is-sel { box-shadow: 0 0 0 1.5px var(--ink); }
+.strip-days { margin-top: 3px; font-size: 10px; color: var(--faint); text-align: center; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  .sky-split { grid-template-columns: 1fr; }
+  .donut-wrap { margin: 4px 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <h1>排行 · 30 天节律带 · 排布对比</h1>
+    <p>同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂三种排布；点任一格，三处同时选中。token 与生产页逐字同源，数据为构造数据。</p>
+  </header>
+  <main id="panels"></main>
+</div>
+<script>
+"use strict";
+/* ===== 构造数据：与 rankings-v2.html 同种子、同 NOW ===== */
+const NOW = new Date(2026, 7, 18, 15, 0, 0);
+const HOURS = 30 * 24;
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry32(20260818);
+const MODELS = [
+  { name: "opus-4.8", w: 1.0 }, { name: "gpt-5.6-terra", w: 0.95 }, { name: "gpt-5.6-luna", w: 0.6 },
+  { name: "opus-4.7", w: 0.5 }, { name: "grok-4.5", w: 0.45 }, { name: "gpt-5.5", w: 0.4 },
+  { name: "grok-4.3", w: 0.35 }, { name: "glm-5.2", w: 0.3 }, { name: "deepseek-v4-pro", w: 0.28 },
+  { name: "kimi-k3", w: 0.25 },
+];
+const CAT = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-other)"];
+const DAY_CURVE = [0.05,0.04,0.03,0.03,0.03,0.05,0.08,0.15,0.28,0.42,0.55,0.62,0.58,0.6,0.66,0.7,0.75,0.8,0.78,0.7,0.55,0.4,0.28,0.15];
+const fmt = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(Math.round(n));
+const fmtInt = (n) => Math.round(n).toLocaleString("en-US");
+const md = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+const key = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+const WD = ["日", "一", "二", "三", "四", "五", "六"];
+
+const buckets = [];
+let burst = 0;
+for (let i = HOURS - 1; i >= 0; i--) {
+  const t = new Date(NOW.getTime() - i * 3600e3);
+  t.setMinutes(0, 0, 0);
+  const h = t.getHours(), dow = t.getDay();
+  let base = DAY_CURVE[h];
+  if (dow === 0 || dow === 6) base *= 0.5;
+  if (burst > 0) burst--;
+  else if (base > 0.15 && rnd() < 0.05) burst = 3 + Math.floor(rnd() * 6);
+  const spike = burst > 0 ? 2.6 + rnd() * 2.4 : 1;
+  const active = burst > 0 || rnd() < base * 1.1;
+  const calls = active ? Math.max(1, Math.round((2 + rnd() * 26) * base * spike)) : 0;
+  const tokens = calls === 0 ? 0 : Math.round(calls * (9000 + rnd() * 190000) * spike);
+  const errors = calls === 0 ? 0 : rnd() < 0.11 ? Math.max(1, Math.round(calls * rnd() * 0.16)) : 0;
+  const byModel = {};
+  let left = tokens;
+  const shuffled = MODELS.map((m) => ({ m, r: rnd() * m.w })).sort((a, b) => b.r - a.r);
+  shuffled.forEach(({ m }, idx) => {
+    const take = idx === shuffled.length - 1 ? left : Math.round(left * (0.35 + rnd() * 0.5));
+    byModel[m.name] = (byModel[m.name] || 0) + take;
+    left -= take;
+  });
+  buckets.push({ t, calls, errors, tokens, byModel });
+}
+
+/* 30 天日段（7/20 – 8/18） */
+const days = [];
+{
+  const start = new Date(NOW);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - 29);
+  const byHour = new Map(buckets.map((b) => [key(b.t) + "-" + b.t.getHours(), b]));
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const cur = { t: d, calls: 0, errors: 0, tokens: 0, byModel: {} };
+    for (let h = 0; h < 24; h++) {
+      const b = byHour.get(key(d) + "-" + h);
+      if (!b) continue;
+      cur.calls += b.calls;
+      cur.errors += b.errors;
+      cur.tokens += b.tokens;
+      for (const [m, v] of Object.entries(b.byModel)) cur.byModel[m] = (cur.byModel[m] || 0) + v;
+    }
+    days.push(cur);
+  }
+}
+
+/* 热度阶（与生产一致：非零天按分位切 5 档） */
+const vals = days.map((b) => b.tokens).filter((v) => v > 0).sort((a, b) => a - b);
+const q = (p) => vals[Math.min(vals.length - 1, Math.floor(vals.length * p))];
+const [Q1, Q2, Q3, MAX] = [q(0.25), q(0.5), q(0.75), q(1)];
+const scale = (b) => b.tokens <= 0 ? -1 : b.tokens < Q1 ? 0 : b.tokens < Q2 ? 1 : b.tokens < Q3 ? 2 : b.tokens < MAX ? 3 : 4;
+
+/* 环形：top5 + 其余 */
+const totals = {};
+days.forEach((d) => Object.entries(d.byModel).forEach(([m, v]) => (totals[m] = (totals[m] || 0) + v)));
+const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+const rest = entries.slice(5);
+const slices = entries.slice(0, 5).map(([label, tokens], i) => ({ label, tokens, color: CAT[i] }));
+if (rest.length) slices.push({ label: `其余（${rest.length}）`, tokens: rest.reduce((a, e) => a + e[1], 0), color: CAT[5] });
+const total = slices.reduce((a, s) => a + s.tokens, 0);
+
+const state = { sel: null };
+const rangeText = `${md(days[0].t)} – ${md(days[days.length - 1].t)}`;
+const tip = (b) => `${md(b.t)} · ${fmtInt(b.calls)} 次 · ${fmtInt(b.tokens)} token${b.errors ? ` · ${fmtInt(b.errors)} 失败` : ""}`;
+const heatVar = (b) => `var(--heat-${scale(b) < 0 ? "none" : scale(b)})`;
+
+function donutHtml() {
+  const R = 62, C = 2 * Math.PI * R, GAP = 3.5;
+  let acc = 0;
+  const segs = slices.map((s) => {
+    const share = s.tokens / total;
+    const len = Math.max(1, share * C - GAP);
+    const el = `<circle r="${R}" cx="0" cy="0" fill="none" stroke="${s.color}" stroke-width="20" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-acc).toFixed(2)}"><title>${s.label} · ${fmtInt(s.tokens)} token · ${(share * 100).toFixed(1)}%</title></circle>`;
+    acc += share * C;
+    return el;
+  }).join("");
+  return `<div class="donut-wrap">
+    <svg viewBox="-76 -76 152 152" role="img" aria-label="token 按模型构成"><g transform="rotate(-90)">${segs}</g></svg>
+    <div class="donut-mid"><b>${fmt(total)}</b><span>token</span></div>
+  </div>`;
+}
+
+/* 周历：6 周画布，end 取本周六 */
+function renderCalendar(cls) {
+  const byDay = new Map(days.map((b, i) => [key(b.t), { b, i }]));
+  const end = new Date(NOW);
+  end.setHours(0, 0, 0, 0);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  const weeks = [], months = [];
+  let lastMonth = -1;
+  for (let w = 5; w >= 0; w--) {
+    const wdays = [];
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(end);
+      day.setDate(end.getDate() - w * 7 + d - 6);
+      wdays.push(day);
+    }
+    const col = 6 - w;
+    if (wdays[6].getMonth() !== lastMonth) months.push({ col, label: `${wdays[6].getMonth() + 1}月` });
+    lastMonth = wdays[6].getMonth();
+    weeks.push(wdays);
+  }
+  const cells = weeks.map((wd) => `<div class="cal-week">${wd.map((day) => {
+    const hit = byDay.get(key(day));
+    if (!hit) return `<span class="cal-day is-out" title="${md(day)} · 不在这个窗口里"></span>`;
+    return `<button type="button" class="cal-day is-in${state.sel === hit.i ? " is-sel" : ""}" data-iv="${hit.i}" style="background:${heatVar(hit.b)}" title="${tip(hit.b)}"></button>`;
+  }).join("")}</div>`).join("");
+  return `<div class="cal ${cls}">
+    <div></div>
+    <div class="cal-months" style="grid-template-columns:repeat(6,calc(var(--cell) + var(--cal-gap)))">
+      ${months.map((m) => `<span style="grid-column:${m.col}">${m.label}</span>`).join("")}
+    </div>
+    <div class="cal-wdays">${WD.map((w) => `<span>${w}</span>`).join("")}</div>
+    <div class="cal-body">${cells}</div>
+  </div>`;
+}
+
+/* 月条：30 格一行，按周（周日–周六）分组，周界 8px 大间隙 */
+function renderStrip() {
+  const starts = [0];
+  for (let i = 1; i < days.length; i++) if (days[i].t.getDay() === 0) starts.push(i);
+  const sizes = starts.map((s, k) => (starts[k + 1] ?? days.length) - s);
+  const tpl = sizes.map((n) => `repeat(${n},1fr)`).join(" 8px ");
+  const colOf = (i) => 1 + i + starts.filter((s) => s > 0 && s <= i).length;
+  const monthSpans = [`<span style="grid-column:1">${days[0].t.getMonth() + 1}月</span>`];
+  for (let i = 1; i < days.length; i++)
+    if (days[i].t.getMonth() !== days[i - 1].t.getMonth())
+      monthSpans.push(`<span style="grid-column:${colOf(i)}">${days[i].t.getMonth() + 1}月</span>`);
+  return `<div>
+    <div class="strip-row strip-months" style="grid-template-columns:${tpl}">${monthSpans.join("")}</div>
+    <div class="strip-row strip-cells" style="grid-template-columns:${tpl}">
+      ${days.map((b, i) => `<button type="button" class="${state.sel === i ? "is-sel" : ""}" data-iv="${i}" style="grid-column:${colOf(i)};background:${heatVar(b)}" title="${tip(b)}"></button>`).join("")}
+    </div>
+    <div class="strip-row strip-days" style="grid-template-columns:${tpl}">
+      ${days.map((b, i) => `<span style="grid-column:${colOf(i)}">${b.t.getDate()}</span>`).join("")}
+    </div>
+  </div>`;
+}
+
+/* ===== 三个面板：同数据，只换排布 ===== */
+const P = [
+  { id: "now", name: "① 现状", tag: `<span class="tag">现行</span>`,
+    spec: "6 周画布 · 34px 方格 · 左对齐 · 窗口外描边占位",
+    note: "42 格里 12 格是窗口外占位（整第一列空）；右栏留 ~400px 空白。",
+    render: () => renderCalendar("") },
+  { id: "A", name: "② 方案 A · 月条", tag: `<span class="tag rec">推荐</span>`,
+    spec: "30 格一行 · 周界 8px 大间隙 · 格下日期号 · 上沿月份分隔",
+    note: "30 格全是数据，撑满右栏（与 1 天/7 天布局同一填充逻辑）；放弃同一星期几跨周对齐。",
+    render: renderStrip },
+  { id: "B", name: "③ 方案 B · 日历压缩", tag: `<span class="tag">保守</span>`,
+    spec: "6 周画布 · 22px 方格 · 居中 · 窗口外无描边（悬停才现）",
+    note: "保住周历结构与星期对齐；12 格占位仍在、只是更安静；空白左右分摊。",
+    render: () => renderCalendar("tight") },
+];
+
+document.getElementById("panels").innerHTML = P.map((p) => `
+  <section class="card">
+    <div class="phead">
+      <div class="phead-row"><span class="phead-name">${p.name}</span>${p.tag}</div>
+      <div class="phead-spec">${p.spec}</div>
+      <div class="phead-note">${p.note}</div>
+    </div>
+    <div class="sky">
+      <div class="sky-head">
+        <div>${rangeText} · 一格 = 1 天</div>
+        <div class="sky-legend"><span>少</span>${[1, 2, 3, 4].map((l) => `<i style="background:var(--heat-${l})"></i>`).join("")}<span>多</span></div>
+      </div>
+      <div class="sky-split">
+        <div>${donutHtml()}</div>
+        <div id="lay-${p.id}"></div>
+      </div>
+      <p class="sky-hint">点一格，看那一段是谁在烧。</p>
+    </div>
+  </section>`).join("");
+
+function refresh() {
+  P.forEach((p) => {
+    const el = document.getElementById(`lay-${p.id}`);
+    if (el) el.innerHTML = p.render();
+  });
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-iv]");
+  if (!t) return;
+  const i = Number(t.dataset.iv);
+  state.sel = state.sel === i ? null : i;
+  refresh();
+});
+refresh();
+</script>
+</body></html>
