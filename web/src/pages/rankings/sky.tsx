@@ -117,7 +117,7 @@ export function SkyMatrix({ list, scale, sel, onPick }: SkyProps) {
                     style={{
                       width: lv < 0 ? 4 : 5 + lv * 2.6,
                       height: lv < 0 ? 4 : 5 + lv * 2.6,
-                      background: lv < 0 ? 'var(--heat-out)' : `var(--heat-${lv})`,
+                      background: lv < 0 ? 'var(--heat-none-dot)' : `var(--heat-${lv})`,
                     }}
                   />
                 </button>
@@ -141,7 +141,8 @@ export function SkyMatrix({ list, scale, sel, onPick }: SkyProps) {
 /**
  * 排布③：30 天 = 窗口盖住的那六周日历（口径层 v0.86 ⑤，不做 53 周画布）。
  *
- * 窗口外那几格仍画成灰底占位——一周七格的结构不能缺角。
+ * 窗口外那几格只描一圈线占位——一周七格的结构不能缺角，但不能填灰，填了就比
+ * 窗口内「没有调用」的格子更实。
  */
 export function SkyCalendar({
   list,
@@ -190,11 +191,7 @@ export function SkyCalendar({
                   aria-pressed={sel === c.index}
                   title={tip(b, 'day')}
                   onClick={() => onPick(c.index)}
-                  style={{
-                    background: lv < 0 ? 'var(--heat-none)' : `var(--heat-${lv})`,
-                    // 空格子留一圈细线，否则它与画布同色、日历上直接缺一块。
-                    boxShadow: lv < 0 ? 'inset 0 0 0 1px var(--line)' : undefined,
-                  }}
+                  style={{ background: lv < 0 ? 'var(--heat-none)' : `var(--heat-${lv})` }}
                 />
               )
             })}
