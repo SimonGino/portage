@@ -18,7 +18,8 @@ import { ModelProbeGrid, ProbeRow } from './probe'
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
- * 「上游设置 / 上游凭证」收进条内文字按钮，点开在列表上方展开井，默认收起。
+ * 「检测 / 上游设置 / 上游凭证」收进条内文字按钮；后两颗点开在列表上方展开井，默认
+ * 收起，检测则直接发请求，结论落在井外。
  * 获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
  */
 export function ChannelDetail({
@@ -131,6 +132,17 @@ export function ChannelDetail({
             />
           </div>
           <div className="ch-acts">
+            {/* 检测的对象是渠道整体（协议子路径 + 凭证 + 模型），跟另两颗同属渠道操作层，
+                所以坐在条上、不再藏进凭证井——它的结论本来就有一半（模型矩阵）在井外面。 */}
+            <button
+              type="button"
+              className="btn btn-text"
+              onClick={onProbe}
+              disabled={probe === 'running'}
+              title="给勾选的协议子路径各发一个最小请求；只提示，不落库也不影响路由"
+            >
+              {probe === 'running' ? '检测中…' : '检测'}
+            </button>
             <button
               type="button"
               className={'btn btn-text well-toggle' + (well === 'settings' ? ' is-on' : '')}
@@ -167,26 +179,19 @@ export function ChannelDetail({
 
       {well === 'creds' && (
         <div className="well">
-          <CredentialSection
-            channel={ch}
-            onChanged={onCredentialsChanged}
-            action={
-              <button className="btn btn-quiet" onClick={onProbe} disabled={probe === 'running'}>
-                {probe === 'running' ? '检测中…' : '检测'}
-              </button>
-            }
-          >
-            {probe && probe !== 'running' && (
-              <div className="detail-probes">
-                {probe.credentials.map((g) => (
-                  <ProbeRow key={g.credential} group={g} multi={probe.credentials.length > 1} />
-                ))}
-              </div>
-            )}
-          </CredentialSection>
+          <CredentialSection channel={ch} onChanged={onCredentialsChanged} />
         </div>
       )}
 
+      {/* 探测结论跟着按钮出井：按钮在条上、结果锁在折叠井里是断的。放在井之后、模型
+          列表之前——井默认收起，于是它平时就紧跟在渠道条下面，且始终与模型矩阵相邻。 */}
+      {probe && probe !== 'running' && (
+        <div className="detail-probes">
+          {probe.credentials.map((g) => (
+            <ProbeRow key={g.credential} group={g} multi={probe.credentials.length > 1} />
+          ))}
+        </div>
+      )}
       {probe && probe !== 'running' && (probe.models?.length ?? 0) > 0 && (
         <ModelProbeGrid rows={probe.models!} credential={probe.model_credential} />
       )}

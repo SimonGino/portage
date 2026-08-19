@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
 import { Confirm, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
@@ -16,16 +15,10 @@ import { Segmented } from '../../fields'
 export function CredentialSection({
   channel,
   onChanged,
-  action,
-  children,
 }: {
   channel: Channel
   /** 池子变了就通知外面重拉渠道——「缺凭证」那个标记挂在渠道对象上。 */
   onChanged: () => void
-  /** 段标题右边那颗按钮（「检测」），由右栏传进来——探测状态是整页共享的。 */
-  action?: ReactNode
-  /** 探测结论条，紧跟在这一段里显示：它答的正是「这几把 key 现在还活不活」。 */
-  children?: ReactNode
 }) {
   const { data, error, reload, setError } = useList(() =>
     api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
@@ -71,11 +64,9 @@ export function CredentialSection({
         {/* 段名是「上游凭证」不是「API 密钥」（v0.48）：导航上那个「API Key」指的是
             网关下发给客户端的 key，两个词摆在同一个界面里同形不同义。 */}
         <h2>上游凭证{list.length > 0 && ` · ${list.length}`}</h2>
-        {action}
       </header>
       <p className="muted">值默认掩码，点「显示」看明文、点「复制」拿全串。名字是归因依据，它会出现在流水与用量里。</p>
       <ErrorBar message={error} />
-      {children}
 
       {list.length === 0 ? (
         <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
