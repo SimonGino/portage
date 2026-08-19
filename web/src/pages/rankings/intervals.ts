@@ -264,10 +264,13 @@ export interface CatSlice {
  * 归不归「其余」看的是**色映射**而不是这一段自己的名次——名次跟着 scope 变，
  * 色不变，两者混用会让某个模型在切片里突然分到一个色相。
  */
-export function composition(
-  rows: UsageRow[],
-  color: Map<string, string>,
-): { slices: CatSlice[]; total: number } {
+/** 一段时间的构成：几段 + 它们的合计（那个合计同时是每段百分比的分母）。 */
+export interface Composition {
+  slices: CatSlice[]
+  total: number
+}
+
+export function composition(rows: UsageRow[], color: Map<string, string>): Composition {
   const head: CatSlice[] = []
   let otherTokens = 0
   let otherCount = 0
@@ -306,8 +309,9 @@ export interface CalCell {
 export function calendarWeeks(
   list: Interval[],
   now: Date,
-  weeks = 6,
 ): { weeks: CalCell[][]; months: { col: number; label: string }[] } {
+  // 六周写死：v0.86 ⑤ 裁的就是这个数，做成参数会让人以为还有别的取值。
+  const weeks = 6
   const dayKey = (d: Date) => bucketKey(d, 'day')
   const at = new Map(list.map((b, i) => [dayKey(b.start), i]))
 

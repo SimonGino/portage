@@ -4,7 +4,6 @@ import type { BucketUsage, UsageRow } from '../api'
 import { Card, Empty, ErrorBar, fmtCompact, fmtInt, useList } from '../ui'
 import { Segmented } from '../fields'
 import { ModelIcon } from '../icons'
-import { DAY_OPTIONS } from './usage-common'
 import {
   buildIntervals,
   calendarWeeks,
@@ -28,6 +27,20 @@ import {
   md,
   whenLabel,
 } from './rankings/sky'
+
+/**
+ * 统计窗口。「7 天」= 今天往前数 7 个自然日、按本地时区（口径层 v0.55），不是滚动
+ * 7×24 小时。仍是 1 / 7 / 30 三档，不开自定义范围——`from`/`to` 是给下钻用的，
+ * 不是给窗口选择器用的。
+ *
+ * 原先住在 `usage-common.ts`，那个文件是为「概览与排行共用」立的；概览页在口径层
+ * v0.75 去掉、`sumUsage` 随之无人调用之后，那里只剩这一个常量和一个过期的名字。
+ */
+const DAY_OPTIONS = [
+  { value: '1' as const, label: '1 天' },
+  { value: '7' as const, label: '7 天' },
+  { value: '30' as const, label: '30 天' },
+]
 
 // 聚合维度（v0.38 加了上游凭证，v0.53 加了 API Key）。
 //

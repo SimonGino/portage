@@ -3,7 +3,7 @@
 //
 // 不引图表库，手写 SVG / CSS——与原先概览页那张 usage-chart 同一路子。
 
-import type { CatSlice, Interval, SliceComp, Unit } from './intervals'
+import type { CalCell, Composition, Interval, SliceComp, Unit } from './intervals'
 import { fmtCompact, fmtInt } from '../../ui'
 
 const p2 = (n: number) => String(n).padStart(2, '0')
@@ -56,14 +56,15 @@ export function SkyBars({ list, sel, onPick }: Omit<SkyProps, 'scale'>) {
             <button
               type="button"
               key={i}
-              className={
-                'sky-bar-col' + (sel === i ? ' is-sel' : '') + (b.calls ? '' : ' is-empty')
-              }
+              className={'sky-bar-col' + (sel === i ? ' is-sel' : '')}
               data-iv={i}
               aria-pressed={sel === i}
               title={tip(b, 'hour')}
               onClick={() => onPick(i)}
             >
+              {/* 三档在这一排布里由**高度**分开，不由深浅（深浅是点阵与日历的活）：
+                  有 token 按比例、至少 2%；有调用但上游没报 token 留 2% 一线，
+                  仍占一格位置；没有调用是真的 0，画不出东西。 */}
               <span
                 className="sky-bar"
                 style={{ height: `${b.tokens ? Math.max((b.tokens / max) * 100, 2) : b.calls ? 2 : 0}%` }}
@@ -99,8 +100,8 @@ export function SkyMatrix({ list, scale, sel, onPick }: SkyProps) {
           <div className="sky-row">
             {row.map((b, c) => {
               const i = d * 24 + c
+              if (b.future) return <span className="sky-dot-hit" key={c} title={tip(b, 'hour')} />
               const lv = scale(b)
-              if (lv === -2) return <span className="sky-dot-hit" key={c} title={tip(b, 'hour')} />
               return (
                 <button
                   type="button"
@@ -149,10 +150,7 @@ export function SkyCalendar({
   onPick,
   weeks,
   months,
-}: SkyProps & {
-  weeks: { date: Date; index: number }[][]
-  months: { col: number; label: string }[]
-}) {
+}: SkyProps & { weeks: CalCell[][]; months: { col: number; label: string }[] }) {
   return (
     <div className="cal">
       <div />
@@ -278,7 +276,7 @@ export function SliceWell({
  * **这一栏不带图例**（PO 2026-08-18 裁，口径层 v0.86 ⑧）：名字与百分比由紧挨着的
  * 「按模型」堆叠条给一次，同一屏里不重复三遍。
  */
-export function Donut({ slices, total }: { slices: CatSlice[]; total: number }) {
+export function Donut({ slices, total }: Composition) {
   const R = 62
   const C = 2 * Math.PI * R
   const GAP = 3.5
@@ -312,7 +310,7 @@ export function Donut({ slices, total }: { slices: CatSlice[]; total: number }) 
       </svg>
       <div className="donut-mid">
         <b className="tnum">{fmtCompact(total)}</b>
-        <span>TOKEN</span>
+        <span>token</span>
       </div>
     </div>
   )
@@ -324,15 +322,7 @@ export function Donut({ slices, total }: { slices: CatSlice[]; total: number }) 
  * **每个系列必须直标名字 + 百分比**：这五个色对羊皮纸底有四个不足 3:1（实测 2.9 /
  * 2.55 / 1.96 / 2.44），dataviz 的 relief 条款靠直标满足，只摆色块不成立。
  */
-export function Stack({
-  title,
-  slices,
-  total,
-}: {
-  title: string
-  slices: CatSlice[]
-  total: number
-}) {
+export function Stack({ title, slices, total }: Composition & { title: string }) {
   return (
     <div>
       <div className="cat-title">{title}</div>
