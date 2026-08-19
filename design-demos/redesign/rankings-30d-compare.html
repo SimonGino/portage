@@ -9,12 +9,13 @@
 <!--
   30 天节律带排布对比（PO 2026-08-19：排行页 30 天视图红框内不顺眼）。
 
-  同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂三种排布：
+  同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂四种排布：
     ① 现状        6 周画布 · 34px 方格 · 左对齐 · 窗口外描边占位
     ② 方案 A 月条  30 格一行 · 周界大间隙 · 格下日期号（推荐）
     ③ 方案 B 日历压缩  6 周画布 · 22px 方格 · 居中 · 窗口外无描边
+    ④ GitHub 式裁切  GitHub 贡献图风格 · 13px 小格 + 3px 隙 · 窗口外格直接裁掉 · 一/三/五标注
   布局卡内宽 920px，与生产页 main 等宽；token 逐字同源 web/src/styles.css（含生产 heat-* 值）。
-  点任一格，三处同时选中。数据为构造数据（种子固定），只用于看排布，不代表真实分布。
+  点任一格，四处同时选中。数据为构造数据（种子固定），只用于看排布，不代表真实分布。
 -->
 <style>
 :root {
@@ -88,6 +89,11 @@ button { font: inherit; color: inherit; border: 0; background: none; padding: 0;
 .cal.tight .cal-day.is-out { box-shadow: none; }
 .cal.tight .cal-day.is-out:hover { box-shadow: inset 0 0 0 1px var(--line); }
 .cal.tight .cal-wdays { font-size: 10px; }
+/* ④ GitHub 式：小格、窄隙、窗口外格直接裁掉（不留占位框） */
+.cal.gh { --cell: 13px; --cal-gap: 3px; }
+.cal.gh .cal-day { border-radius: 2.5px; }
+.cal.gh .cal-day.is-gap { background: none; box-shadow: none; }
+.cal.gh .cal-wdays { font-size: 10px; }
 
 /* ===== 月条（②） ===== */
 .strip-row { display: grid; }
@@ -108,7 +114,7 @@ button { font: inherit; color: inherit; border: 0; background: none; padding: 0;
 <div class="wrap">
   <header class="page-head">
     <h1>排行 · 30 天节律带 · 排布对比</h1>
-    <p>同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂三种排布；点任一格，三处同时选中。token 与生产页逐字同源，数据为构造数据。</p>
+    <p>同一条 30 天构造数据（种子 20260818，NOW 2026-08-18 15:00，窗口 7/20 – 8/18）喂四种排布；点任一格，四处同时选中。token 与生产页逐字同源，数据为构造数据。</p>
   </header>
   <main id="panels"></main>
 </div>
@@ -227,6 +233,7 @@ function donutHtml() {
 
 /* 周历：6 周画布，end 取本周六 */
 function renderCalendar(cls) {
+  const gh = cls.includes("gh");
   const byDay = new Map(days.map((b, i) => [key(b.t), { b, i }]));
   const end = new Date(NOW);
   end.setHours(0, 0, 0, 0);
@@ -247,7 +254,9 @@ function renderCalendar(cls) {
   }
   const cells = weeks.map((wd) => `<div class="cal-week">${wd.map((day) => {
     const hit = byDay.get(key(day));
-    if (!hit) return `<span class="cal-day is-out" title="${md(day)} · 不在这个窗口里"></span>`;
+    if (!hit) return gh
+      ? `<span class="cal-day is-gap"></span>`
+      : `<span class="cal-day is-out" title="${md(day)} · 不在这个窗口里"></span>`;
     return `<button type="button" class="cal-day is-in${state.sel === hit.i ? " is-sel" : ""}" data-iv="${hit.i}" style="background:${heatVar(hit.b)}" title="${tip(hit.b)}"></button>`;
   }).join("")}</div>`).join("");
   return `<div class="cal ${cls}">
@@ -255,7 +264,7 @@ function renderCalendar(cls) {
     <div class="cal-months" style="grid-template-columns:repeat(6,calc(var(--cell) + var(--cal-gap)))">
       ${months.map((m) => `<span style="grid-column:${m.col}">${m.label}</span>`).join("")}
     </div>
-    <div class="cal-wdays">${WD.map((w) => `<span>${w}</span>`).join("")}</div>
+    <div class="cal-wdays">${(gh ? ["", "一", "", "三", "", "五", ""] : WD).map((w) => `<span>${w}</span>`).join("")}</div>
     <div class="cal-body">${cells}</div>
   </div>`;
 }
@@ -296,6 +305,10 @@ const P = [
     spec: "6 周画布 · 22px 方格 · 居中 · 窗口外无描边（悬停才现）",
     note: "保住周历结构与星期对齐；12 格占位仍在、只是更安静；空白左右分摊。",
     render: () => renderCalendar("tight") },
+  { id: "gh", name: "④ GitHub 式裁切", tag: `<span class="tag">PO 点名</span>`,
+    spec: "GitHub 贡献图风格 · 13px 小格 + 3px 隙 · 窗口外格直接裁掉（不留占位框）· 星期只标一/三/五",
+    note: "视觉语言与 GitHub 一致，但 30 天只有 5 列、宽 ~85px——GitHub 撑满卡片是因为它有 52 周。左对齐后右栏仍留 ~560px 空白；想撑满得把窗口拉长到半年（口径变更）。",
+    render: () => renderCalendar("gh") },
 ];
 
 document.getElementById("panels").innerHTML = P.map((p) => `
