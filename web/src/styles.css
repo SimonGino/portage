@@ -382,6 +382,9 @@ button, input, textarea, select {
 
 .acct-acts {
   display: flex;
+  /* 三个按钮在 248px 的左栏里刚好排得下，但字号或文案一变就会挤出去——
+     允许换行，挤不下时掉一行比横向溢出好看。 */
+  flex-wrap: wrap;
   gap: 4px;
   padding: 0 4px;
 }

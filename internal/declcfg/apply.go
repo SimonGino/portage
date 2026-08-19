@@ -3,7 +3,6 @@ package declcfg
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -332,14 +331,19 @@ func applyAPIKeys(ctx context.Context, tx *sql.Tx, list []APIKey) ([]string, err
 	return changes, nil
 }
 
-// allowedModels 把白名单拼成 DDL 那一列的形态：JSON 数组或 `*`。
+// allowedModels 把白名单拼成 `api_keys.allowed_models` 那一列的形态：**逗号分隔**，
+// 或者 `*` 表示不限。
+//
+// 逗号而不是 JSON：读这一列的是 `auth.Key.Allows`，它 `strings.Split(list, ",")`
+// 逐段比。写成 JSON 数组的话每一段都带着引号和方括号，跟请求里那个裸模型名永远比不
+// 上——一把限了模型的 key 会变成谁都放不过去的死 key，而闸全过、页面上也看着正常。
+// 管理端与前端一直用的就是逗号（`Keys.tsx` 直接 `.split(',')` 显示），文件这条入口
+// 得跟它们写进同一个格式。
 //
 // **不做存在性校验**（口径层 §2.9 #29）：白名单只在转发端生效，写一个还没建的接入点
-// 名不是配置损坏——先写 key 后加模型是完全正常的顺序。
+// 名不是配置损坏——先写 key 后加模型是完全正常的顺序。名字里带逗号则由自校验拦下，
+// 那种名字在这个格式里根本表达不出来。
 func allowedModels(list []string) string {
-	if len(list) == 0 {
-		return "*"
-	}
 	models := make([]string, 0, len(list))
 	for _, s := range list {
 		if s = strings.TrimSpace(s); s == "*" {
@@ -351,16 +355,7 @@ func allowedModels(list []string) string {
 	if len(models) == 0 {
 		return "*"
 	}
-	// 走 encoding/json 而不是手拼 %q：模型名允许非 ASCII，而 Go 的 %q 与 JSON 字符串
-	// 的转义规则只是**大部分**重合，不是全部。这一列是要被读回去解析的。
-	raw, err := json.Marshal(models)
-	if err != nil {
-		// []string 不可能编码失败；真出了就退回 `*`（放行）会静默扩权，退回一个解不动
-		// 的值反而会被鉴权侧当成「没有白名单」——两条都不对，所以直接给个空数组：
-		// 语义是「一个模型都不许」，出错时收紧而不是放开。
-		return "[]"
-	}
-	return string(raw)
+	return strings.Join(models, ",")
 }
 
 func namesOf(ctx context.Context, tx *sql.Tx, query string, args ...any) (map[string]bool, error) {

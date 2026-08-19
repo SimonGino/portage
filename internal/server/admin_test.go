@@ -451,15 +451,24 @@ func TestAdminKeyIsReadableAndWorks(t *testing.T) {
 	}
 
 	// 加 key_plain 之前种下的 key 只有哈希，明文栏是空串——不是「空 key」，是拿不回来。
+	// 显式种一把存量 key，不蹭默认夹具：默认夹具走的是今天 createKey 的形状（两列都写）。
+	gatewaytest.SeedLegacyAPIKey(t, g.DB, "存量", "sk-ptg-legacy")
 	var keys []struct {
 		Name string `json:"name"`
 		Key  string `json:"key"`
 	}
 	a.JSONInto(t, http.MethodGet, "/admin/api/keys", "", &keys)
+	var seen bool
 	for _, k := range keys {
-		if k.Name == "test-default" && k.Key != "" {
-			t.Errorf("只种了哈希的存量 key 不该有明文：%+v", k)
+		if k.Name == "存量" {
+			seen = true
+			if k.Key != "" {
+				t.Errorf("只种了哈希的存量 key 不该有明文：%+v", k)
+			}
 		}
+	}
+	if !seen {
+		t.Error("存量 key 没出现在列表里")
 	}
 }
 

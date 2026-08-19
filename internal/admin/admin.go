@@ -115,6 +115,10 @@ func (h *Handler) Mount(r *gin.Engine) {
 	auth.PUT("/keys/:id", h.updateKey)
 	auth.DELETE("/keys/:id", h.deleteKey)
 
+	// 导出整份业务配置为 channels.yaml（口径层 §2.9 #32）。在 auth 组里，且**没有**
+	// 第二条出口（不做 CLI 导出子命令）——见 export.go。
+	auth.GET("/export", h.exportConfig)
+
 	auth.GET("/logs", h.listLogs)
 	auth.GET("/usage", h.usage)
 	auth.GET("/usage/buckets", h.usageBuckets)

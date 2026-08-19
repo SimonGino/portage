@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { api, setUnauthorizedHandler } from './api'
+import { api, download, setUnauthorizedHandler } from './api'
 import { PortageMark } from './brand'
 import type { SessionState } from './api'
 import Login from './pages/Login'
@@ -11,6 +11,7 @@ import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
 import ChangePassword from './pages/ChangePassword'
 import { RailMidTarget, RailProvider } from './rail'
+import { Dialog, ErrorBar } from './ui'
 
 const NAV: { to: string; label: string; icon: ReactNode }[] = [
   {
@@ -98,6 +99,53 @@ export default function App() {
   )
 }
 
+/**
+ * 把整份业务配置导成 channels.yaml 下载（口径层 §2.9 #32）。
+ *
+ * 放在左栏底部而不是某一页里：它导的是**全部**业务配置，渠道、接入点、API Key 一份
+ * 都不落，挂在其中任何一页下面都会读成「只导这一页的东西」。
+ *
+ * 沿用当前会话、不再问一次口令——登录者本来就能在页面上逐条看到全部秘密，导出只是
+ * 把 1+N 次点击压成一次。失败只有一类（存量 API Key 拿不到原值），报文里点了名，
+ * 用弹框而不是左栏里那条窄缝来显示。
+ */
+function ExportButton() {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        title="导出全部业务配置，用于部署一台无管理界面的纯转发实例"
+        onClick={async () => {
+          setBusy(true)
+          try {
+            await download('/export', 'channels.yaml')
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        {busy ? '导出中…' : '导出配置'}
+      </button>
+      {error && (
+        <Dialog title="导出失败" onClose={() => setError('')}>
+          <ErrorBar message={error} />
+          <div className="form-actions">
+            <button type="button" className="btn btn-quiet" onClick={() => setError('')}>
+              知道了
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
+  )
+}
+
 function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () => void }) {
   const loc = useLocation()
   const wide = loc.pathname.startsWith('/logs')
@@ -129,6 +177,7 @@ function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () 
             </div>
           </div>
           <div className="acct-acts">
+            <ExportButton />
             <button type="button" onClick={onPassword}>
               改密码
             </button>

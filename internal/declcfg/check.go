@@ -189,6 +189,15 @@ func checkAPIKeys(f *File) []string {
 		default:
 			byHash[auth.Hash(key)] = append(byHash[auth.Hash(key)], name)
 		}
+		// allowed_models 那一列是**逗号分隔**的（`auth.Key.Allows` 按逗号切），于是
+		// 名字里带逗号在这个格式里根本表达不出来——存进去会被切成两段谁都对不上，
+		// 而闸全过、页面上也看着正常。静态可判定，当场点名。
+		for _, m := range k.AllowedModels {
+			if strings.Contains(m, ",") {
+				p = append(p, fmt.Sprintf("API Key %q 的 allowed_models 里 %q 含逗号。"+
+					"这一列在库里是逗号分隔的，带逗号的名字会被切开、谁都匹配不上", name, m))
+			}
+		}
 	}
 	var dup []string
 	for _, names := range byHash {

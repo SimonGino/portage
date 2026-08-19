@@ -53,6 +53,36 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return payload as T
 }
 
+/**
+ * 下载一份非 JSON 的响应体。今天只有导出声明文件走它。
+ *
+ * **不用 `<a href>` 直链**：直链绕开了上面那套 401 处理，会话过期时浏览器会把
+ * 登录页那份 HTML 当成 channels.yaml 存下来——一个看着成功的失败。走 fetch 才能
+ * 先看状态码再决定存不存。
+ */
+export async function download(path: string, filename: string): Promise<void> {
+  const res = await fetch(BASE + path, { credentials: 'same-origin' })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = `请求失败（HTTP ${res.status}）`
+    try {
+      msg = (JSON.parse(text) as { error?: string }).error ?? msg
+    } catch {
+      // 非 JSON 的错误体（比如反代吐的 502 页面）用兜底文案。
+    }
+    if (res.status === 401) onUnauthorized?.()
+    throw new ApiError(res.status, msg)
+  }
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export const api = {
   get: <T,>(path: string) => request<T>('GET', path),
   post: <T,>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),

@@ -449,11 +449,30 @@ func SeedPassthrough(t *testing.T, db *sql.DB, accessPointModel, proto, baseURL,
 
 // SeedAPIKey 种一把网关 key。重复种同一把不算错——Start 每次都会种 DefaultKey，
 // 而同一个库可能被起两次。
+//
+// 哈希与明文**两列都写**：管理端的 createKey 自 v0.47 起就是这么写的，只写 key_hash
+// 种出来的是「v0.47 之前建的存量 key」那个形状——一个真实代码路径今天已经产不出的
+// 行。差别不是学术的：声明文件导出遇到 key_plain 为空会当场失败（口径层 §2.9 #32），
+// 于是一个假的夹具会把导出用例弄成永远红的。
 func SeedAPIKey(t *testing.T, db *sql.DB, name, plain string) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT OR IGNORE INTO api_keys (name, key_hash) VALUES (?, ?)`, name, auth.Hash(plain)); err != nil {
+		`INSERT OR IGNORE INTO api_keys (name, key_hash, key_plain) VALUES (?, ?, ?)`,
+		name, auth.Hash(plain), plain); err != nil {
 		t.Fatalf("种网关 key 失败: %v", err)
+	}
+}
+
+// SeedLegacyAPIKey 种一把 **v0.47 之前** 建的 key：只有哈希，没有明文。
+//
+// 这个形状今天的代码路径产不出来，但库里可能还留着，而它是两处行为的分界线——
+// 管理端列表把明文栏留空（不是「空 key」，是拿不回来），声明文件导出当场失败并点名
+// （口径层 §2.9 #32）。要测这两件事就得显式种它，别指望默认夹具。
+func SeedLegacyAPIKey(t *testing.T, db *sql.DB, name, plain string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT OR IGNORE INTO api_keys (name, key_hash) VALUES (?, ?)`, name, auth.Hash(plain)); err != nil {
+		t.Fatalf("种存量网关 key 失败: %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package declcfg_test
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -370,6 +371,51 @@ func TestAPIKeyIsUsableAfterApply(t *testing.T) {
 	}
 	if plain != "sk-ptg-real-one" {
 		t.Errorf("key_plain 没落上，导出那半边会拿不到原值：%q", plain)
+	}
+}
+
+// TestAllowedModelsMatchesWhatAuthReads 钉住白名单写进去的格式就是转发端读的格式。
+//
+// `api_keys.allowed_models` 是**逗号分隔**的，读它的是 `auth.Key.Allows`
+// （`strings.Split(list, ",")` 逐段比）。声明文件这条入口一度把它写成 JSON 数组：
+// 两道闸全过、库里那一行看着也像回事，而每一段都带着引号和方括号，跟请求里那个裸
+// 模型名永远比不上——一把限了模型的 key 变成谁都放不过去的死 key。纯转发形态下没有
+// 页面能看出这件事，只能从 401 往回猜。
+//
+// 断言直接落在 `Allows` 上而不是那个字符串上：格式将来真要换（换成 JSON 也不是不
+// 行），要跟着换的是**两边一起**，而这条用例问的正是「两边还对得上吗」。
+func TestAllowedModelsMatchesWhatAuthReads(t *testing.T) {
+	db := openDB(t)
+	mustApply(t, db, strings.Replace(goodFile,
+		"    key: sk-ptg-real-one",
+		"    key: sk-ptg-real-one\n    allowed_models: [claude-sonnet-4, qwen/Qwen3-27B]", 1))
+
+	k, err := auth.Resolve(context.Background(), db,
+		http.Header{"X-Api-Key": []string{"sk-ptg-real-one"}})
+	if err != nil {
+		t.Fatalf("鉴权解不出这把 key：%v", err)
+	}
+	for _, model := range []string{"claude-sonnet-4", "qwen/Qwen3-27B"} {
+		if !k.Allows(model) {
+			t.Errorf("白名单里写了 %q 却放不过去；allowed_models=%q 与 auth 读的格式对不上",
+				model, k.AllowedModels)
+		}
+	}
+	if k.Allows("别的接入点") {
+		t.Errorf("白名单外的模型不该放行；allowed_models=%q", k.AllowedModels)
+	}
+}
+
+// TestAllowedModelsRejectsCommaInName 钉住带逗号的名字当场被拦。
+//
+// 这一列的分隔符就是逗号，带逗号的名字在里面表达不出来——存进去会被切成两段谁都
+// 对不上，而闸全过、页面上也看着正常。
+func TestAllowedModelsRejectsCommaInName(t *testing.T) {
+	got := applyErr(t, openDB(t), strings.Replace(goodFile,
+		"    key: sk-ptg-real-one",
+		"    key: sk-ptg-real-one\n    allowed_models: [\"a,b\"]", 1))
+	if !strings.Contains(got, "逗号") {
+		t.Errorf("带逗号的白名单项该被点名，实得：%s", got)
 	}
 }
 

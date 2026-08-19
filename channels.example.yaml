@@ -1,0 +1,74 @@
+# 由 portage 管理端导出（口径层 §2.9）。这份文件是业务配置的**唯一事实源**：
+# 挂上它（-channels 或 PORTAGE_CHANNELS）之后，启动时它会被 apply 进 DB，管理端对业务
+# 配置全只读；文件里没有的实体会被删掉。
+#
+# ⚠ 里面是**明文秘密**：上游凭证与 API Key 都是原值。打了码的文件部署不了，而部署正是
+# 它存在的全部理由。所以——权限给 0600，且**永远不要提交进 git**（.gitignore 里已有
+# channels.yaml 那一行）。
+#
+# 改配置的路子是：在本地那台带 UI 的实例上改 → 重新导出 → 重新部署 → 重启。两台之间
+# 没有自动同步。
+channels:
+  - name: anthropic
+    protocols:
+      - anthropic
+    base_url: https://api.anthropic.com
+    credential_type: api_key
+    key_mode: polling
+    max_concurrency: 0
+    supports_compaction: false
+    supports_stateful_responses: false
+    disabled: false
+    credentials:
+      - name: 主号
+        credential: sk-ant-把这里换成你自己的上游-key
+      - name: 备号
+        credential: sk-ant-第二把-可以只有一把
+    models:
+      - upstream_model: claude-sonnet-4-20250514
+        protocols: []
+        disabled: false
+  - name: 自建-vllm
+    protocols:
+      - openai
+      - openai_responses
+    base_url: https://vllm.example.internal
+    credential_type: api_key
+    key_mode: polling
+    max_concurrency: 8
+    supports_compaction: false
+    supports_stateful_responses: true
+    disabled: false
+    credentials:
+      - name: 内网
+        credential: sk-把这里换成你自建服务的-token
+    models:
+      - upstream_model: Qwen3-32B
+        protocols:
+          - openai
+        disabled: false
+      - upstream_model: Qwen2.5-72B-旧的
+        protocols: []
+        disabled: true
+access_points:
+  - model: claude-sonnet-4
+    disabled: false
+    candidates:
+      - target: anthropic/claude-sonnet-4-20250514
+        weight: 100
+  - model: qwen
+    disabled: false
+    candidates:
+      - target: 自建-vllm/Qwen3-32B
+        weight: 100
+api_keys:
+  - name: 默认
+    key: sk-ptg-把这里换成你自己生成的-API-Key
+    allowed_models:
+      - '*'
+    disabled: false
+  - name: 只放行-qwen
+    key: sk-ptg-换成你自己生成的第二把
+    allowed_models:
+      - qwen
+    disabled: false
