@@ -1,65 +1,142 @@
 # Portage
 
+**Keep the harness. Change the model.**
+
 [![CI](https://github.com/SimonGino/portage/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonGino/portage/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Single binary](https://img.shields.io/badge/deploy-single%20binary-1B365D)](#quick-start)
 
-> portage：在两段不通航的水道之间，把船和货扛过陆地。
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-个人自用的 AI 模型网关。一个 Go 二进制，对外说三种大模型协议——OpenAI Chat Completions、OpenAI Responses、Anthropic Messages——把 agent harness 的请求转发到任意一家上游，需要时跨协议翻译。
+Claude Code and Codex CLI are the reason the work gets done. What's behind them shouldn't
+be decided by whoever wrote them.
 
-**扛过去是有代价的，能漂过去就别上岸。** 这句既是名字的来历，也是实现上的硬约束：入口协议与上游协议相同时，走的是原始字节转发，不做 decode→encode 转码；只有真要跨协议时才拆成 canonical 事件序列再编出去。转换会丢东西（Responses 的 `encrypted_content` 是上游侧不透明密文，跨过去只能丢），所以能不转就不转，非转不可时丢了什么要在日志里说得出来。
+But a harness talks exactly one protocol. Claude Code speaks Anthropic Messages, Codex CLI
+speaks OpenAI Responses — and nearly every other model on earth is reached over OpenAI
+Chat Completions: open-weight models, the relay you're already paying for, the endpoint on
+your own GPU, your employer's internal deployment. Neither harness will ever call any of
+them.
 
-流式（SSE）与 tool calling 是及格线不是特性——agent harness 全程依赖这两项，任何一条转换路径不支持它们就等于没做。
+**Portage is the piece in between.** Point the harness at it, and the model on the other
+side becomes a configuration line. No patched clients, no forked harness, no wrapper
+scripts.
 
-## 它做什么
+```mermaid
+flowchart LR
+    subgraph clients["The harness you already use"]
+        CC["Claude Code<br/>Anthropic Messages"]
+        CX["Codex CLI<br/>OpenAI Responses"]
+        APP["Your scripts / SDK<br/>Chat Completions"]
+    end
 
-- **三协议转发与互转**。Claude Code 挂到便宜的第三方 OpenAI 兼容模型上，Codex CLI 挂到 Claude 上，客户端不用改。
-- **接入点路由**。对外暴露一个模型名，绑定若干候选（渠道纳管的模型 + 权重）；也支持用限定名 `渠道名/模型名` 直连纳管模型。
-- **渠道与凭证池**。一个渠道 = base_url + 支持协议集 + 纳管模型 + 1..N 份上游凭证。凭证值管理端可回读可复制，但只由凭证池那一个接口发。401 自动摘除并人工恢复，403 换而不摘。
-- **两层重试**。同一凭证内退避重试（默认 2 次），渠道内换凭证重试，全局尝试上限封顶。流式已写出首字节后一律不重试——首字节边界即承诺边界。
-- **API Key 生命周期**。前缀 `sk-ptg-`，hash 落库；新建后管理端可回读可复制（加列前的旧 key 补不回来），与上游凭证严格两回事。
-- **用量流水**。每次调用一行，记模型、渠道、真正用上的那份凭证、token 数（含缓存读写）、状态与耗时；usage 出自上游自己说的数，透传路径靠旁路 Tap 只读提取，不改流。
-- **单二进制**。React 管理端 embed 进 Go 二进制，SQLite 落库，没有外部依赖。
+    PG{{"Portage<br/>one binary · SQLite · web admin"}}
 
-## 协议转换矩阵
+    subgraph up["Whatever model you can get"]
+        T["Open-weight models<br/>via any OpenAI-compatible relay"]
+        L["Your own hardware<br/>Ollama · vLLM · MLX"]
+        A["Anthropic · OpenAI<br/>native"]
+    end
 
-同协议对角线是字节透传。跨协议六条已全部放开，九格全开：
-
-| 入站 ＼ 上游 | Chat Completions | Responses | Anthropic |
-| --- | --- | --- | --- |
-| **Chat Completions** | 透传 | ✅ 已放开 | ✅ 已放开 |
-| **Responses** | ✅ 已放开 | 透传 | ✅ 已放开 |
-| **Anthropic Messages** | ✅ 已放开 | ✅ 已放开 | 透传 |
-
-矩阵全开后，仍会回 501 的只剩 `/v1/messages/count_tokens` 落到非 Anthropic 渠道：那个端点在另外两种协议里没有对应物，是**没得做**而不是「还没做」，文案为「该端点没有对应的转换路径」。
-
-转发端点：`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`，另有 `/v1/models`（按接入点与协议交集出清单）与免鉴权的 `/healthz`。embeddings / rerank 已定口径为仅透传，尚未接线。
-
-转换走枢纽式而非网桥式：每个协议实现一个 `Codec`，`A→B` = CodecA 解成 canonical + CodecB 编出去，不存在两两互转器。每条路径先备真实 harness 发包与 SSE 转录的 golden 样本，再写实现。
-
-## 快速开始
-
-Docker（推荐）：
-
-```bash
-PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
+    CC --> PG
+    CX --> PG
+    APP --> PG
+    PG -- "different protocol → translate" --> T
+    PG --> L
+    PG -- "same protocol → byte passthrough" --> A
 ```
 
-起来之后开 <http://127.0.0.1:8317/admin> 登录，在页面上配渠道、纳管模型、接入点、API Key。库是空的很正常，日志里会有一条「`api_keys` 表是空的，所有转发请求都会回 401」，配完就没了。密码走环境变量而不是配置文件，因为镜像里那份配置是烤进镜像层历史的；它只用于初始化，库里已有密码后改它不生效。
+## What you can run
 
-从源码构建（需要 Go 1.26+ 与 Node）：
+| The model you want | Reached over | In the harness |
+| --- | --- | --- |
+| **Open-weight models** — whatever the good one is this month | any OpenAI-compatible endpoint | Claude Code · Codex CLI |
+| **Your own hardware** — Ollama, vLLM, LM Studio, MLX | Chat Completions on localhost | Claude Code · Codex CLI |
+| **The relay or aggregator you already pay for** | Chat Completions or Responses | Claude Code · Codex CLI |
+| **Your employer's internal deployment** | whichever of the three it exposes | Claude Code · Codex CLI |
+| **Anthropic and OpenAI themselves** | their native protocol, bytes untouched | Claude Code · Codex CLI |
+
+Crossing the two big vendors — Claude models inside Codex CLI, GPT models inside Claude
+Code — falls out of the same machinery. It's a consequence, not the point.
+
+Streaming (SSE) and tool calling work on every one of those paths. For an agent harness
+those aren't features, they're the floor — a translation path without them is a
+translation path that doesn't work.
+
+## And while it's in the path
+
+Once every request goes through one place, a few things become free:
+
+| | |
+| --- | --- |
+| **Swap vendors without touching clients** | An *access point* is a stable public model name bound to real upstreams. Move it, and every harness follows. |
+| **Stop handing out real vendor keys** | Portage issues its own `sk-ptg-…` keys. Upstream credentials never leave the server, never appear in a log or an error body. |
+| **Survive a dead key at 3am** | Each channel holds a pool of credentials. A `401` pulls one out of rotation and the request continues on the next. |
+| **Know where the tokens went** | One row per call — model, channel, the credential that actually served it, tokens including cache reads and writes, status, latency. |
+
+> *portage (n.):* carrying a boat overland between two waterways that don't connect.
+> **Carrying costs something — if you can float, don't land.** That's the name and the
+> hard rule: when the two sides already speak the same protocol, raw bytes go straight
+> through and nothing is transcoded. Translate only when you must, and say in the logs
+> what got left on the bank.
+
+## Quick start
 
 ```bash
-make build          # 前端产物 embed 进 bin/portage
+PORTAGE_ADMIN_PASSWORD='pick-a-password' \
+  docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Open <http://127.0.0.1:8317/admin>, log in, and add a channel → managed models →
+an access point → an API key. The database starts empty, and the log will say so
+(`api_keys is empty, every forwarded request will 401`) until you've configured one.
+
+The admin password comes from the environment, not the config file — anything baked
+into a config file inside an image is baked into that image's layer history. It seeds
+the database on first boot; once a password is stored, changing the variable does nothing.
+
+<details>
+<summary>Build from source (Go 1.26+ and Node)</summary>
+
+```bash
+make build          # builds the web admin and embeds it into bin/portage
 ./bin/portage
 ```
 
-不带 `-tags webui` 直接 `go build ./cmd/portage` 也能过，只是 `/admin` 会显示一页「前端未构建」——CI 和没装 Node 的机器走的就是那条路。
+A plain `go build ./cmd/portage` works too — without the `webui` build tag, `/admin`
+serves a "frontend not built" page. That's the path CI and Node-less machines take.
+</details>
 
-公网暴露：容器端口保持只发布给本机，前面挂 nginx 收 TLS 并只放行 `/v1`，样例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)。**nginx 对 SSE 的几个默认值必须显式改**，漏了不报错，只表现为卡住或断流。
+<details>
+<summary>Putting it on the public internet</summary>
 
-## 接 Codex CLI
+Publish the container port to localhost only and terminate TLS in nginx in front of it,
+exposing just `/v1`. See [`deploy/nginx.conf.example`](deploy/nginx.conf.example).
+**Several nginx defaults are actively hostile to SSE** and must be overridden — get it
+wrong and nothing errors, streams just hang or cut off.
+</details>
 
-把 portage 配成 Codex 的 custom provider（`~/.codex/config.toml`）：
+## Claude Code
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+export ANTHROPIC_AUTH_TOKEN=sk-ptg-…    # your Portage key — never a vendor key
+export ANTHROPIC_MODEL=gw-sonnet        # an access point name, or channel/model
+claude
+```
+
+That's the whole setup. Claude Code keeps sending Anthropic Messages; Portage decides per
+channel whether that goes out untouched or gets translated into Chat Completions or
+Responses first. Keys are accepted as either `x-api-key` or `Authorization: Bearer`,
+so `ANTHROPIC_API_KEY` works just as well as `ANTHROPIC_AUTH_TOKEN`.
+
+Claude Code also fires background requests (titles, summaries) at a small fast model —
+`ANTHROPIC_SMALL_FAST_MODEL` on older versions, `ANTHROPIC_DEFAULT_HAIKU_MODEL` on newer
+ones. Point it at an access point too, or those requests go looking for a model name your
+upstream may not have.
+
+## Codex CLI
+
+Configure Portage as a custom provider in `~/.codex/config.toml`:
 
 ```toml
 model_provider = "portage"
@@ -67,72 +144,158 @@ model_provider = "portage"
 [model_providers.portage]
 name = "Portage"
 base_url = "http://127.0.0.1:8317/v1"
-wire_api = "responses"          # 走 /v1/responses，网关按渠道决定要不要转成别的协议
-env_key = "PORTAGE_API_KEY"     # 值是 API Key（sk-ptg-…），不是上游 key
+wire_api = "responses"          # the gateway decides whether to translate downstream
+env_key = "PORTAGE_API_KEY"     # your sk-ptg-… key, never an upstream key
 
-# 每个真会用到的接入点各来一份 profile，窗口按**上游真实窗口**写
 [profiles.sonnet]
 model = "gw-sonnet"
 model_provider = "portage"
-model_context_window = 200000
-# 可选：想更早开始压缩就显式设它；不设则由 Codex 按窗口比例自己算触发点
-model_auto_compact_token_limit = 160000
+model_context_window = 200000   # must match the real upstream window
 ```
 
-**`model_context_window` 必须自己设**，这是网关侧无法代劳的一件事：Codex 不读网关的
-`/v1/models` 去取窗口，它认的是自己内置的模型目录。接入点名沿用 Codex 认得的真名
-（`gpt-5.1-codex` 这类）时目录里的元数据自然对得上；起了 `gw-sonnet` 这种自定义名字，
-或者真实上游窗口比同名模型小，Codex 就会吃 fallback 的 272k、把自动压缩的触发点摆在
-约 245k 上——上游真窗口更小的话，请求会先撞上游的 400，压根轮不到压缩。
+**You have to set `model_context_window` yourself** — this is the one thing the gateway
+cannot do for you. Codex doesn't read `/v1/models`; it trusts its own built-in model
+catalog. Give an access point a custom name like `gw-sonnet` and Codex falls back to a
+272k window, putting auto-compaction around 245k. If the real upstream window is smaller,
+the request hits the upstream's `400` long before compaction ever fires.
 
-**压缩（remote compaction）按路径分两档**：Codex 到点会发一个 input 尾部带
-`compaction_trigger` 的请求，并要求响应里恰好一个 compaction item，收不到就当场 Fatal
-且不重试。
+<details>
+<summary>How remote compaction is handled (read this if you use long sessions)</summary>
 
-- **Responses 透传**：只在上游自己认得这个 trigger 的渠道上放行——在管理端渠道页把「Codex 压缩」勾成「支持」。没勾则明确拒绝（400，文案说明原因），而不是转发出去让 Codex 收到一个空的压缩结果。Responses 形状的 wire 不等于支持压缩。
-- **转换路径（Responses → Anthropic / Chat Completions）**：走本地合成。网关把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封（`ptg1:` + base64）当成恰好一个 compaction item 发回去；下一轮 Codex 回带时再拆开还原。渠道上那个勾选不管这条路。
+When Codex decides to compact, it sends a request whose input tail carries a
+`compaction_trigger` and expects **exactly one** compaction item back. Zero items is a
+fatal, non-retryable error on the client. Portage handles the two cases differently:
 
-legacy 的 `POST /v1/responses/compact` 不实现，回 501。
+- **Responses passthrough** — only allowed on channels whose upstream actually understands
+  the trigger; tick *Codex compaction: supported* on the channel. Otherwise the request is
+  refused with an explanatory `400`, rather than forwarded to an upstream that will
+  silently ignore the field and return nothing. Responses-shaped wire ≠ compaction support.
+- **Translated paths** (Responses → Anthropic / Chat Completions) — synthesized locally.
+  Portage rewrites the compaction turn into a pure summarization request, wraps the
+  summary in its own envelope (`ptg1:` + base64) as exactly one compaction item, and
+  unwraps it when Codex plays it back on the next turn. The channel checkbox doesn't
+  apply here.
 
-## 管理端
+The legacy `POST /v1/responses/compact` is not implemented and returns `501`.
+</details>
 
-`/admin` 下的 React 界面覆盖日常运营的全部动作：模型（渠道、协议集、base_url、凭证池、纳管、连通性探测、拉上游模型列表）、接入点（候选与权重）、API Key、调用记录、排行。
+## The admin console
 
-设计规范见 [`DESIGN.md`](DESIGN.md)：单色、排版先行、表格即证据、默认静止。上游凭证只在凭证池那一处可显示、可复制；渠道列表、接入点、流水、错误回显一律不带。转发链路回给客户端的东西里永远没有上游 key 与 base_url。
+Five screens, each answering one operational question: **Models · API Keys · Call Log ·
+Access Points · Rankings**. Hierarchy comes from typography, color carries status and one
+accent, nothing decorative. Upstream credentials are displayable and copyable in exactly
+one place — the credential pool — and appear in no list, no log, and no error message.
 
-## 配置
+<!-- Screenshots: drop sanitized PNGs into docs/images/ and uncomment.
+     See docs/images/README.md for what to capture.
 
-业务配置——渠道、纳管模型、接入点、候选、凭证——全部落 DB，不进配置文件。`config.yaml` 只管启动：监听地址、库路径、管理密码初始化、重试参数、全局令牌桶（出厂 10 QPS / 突发 20，只挂转发面）。整个文件都可以省，缺失时全用默认值。
-
-## 明确不做
-
-多用户与租户、计费与充值、兑换码、通知、评测、ES 日志、模型训练相关的一切；new-api 式的「用户等级 × 渠道分组」体系不做（权重分流要做，那是路由不是运营）。图像生成与 audio 端点 v1 不做。Responses 的有状态子路径不做——只支持无状态用法，带了 `previous_response_id` 明确回 400 而不是静默丢掉它（丢了客户端以为历史还在、实际每轮单轮，劣化看不见）；转换路径一律拒，同协议透传看渠道上那一位「支持有状态续链」，出厂取是。
-
-能力探测（模型是否支持工具调用/思考）不做：探不准、不可证伪、且没有消费者——网关不按能力拦请求。真需要这类信息时从调用流水里学，观测数据不会过期。
-
-## 状态
-
-M0 透传骨架、M1 key 与流水、M2 六条转换路径与同候选退避重试、M3 管理端与凭证池均已交付。M4（多候选加权分流、候选间故障转移）语义已拍板，尚未实现——在此之前单候选的临时闸仍然挂着。
-
-进行中的工作在 [Issues](https://github.com/SimonGino/portage/issues)。
-
-## 文档
-
-| 文档 | 层级 | 说明 |
+| Models | Call log | Rankings |
 | --- | --- | --- |
-| [docs/口径层设计.md](docs/口径层设计.md) | 口径层 | 需求口径、转换矩阵、边界与非目标、决策版本记录 |
-| [docs/MVP设计草案.md](docs/MVP设计草案.md) | 展开层 | 模块划分、canonical 事件模型、codec 接口、数据模型、golden 测试方案 |
-| [CONTEXT.md](CONTEXT.md) | 术语表 | 领域语言词典（接入点／候选／渠道／凭证池／API Key……） |
-| [DESIGN.md](DESIGN.md) | 设计规范 | 管理端视觉与交互原则 |
+| ![Models](docs/images/admin-models.png) | ![Call log](docs/images/admin-logs.png) | ![Rankings](docs/images/admin-rankings.png) |
+-->
 
-两份设计文档冲突时以口径层 §6 为准。决策连同依据记在口径层版本记录里，只记口径变化不记流水账。
+Full visual and interaction spec in [`DESIGN.md`](DESIGN.md).
 
-## 参考与致谢
+## How it's put together
 
-从头重写，不 fork 代码。协议细节、字段语义与转换坑参考了这些项目：
+A **channel** is one upstream account: a `base_url`, the protocols it can speak, the
+models you've declared on it, and a pool of credentials. An **access point** is the model
+name your harness asks for, bound to candidates drawn from those channels — or skip it and
+address a managed model directly as `channel/model`.
 
-- [new-api](https://github.com/QuantumNous/new-api) —— Go 网关的转发内核、SSE 流式转发、key 鉴权与渠道路由。
-- [sub2api](https://github.com/Wei-Shaw/sub2api) —— 协议转换的 Go 实现首要参考，其 `apicompat/` 覆盖本项目全部转换方向。**LGPL-3.0：本项目参考的是实现思路与字段语义，不复制代码。**
-- [litellm](https://github.com/BerriAI/litellm) —— 字段映射最全的对照物，thinking、tool calling、usage 语义以它逐 provider 核对。
-- [opencodex](https://github.com/lidge-jun/opencodex) —— Codex CLI 客户端行为兼容的首要参考：自动压缩、reasoning 回放、Responses SSE 事件线。
-- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) —— thinking/reasoning 跨协议保真与 signature 处置这一主题的首要参考（主题之外不参考）。
+- **A retry ladder that knows when to stop.** Backoff within a credential (2 attempts by
+  default), then the next credential in the channel, capped by a global attempt budget. A
+  `401` pulls a credential out of rotation until you restore it; a `403` moves on without
+  pulling it — that usually just means this key isn't entitled to this model. Once the
+  first byte of a stream is out, nothing is retried: the first byte is a promise.
+- **Numbers that come from the upstream, not from a guess.** On translated paths usage is
+  read off the canonical stream; on passthrough a read-only tap extracts it without
+  touching a byte of what the client receives.
+- **One binary.** React admin embedded into the Go binary, SQLite for storage. No Redis,
+  no sidecar, no external dependency of any kind.
+
+## Protocol matrix
+
+The diagonal is byte passthrough. All six cross-protocol paths are open.
+
+| Inbound ＼ Upstream | Chat Completions | Responses | Anthropic |
+| --- | --- | --- | --- |
+| **Chat Completions** | passthrough | ✅ | ✅ |
+| **Responses** | ✅ | passthrough | ✅ |
+| **Anthropic Messages** | ✅ | ✅ | passthrough |
+
+Endpoints: `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`,
+`/v1/responses`, plus `/v1/models` (the intersection of access points and protocols) and
+an unauthenticated `/healthz`.
+
+The one remaining `501` is `/v1/messages/count_tokens` on a non-Anthropic channel: the
+other two protocols have no equivalent endpoint. That's *impossible*, not *unfinished*.
+
+Translation is hub-and-spoke, not point-to-point: each protocol implements one `Codec`,
+and `A→B` means *A decodes to canonical, B encodes out*. There is no N×N mesh of pairwise
+converters. Every path gets golden samples — real harness requests and SSE transcripts —
+recorded before the implementation is written.
+
+## Configuration
+
+Everything operational — channels, managed models, access points, candidates,
+credentials — lives in the database and is edited in the console, never in a file.
+`config.yaml` only covers startup: listen address, database path, admin password seeding,
+retry parameters, and a global token bucket (10 QPS / burst 20 out of the box, applied to
+the forwarding plane only). The whole file is optional; every key has a default.
+
+## Deliberately not doing
+
+Multi-tenancy, billing, top-up codes, redemption, notifications, evals, Elasticsearch
+logging, anything training-related. No "user tier × channel group" matrix — weighted
+routing is routing, not commerce. No image generation or audio endpoints in v1.
+
+**No stateful Responses.** A request carrying `previous_response_id` gets an explicit
+`400` rather than having the field quietly dropped — silently dropping it means the client
+believes the history is still there while every turn is actually a fresh one, and the
+degradation is invisible. Translated paths always refuse; same-protocol passthrough
+follows a per-channel *supports stateful chaining* flag, on by default.
+
+**No capability probing.** Whether a model supports tool calling or thinking can't be
+probed accurately, can't be falsified, and has no consumer — the gateway never blocks a
+request on capability. When that information is genuinely needed, it gets learned from the
+call log instead. Observed behaviour doesn't expire; a self-reported capability does.
+
+## Status
+
+Shipped: passthrough core, API keys and usage logging, all six translation paths with
+in-credential backoff, the admin console and credential pools.
+
+In progress: weighted split across multiple candidates and candidate-level failover. The
+semantics are settled; until the implementation lands, configuration is gated to a single
+candidate per access point.
+
+Work in flight lives in [Issues](https://github.com/SimonGino/portage/issues).
+
+## Documentation
+
+The design documents are written in Chinese and are the source of truth for the project.
+
+| Document | Layer | Contents |
+| --- | --- | --- |
+| [docs/口径层设计.md](docs/口径层设计.md) | Requirements | Scope, the protocol matrix, boundaries and non-goals, decision log |
+| [docs/MVP设计草案.md](docs/MVP设计草案.md) | Implementation | Modules, canonical event model, codec interface, data model, golden tests |
+| [CONTEXT.md](CONTEXT.md) | Glossary | Domain vocabulary (access point / candidate / channel / credential pool / API key) |
+| [DESIGN.md](DESIGN.md) | Design spec | Admin console visual and interaction rules |
+
+## Credits
+
+Written from scratch, no forked code. Protocol details, field semantics, and the sharp
+edges between them were checked against these projects:
+
+- [new-api](https://github.com/QuantumNous/new-api) — Go gateway forwarding core, SSE
+  streaming, key auth and channel routing.
+- [sub2api](https://github.com/Wei-Shaw/sub2api) — primary reference for protocol
+  translation in Go; its `apicompat/` covers every direction Portage needs.
+  **LGPL-3.0: implementation ideas and field semantics were referenced, no code copied.**
+- [litellm](https://github.com/BerriAI/litellm) — the most complete field-mapping
+  reference; thinking, tool calling, and usage semantics were cross-checked per provider.
+- [opencodex](https://github.com/lidge-jun/opencodex) — primary reference for Codex CLI
+  client behaviour: auto-compaction, reasoning replay, the Responses SSE event line.
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — primary reference on one
+  topic only: cross-protocol fidelity of thinking/reasoning and how to handle signatures.
