@@ -29,7 +29,7 @@ flowchart LR
         APP["Your scripts / SDK<br/>Chat Completions"]
     end
 
-    PG{{"Portage<br/>one binary · SQLite · web admin"}}
+    PG{{"Portage<br/>one binary · SQLite · optional web admin"}}
 
     subgraph up["Whatever model you can get"]
         T["Open-weight models<br/>via any OpenAI-compatible relay"]

@@ -25,7 +25,7 @@ flowchart LR
         APP["自己的脚本 / SDK<br/>Chat Completions"]
     end
 
-    PG{{"Portage<br/>单二进制 · SQLite · 管理端"}}
+    PG{{"Portage<br/>单二进制 · SQLite · 可选管理端"}}
 
     subgraph up["你手上能拿到的模型"]
         T["开源权重模型<br/>经任意 OpenAI 兼容中转"]
