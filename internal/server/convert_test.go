@@ -441,20 +441,21 @@ func TestConvertedRejectsUndecodableRequest(t *testing.T) {
 	}
 }
 
-// 闸门只放开这一格。count_tokens 的 ep.Proto 同样是 anthropic，若按协议对开闸就会
-// 被一起放进来——而 CC 那边根本没有对应端点可转。
-func TestConvertGateOpensOnlyMessagesToCC(t *testing.T) {
+// count_tokens 的 ep.Proto 同样是 anthropic，若按协议分路就会被当 /v1/messages
+// 转出去。它走的必须是本地估算那条路（#18）：回 200 带数，且一个字节不打上游——
+// 转出去的话 CC 那边根本没有对应端点，上游会收到一个 chat/completions 假请求。
+func TestCountTokensDoesNotEnterTheConvertPath(t *testing.T) {
 	gw, up := newConvertGateway(t)
 
 	resp := gw.Post(t, "/v1/messages/count_tokens",
 		`{"model":"gw-sonnet","messages":[{"role":"user","content":"hi"}]}`, nil)
 	body := gatewaytest.ReadBody(t, resp)
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("count_tokens → openai 状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("count_tokens → openai 状态码 = %d, 期望 200（本地估算）；body=%s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, "没有对应的转换路径") {
-		t.Errorf("文案应点明该端点没有对应的转换路径: %s", body)
+	if !strings.Contains(body, "input_tokens") {
+		t.Errorf("回包该是估算数 {\"input_tokens\":N}: %s", body)
 	}
 	if up.Count() != 0 {
 		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())

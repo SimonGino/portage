@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.05
+> 状态：草案 v1.06
+> v1.06 变更（口径层 v0.80 落地：非 Anthropic 出口的 `count_tokens` 由 501 改本地估算，[#18](https://github.com/SimonGino/portage/issues/18)，2026-08-20）：v0.83 定的口径原样实现，三条承诺边界（不承诺与上游一致、不进计费不写 usage 列、锁死在这一个端点一个字段）一条未动。①**新模块 `internal/tokencount`**：吃 canonical `protocol.Request` 回一个数。票面留给实现层的三项选型在此定夺——**分词器 O200kBase**（`tiktoken-go/tokenizer`，词表内嵌、离线可用、MIT；Anthropic 分词器不公开，要的是「同数量级、随文本单调」，CLIProxyAPI 同款）；**序列化口径取正文段落**（system / role+各块 / tool_use 的 id+name+args / tool_result 嵌套块递归 / tools 的 name+description+schema 原文+Extras（custom 工具的 format 文法住那儿）/ tool_choice，段落间换行相接，不数协议信封的 JSON 语法字节）；**附件折算 = 解码字节数 / 512、下限 256**（系数照 opencodex 的兜底档，尺寸嗅探那半不做）——base64 绝不当正文数，一张 2MB 截图按文本数是几十万 token、真实一千六上下。另补一笔票面没有的：**声明了工具的请求 +300**（Anthropic 的 tool-use 系统提示注入，官方文档记 Sonnet 约 294~346；golden 实测不补时单工具小请求估 51 / 真实 580，缺口几乎全是这一笔）。结果恒 ≥ 1。②**落点是 `server.countTokensLocal`，拦在转换闸之前的独立分支**，不改 `conversionOpen` 的形状：估算不是转换路径，是不打上游的本地路。判据按**端点**不按入口协议（count_tokens 与 /v1/messages 的 ep.Proto 同为 anthropic，`pickLimiter` 与 `conversionOpen` 都踩过）。解码复用 anthropic codec 的 `DecodeRequest`，解不动回 anthropic 形状的 400（收场词照早退缺省 `rejected`）。③**流水侧三条边界**：rec 不 `Dialing`（`upstream_endpoint` 空，「非空 ⟺ 真的发起过」不变量原样）、不 `Summarized`（usage 列全 NULL）、收场 `ok`（本地估算是一次成功）。`calllog.Rejected` 的注释同批改写——count_tokens 501 曾是它的主要载体，现由 previous_response_id 的 400 们接棒。④**五处 501 断言换靶**：`TestCountTokensRejectsNonAnthropicChannel` 改名 `TestCountTokensEstimatesLocallyOnNonAnthropicChannel`（200 + 数 ≥1 + 上游 0 请求 + 流水三条边界）；`TestConvertGateOpensOnlyMessagesToCC` 改 `TestCountTokensDoesNotEnterTheConvertPath`；`TestCountTokens501RowCarriesTheEndpoint` 改 `TestCountTokensLocalRowCarriesTheEndpoint`；`TestCountTokensNeedsAnthropicInTheSet` 断言改 200（「不打上游」那半句一字不变，正是它要钉的）；`TestCrossProtocolGateAnswersInInboundFormat` 的载体换成同端点解码失败的 400（501 今天没有可达载体，「按入口格式回错、不泄 key/base_url」两条断言原样）。`rejected` 词的两条用例（`calllogcolumns_test.go` / `calllog_test.go`）载体换 previous_response_id 撞转换路径。⑤**偏差量实测**（验收最后一条，基准 = `testdata/golden/anthropic-*` 八份真实转录的 `usage` 反推、扣除该中转已知的 +357 注入；#2 透明链路仍未通，基准来源照票面备选）：纯文本 0.74、带工具 0.61（+300 补偿后）、带 thinking 0.17——样本都是几十 token 的小请求，固定注入占大头，相对偏差在真实几万 token 的请求上会显著收窄；thinking 那档疑似还有一笔未识别的注入，记为已知偏差不追。⑥`go.mod` 新增 `github.com/tiktoken-go/tokenizer`（MIT，词表内嵌）。修改人 jinpenga。
 > v1.05 变更（[#7](https://github.com/SimonGino/portage/issues/7) 落地：`queue_wait_ms` 只写不读改为管理端露出，2026-08-20）：口径照搬 v0.67（与 request-id 那票同构），四步全落。①`store.CallLogRow` 加 `QueueWaitMs int64`（`json:"queue_wait_ms"`），`ListCallLogs` 的 SELECT 与 Scan 加列；**int64 不是指针**——写侧这一列不可空（v0.52：「没排队」与「排了 0ms」同档），接口照原样给 0 不转 null，「> 0 才摆」是前端的判据不是这里的。`/admin/api/logs` 直接序列化该结构，handler 零改动。②详情框加「排队」一格，只在 `queue_wait_ms > 0` 时摆，挂在「状态」之后（`queue_full`/`queue_timeout` 两个词落在状态格，这一格答「等了多久」）；**「详情」按钮判据跟着扩成三段或**——排过队的成功行不进按钮判据就够不着，露出形态与两条判据的立论记 DESIGN v0.31。③DB→接口断言补在 `TestGateQueueTimeoutReturns429` 里：既有用例已把 `queue_wait_ms ≈ 300` 钉在库上，顺同一行断 `/admin/api/logs` 回包与库里精确同值；`logRow.QueueWaitMs` 用 `*int64`——断的是「这一列出现在回包里」，值类型的 0 分不清「回了 0」和「压根没回这个键」。④票面那条待 PO 确认的「框里判据」（> 0 才摆、不摆 0ms 空壳）按票面倾向执行，连同按钮判据的扩展一起在票里点名请 PO 追认。修改人 jinpenga。
 > v1.04 变更（[#33](https://github.com/SimonGino/portage/issues/33) 落地：取消 Responses 协议后两个能力位归位，2026-08-20）：修法 A（PO 2026-08-19 裁定），后端守不变式、前端一行未动。①`store.UpdateChannel`：新 `protocols` **不含** `openai_responses` 时，`supports_compaction` 强制写 0（v0.54 ⑨ 默认取否）、`supports_stateful_responses` 强制写 1（v0.88 ② 默认取是），不再走「nil = 整列不写」——那条规则是为「老请求体没这个字段」立的，它保不住这里：UI 只在勾了 Responses 时才渲染这两位，取消协议后前端整个不发字段，残值留库且界面上再也够不着，哪天协议勾回来就原样复活（真机形态：残留 1 的 qwen 透传，上游忽略 `compaction_trigger`，Codex 收 0 个 compaction item 即 Fatal）。含 Responses 时维持现状，「整列不写」一字不动。②`CreateChannel` 对称处理：协议不含 Responses 时两位落默认值，请求体带来的不作数——UI 造不出这种请求，直接打 API 能。③顺带把 `ChannelInput.normalized()` 的返回从串改成 `protocol.Set`（两处调用点要问 `Has(OpenAIResponses)`，再 ParseSet 一遍是重复解析）。④**不做存量迁移**：现网四个渠道已人工清理，归位发生在下次保存该渠道时。⑤**`declcfg.Apply` 不在本票**：声明文件里显式写的 `supports_compaction: true` 是文件里看得见的配置，不属于「不可见状态」这条不变式管的东西；要不要在 `selfCheck` 里把「协议不含 Responses 却写了这两位」判成错，另议。⑥用例三条见 `internal/store/admin_internal_test.go`：取消协议归位（两位分别拨离默认值再断言两个方向）、协议仍含时缺省字段一字不变（守住「整列不写」没被连带改坏）、新建时不信请求体。修改人 jinpenga。
 > v1.03 变更（口径层 v0.93 落地：`call_logs` 保留期清理，[#35](https://github.com/SimonGino/portage/issues/35)，2026-08-20）：①`config.Config` 加 `CallLogRetentionDays`（`call_log_retention_days`，默认 90）——零值陷阱同 `rate_limit_qps`：`Load` **不补零值**，整块缺席靠 Unmarshal 覆盖在 `Default()` 之上保持 90，显式写 0 就是永久保留。②`store.DeleteCallLogsBefore(ctx, db, cutoff)`：`DELETE FROM call_logs WHERE id IN (SELECT id … WHERE created_at < ? LIMIT ?)` **分批删，每批 1 万行、各自成事务**——单写连接下一条无上限的 DELETE 对着存量大库会把写连接占到删完为止，转发全排在它后面，裁掉 VACUUM 防的正是这件事，清理自己不能再犯；批间放行其他写入。cutoff 在 Go 侧走 `sqlTime` 折成 UTC 串再比，**不在 SQL 里对 created_at 套函数**（与用量聚合 `UsageRange.where` 同一条纪律：套了 `idx_call_logs_created_at` 就废，这条 DELETE 变全表扫）；边界钉死为 `<`——恰好等于 cutoff 的行留下，「保留 90 天」不在边界那一秒少一行。③清理循环放 `cmd/portage/main.go` 不放 store——goroutine、ticker、日志是进程生命周期编排，store 只留纯删除。`call_log_retention_days > 0` 才起：0 是永久保留，**负数也必须落在不起那一侧**（折出来的 cutoff 在未来，会清空全表）。起来先清一次、之后 24h ticker，信号 ctx 取消即退；删了行才记 Info（带 deleted 与 retain_days），失败记 Error **不退出**——SQLITE_BUSY 一类瞬时错下一天还有机会。**「每天一次」= 进程内 24h ticker、重启即重新计时**：频繁重启的实例永远走不到 ticker 那一步，但每次启动都清，缺口不再打开。④不 VACUUM 是口径层 v0.93 ③ 钉死的设计行为，`PruneCallLogsLoop` 的 doc 注释原文记着理由（单写连接下独占锁卡转发），免得后人当漏洞补上。⑤用例三条：`config` 的零值三态表（缺席 90 / 显式 0 / 显式 30，`TestLoadDistinguishesAbsentRetentionFromExplicitZero`）；`store` 的边界 + 分批 + 幂等（`prune_internal_test.go`，批取 2、超期行种 5 让分批真转起来，boundary/fresh 留下，重跑删 0）；**格式对齐单独一条**（`TestPruneMatchesCurrentTimestampFormat`）——真实流水的 created_at 是 DDL 默认 CURRENT_TIMESTAMP 写的，不经过 `sqlTime`，两侧都走 `sqlTime` 的用例对格式漂移是盲的，这条种一行真实路径、拿 ±1h 的 cutoff 从两个方向逼近。goroutine 本身不单测（定时器时序测试必 flaky，缝在 `DeleteCallLogsBefore` 上）。⑥`deploy/config.docker.yaml` 补这一键的示范与注释。修改人 jinpenga。
@@ -152,7 +153,7 @@
 
 `conversionOpen` 也因此换了职责：它不再是「逐格放开」的临时闸，而只挡一件事——**没有上游对应端点的入口端点**。那就是 `/v1/messages/count_tokens`：它与 `/v1/messages` 的入口协议同为 anthropic，命中非 anthropic 渠道时没有可转的上游端点。判据必须按端点而不按协议，原因即在此。
 
-> **口径层 v0.80 改了这一格的收场**：「没有上游对应端点」不再等同于「回 501」——CC / Responses 出口改为**网关本地估算**回 200，只有 Anthropic 出口才转发原生端点。于是 `conversionOpen` 对 `count_tokens` 的返回值不再是「拒绝」而是「换一条本地路」，闸的形状要跟着改。实现见 [#18](https://github.com/SimonGino/portage/issues/18)，**代码尚未落地**；在那之前本节描述的 501 行为仍是现状。
+> **口径层 v0.80 改了这一格的收场，[#18](https://github.com/SimonGino/portage/issues/18) 已落地**：「没有上游对应端点」不再等同于「回 501」——CC / Responses 出口改为**网关本地估算**回 200（`server.countTokensLocal` + `internal/tokencount`），只有 Anthropic 出口才转发原生端点。闸的形状落成「拦在转换闸之前的独立分支」而不是改 `conversionOpen`：估算不是一条转换路径，是一条不打上游的本地路。`conversionOpen` 因此今天没有可拦的组合，保留当将来新端点的兜底。
 
 排序曾有争议：按**边际成本**④ 比 ③ 便宜，与口径层 §2.1 的排序（③ 先于 ④）相反。**PO 裁定不调序**（v0.35）：这两个半边同属 M2 收尾的一批，做完就是 9 格全开，边际成本的差别在「两个都要做」的前提下不成立；而 ③ 的输入契约（六份 `in-cc-*` 样本，portage-legacy#27/portage-legacy#28）刚落地，采集时带出的两条约束已进 canonical 覆盖表，趁热做省一次重新进入成本。portage-legacy#9 收敛了 `openaicc` 入口半边，portage-legacy#80 一票把 `openairesponses` 出口半边与最后两格一起落地，两格共用同一个半边，本就没有分两票的理由。
 
@@ -169,7 +170,7 @@
   - 请求侧思考参数（**口径层 v0.65 定，v0.72/v0.73 放开方向**）：**只映 effort 一维、同域字符串直传、不折算数字**，**六条路径全通**（Anthropic 侧载体统一 `output_config.effort`，实测合法且单发即开思考，不写老式 `thinking.budget_tokens`）；域外值不钳，Anthropic 官方值域实测五档 `low|medium|high|xhigh|max`；没映过去的维登记 `thinking_param`。
   - cache_control：仅「出口为 Anthropic」时保留；转往其他协议时静默剥离。
   - temperature：Anthropic 区间 0~1，OpenAI 0~2，转换时 clamp。
-  - count_tokens（**口径层 v0.80 定案**）：Anthropic 出口原样转发；**CC / Responses 出口本地估算回 200 `{"input_tokens":N}`**，不再回 501。估算不承诺与上游一致、不作对账依据、不进计费。原文「P0 回 501 风格错误；P1 做字符估算」的 P1 至此提上来并锁死承诺边界，实现见 [#18](https://github.com/SimonGino/portage/issues/18)（**代码尚未落地**）。
+  - count_tokens（**口径层 v0.80 定案**）：Anthropic 出口原样转发；**CC / Responses 出口本地估算回 200 `{"input_tokens":N}`**，不再回 501。估算不承诺与上游一致、不作对账依据、不进计费。原文「P0 回 501 风格错误；P1 做字符估算」的 P1 至此提上来并锁死承诺边界，[#18](https://github.com/SimonGino/portage/issues/18) 已落地（估算器口径见 v1.06 版本记录与 `internal/tokencount` 包注释）。
 
 ## 3. 模块划分
 
@@ -707,8 +708,8 @@ CREATE TABLE call_logs (
   endpoint TEXT NOT NULL DEFAULT '',   -- 这次打的转发端点路径（口径层 v0.82，#17）：值域就是 protocol.Endpoint
                                        -- 那四条原样（slog 的 endpoint 字段同源）。**client_protocol 分不开它**：
                                        -- /v1/messages 与 /v1/messages/count_tokens 的入站协议同为 anthropic，
-                                       -- 而 count_tokens 的 501 与限流的 429 都没有模型、渠道、耗时，端点是
-                                       -- 它们之间唯一的区别。由最外层的 callLog 中间件写，鉴权失败/限流的行
+                                       -- 而 count_tokens 的本地估算行（#18，此前是 501）与限流的 429 都没有
+                                       -- usage 与出站端点，端点列是辨认它们的唯一依据。由最外层的 callLog 中间件写，鉴权失败/限流的行
                                        -- 因此也有值。**不可空、默认空串**（同 upstream_request_id，与
                                        -- reasoning_tokens 的可空相反）：空串只有一个意思——加列之前的老行，
                                        -- 不回填（历史行没有这个信息，从 client_protocol 反推更错）
@@ -717,7 +718,7 @@ CREATE TABLE call_logs (
                                        -- 同协议透传时相等。**upstream_protocol 也分不开它**：count_tokens 透传到
                                        -- anthropic 渠道时上游协议是 anthropic，照 protocol.UpstreamEndpoint 反推
                                        -- 会把它说成 /v1/messages——它压根没有出口对应物。**没发到上游的行为空**
-                                       -- （401 / 429 / count_tokens 撞非 anthropic 渠道的 501 / 并发闸队满），
+                                       -- （401 / 429 / count_tokens 撞非 anthropic 渠道的本地估算 200 / 并发闸队满），
                                        -- 与上一列恰好相反；不可空、默认空串，空串两义靠上一列分辨：两列皆空
                                        -- 是加列前的老行，只有本列空是那次请求从没发出去。同样不回填
   client_protocol TEXT NOT NULL,       -- anthropic | openai | openai_responses
@@ -974,7 +975,7 @@ api_keys:
 > 这张表唯一的契约是**列出来的都调得通**，因此它认的名字集合必须和 `store.Resolve` 逐字一致，改一边就得改另一边。
 
 > **不迎合 harness 的私有目录格式（M0 验收实测，2026-08-06）**：Codex CLI 拉的其实是 OpenAI 的**私有**模型目录——`{fetched_at, etag, client_version, models:[{slug, supported_reasoning_levels, apply_patch_tool_type, …}]}`，与公开的 `/v1/models` 不是一个东西。拿不到时 Codex 打两条 warning（`Model metadata for X not found. Defaulting to fallback metadata`、`service tier priority is not advertised…`）后**照常工作**，整轮工具调用不受影响。故本项目**不实现该私有格式**：它无公开契约、字段随 Codex 版本漂移，为它建一张模型能力表要长期跟着上游跑，而收益只是消掉两条 warning。降级路径已实测可用，就停在降级上。
-- Anthropic 出口/入口的 `count_tokens`：上游为 Anthropic 时原样转发，否则**本地估算回 200**（口径层 v0.80；原「否则 501」已废，实现见 [#18](https://github.com/SimonGino/portage/issues/18)，代码尚未落地）
+- Anthropic 出口/入口的 `count_tokens`：上游为 Anthropic 时原样转发，否则**本地估算回 200**（口径层 v0.80；原「否则 501」已废，[#18](https://github.com/SimonGino/portage/issues/18) 已落地）
 
 **以上是业务面，全在 `internal/server`**（口径层 v0.28：`/healthz` 与 `/v1/models` 不归 `admin`）。
 

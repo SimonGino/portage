@@ -115,14 +115,15 @@ func TestRowsThatNeverReachedUpstreamHaveNoUpstreamEndpoint(t *testing.T) {
 		assertNoUpstreamEndpoint(t, row, protocol.EndpointMessages.Path)
 	})
 
-	t.Run("501 count_tokens 撞非 anthropic 渠道", func(t *testing.T) {
+	t.Run("count_tokens 撞非 anthropic 渠道走本地估算", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
 		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, "qwen3-max", openaiCredential)
 		gw := gatewaytest.Start(t, db)
 
-		if resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil); resp.StatusCode != http.StatusNotImplemented {
-			t.Fatalf("状态码 = %d, 期望 501", resp.StatusCode)
+		// #18 之后这一格回 200，但「没打上游」没变——正是这条子测试要钉的那一列。
+		if resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("状态码 = %d, 期望 200（本地估算）", resp.StatusCode)
 		}
 
 		row := gw.LastCallRow(t)

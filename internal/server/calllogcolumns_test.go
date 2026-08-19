@@ -102,19 +102,20 @@ func TestStreamAbortedLandsInErrorColumn(t *testing.T) {
 	}
 }
 
-// rejected：构造时的默认词，走到这里说明没有任何分支覆盖过它。count_tokens 撞
-// 非 Anthropic 渠道那条 501 是它今天唯一还在用的载体。
+// rejected：构造时的默认词，走到这里说明没有任何分支覆盖过它。count_tokens 501
+// 那个老载体在 #18 之后改判本地估算回 200，这里换 previous_response_id 撞转换
+// 路径那条 400 当载体（口径层 v0.88，同为早退分支的缺省词）。
 func TestRejectedLandsInErrorColumn(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
-	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-5.6", openaiCredential)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, "qwen3-max", openaiCredential)
 	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
-	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil))
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/responses", statefulRequest, nil))
 
 	row := gw.LastCallRow(t)
-	if row.Status != http.StatusNotImplemented {
-		t.Fatalf("status = %d, 期望 501", row.Status)
+	if row.Status != http.StatusBadRequest {
+		t.Fatalf("status = %d, 期望 400", row.Status)
 	}
 	if row.Error.String != "rejected" {
 		t.Errorf("error = %q, 期望 rejected", row.Error.String)

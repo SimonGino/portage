@@ -34,9 +34,11 @@ const (
 	// Unauthorized 是网关 key 不认（鉴权层）。
 	Unauthorized Outcome = "unauthorized"
 	// Rejected 是构造时的默认词：走到收尾还没有任何分支覆盖过它，说明这次调用
-	// 在某个早退分支上停下了。今天有两个载体：count_tokens 撞非 Anthropic 渠道那条
-	// 501，以及 previous_response_id 被拒的那两条 400（口径层 v0.88）——后者没单开
-	// 一个词，是因为这份词表是逐词钉死的对外契约，加第 11 个词要 PO 先裁。
+	// 在某个早退分支上停下了。今天的载体是各路早退 400——previous_response_id 被拒
+	// 的那两条（口径层 v0.88）、count_tokens 本地估算解不开请求体的那条（#18）等。
+	// 它们没单开词，是因为这份词表是逐词钉死的对外契约，加第 11 个词要 PO 先裁。
+	// count_tokens 撞非 Anthropic 渠道那条 501 曾是本词的主要载体，口径层 v0.80
+	// 之后那一格改判本地估算回 200，不再经过这里。
 	Rejected Outcome = "rejected"
 	// ModelNotAllowed 是 key 的 allowed_models 白名单挡下的（口径层 v0.32）。
 	ModelNotAllowed Outcome = "model_not_allowed"

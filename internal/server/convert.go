@@ -24,12 +24,11 @@ import (
 // conversionOpen 报告「入口端点 → 渠道协议」这一格闸是否已放开。
 //
 // portage-legacy#80 之后**三协议九宫格全开**（对角线三格走透传，六格跨协议转换在这里列全）。
-// 于是这个函数的职责只剩一件：挡住**没有上游对应端点**的入口端点。
-//
-// 那就是 /v1/messages/count_tokens。它与 /v1/messages 的 ep.Proto 同为 anthropic，
-// 所以判据必须是**端点**而不是入口协议——按协议判会把 count_tokens 一起放进转换
-// 分支，而 CC 与 Responses 两边根本没有可以转过去的端点。它命中非 anthropic 渠道
-// 一律回 501，这不是「还没做」，是**没得做**。
+// count_tokens 曾是这里唯一要挡的入口（没有上游对应端点，回 501），口径层 v0.80
+// 之后它在进这道闸**之前**就拆去了本地估算那条路（server.go 的 countTokensLocal，
+// #18），于是今天没有能落进 501 的组合。闸保留是给将来新端点兜底——「回 501 是
+// 没得做」这句只对**既没有上游对应端点、也没有本地路**的入口成立。判据按端点不按
+// 入口协议的教训原样有效：count_tokens 与 /v1/messages 的 ep.Proto 同为 anthropic。
 func conversionOpen(ep protocol.Endpoint, channel protocol.Protocol) bool {
 	switch {
 	case ep == protocol.EndpointMessages && channel == protocol.OpenAI:

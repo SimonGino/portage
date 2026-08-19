@@ -391,8 +391,19 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		// 转换闸。portage-legacy#80 九宫格全开后，这里能拦下的只剩「没有上游对应端点」的入口端点
-		// （count_tokens），501 是**没得做**而不是「还没做」——见 conversionOpen 的注释。
+		// count_tokens 撞非 anthropic 渠道走本地估算（#18，口径层 v0.80）：CC /
+		// Responses 没有原生端点可转发，此前这一格回 501。判据是**端点**不是入口
+		// 协议——它与 /v1/messages 的 ep.Proto 同为 anthropic（conversionOpen 与
+		// pickLimiter 都踩过同一个坑）。拦在转换闸之前：它不是一条转换路径，是一条
+		// 不打上游的本地路。
+		if cand.Protocol != ep.Proto && ep == protocol.EndpointCountTokens {
+			s.countTokensLocal(c, rec, ep, cand, body)
+			return
+		}
+
+		// 转换闸。portage-legacy#80 九宫格全开、count_tokens 又在上面拆去本地路之后，
+		// 今天没有能走到这条 501 的组合——留着它是给将来新端点兜底：既没有上游对应
+		// 端点、也没有本地路的入口，落进来该被明确拒掉而不是乱转。
 		if cand.Protocol != ep.Proto {
 			if !conversionOpen(ep, cand.Protocol) {
 				ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,

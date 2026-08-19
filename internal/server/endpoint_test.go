@@ -61,16 +61,16 @@ func TestEveryRelayEndpointRecordsItsPath(t *testing.T) {
 	}
 }
 
-// 本票的现象行：count_tokens 命中非 Anthropic 渠道就地回 501，一个字节都不打上游。
-// 这种行的模型、渠道、耗时全是空的，端点是它与其它 501 之间**唯一**的区别。
-func TestCountTokens501RowCarriesTheEndpoint(t *testing.T) {
+// 本票的现象行：count_tokens 命中非 Anthropic 渠道就地本地估算（#18，此前是 501），
+// 一个字节都不打上游。这种行没有 usage、没有出站端点，端点列是辨认它的**唯一**依据。
+func TestCountTokensLocalRowCarriesTheEndpoint(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	db := gatewaytest.NewDB(t)
 	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, "qwen3-max", openaiCredential)
 	gw := gatewaytest.Start(t, db)
 
-	if resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil); resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("状态码 = %d, 期望 501", resp.StatusCode)
+	if resp := gw.Post(t, "/v1/messages/count_tokens", countTokensRequest, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200（本地估算）", resp.StatusCode)
 	}
 
 	row := gw.LastCallRow(t)

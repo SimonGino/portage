@@ -78,20 +78,21 @@ func TestInboundNotInSetFallsBackToChatCompletions(t *testing.T) {
 	}
 }
 
-// count_tokens 是 Anthropic 独有端点、没有转换路径：渠道不说 anthropic 就只能 501，
-// 绝不会因为回退顺序被送去 /v1/chat/completions。
+// count_tokens 是 Anthropic 独有端点、没有转换路径：渠道不说 anthropic 时走本地
+// 估算（#18，此前是 501），绝不会因为回退顺序被送去 /v1/chat/completions。
 //
 // portage-legacy#80 九宫格全开之后，这条是「回退顺序不会把一条走不通的路变成可用的」在本文件里
 // 的唯一载体——此前那条用 CC→R 当反例的用例（TestFallbackDoesNotOpenAnUnimplementedPath）
-// 随该格放开一并删了，它测的行为已经不存在。count_tokens 这一格不同：它 501 是因为
-// **上游没有对应端点**，不是因为还没做，所以是个永久成立的反例。
+// 随该格放开一并删了，它测的行为已经不存在。count_tokens 这一格不同：**上游没有
+// 对应端点**是永久事实，v0.80 改的只是收场（501 → 本地估算回 200），「不打上游」
+// 这半句一个字没变，正是这条要钉的。
 func TestCountTokensNeedsAnthropicInTheSet(t *testing.T) {
 	gw, up := seedBothProtocols(t)
 
 	resp := gw.Post(t, "/v1/messages/count_tokens",
 		`{"model":"gpt-luna/gpt-5.6-luna","messages":[{"role":"user","content":"hi"}]}`, nil)
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("状态码 = %d，期望 501；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("状态码 = %d，期望 200（本地估算）；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
 	}
 	if up.Count() != 0 {
 		t.Error("count_tokens 不该打到上游")

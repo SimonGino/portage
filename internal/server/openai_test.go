@@ -146,11 +146,10 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 
 // 走不通的路要按**入口**协议的原生格式回错——客户端只认得它自己那套。
 //
-// 载体是 count_tokens×openai_responses，而且是个**永久**反例：portage-legacy#80 之后九宫格全开，
-// 「这一格还没做」的 501 已经不存在了，唯一还会 501 的是 count_tokens——它是
-// Anthropic 独有端点，CC 与 Responses 两边根本没有可以转过去的上游端点（见
-// conversionOpen 的注释）。所以这里不会像此前那两个子测试一样，随着某一格放开而
-// 变成在测一条不再存在的行为。
+// 载体又换了一次：count_tokens×openai_responses 的 501 曾是永久反例，#18（口径层
+// v0.80）把那一格改判本地估算回 200，于是 501 这条今天没有可达的载体。接棒的是
+// 同一端点上**解码失败的 400**——本地估算也得先把请求解成 canonical，解不动时的
+// 错误照样要用 Anthropic 原生形状回、照样不泄 key/base_url。
 //
 // 此前的 CC 子测试（CC 入口打 openai_responses 渠道）已随 CC→R 放开而删除。
 // 「错误用入站格式回、不泄 key/base_url」这两条断言在 CC 方向的载体改为
@@ -158,16 +157,15 @@ func TestOpenAIChannelUsesBearerCredential(t *testing.T) {
 func TestCrossProtocolGateAnswersInInboundFormat(t *testing.T) {
 	gw, up := newOpenAIGateway(t, "gw-sonnet", "openai_responses", "gpt-5.6")
 
-	resp := gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
+	// messages 是字符串不是数组，anthropic codec 解不动它。
+	resp := gw.Post(t, "/v1/messages/count_tokens",
+		`{"model":"gw-sonnet","messages":"not-an-array"}`, nil)
 	body := gatewaytest.ReadBody(t, resp)
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("状态码 = %d, 期望 501；body=%s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("状态码 = %d, 期望 400；body=%s", resp.StatusCode, body)
 	}
-	assertAnthropicError(t, body, "api_error")
-	if !strings.Contains(body, "没有对应的转换路径") {
-		t.Errorf("文案应点明该端点没有对应的转换路径: %s", body)
-	}
+	assertAnthropicError(t, body, "invalid_request_error")
 	assertNoSecrets(t, body, openaiCredential, up.URL)
 	if up.Count() != 0 {
 		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())

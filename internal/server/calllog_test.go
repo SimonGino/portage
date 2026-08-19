@@ -141,20 +141,20 @@ func TestCallLogCoversRejectedAndFailedCalls(t *testing.T) {
 	t.Run("闸门拒绝", func(t *testing.T) {
 		up := gatewaytest.NewUpstream(t)
 		db := gatewaytest.NewDB(t)
-		// portage-legacy#80 之后九宫格全开，唯一还会被闸挡下的是 count_tokens——它是 Anthropic
-		// 独有端点，另外两个协议根本没有可以转过去的上游端点。载体换了，这条要钉的
-		// 「被挡下的调用照样落日志」没变。
-		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai_responses", up.URL, "gpt-5.6", openaiCredential)
+		// 载体又换了一次（前一个是 count_tokens 的 501，#18 之后那格改判本地估算
+		// 回 200）：现在用 previous_response_id 撞转换路径那条 400（口径层 v0.88）。
+		// 这条要钉的「被挡下的调用照样落日志」没变。
+		gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, "qwen3-max", openaiCredential)
 		gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
-		gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil))
+		gatewaytest.ReadBody(t, gw.Post(t, "/v1/responses", statefulRequest, nil))
 
 		line := gw.LastCall(t)
-		if line.Int64("status") != http.StatusNotImplemented || line.Str("outcome") != "rejected" {
-			t.Errorf("status/outcome = %d/%q, 期望 501/rejected", line.Int64("status"), line.Str("outcome"))
+		if line.Int64("status") != http.StatusBadRequest || line.Str("outcome") != "rejected" {
+			t.Errorf("status/outcome = %d/%q, 期望 400/rejected", line.Int64("status"), line.Str("outcome"))
 		}
 		// 命中了哪个渠道要记下来——不然「为什么被挡」得靠猜。
-		if line.Str("channel_protocol") != "openai_responses" {
+		if line.Str("channel_protocol") != "openai" {
 			t.Errorf("channel_protocol = %q", line.Str("channel_protocol"))
 		}
 		if _, ok := line.Attrs["input_tokens"]; ok {
