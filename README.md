@@ -81,18 +81,100 @@ Once every request goes through one place, a few things become free:
 
 ## Quick start
 
+The same binary runs in two shapes, and one thing decides which: whether an admin
+password is set.
+
+| | Admin password | Business configuration | What it's for |
+| --- | --- | --- | --- |
+| **With the console** | set | lives in the database, edited by clicking | the machine you configure *on* |
+| **Forwarding only** | not set anywhere | comes from a declarative file | the machine you deploy *to* |
+
+The intended path uses both, in three steps: **configure locally with the console →
+export one `channels.yaml` → deploy that file to a forwarding-only instance.**
+
+### 1. Configure locally, with the console
+
 ```bash
 PORTAGE_ADMIN_PASSWORD='pick-a-password' \
   docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
 Open <http://127.0.0.1:8317/admin>, log in, and add a channel → managed models →
-an access point → an API key. The database starts empty, and the log will say so
-(`api_keys is empty, every forwarded request will 401`) until you've configured one.
+an access point → an API key. Test the upstreams from here: a forwarding-only instance
+never probes anything, so whatever you don't verify on this machine, nobody verifies.
+
+This instance never gets a declarative file mounted — its database stays the source of
+truth and the console stays writable. So the database starts empty and the log merely
+says so (`api_keys is empty, every forwarded request will 401`) until you've added a
+key: a warning, not a failure, because on this shape configuring a key requires a
+gateway that's already running. Mount a file and that same condition refuses to boot
+instead — see step 3.
 
 The admin password comes from the environment, not the config file — anything baked
 into a config file inside an image is baked into that image's layer history. It seeds
 the database on first boot; once a password is stored, changing the variable does nothing.
+
+### 2. Export `channels.yaml`
+
+One button at the foot of the console's left rail. It writes the whole business
+configuration into a single file — every channel, managed model, credential, access
+point and API key — and nothing about runtime state, so a `401` you hit locally doesn't
+travel to the deployed machine as a disabled credential.
+
+**The file carries secrets in cleartext**, both upstream credentials and `sk-ptg-…`
+keys, because a redacted file can't be deployed and deploying it is the entire point.
+It lands `0600`; keep it that way, and never commit it — `channels.yaml` is already in
+`.gitignore`. The one file of this shape that *is* in git is `channels.example.yaml`,
+and that one is a reference, not a config.
+
+### 3. Deploy it, forwarding-only
+
+Mount the file, point `PORTAGE_CHANNELS` at it, and set no admin password:
+
+```yaml
+# deploy/docker-compose.override.yml — compose merges this in automatically
+services:
+  portage:
+    environment:
+      PORTAGE_CHANNELS: /etc/portage/channels.yaml
+    volumes:
+      - ./channels.yaml:/etc/portage/channels.yaml:ro
+```
+
+Outside a container it's the `-channels` flag; `PORTAGE_CHANNELS` overrides it. The
+environment variable has to exist because the image's `ENTRYPOINT` hard-codes `-config`.
+There is no implicit default path and no search — a mistyped filename must fail loudly,
+not degrade into silently serving whatever the database happened to hold.
+
+With a file mounted, that file is the only source of truth for business configuration:
+it's applied into the database at boot, entities missing from it are deleted, and with
+no admin password there is no console left to write any of it. Anything statically
+wrong — a candidate pointing at a channel that doesn't exist, an unknown field, an empty
+`api_keys` list — fails the boot with exit code 1 and reports **every** problem at once
+rather than stopping at the first, because the only way to fix one is edit-and-restart.
+In a container that's a restart loop, and that's the point: the alternative is exiting 0
+and disappearing quietly.
+
+### Changing something later
+
+Change it on the local instance, export again, redeploy the file, restart. The two
+machines share nothing and there is no file watching — the declarative file is read once,
+at boot.
+
+<details>
+<summary>Writing <code>channels.yaml</code> by hand (the secondary path)</summary>
+
+[`channels.example.yaml`](channels.example.yaml) is real exporter output run over fake
+data, pinned by a round-trip test (`export → apply → export`, byte-identical), which is
+why it can be trusted as a field reference — a hand-maintained sample goes stale the
+first time a field is renamed and nothing notices.
+
+It is **not** a config you can run. The API key in it is the factory placeholder, and a
+placeholder API key is refused at boot: it's a door key published in a public repo.
+Unknown fields are refused too. Exported files never contain either, so the strict
+parser costs the main path nothing and only bites here — at boot, on the machine you're
+still standing next to.
+</details>
 
 <details>
 <summary>Build from source (Go 1.26+ and Node)</summary>
@@ -104,6 +186,8 @@ make build          # builds the web admin and embeds it into bin/portage
 
 A plain `go build ./cmd/portage` works too — without the `webui` build tag, `/admin`
 serves a "frontend not built" page. That's the path CI and Node-less machines take.
+Note this is a build-time switch over the bundled assets only; whether the admin plane
+exists at all is the password question above, not this tag.
 </details>
 
 <details>
@@ -185,6 +269,13 @@ Five screens, each answering one operational question: **Models · API Keys · C
 Access Points · Rankings**. Hierarchy comes from typography, color carries status and one
 accent, nothing decorative. Upstream credentials are displayable and copyable in exactly
 one place — the credential pool — and appear in no list, no log, and no error message.
+The left rail also holds the export button that produces `channels.yaml`.
+
+**On a forwarding-only instance none of this exists.** With no admin password set,
+`/admin` and `/admin/api/*` — login and session included — are never registered: the
+404 comes from the router, not from an auth check. There is no login form to brute-force
+and no admin surface to accidentally leave exposed. `/v1` and `/healthz` are all that's
+listening.
 
 <!-- Screenshots: drop sanitized PNGs into docs/images/ and uncomment.
      See docs/images/README.md for what to capture.
@@ -238,11 +329,28 @@ recorded before the implementation is written.
 
 ## Configuration
 
-Everything operational — channels, managed models, access points, candidates,
-credentials — lives in the database and is edited in the console, never in a file.
-`config.yaml` only covers startup: listen address, database path, admin password seeding,
+Two files, answering different questions.
+
+`config.yaml` covers startup only: listen address, database path, admin password seeding,
 retry parameters, and a global token bucket (10 QPS / burst 20 out of the box, applied to
-the forwarding plane only). The whole file is optional; every key has a default.
+the forwarding plane only). The whole file is optional; every key has a default, and it's
+parsed leniently so an old deployment carrying a since-removed key still boots.
+
+Everything operational — channels, managed models, access points, candidates,
+credentials, API keys — has one source of truth, and *which* one depends on whether a
+declarative file is mounted:
+
+- **No declarative file** — the database is the source of truth and the console edits it.
+  None of it lives in a file, and there's nothing to redeploy.
+- **`channels.yaml` mounted** via `-channels` or `PORTAGE_CHANNELS` — the file is the
+  source of truth. It's applied into the database at boot, entities absent from it are
+  deleted, unknown fields are refused, and the console (where one exists at all) is
+  read-only for business configuration.
+
+Either way the database is what actually gets read per request — there is no
+configuration cache anywhere in the process. What the file never describes is runtime
+state: which credential a `401` pulled out of rotation, when, and why. That's the
+gateway's to write, not yours to declare.
 
 ## Deliberately not doing
 
@@ -264,7 +372,8 @@ call log instead. Observed behaviour doesn't expire; a self-reported capability 
 ## Status
 
 Shipped: passthrough core, API keys and usage logging, all six translation paths with
-in-credential backoff, the admin console and credential pools.
+in-credential backoff, the admin console and credential pools, declarative
+`channels.yaml` with its export button and the forwarding-only shape.
 
 In progress: weighted split across multiple candidates and candidate-level failover. The
 semantics are settled; until the implementation lands, configuration is gated to a single
