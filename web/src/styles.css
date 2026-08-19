@@ -2986,6 +2986,11 @@ button.cal-day,
   box-shadow: none;
 }
 
+/* 窗口内的格子靠填色说话，不要那圈底框；空格子由行内 box-shadow 单独描一圈占位。 */
+.cal-day.is-in {
+  box-shadow: none;
+}
+
 .cal-day.is-in:hover {
   box-shadow: 0 0 0 1.5px var(--line);
 }

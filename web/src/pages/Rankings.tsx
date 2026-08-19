@@ -122,14 +122,31 @@ export default function Rankings() {
 
   const picked = sel != null ? (list[sel] ?? null) : null
   const range = picked ? intervalRange(picked) : null
+  const sliceKey = range ? `${range.from}-${range.to}` : ''
+  // 回包带上自己那一段的 key：手上这份到底说的是不是当前选中的这一格，只能这么认。
   const sliceUsage = useList(
-    () => (range ? fetchDims(`from=${range.from}&to=${range.to}`, dims) : Promise.resolve(null)),
-    [range?.from, range?.to, dimsKey],
+    () =>
+      range
+        ? fetchDims(`from=${range.from}&to=${range.to}`, dims).then((rows) => ({
+            key: `${range.from}-${range.to}`,
+            rows,
+          }))
+        : Promise.resolve(null),
+    [sliceKey, dimsKey],
   )
 
-  // 选中之后三处（环、堆叠条、排行列表）看同一个 scope。切片还在飞时留着上一份，
-  // 与切窗口同一条：宁可慢半拍，不要闪一下空。
-  const scope: DimRows = (picked ? sliceUsage.data : winUsage.data) ?? winUsage.data ?? {}
+  // 选中之后三处（环、堆叠条、排行列表）看同一个 scope。**这一段没到手就什么都不说**，
+  // 不拿整窗的数顶上：那会让同一屏出现「上面是这一小时、下面是整窗」两套数，而下面那句
+  // 还写着「只看选中的那个区间」——正是口径层 v0.86 ③ 要避的。取失败时这个顶替还不会
+  // 自己消失，一直挂着一份错的。没选中时整窗慢半拍不要紧：旧窗口的数与旧标签本就自洽，
+  // 三档窗口切换不闪那条要的就是这个。
+  const scope: DimRows | null = picked
+    ? sliceUsage.data?.key === sliceKey
+      ? sliceUsage.data.rows
+      : null
+    : (winUsage.data ?? null)
+  /** 不知道就写不知道，别把别处的数摆在这一段的标签底下。 */
+  const scopeText = sliceUsage.loading ? '正在取这一段…' : '没取到这一段的构成。'
 
   const stats = useMemo(() => ivStats(list), [list])
   const scale = useMemo(() => heatScale(list), [list])
@@ -147,10 +164,10 @@ export default function Rankings() {
     }),
     [winUsage.data],
   )
-  const byModel = useMemo(() => composition(scope.model ?? [], colors.model), [scope, colors])
-  const byKey = useMemo(() => composition(scope.key ?? [], colors.key), [scope, colors])
+  const byModel = useMemo(() => composition(scope?.model ?? [], colors.model), [scope, colors])
+  const byKey = useMemo(() => composition(scope?.key ?? [], colors.key), [scope, colors])
 
-  const ranked = useMemo(() => rankSort(scope[dim] ?? []), [scope, dim])
+  const ranked = useMemo(() => rankSort(scope?.[dim] ?? []), [scope, dim])
   // 这一页只有这一个合计，它同时是下面每一行占比的**分母**（DESIGN §5.2 ⑥），
   // 所以它跟着 scope 走：选中一格之后它说的就是那一格。
   const rankTotal = ranked.reduce((a, r) => a + tokensOf(r), 0)
@@ -216,11 +233,12 @@ export default function Rankings() {
             它在这里的身份是**每一行占比的分母**，没有它，「57.9%」没有出处。 */}
         <div className="stats">
           <div className="stat-lead">
-            <span className="stat-lead-value" title={fmtInt(rankTotal)}>
-              {fmtCompact(rankTotal)}
+            <span className="stat-lead-value" title={scope ? fmtInt(rankTotal) : ''}>
+              {scope ? fmtCompact(rankTotal) : '—'}
             </span>
             <span className="stat-lead-label">
-              token 合计 · {scopeWord} · {ranked.length} {DIM_UNIT[dim]}
+              token 合计 · {scopeWord}
+              {scope ? ` · ${ranked.length} ${DIM_UNIT[dim]}` : ''}
             </span>
           </div>
         </div>
@@ -245,7 +263,9 @@ export default function Rankings() {
               2026-08-18 裁）：名字与百分比由下面那条「按模型」堆叠条给一次。 */}
           <div className="sky-split">
             <div>
-              {byModel.total > 0 ? (
+              {!scope ? (
+                <p className="sky-hint">{scopeText}</p>
+              ) : byModel.total > 0 ? (
                 <Donut slices={byModel.slices} total={byModel.total} />
               ) : (
                 <p className="sky-hint">这段时间还没有调用。</p>
@@ -329,7 +349,9 @@ export default function Rankings() {
           <Segmented value={dim} options={DIM_OPTIONS} onChange={setDim} />
         </div>
 
-        {ranked.length === 0 ? (
+        {!scope ? (
+          <Empty>{scopeText}</Empty>
+        ) : ranked.length === 0 ? (
           <Empty>这段时间还没有调用。</Empty>
         ) : (
           <ol className="rank-list">
