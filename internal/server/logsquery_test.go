@@ -19,6 +19,9 @@ type logRow struct {
 	ModelRequested string `json:"model_requested"`
 	APIKeyName     string `json:"api_key_name"`
 	Status         int    `json:"status"`
+	// QueueWaitMs 用指针：断言的是「这一列出现在回包里」（#7 之前只写不读），
+	// 值类型的 0 分不清「回了 0」和「压根没回这个键」。
+	QueueWaitMs *int64 `json:"queue_wait_ms"`
 }
 
 // logPage 是 /admin/api/logs 的回包形状（口径层 v0.61 起带 total——页码要跳，

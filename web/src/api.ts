@@ -327,6 +327,13 @@ export interface CallLog {
   is_stream: boolean | null
   ttft_ms: number | null
   total_ms: number
+  /**
+   * 并发闸排队耗时（口径层 v0.52，露出见 #7）。不可空：写侧每行必落，「没排队」
+   * 与「排了 0ms」在这一列上同档，一律 0。所以 > 0 才是「真排过队」，详情框
+   * 只在那时摆这一格——照挂在 0 上会让人读出「这次排了 0ms」，而绝大多数行的
+   * 实情是压根没进闸。
+   */
+  queue_wait_ms: number
   input_tokens: number | null
   output_tokens: number | null
   cache_read_tokens: number | null

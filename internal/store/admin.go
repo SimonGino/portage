@@ -745,9 +745,13 @@ type CallLogRow struct {
 	RetryCount       int    `json:"retry_count"`
 	// IsStream：同步/流式。指针而不是 bool：NULL 是「不知道」（鉴权失败那类行没
 	// 解析到请求体，迁移前的老行同），false 才是「同步」，两者不能抹成一个。
-	IsStream         *bool  `json:"is_stream"`
-	TTFTMs           *int64 `json:"ttft_ms"`
-	TotalMs          int64  `json:"total_ms"`
+	IsStream *bool  `json:"is_stream"`
+	TTFTMs   *int64 `json:"ttft_ms"`
+	TotalMs  int64  `json:"total_ms"`
+	// QueueWaitMs 是并发闸排队耗时（口径层 v0.52，露出见 #7）。int64 而不是指针：
+	// 写侧每行必落且列不可空——「没排队」与「排了 0ms」在这一列上同档，接口照原样
+	// 给 0 不转 null。真排过队（> 0）才值得摆到人眼前，那是前端的判据，不是这里的。
+	QueueWaitMs      int64  `json:"queue_wait_ms"`
 	InputTokens      *int64 `json:"input_tokens"`
 	OutputTokens     *int64 `json:"output_tokens"`
 	CacheReadTokens  *int64 `json:"cache_read_tokens"`
@@ -858,7 +862,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, created_at, api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
-		       is_stream, ttft_ms, total_ms, input_tokens, output_tokens,
+		       is_stream, ttft_ms, total_ms, queue_wait_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens,
 		       error, error_detail, upstream_request_id
 		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
@@ -875,7 +879,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.UpstreamEndpoint,
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
-			&stream, &ttft, &r.TotalMs, &in, &outTok, &cr, &cw, &reasoning,
+			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &reasoning,
 			&errWord, &detail, &r.UpstreamRequestID); err != nil {
 			return nil, err
 		}

@@ -128,6 +128,17 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
             {log.retry_count > 0 && <span className="muted"> 重试 ×{log.retry_count}</span>}
             {log.error && <span className="is-bad"> {log.error}</span>}
           </dd>
+          {/* 排队耗时（口径层 v0.52，露出见 #7）：只在真排过队时摆。这一列不可空、
+              每行必落，0 是「没排队」与「排了 0ms」的同档缺省——照挂在所有行上会让
+              人读出「这次排了 0ms」，而绝大多数行的实情是压根没进闸。挂在状态之后：
+              queue_full / queue_timeout 两个错误词就落在上面那格，这一格答的是
+              「等了多久」。 */}
+          {log.queue_wait_ms > 0 && (
+            <>
+              <dt>排队</dt>
+              <dd className="tnum">{fmtMs(log.queue_wait_ms)}</dd>
+            </>
+          )}
           {/* 上游 request-id（口径层 v0.56，露出见 #81）：走 CopyCode 而不是裸 code——
               它的唯一用途是粘给上游查这一次调用，`req_018Ee…` 这种串手抄必错。
               空串不摆空壳：三种情况（没走到上游、上游没回这个头、v0.56 之前的老流水）
@@ -503,8 +514,10 @@ export default function Logs() {
                           查这次到底计了多少时，要的正是成功行的那个 id。它不另占一列
                           （二十几个字符会把表撑出卡片）也不压在时间下面（同理），而
                           这个框本来就是「这一行的额外细节」，上游原文只是它此前唯一
-                          的内容。 */}
-                      {(l.status >= 400 || l.upstream_request_id !== '') && (
+                          的内容。
+                          排队耗时这一半同理（#7）：真排过队（> 0）的行多一段可看，
+                          成功与否无关——挤过闸的成功行正是看拥塞时要找的那种。 */}
+                      {(l.status >= 400 || l.upstream_request_id !== '' || l.queue_wait_ms > 0) && (
                         <button
                           type="button"
                           className="btn btn-ghost log-detail-toggle"
