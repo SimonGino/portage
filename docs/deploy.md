@@ -63,7 +63,23 @@ and that one is a reference, not a config.
 
 ## 3. Deploy it, forwarding-only
 
+There is nothing to build on the deployment machine: CI publishes a multi-arch
+(amd64/arm64) image to GHCR on every push to main, public, no login needed. `latest`
+tracks main, `sha-…` pins an exact commit, and `v*` tags get a version tag of their own.
+
 Mount the file, point `PORTAGE_CHANNELS` at it, and set no admin password:
+
+```bash
+docker run -d --name portage \
+  --restart unless-stopped \
+  -p 8317:8317 \
+  -v ai-gateway-data:/data \
+  -v "$PWD/channels.yaml:/etc/portage/channels.yaml:ro" \
+  -e PORTAGE_CHANNELS=/etc/portage/channels.yaml \
+  ghcr.io/simongino/portage:latest
+```
+
+With a repo checkout on the machine, the compose equivalent is an override:
 
 ```yaml
 # deploy/docker-compose.override.yml — compose merges this in automatically

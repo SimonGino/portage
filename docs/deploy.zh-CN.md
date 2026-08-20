@@ -48,7 +48,22 @@ API Key 全在里面——运行期状态一样不带，所以你在本地撞出
 
 ## 3. 部署，纯转发
 
+镜像不用在部署机上构建：CI 在每次 main 推送后把双架构（amd64/arm64）镜像发到 GHCR，公开可
+拉，不用登录。`latest` 跟着 main 走，`sha-…` 钉具体提交，打过 `v*` tag 的另有版本号。
+
 把文件挂进去，`PORTAGE_CHANNELS` 指过去，管理密码一个都不设：
+
+```bash
+docker run -d --name portage \
+  --restart unless-stopped \
+  -p 8317:8317 \
+  -v ai-gateway-data:/data \
+  -v "$PWD/channels.yaml:/etc/portage/channels.yaml:ro" \
+  -e PORTAGE_CHANNELS=/etc/portage/channels.yaml \
+  ghcr.io/simongino/portage:latest
+```
+
+部署机上有仓库检出、想沿用 compose 的话，等价的是一份 override：
 
 ```yaml
 # deploy/docker-compose.override.yml——compose 会自动合并进来
