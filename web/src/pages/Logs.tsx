@@ -45,8 +45,8 @@ const ENDPOINT_OPTIONS: Option<string>[] = [
 /**
  * 一页显示多少条流水。它同时是页码的分母（总页数 = 总数 / 它），改这个数就是改页数。
  *
- * 10 而不是 50（PO 2026-08-13 裁定）。这张表有 9 列，且时间之外几乎每格都还带一行
- * 副信息（上游模型、上游协议、首字耗时、缓存读写、重试与错误），一行的实际高度是
+ * 10 而不是 50（PO 2026-08-13 裁定）。这张表有 9 列，且不少格还带一行副信息
+ * （首字耗时、缓存读写、重试与错误），一行的实际高度是
  * 普通表格行的两倍多——50 行拉出来是好几屏，而这一页问的是「刚才那几次怎么样」，
  * 答案基本都在最上面几行里。翻回去的代价只是一次请求。
  *
@@ -69,8 +69,8 @@ function fmtMs(ms: number | null) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
 }
 
-/** 这次落到哪个渠道的哪个上游模型。抽出来是为了让截断用的 title 与显示的正文
- *  一定是同一个串——两处各拼一次，早晚会分叉成「看到的」和「悬停看到的」不一样。 */
+/** 这次落到哪个渠道的哪个上游模型。表里的模型列只摆请求模型一行（PO 2026-08-20
+ *  裁定），这份映射只在详情框里出现。 */
 function upstreamOf(l: CallLog) {
   return l.channel_name ? `${l.channel_name} / ${l.model_upstream}` : '—'
 }
@@ -412,17 +412,16 @@ export default function Logs() {
                     <td className="nowrap">
                       {l.api_key_name || <span className="muted">—</span>}
                     </td>
-                    {/* 请求的模型是主信息，落到哪个渠道的哪个上游模型是次信息，压在下面一行 */}
+                    {/* 只摆请求的模型一行（PO 2026-08-20 裁定）：副行那份「渠道 /
+                        上游模型」多数时候就是主行换个写法，两行说一件事；映射关系
+                        要看去详情框，那里一直有。 */}
                     <td className="log-model">
                       <span className="icon-row nowrap">
                         <ModelIcon model={l.model_requested} size={16} />
                         <code title={l.model_requested}>{l.model_requested}</code>
                       </span>
-                      <div className="sub" title={upstreamOf(l)}>
-                        {upstreamOf(l)}
-                      </div>
                     </td>
-                    {/* 端点：主行是真端点路径（#17），副行是上游协议，恒排两行。
+                    {/* 端点：主行是真端点路径（#17）。
                         入站协议不再单摆一行（PO 2026-08-17 裁定）——它由路径完全
                         决定（入口协议由路径定，不嗅探请求体），两个都摆是同一件事
                         说两遍；而路径能答的那个问题（这行是 messages 还是
@@ -444,18 +443,23 @@ export default function Logs() {
                           <span className="route" title={l.endpoint}>
                             <span className="route-node">{shortEndpoint(l.endpoint)}</span>
                           </span>
-                          <div className="sub">
-                            <span className="route" title={l.upstream_endpoint || undefined}>
-                              <span className="muted">→</span>
-                              {l.upstream_endpoint ? (
-                                <span className="route-node">
-                                  {shortEndpoint(l.upstream_endpoint)}
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </span>
-                          </div>
+                          {/* 出入站同路径就只摆一个徽章（PO 2026-08-20 裁定）：没转化
+                              的行占大多数，副行「→ 同一条路径」是把主行重抄一遍。副行
+                              只在真转化过、或没发到上游（出站空）时出现。 */}
+                          {l.upstream_endpoint !== l.endpoint && (
+                            <div className="sub">
+                              <span className="route" title={l.upstream_endpoint || undefined}>
+                                <span className="muted">→</span>
+                                {l.upstream_endpoint ? (
+                                  <span className="route-node">
+                                    {shortEndpoint(l.upstream_endpoint)}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </span>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <>
