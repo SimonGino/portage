@@ -53,6 +53,14 @@ export function ChannelDetail({
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [well, setWell] = useState<'settings' | 'creds' | null>(null)
+  // 井打开过就不再卸载，收起只是 hidden。卸载的代价是「设置填了一半、切去凭证井
+  // 再回来，编辑全没了且无提示」——表单是非受控的，state 随卸载一起丢。
+  const [mounted, setMounted] = useState<{ settings: boolean; creds: boolean }>({
+    settings: false,
+    creds: false,
+  })
+  // 设置表单有没有未保存的改动。井收起时它在屏幕上不存在，这个点是它唯一的痕迹。
+  const [settingsDirty, setSettingsDirty] = useState(false)
   const models = ch.models ?? []
   const protos = ch.protocols ?? []
   const listed = Array.isArray(fetched) ? fetched : null
@@ -75,6 +83,7 @@ export function ChannelDetail({
     protos.every((p) => listed.some((r) => r.models !== null && r.protocols.includes(p)))
 
   function toggleWell(next: 'settings' | 'creds') {
+    setMounted((m) => (m[next] ? m : { ...m, [next]: true }))
     setWell((cur) => (cur === next ? null : next))
   }
 
@@ -146,16 +155,23 @@ export function ChannelDetail({
             <button
               type="button"
               className={'btn btn-text well-toggle' + (well === 'settings' ? ' is-on' : '')}
+              aria-expanded={well === 'settings'}
               onClick={() => toggleWell('settings')}
             >
               上游设置
+              {/* 未保存标记：井收起后表单从屏幕上消失，改动还在但看不见——这个点
+                  就是「回来接着保存」的提醒。保存或撤销后它自己灭。 */}
+              {settingsDirty && <span className="well-dirty" title="有未保存的改动" />}
+              <WellCaret open={well === 'settings'} />
             </button>
             <button
               type="button"
               className={'btn btn-text well-toggle' + (well === 'creds' ? ' is-on' : '')}
+              aria-expanded={well === 'creds'}
               onClick={() => toggleWell('creds')}
             >
               上游凭证
+              <WellCaret open={well === 'creds'} />
             </button>
           </div>
         </div>
@@ -163,22 +179,29 @@ export function ChannelDetail({
 
       {ch.enabled_keys === 0 && (
         <div className="bar bar-warn">
-          这个渠道没有可用凭证，所有走它的请求都会失败；启用状态下连启动闸都过不去。在「上游凭证」里加一份。
+          这个渠道没有可用凭证，所有走它的请求都会失败；启用状态下连启动闸都过不去。
+          {/* 警告让人去的地方，警告自己就该能带人去——一句话点一下就到，
+              别让人回头去条上找那颗同名按钮。 */}
+          <button type="button" className="bar-link" onClick={() => toggleWell('creds')}>
+            去「上游凭证」加一份
+          </button>
         </div>
       )}
 
-      {well === 'settings' && (
-        <div className="well">
+      {/* 井打开过就保持挂载，收起只藏不卸（hidden）：设置表单是非受控的，卸载即丢
+          输入。互斥展开不变——两口井叠着开会把模型列表（主语）推出首屏。 */}
+      {mounted.settings && (
+        <div className="well" hidden={well !== 'settings'}>
           {/* 不要再挂 key={ch.id}：调用方已经在 ChannelDetail 上挂了。 */}
-          <ChannelForm channel={ch} onSaved={onSaved} />
+          <ChannelForm channel={ch} onSaved={onSaved} onDirtyChange={setSettingsDirty} />
           <div className="well-foot">
             <Confirm ghost label="删除渠道" onConfirm={onDelete} />
           </div>
         </div>
       )}
 
-      {well === 'creds' && (
-        <div className="well">
+      {mounted.creds && (
+        <div className="well" hidden={well !== 'creds'}>
           <CredentialSection channel={ch} onChanged={onCredentialsChanged} />
         </div>
       )}
@@ -385,6 +408,29 @@ function ModelProtocols({
         </span>
       )}
     </div>
+  )
+}
+
+/** 井开合的朝向指示。文字按钮本身看不出「点开会在下面展开一块」，这个小箭头补的
+ *  就是这一层：闭合朝下（可展开），打开朝上（可收起）。 */
+function WellCaret({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={'well-caret' + (open ? ' is-open' : '')}
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M2.2 3.8 5 6.6l2.8-2.8"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 

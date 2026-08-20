@@ -585,6 +585,20 @@ button, input, textarea, select {
   background: var(--canvas);
 }
 
+/* 就地改名的 ghost-input 不吃上面这条统一底色：它是记录不是表单（.ghost-input
+   的立论）。负外边距也一并去掉——那 -10px 是把文字拉去贴**文字左轨**的，而井里
+   的左轨属于框边（下面就是真输入框）：留着它，聚焦时现形的框会比下面的框凸出
+   10px。去掉后静止文字与下面输入框的内文同缩进、聚焦框边与下面的框边同线，两个
+   状态都对齐，文字聚焦时也不跳。三个类叠满是为了跟上面那条打平特异性，靠源序赢。 */
+.well input.ghost-input.cred-name {
+  margin-left: 0;
+  background: transparent;
+}
+
+.well input.ghost-input.cred-name:focus {
+  background: var(--canvas);
+}
+
 .models-empty {
   margin: 8px 0;
 }
@@ -1286,6 +1300,33 @@ button, input, textarea, select {
   font-weight: 500;
 }
 
+/* 井切换按钮的开合指示与未保存标记。箭头跟着文字色走、比文字低半档，不抢字重
+   已经承担的选中态；旋转不加过渡（§7 默认静止）。 */
+.well-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.well-caret {
+  color: var(--faint);
+  flex: none;
+}
+
+.well-toggle.is-on .well-caret {
+  color: inherit;
+  transform: rotate(180deg);
+}
+
+/* 未保存的改动：状态色一粒点，不用强调蓝——它是「别忘了」不是「点这里」。 */
+.well-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn-line);
+  flex: none;
+}
+
 .btn-quiet.is-on {
   background: var(--sunken);
   color: var(--ink);
@@ -1458,6 +1499,23 @@ textarea:focus {
   background: var(--warn-bg);
   border-color: var(--warn-line);
   color: var(--warn-text);
+}
+
+/* 警告条里的行内动作：跟正文同色同字号，下划线是唯一的「能点」信号——条本身
+   已经是警示色，再上按钮底色就是双重强调。 */
+.bar-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.bar-link:hover {
+  text-decoration-thickness: 2px;
 }
 
 /* ── 模态框 ────────────────────────────────────────────────────────── */

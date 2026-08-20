@@ -32,11 +32,14 @@ export function ChannelForm({
   channel,
   onCancel,
   onSaved,
+  onDirtyChange,
 }: {
   channel: Channel | null
   /** 新建时是「放弃新建」；编辑时不给（表单是常驻的，没有可取消的东西）。 */
   onCancel?: () => void
   onSaved: (id: number) => void
+  /** 编辑态的未保存改动上报给井外——井收起后表单不可见，标记只能画在切换按钮上。 */
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
   // 支持协议集（口径层 v0.33）。默认只勾 OpenAI：绝大多数上游只提供它，多勾一个探测
@@ -87,6 +90,10 @@ export function ChannelForm({
       (showCompaction && compaction !== channel.supports_compaction) ||
       (showStateful && stateful !== channel.supports_stateful_responses) ||
       protos.join(',') !== (channel.protocols ?? []).join(','))
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
