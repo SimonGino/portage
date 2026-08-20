@@ -168,7 +168,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	}
 
 	if stream {
-		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, src)
+		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, src, resp.Body)
 		return
 	}
 	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, src)
@@ -218,7 +218,10 @@ func upstreamErrorMessage(raw []byte) string {
 }
 
 // streamConverted 跑流式转换：上游 SSE → canonical 事件 → 入口协议 SSE。
-func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
+//
+// upstreamBody 是上游响应体本尊（src 是它包了 Tee 的读端）：写出失败的收场要先
+// 关它——见 abortDecode。
+func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader, upstreamBody io.Closer) {
 	events, err := outCodec.DecodeStream(src)
 	if err != nil {
 		rec.Failed(calllog.UpstreamError, "")
@@ -241,6 +244,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	if err := w.advance(); err != nil {
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
+		abortDecode(upstreamBody, events)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -248,11 +252,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
-		// 上游流还没读完时 EncodeStream 提前返回，会把解码 goroutine 卡在发送上。
-		// 后台读空事件通道让它能写完退出；真正让它停下来的是 relayConverted 里
-		// defer 的 resp.Body.Close()——panic 展开时它照常执行。就地同步排空不行：
-		// 上游可能还在源源不断地发，那会把这次调用挂在一条已经断了的连接上。
-		go drainEvents(events)
+		abortDecode(upstreamBody, events)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -269,8 +269,15 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	}
 }
 
-// drainEvents 把剩余事件读空，好让解码侧的 goroutine 能写完退出，不泄漏。
-func drainEvents(events <-chan protocol.Event) {
+// abortDecode 是写出失败分支的收场次序（#8）：先断上游、再把事件通道排空到关闭，
+// 之后调用方才能 panic。次序就是同步语义：Close 让解码 goroutine 的下一次 Read
+// 立刻出错收摊，排空因此有界，不会把这次调用挂在一条还在灌数据的连接上；通道
+// 关闭给出解码侧全部写入对 handler 侧的 happens-before 边——panic 展开里 defer 的
+// rec.Summarized(tap.Summary()) 与 LogBodies 的 body 收集器读到的都是解码侧写完的
+// 最终状态（上游连接断掉前收到的全部字节），Tap 与收集器两处都零锁。
+// relayConverted 里 defer 的 resp.Body.Close() 会再关一次，无害。
+func abortDecode(upstreamBody io.Closer, events <-chan protocol.Event) {
+	upstreamBody.Close()
 	for range events {
 	}
 }

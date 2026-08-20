@@ -3,7 +3,6 @@ package server_test
 import (
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,36 +11,28 @@ import (
 	"github.com/SimonGino/portage/internal/protocol/openaicc"
 )
 
-// 本文件是 #8 的复现（两条用例合起来才是完整论证，处置未定前都默认跳过）：
+// 本文件是 #8 的回归（两条用例合起来才看住整件事）：
 //
 // 竞态的结构性成因在 convert.go 的 streamConverted——outCodec.DecodeStream 在解码
-// goroutine 上读 TeeReader，于是 tap.Write 跑在那条线上；EncodeStream 写出失败时
-// handler goroutine 走 `go drainEvents + panic(http.ErrAbortHandler)`，panic 展开里
-// relayConverted 的 defer 按 LIFO **先**跑 rec.Summarized(tap.Summary())、**后**跑
-// resp.Body.Close()。Summary 被调的那一刻上游连接还开着，drainEvents 又保证解码
-// goroutine 没有卡在发事件上——两条线在 TapCore 的 sum/finished/scanner 上重叠，
-// 而 TapCore 完全无同步。cfg.LogBodies 开着时 rec.TapResponseBody() 那个收集器
-// 同构（也在解码 goroutine 上被写、在 handler 侧被读）。
+// goroutine 上读 TeeReader，于是 tap.Write（与 LogBodies 的 body 收集器）跑在那条
+// 线上；修复前写出失败分支走 `go drainEvents + panic`，panic 展开里 defer 的
+// rec.Summarized(tap.Summary()) 先于 resp.Body.Close() 执行，两条线在 TapCore 的
+// sum/finished/scanner 上无同步重叠（复现史与报警栈见展开层 v1.08）。
 //
-// 复现方式：
-//
-//	PORTAGE_RACE_REPRO=1 go test -race -run TestConvertStream -count=1 ./internal/server/
-//
-// 拓扑用例**必报 DATA RACE**（报了即复现成功）；整链用例证明对齐这个拓扑的触发
-// 路径真实可达，但 race 本身是微秒级调度彩票，它自己报不报警看运气。修复落地后
-// 这两条去掉跳过，转正成回归用例（届时 -race 下应全绿）。
+// 修复（方案 B，PO 2026-08-20 裁定）是收场次序重排：abortDecode 先关上游 body、
+// 再把事件通道排空**到关闭**——通道关闭给出解码侧全部写入对 handler 侧的
+// happens-before 边，之后才 panic，Summary 在 defer 里自然有序。
+// 两条用例都要在 -race 下全绿；拓扑用例若再报 DATA RACE 即回归。
 
-// 拓扑用例：把 streamConverted 的 goroutine 拓扑用生产类型原样缩微——TeeReader 挂
+// 拓扑用例：把 streamConverted 写出失败的收场用生产类型原样缩微——TeeReader 挂
 // Tap、DecodeStream 起解码 goroutine、handler 先正常收几条（对应 EncodeStream 的
-// 前半段）、然后 go drain + Summary（对应写出失败后的 panic 展开）。-race 下必报。
+// 前半段）、然后按 abortDecode 的次序收场：先断上游读端（≙ resp.Body.Close()）、
+// 排空事件通道到关闭、才调 Summary（≙ panic 展开里的 rec.Summarized）。
 //
-// 它绕开的只有「写出失败」的对齐时机（由下面整链用例证明可达），竞争的双方、
-// 数据结构、调用栈与生产一字不差。
-func TestConvertStreamTapTopologyRaces(t *testing.T) {
-	if os.Getenv("PORTAGE_RACE_REPRO") == "" {
-		t.Skip("竞态复现用例（#8）：设 PORTAGE_RACE_REPRO=1 并带 -race 跑，报 DATA RACE 即复现")
-	}
-
+// 修复前这里的收场是 `go drain + Summary`，-race 三连跑三报，报警栈就是生产栈
+// （TapCore.Summary/finish 对 teeReader.Read → TapCore.Write/consume）；改成现在
+// 这个次序后必须全绿——它钉的正是「通道关闭在 Summary 之前」这条 happens-before 边。
+func TestConvertStreamTapAbortOrderingHasNoRace(t *testing.T) {
 	tap := openaicc.NewTap(true)
 	pr, pw := io.Pipe()
 	src := io.TeeReader(pr, tap)
@@ -53,7 +44,7 @@ func TestConvertStreamTapTopologyRaces(t *testing.T) {
 
 	frame := []byte(`data: {"choices":[{"index":0,"delta":{"content":"xxxx"}}]}` + "\n\n")
 	stop := make(chan struct{})
-	go func() {
+	go func() { // 上游持续灌帧，直到读端被关
 		defer close(stop)
 		for {
 			if _, err := pw.Write(frame); err != nil {
@@ -65,37 +56,32 @@ func TestConvertStreamTapTopologyRaces(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		<-events // EncodeStream 的前半段：正常消费，建立解码侧→handler 的接收边
 	}
-	go func() { // 写出失败分支的 go drainEvents(events)
-		for range events {
-		}
-	}()
-	_ = tap.Summary() // panic 展开里的 rec.Summarized(tap.Summary())
+	// abortDecode 的收场次序，逐步对应：
+	pr.Close() // ① 先断上游——解码 goroutine 的下一次 Read 立刻出错收摊
+	for range events {
+	} // ② 排空到通道关闭——拿到解码侧全部写入的 happens-before 边
+	_ = tap.Summary() // ③ 此后 Summary（panic 展开里 defer 的 rec.Summarized）才安全
 
-	pr.Close()
 	pw.Close()
 	<-stop
 }
 
-// 整链用例：证明上面那个拓扑的触发路径在完整网关上真实可达。
+// 整链用例：证明写出失败的 panic 路径在完整网关上真实可达，且修复后收场干净。
 //
 // 触发形态挑的是**客户端停读但不断连**：断连（RST/ctx 取消）会同时杀掉上游请求
 // （s.up.Do 挂在 c.Request.Context() 上），解码 goroutine 几乎立刻收摊；停读则请求
 // ctx 还活着、上游继续灌、编码侧堵在给客户端的 Write 上直到 30s writeDeadline 到期
 // 才报错进 panic 路径——这正是生产里的真实形态（客户端挂死、网络路径僵住）。
-// 断言钉在「这一行流水以 stream_aborted 收场」上：走到这里就意味着 panic 展开里
-// Summary 先于 Body.Close 跑过了一遍，与解码 goroutine 的重叠窗口打开过。
+// 断言钉在「这一行流水以 stream_aborted 收场」上：走到这里就意味着 abortDecode
+// 的收场次序真的跑过一遍；-race 下必须全绿（修复前这里绿不绿是调度彩票，检出
+// 靠上面的拓扑用例，可达性由这条钉住——两条的分工没变）。
 //
-// race 报不报警取决于解码 goroutine 被 drainEvents 放行后能不能在 Body.Close 之前
-// 抢到下一次 Read——本机实测多为 Close 先到，所以这条经常绿着结束；它的价值是
-// 钉住可达性，检出交给上面的拓扑用例。
+// 耗时约 35s（等写超时），是全套里最慢的一条；它看住的是只有整链才摆得出来的
+// 触发时机，慢是这个形态本身的价格。
 func TestConvertStreamStalledClientReachesThePanicPath(t *testing.T) {
-	if os.Getenv("PORTAGE_RACE_REPRO") == "" {
-		t.Skip("竞态复现用例（#8）：设 PORTAGE_RACE_REPRO=1 并带 -race 跑，耗时约 35s（等写超时）")
-	}
-
 	gw, up := newConvertGateway(t)
 	// 上游无限发大帧：帧越大，每次 Read 里的帧越少（解码 goroutine 醒来即回 Read）、
-	// tap 侧的 json 解析越慢（重叠窗口越宽）。handler 收场时请求 ctx 取消，这里跟着退。
+	// tap 侧的 json 解析越慢（重叠窗口越宽）。handler 收场时上游 body 被关，这里跟着退。
 	frame := `data: {"choices":[{"index":0,"delta":{"content":"` +
 		strings.Repeat("x", 24<<10) + `"}}]}` + "\n\n"
 	up.Handler = func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +114,6 @@ func TestConvertStreamStalledClientReachesThePanicPath(t *testing.T) {
 	}
 	row := gw.LastCallRow(t)
 	if row.Error.String != "stream_aborted" {
-		t.Fatalf("error 列 = %q，期望 stream_aborted——没走到写出失败的 panic 路径，这一轮没构成复现", row.Error.String)
+		t.Fatalf("error 列 = %q，期望 stream_aborted——没走到写出失败的 panic 路径", row.Error.String)
 	}
 }
