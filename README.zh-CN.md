@@ -8,14 +8,14 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-活是靠 Claude Code 和 Codex CLI 干完的。至于底下跑哪个模型，不该由写 harness 的那家替你定。
+Portage 是一个自建模型网关：把你能拿到的所有模型——官方 API、OpenAI 兼容中转、本机的
+Ollama / vLLM——统一纳管到一个地址后面，让 Claude Code、Codex CLI 这些 agent harness
+想跑哪个模型就跑哪个。
 
-可是 harness 只会说一种协议。Claude Code 说 Anthropic Messages，Codex CLI 说 OpenAI
-Responses——而这世上几乎所有别的模型都挂在 OpenAI Chat Completions 后面：开源权重模型、你正
-在付费的那家中转、自己机器上那块卡、公司内部那套部署。这两个 harness 谁都不会去调它们。
-
-**Portage 就是中间那一块。** harness 指向它，另一头跑什么模型就变成一行配置。不用改客户端，
-不用 fork harness，不用套一层脚本。
+做法是协议互转。harness 各说各的协议（Claude Code 说 Anthropic Messages，Codex CLI 说
+OpenAI Responses，而绝大多数模型只提供 OpenAI Chat Completions），Portage 在中间做三种
+协议的双向翻译，同协议则字节透传。harness 指向 Portage，换模型就是改一行配置——不改客户端，
+不 fork harness，不套脚本。
 
 ```mermaid
 flowchart LR

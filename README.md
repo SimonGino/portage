@@ -8,18 +8,16 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-Claude Code and Codex CLI are the reason the work gets done. What's behind them shouldn't
-be decided by whoever wrote them.
+Portage is a self-hosted model gateway: put every model you can reach — official APIs,
+OpenAI-compatible relays, Ollama / vLLM on your own machine — behind one address, and run
+any of them inside agent harnesses like Claude Code and Codex CLI.
 
-But a harness talks exactly one protocol. Claude Code speaks Anthropic Messages, Codex CLI
-speaks OpenAI Responses — and nearly every other model on earth is reached over OpenAI
-Chat Completions: open-weight models, the relay you're already paying for, the endpoint on
-your own GPU, your employer's internal deployment. Neither harness will ever call any of
-them.
-
-**Portage is the piece in between.** Point the harness at it, and the model on the other
-side becomes a configuration line. No patched clients, no forked harness, no wrapper
-scripts.
+It works by translating protocols. Each harness speaks exactly one (Claude Code speaks
+Anthropic Messages, Codex CLI speaks OpenAI Responses, while most models only expose
+OpenAI Chat Completions). Portage translates between all three in the middle, and passes
+bytes through untouched when the protocols already match. Point the harness at Portage
+and switching models is one line of config — no patched clients, no forked harness, no
+wrapper scripts.
 
 ```mermaid
 flowchart LR
