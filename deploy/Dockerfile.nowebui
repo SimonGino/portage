@@ -1,0 +1,41 @@
+# 无 webui 形态：跳过前端层、不带 -tags webui，其余与主 Dockerfile 一致。
+# 配合挂声明文件（PORTAGE_CHANNELS）跑纯转发。/admin 只回「前端未构建」说明页。
+#
+# 构建上下文必须是仓库根（COPY . . 与 deploy/config.docker.yaml 都按根算）：
+#
+#   docker build -t portage:nowebui -f deploy/Dockerfile.nowebui .
+#
+# 刻意不在主 Dockerfile 里做 ARG 开关：Dockerfile 没法条件 COPY 前端产物层，
+# 硬做就是两个 build stage 加 --target 绕行，两份文件反而各自一眼能读懂。
+# 主 Dockerfile 的注释（scratch 为什么成立、$BUILDPLATFORM 别删、/data 属主）
+# 在这里同样成立，改这份之前先读那份。
+
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags='-s -w' -o /out/portage ./cmd/portage
+
+RUN mkdir -p /out/data
+
+FROM scratch
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /out/portage /portage
+COPY --from=build /src/deploy/config.docker.yaml /etc/portage/config.yaml
+COPY --from=build --chown=65532:65532 /out/data /data
+
+USER 65532:65532
+
+VOLUME ["/data"]
+EXPOSE 8317
+
+ENTRYPOINT ["/portage", "-config", "/etc/portage/config.yaml"]
