@@ -2353,19 +2353,88 @@ textarea:focus {
   color: var(--ok-text);
 }
 
-/* ── 凭证池 ────────────────────────────────────────────────────────── */
+/* ── 常驻区块：上游凭证 / API 地址（PO 2026-08-20，布局参照 Cherry Studio）──── */
 
-/* 这一段不吃满整栏（v0.10）。上面的 base_url 该吃满——那儿装的是真会长到换行的
-   东西；这儿装的是「凭证 1」这种短标识，值又永远不出现（只写不回读），拉到一整行
-   宽只会在名字和右边的开关之间空出一大片，眼睛得跑一趟长途才知道那个「启用」说的
-   是谁。42em 是这一段所有横向东西的共同上限：说明、列表、添加行、按钮行都对齐到
-   同一条右边界，才像一段而不是三段各自为政。 */
-.cred-section > p.muted,
-.cred-section .cred-list,
-.cred-section .cred-add-form {
-  /* 52em 而不是 v0.10 定的 42em：那时行里只有名字与状态，现在多了一串密钥加两颗
-     按钮。上限跟着内容走，这正是 v0.10 那条「宽度按内容给」自己的说法。 */
+/* 与「纳管模型 · N」同一套小字标题（.models-title），三段读起来才是同一层：
+   凭证、地址、模型都是这个渠道名下的清单项。 */
+.detail-block {
+  margin: 0 0 18px;
+}
+
+.detail-block-title {
+  font-size: 12px;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+/* 凭证行：掩码值 + 「管理」「检测」。52em 与弹框里的列表同一条右边界。 */
+.cred-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   max-width: 52em;
+}
+
+.cred-inline .secret {
+  min-width: 0;
+}
+
+.cred-inline-count {
+  flex: none;
+  font-size: 12px;
+}
+
+/* API 地址：就地改的一行。base_url 是标识符，等宽（DESIGN.md §3）。 */
+.baseurl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 52em;
+}
+
+.baseurl-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.baseurl-state {
+  flex: none;
+  font-size: 12px;
+}
+
+.detail-block .url-preview {
+  max-width: 52em;
+  margin: 8px 0 0;
+}
+
+/* 常驻区块里的添加行不吃 .form 的 18px 内边距（那是给弹框表单的）。 */
+.detail-block .form {
+  padding: 0;
+}
+
+/* ── 凭证池（管理弹框）───────────────────────────────────────────── */
+
+.cred-dialog {
+  padding: 14px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cred-dialog > p.muted {
+  margin: 0;
+  font-size: 13px;
+}
+
+.cred-dialog .form {
+  padding: 0;
+}
+
+.cred-dialog-foot {
+  font-size: 12px;
 }
 
 /* 一行一份凭证：名字（可改）+ 状态 + 开关与删除。凭证值不在这里，也不会在别处

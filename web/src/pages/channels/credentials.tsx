@@ -1,30 +1,38 @@
 import { useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
-import { Confirm, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
+import { Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
 import { Segmented } from '../../fields'
 
 /**
- * CredentialSection 是渠道凭证池（口径层 v0.38），长在右栏里的一段（v0.46 由弹框
- * 改为常驻 section）。
+ * CredentialBlock 是渠道凭证在模型页上的常驻一行（PO 2026-08-20 裁决，推翻 v0.46
+ * 「凭证收井默认收起」那一条；布局参照 Cherry Studio 的服务商页，视觉与命名不跟）。
  *
- * 逐条 CRUD，不是整把替换：覆盖会连带清掉已停用的凭证，那是 401 摘除的现场，是
- * 「这把为什么不转了」的唯一记录。列表里有名字、**值**（v0.47 起可回读，默认掩码）、
- * 状态与时间。
+ * 页面上只摆**正在被用的那一把**（掩码 + 显示 / 复制）和「管理」「检测」两颗按钮；
+ * 池子的逐条 CRUD、选取模式、401 摘除现场都在「管理」弹框里。检测跟着凭证走——
+ * 它验的首先就是这把 key 能不能过上游的门。
  */
-export function CredentialSection({
+export function CredentialBlock({
   channel,
   onChanged,
+  probing,
+  onProbe,
 }: {
   channel: Channel
   /** 池子变了就通知外面重拉渠道——「缺凭证」那个标记挂在渠道对象上。 */
   onChanged: () => void
+  probing: boolean
+  onProbe: () => void
 }) {
   const { data, error, reload, setError } = useList(() =>
     api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
   )
   const list = data ?? []
-  const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
+  const [managing, setManaging] = useState(false)
+  const enabled = list.filter((c) => !c.disabled)
+  // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表——
+  // 完整的池子在弹框里，行尾的计数提醒着「不止这一把」。
+  const primary = enabled[0] ?? null
 
   async function mutate(fn: () => Promise<unknown>) {
     try {
@@ -37,6 +45,71 @@ export function CredentialSection({
     await reload()
     onChanged()
   }
+
+  return (
+    <section className="detail-block">
+      <div className="detail-block-title">上游凭证{list.length > 0 && ` · ${list.length}`}</div>
+      <ErrorBar message={error} />
+      {list.length === 0 ? (
+        /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
+        <AddCredentials channelID={channel.id} mutate={mutate} />
+      ) : (
+        <div className="cred-inline">
+          {primary ? (
+            <SecretValue value={primary.credential} />
+          ) : (
+            <span className="muted">全部已停用——进「管理」恢复或加一份新的</span>
+          )}
+          {enabled.length > 1 && (
+            <span className="muted cred-inline-count">共 {enabled.length} 把在轮</span>
+          )}
+          <button type="button" className="btn btn-quiet" onClick={() => setManaging(true)}>
+            管理
+          </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={onProbe}
+            disabled={probing}
+            title="给勾选的协议子路径各发一个最小请求；只提示，不落库也不影响路由"
+          >
+            {probing ? '检测中…' : '检测'}
+          </button>
+        </div>
+      )}
+      {managing && (
+        <CredentialsDialog
+          channel={channel}
+          list={list}
+          mutate={mutate}
+          onClose={() => setManaging(false)}
+        />
+      )}
+    </section>
+  )
+}
+
+/**
+ * CredentialsDialog 是凭证池的管理弹框（口径层 v0.38 的池子语义原样搬进来）。
+ *
+ * 逐条 CRUD，不是整把替换：覆盖会连带清掉已停用的凭证，那是 401 摘除的现场，是
+ * 「这把为什么不转了」的唯一记录。列表里有名字、**值**（v0.47 起可回读，默认掩码）、
+ * 状态与时间。段名仍是「上游凭证」不是「API 密钥」（v0.48）：导航上那个「API Key」
+ * 指的是网关下发给客户端的 key，两个词摆在同一个界面里同形不同义。
+ */
+function CredentialsDialog({
+  channel,
+  list,
+  mutate,
+  onClose,
+}: {
+  channel: Channel
+  list: Credential[]
+  mutate: (fn: () => Promise<unknown>) => Promise<void>
+  onClose: () => void
+}) {
+  const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
+  const enabled = list.filter((c) => !c.disabled).length
 
   /** 改选取模式立即落库。渠道的修改接口是整体覆盖，其余字段原样回传。 */
   function saveKeyMode(mode: KeyMode) {
@@ -59,41 +132,41 @@ export function CredentialSection({
   }
 
   return (
-    <section className="section cred-section">
-      <header className="section-head">
-        {/* 段名是「上游凭证」不是「API 密钥」（v0.48）：导航上那个「API Key」指的是
-            网关下发给客户端的 key，两个词摆在同一个界面里同形不同义。 */}
-        <h2>上游凭证{list.length > 0 && ` · ${list.length}`}</h2>
-      </header>
-      <p className="muted">值默认掩码，点「显示」看明文、点「复制」拿全串。名字是归因依据，它会出现在流水与用量里。</p>
-      <ErrorBar message={error} />
+    <Dialog title="上游凭证" wide onClose={onClose}>
+      <div className="cred-dialog">
+        <p className="muted">名字是归因依据，它会出现在流水与用量里。换 key 就是加一份新的、把旧的停掉。</p>
 
-      {list.length === 0 ? (
-        <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
-      ) : (
-        <div className="cred-list">
-          {list.map((c) => (
-            <CredentialRow key={c.id} cred={c} mutate={mutate} />
-          ))}
-        </div>
-      )}
+        {list.length === 0 ? (
+          <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
+        ) : (
+          <div className="cred-list">
+            {list.map((c) => (
+              <CredentialRow key={c.id} cred={c} mutate={mutate} />
+            ))}
+          </div>
+        )}
 
-      <AddCredentials channelID={channel.id} mutate={mutate} />
+        <AddCredentials channelID={channel.id} mutate={mutate} />
 
-      {/* 选取模式只在 ≥2 把（含停用）时出现（v0.44 修订 v0.38 ⑨ 的位置）：它描述
-          的是「多把 key 之间怎么轮」，单 key 渠道从头到尾不该看到这个概念；含停用
-          是因为 1 启用 + 1 停用时人马上要恢复第二把，模式马上就有意义。原裁决
-          「露出来」的立论（多凭证后「为什么总是第一把在跑」必然被问）在 key 列表
-          旁边成立得更彻底。 */}
-      {list.length >= 2 && (
-        <Field
-          label="凭证选取"
-          hint="按哪种顺序用池子里的 key。轮询把量摊开；随机适合上游按 key 限流、想避开固定节奏的场景。改了立即生效"
-        >
-          <Segmented value={keyMode} options={KEY_MODE_OPTIONS} onChange={saveKeyMode} />
-        </Field>
-      )}
-    </section>
+        {/* 选取模式只在 ≥2 把（含停用）时出现（v0.44 修订 v0.38 ⑨ 的位置）：它描述
+            的是「多把 key 之间怎么轮」，单 key 渠道从头到尾不该看到这个概念；含停用
+            是因为 1 启用 + 1 停用时人马上要恢复第二把，模式马上就有意义。 */}
+        {list.length >= 2 && (
+          <Field
+            label="凭证选取"
+            hint="按哪种顺序用池子里的 key。轮询把量摊开；随机适合上游按 key 限流、想避开固定节奏的场景。改了立即生效"
+          >
+            <Segmented value={keyMode} options={KEY_MODE_OPTIONS} onChange={saveKeyMode} />
+          </Field>
+        )}
+
+        {list.length > 0 && (
+          <div className="muted cred-dialog-foot">
+            {enabled} / {list.length} 已启用
+          </div>
+        )}
+      </div>
+    </Dialog>
   )
 }
 
@@ -159,7 +232,7 @@ function CredentialRow({
 /**
  * AddCredentials 往池子里**追加**。
  *
- * 起名字不在这里：单条与批量都由后端给 `凭证 N`，加完在上面那份列表里就地改名。
+ * 起名字不在这里：单条与批量都由后端给 `凭证 N`，加完在管理弹框的列表里就地改名。
  * 名字框曾经并排在 key 旁边，代价是这一段多一个同等分量的框、而它只在少数时候被填
  * ——而改名这件事列表里本来就能做，只是换个时机。
  */

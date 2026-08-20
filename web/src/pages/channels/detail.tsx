@@ -9,8 +9,8 @@ import type {
 } from '../../api'
 import { Confirm, CopyCode, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
-import { ChannelForm } from './form'
-import { CredentialSection } from './credentials'
+import { ChannelForm, joinURL } from './form'
+import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
 import { ModelProbeGrid, ProbeRow } from './probe'
 
@@ -18,8 +18,10 @@ import { ModelProbeGrid, ProbeRow } from './probe'
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
- * 「检测 / 上游设置 / 上游凭证」收进条内文字按钮；后两颗点开在列表上方展开井，默认
- * 收起，检测则直接发请求，结论落在井外。
+ * 「上游凭证」「API 地址」是身份条下的**常驻区块**（PO 2026-08-20 裁决，布局参照
+ * Cherry Studio 的服务商页，推翻 v0.46 里这两样收井的那一半）；「上游设置」（改名、
+ * 协议集、并发、能力位）仍是条内文字按钮点开的井，默认收起。检测挪到凭证行里——
+ * 它验的首先就是这把 key 能不能过上游的门，结论仍落在模型列表上方。
  * 获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
  */
 export function ChannelDetail({
@@ -52,13 +54,10 @@ export function ChannelDetail({
 }) {
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [well, setWell] = useState<'settings' | 'creds' | null>(null)
-  // 井打开过就不再卸载，收起只是 hidden。卸载的代价是「设置填了一半、切去凭证井
-  // 再回来，编辑全没了且无提示」——表单是非受控的，state 随卸载一起丢。
-  const [mounted, setMounted] = useState<{ settings: boolean; creds: boolean }>({
-    settings: false,
-    creds: false,
-  })
+  const [wellOpen, setWellOpen] = useState(false)
+  // 井打开过就不再卸载，收起只是 hidden。卸载的代价是「设置填了一半、收起再点开，
+  // 编辑全没了且无提示」——表单是非受控的，state 随卸载一起丢。
+  const [wellMounted, setWellMounted] = useState(false)
   // 设置表单有没有未保存的改动。井收起时它在屏幕上不存在，这个点是它唯一的痕迹。
   const [settingsDirty, setSettingsDirty] = useState(false)
   const models = ch.models ?? []
@@ -82,9 +81,9 @@ export function ChannelDetail({
     listed !== null &&
     protos.every((p) => listed.some((r) => r.models !== null && r.protocols.includes(p)))
 
-  function toggleWell(next: 'settings' | 'creds') {
-    setMounted((m) => (m[next] ? m : { ...m, [next]: true }))
-    setWell((cur) => (cur === next ? null : next))
+  function toggleWell() {
+    setWellMounted(true)
+    setWellOpen((v) => !v)
   }
 
   return (
@@ -141,37 +140,19 @@ export function ChannelDetail({
             />
           </div>
           <div className="ch-acts">
-            {/* 检测的对象是渠道整体（协议子路径 + 凭证 + 模型），跟另两颗同属渠道操作层，
-                所以坐在条上、不再藏进凭证井——它的结论本来就有一半（模型矩阵）在井外面。 */}
+            {/* 检测挪去了凭证行（它验的首先是 key），凭证与地址成了常驻区块——
+                条上只剩「上游设置」这一口井的开关。 */}
             <button
               type="button"
-              className="btn btn-text"
-              onClick={onProbe}
-              disabled={probe === 'running'}
-              title="给勾选的协议子路径各发一个最小请求；只提示，不落库也不影响路由"
-            >
-              {probe === 'running' ? '检测中…' : '检测'}
-            </button>
-            <button
-              type="button"
-              className={'btn btn-text well-toggle' + (well === 'settings' ? ' is-on' : '')}
-              aria-expanded={well === 'settings'}
-              onClick={() => toggleWell('settings')}
+              className={'btn btn-text well-toggle' + (wellOpen ? ' is-on' : '')}
+              aria-expanded={wellOpen}
+              onClick={toggleWell}
             >
               上游设置
               {/* 未保存标记：井收起后表单从屏幕上消失，改动还在但看不见——这个点
                   就是「回来接着保存」的提醒。保存或撤销后它自己灭。 */}
               {settingsDirty && <span className="well-dirty" title="有未保存的改动" />}
-              <WellCaret open={well === 'settings'} />
-            </button>
-            <button
-              type="button"
-              className={'btn btn-text well-toggle' + (well === 'creds' ? ' is-on' : '')}
-              aria-expanded={well === 'creds'}
-              onClick={() => toggleWell('creds')}
-            >
-              上游凭证
-              <WellCaret open={well === 'creds'} />
+              <WellCaret open={wellOpen} />
             </button>
           </div>
         </div>
@@ -179,19 +160,14 @@ export function ChannelDetail({
 
       {ch.enabled_keys === 0 && (
         <div className="bar bar-warn">
-          这个渠道没有可用凭证，所有走它的请求都会失败；启用状态下连启动闸都过不去。
-          {/* 警告让人去的地方，警告自己就该能带人去——一句话点一下就到，
-              别让人回头去条上找那颗同名按钮。 */}
-          <button type="button" className="bar-link" onClick={() => toggleWell('creds')}>
-            去「上游凭证」加一份
-          </button>
+          这个渠道没有可用凭证，所有走它的请求都会失败；启用状态下连启动闸都过不去。在下面「上游凭证」贴一份即可。
         </div>
       )}
 
       {/* 井打开过就保持挂载，收起只藏不卸（hidden）：设置表单是非受控的，卸载即丢
-          输入。互斥展开不变——两口井叠着开会把模型列表（主语）推出首屏。 */}
-      {mounted.settings && (
-        <div className="well" hidden={well !== 'settings'}>
+          输入。 */}
+      {wellMounted && (
+        <div className="well" hidden={!wellOpen}>
           {/* 不要再挂 key={ch.id}：调用方已经在 ChannelDetail 上挂了。 */}
           <ChannelForm channel={ch} onSaved={onSaved} onDirtyChange={setSettingsDirty} />
           <div className="well-foot">
@@ -200,14 +176,17 @@ export function ChannelDetail({
         </div>
       )}
 
-      {mounted.creds && (
-        <div className="well" hidden={well !== 'creds'}>
-          <CredentialSection channel={ch} onChanged={onCredentialsChanged} />
-        </div>
-      )}
+      <CredentialBlock
+        channel={ch}
+        onChanged={onCredentialsChanged}
+        probing={probe === 'running'}
+        onProbe={onProbe}
+      />
 
-      {/* 探测结论跟着按钮出井：按钮在条上、结果锁在折叠井里是断的。放在井之后、模型
-          列表之前——井默认收起，于是它平时就紧跟在渠道条下面，且始终与模型矩阵相邻。 */}
+      <BaseURLBlock ch={ch} mutate={mutate} />
+
+      {/* 探测结论落在两个常驻区块之后、模型列表之前：按钮在凭证行里，结论的另一半
+          （模型矩阵）本来就要挨着模型列表。 */}
       {probe && probe !== 'running' && (
         <div className="detail-probes">
           {probe.credentials.map((g) => (
@@ -303,6 +282,86 @@ export function ChannelDetail({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * BaseURLBlock 是 base_url 在模型页上的常驻一行（PO 2026-08-20 裁决，与上面的凭证
+ * 区块一起从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层）。
+ *
+ * 就地改，回车或失焦即存；其余渠道字段照 prop 原样回传（修改接口是整体覆盖，
+ * key_mode 与两个能力位不传 = 那一列不动，同 ChannelForm 的写法）。预览行跟着它
+ * 走：`/v1/v1/…` 这个必踩的坑只有把拼出来的完整地址摆在眼前才真的被读到。
+ */
+function BaseURLBlock({
+  ch,
+  mutate,
+}: {
+  ch: Channel
+  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
+}) {
+  const [url, setUrl] = useState(ch.base_url)
+  const [saved, setSaved] = useState(false)
+  const protos = ch.protocols ?? []
+  const dirty = url.trim() !== ch.base_url
+
+  useEffect(() => {
+    if (!saved) return
+    const t = setTimeout(() => setSaved(false), 2000)
+    return () => clearTimeout(t)
+  }, [saved])
+
+  function save() {
+    const next = url.trim()
+    if (next === ch.base_url) return
+    void mutate(() =>
+      api.put(`/channels/${ch.id}`, {
+        name: ch.name,
+        protocols: protos,
+        base_url: next,
+        max_concurrency: ch.max_concurrency,
+        disabled: ch.disabled,
+      }),
+    ).then((ok) => {
+      if (ok) setSaved(true)
+    })
+  }
+
+  return (
+    <section className="detail-block">
+      <div className="detail-block-title">API 地址</div>
+      <div className="baseurl-row">
+        <input
+          className="baseurl-input"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              save()
+            }
+          }}
+          placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
+        />
+        {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
+        {dirty ? (
+          <span className="muted baseurl-state">回车保存</span>
+        ) : saved ? (
+          <span className="muted baseurl-state">已保存</span>
+        ) : null}
+      </div>
+      {url.trim() !== '' && protos.length > 0 && (
+        <div className="url-preview">
+          {protos.map((p) => (
+            <div key={p}>
+              <span className="muted">预览 {PROTOCOL_LABEL[p]}：</span>
+              <code>{joinURL(url, PROTOCOL_PATH[p] ?? '')}</code>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

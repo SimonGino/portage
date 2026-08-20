@@ -13,7 +13,7 @@ const PROTOCOLS: Protocol[] = ['anthropic', 'openai', 'openai_responses']
  * 复刻而不是让服务端回一个预览字段——这一行的用途是**在保存之前**就把 `/v1/v1/…`
  * 摆出来，那一刻服务端还没见过这个 base_url。两处拼法必须一致，改一处得改另一处。
  */
-function joinURL(baseURL: string, path: string): string {
+export function joinURL(baseURL: string, path: string): string {
   return baseURL.trim().replace(/\/+$/, '') + path
 }
 
@@ -47,6 +47,9 @@ export function ChannelForm({
   const [protos, setProtos] = useState<Protocol[]>(
     channel?.protocols?.length ? channel.protocols : ['openai'],
   )
+  // base_url 只在**新建**时出现在这张表单里。编辑走模型页上的「API 地址」常驻区块
+  // （PO 2026-08-20），这儿不再留一份：两处各存一份编辑态，后保存的会把先保存的
+  // 悄悄盖回去。
   const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
   // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
   const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
@@ -85,7 +88,6 @@ export function ChannelForm({
   const dirty =
     channel !== null &&
     (name !== channel.name ||
-      baseURL !== channel.base_url ||
       maxConcValue !== channel.max_concurrency ||
       (showCompaction && compaction !== channel.supports_compaction) ||
       (showStateful && stateful !== channel.supports_stateful_responses) ||
@@ -109,7 +111,9 @@ export function ChannelForm({
       const body = {
         name,
         protocols: protos,
-        base_url: baseURL,
+        // 编辑时 base_url 从 prop 读（同 disabled）：它的编辑入口在页面上的
+        // 「API 地址」区块，这儿回传旧 state 会把那边刚存的覆盖掉。
+        base_url: channel ? channel.base_url : baseURL,
         max_concurrency: maxConcValue,
         ...(showCompaction ? { supports_compaction: compaction } : {}),
         ...(showStateful ? { supports_stateful_responses: stateful } : {}),
@@ -185,11 +189,14 @@ export function ChannelForm({
       </div>
       {/* base_url 存的是「协议子路径之前」的前缀，子路径由网关自己接。这里不写
           「不要带 /v1」那句提示了——下面那行预览把拼出来的结果直接摆出来，比任何
-          一句提示都硬。并发上限与它并排：一宽一窄，各占一行是浪费。 */}
+          一句提示都硬。并发上限与它并排：一宽一窄，各占一行是浪费。
+          编辑态没有 Base URL（它在页面上的「API 地址」区块里），这一行只剩并发上限。 */}
       <div className="form-row">
-        <Field label="Base URL">
-          <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
-        </Field>
+        {!channel && (
+          <Field label="Base URL">
+            <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
+          </Field>
+        )}
         <Field label="并发上限" hint="同时打向这个上游的请求数上限，超出的在网关排队；留空 = 不限">
           <input
             type="number"
@@ -238,8 +245,9 @@ export function ChannelForm({
       )}
       {/* 边填边把拼出来的完整地址摆出来。这是 base_url 那个必踩的坑唯一说得清的
           方式——上面那句提示写了「不带 /v1」，但人是照着上游文档粘的，粘进来的多半
-          就带；只有把 `…/v1/v1/chat/completions` 摆在眼前，那句提示才真的被读到。 */}
-      {baseURL.trim() !== '' && protos.length > 0 && (
+          就带；只有把 `…/v1/v1/chat/completions` 摆在眼前，那句提示才真的被读到。
+          编辑态的预览跟着「API 地址」区块走了，这份只给新建。 */}
+      {!channel && baseURL.trim() !== '' && protos.length > 0 && (
         <div className="url-preview">
           {protos.map((p) => (
             <div key={p}>
