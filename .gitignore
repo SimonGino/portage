@@ -37,6 +37,9 @@ internal/webui/dist/
 # agent 的本机工作区（.claude/worktrees/ 下是一个个内嵌 git 仓库，git add -A 会
 # 把它们当子模块加进来）
 .claude/
+# impeccable 设计工具的产物：产品上下文与本机会话/检测配置，不入库
+/PRODUCT.md
+.impeccable/
 
 # tsc -b 的增量缓存，机器本地状态
 web/tsconfig.tsbuildinfo
