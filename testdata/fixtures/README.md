@@ -45,5 +45,9 @@ usage 里的数字**，其余字节一字未动。数字取值依据 platform.cl
 （2026-08-13 核对）：`input_tokens` 只算最后一个缓存断点**之后**的 token，与两项缓存互不相交，
 即 `total_input = cache_read + cache_creation + input`。
 
-它**不满足** #37 的验收——那一条要的是官方直连实测。等拿到官方 key，按 `request.json` 里的
-形状（超长固定前缀配 `cache_control`）连打两遍、取第二遍，录进 `golden/`。
+**真实转录已随 [#13](https://github.com/SimonGino/portage/issues/13) 入库**（2026-08-20，
+pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连打两遍）：`golden/` 下
+`anthropic-cache-write` / `anthropic-cache-hit` 与 `anthropic-stream-cache-*` 四份，流式与
+非流式各一对「建缓存 + 命中」。本目录这两份照首段的规矩**留作形状回归**，不删不搬。
+官方**直连**实测那一格仍归 [#2](https://github.com/SimonGino/portage/issues/2)——中转透明
+证明的是「这条链路没吃 usage 字段」，不是「官方就这么发」。

@@ -87,6 +87,22 @@ var responsesUpstreamSamples = []string{
 	"responses-stream-parallel-turn2",
 }
 
+// cacheSamples 是 Anthropic 缓存两项的真实转录（#13，2026-08-20 采）。
+//
+// 第四张单开的表，理由同上：它们补的是「anthropic-* 样本的 cache 计数全是 0」这个
+// 洞——缓存两项的 Anthropic 侧解析此前只有 testdata/fixtures 的构造样本走到过
+// （cachehit_fixture_test.go），构造样本证明不了「上游真的这么发」。四份配成两对：
+// 流式/非流式各一对「建缓存 + 命中」，两个字段各自都有真字节走到。
+//
+// expect 里的 InputTokens 是**净值**（37，只剩缓存断点之后的 user 轮）——Tap 保留
+// 上游原始语义；净值加回缓存两项的毛值归一由 cachegolden_test.go 在 canonical 侧断。
+var cacheSamples = []string{
+	"anthropic-cache-write",
+	"anthropic-cache-hit",
+	"anthropic-stream-cache-write",
+	"anthropic-stream-cache-hit",
+}
+
 type sampleMeta struct {
 	Protocol string           `json:"protocol"`
 	Stream   bool             `json:"stream"`
@@ -106,6 +122,7 @@ func TestGoldenSamples(t *testing.T) {
 	all = append(all, compactionSamples...)
 	all = append(all, reasoningSamples...)
 	all = append(all, responsesUpstreamSamples...)
+	all = append(all, cacheSamples...)
 	for _, name := range all {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(goldenDir, name)

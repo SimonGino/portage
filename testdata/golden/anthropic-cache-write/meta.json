@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "expect": {
+    "Model": "claude-sonnet-5",
+    "InputTokens": 37,
+    "OutputTokens": 90,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 7059,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "end_turn",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "pollo-sub2api 渠道真机采（响应体逐字节透明的 Anthropic 协议中转），claude-sonnet-5，2026-08-20，#13。请求是自造的定长手册文本（60 段规则、alpha 变体，无 harness 指纹、无个人信息），system 块末尾挂 cache_control:ephemeral，同一请求连打两遍，这份是建缓存那一遍（cache_creation_input_tokens=7059）。流式与非流式两对用不同前缀变体各建各的缓存。expect 用 python 扫字节独立重算，不取 goldenrec 预填值：Anthropic 的 input_tokens 是净值——37 只剩缓存断点之后的 user 轮，长前缀整段落在缓存那一项里，毛值 = 37 + 7059 = 7096（口径层 v0.71 归一后流水那一列该是它）。thinking_tokens 键在、值 0，故 ReasoningTokens=0 / HasReasoningTokens=true（口径层 v0.66 『报了但这次没思考』档）。msg id 照 anthropic-text 成例原样保留；请求体自造、响应扫过无 safety_identifier / prompt_cache_key / 凭证类字段，无可脱之物。cache_creation 的 5m/1h 细分键原样留在字节里，不新增列（票面『不在范围』第 2 条）。"
+}
