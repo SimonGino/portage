@@ -1,0 +1,58 @@
+# 镜像发布，与测试闸（ci.yml）分开：两件事，红了互不牵连。
+#
+# 触发与产出：
+#   - push main   → ghcr.io/simongino/portage:latest + :sha-xxxxxxx
+#   - push v* tag → 另出 :1.2.3 这样的版本号 tag
+#   - PR 不构建镜像——ci.yml 的 go build 已覆盖编译回归，这里再跑只是费时间。
+#
+# ⚠ 首次推送后包默认 private，改 public 是一次性手动操作：
+# github.com/users/SimonGino/packages/container/portage/settings → Change visibility。
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # 刻意不装 QEMU：Dockerfile 的两个构建层都钉在 $BUILDPLATFORM 上原生跑，
+      # Go 靠 TARGETOS/TARGETARCH 交叉编译出 arm64，前端产物平台无关，末层
+      # scratch 里只有静态产物没有要执行的东西。装了用不上，还多一步。
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # 写死小写：GHCR 只认小写路径，而 github.repository 是 SimonGino/portage。
+          # （metadata-action 会自己转小写，写死是为了让读的人不用知道这条规则。）
+          images: ghcr.io/simongino/portage
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # npm ci 和 go mod download 两层最吃时间，GHA 缓存能让 web/ 与 go.sum
+          # 不动的构建基本秒过。
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
