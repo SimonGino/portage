@@ -1,18 +1,22 @@
 # 镜像发布，与测试闸（ci.yml）分开：两件事，红了互不牵连。
 #
 # 触发与产出：
-#   - push main   → ghcr.io/simongino/portage:latest + :sha-xxxxxxx
-#   - push v* tag → 另出 :1.2.3 这样的版本号 tag
-#   - PR 不构建镜像——ci.yml 的 go build 已覆盖编译回归，这里再跑只是费时间。
+#   - push v* tag → :1.2.3 + :latest，同一次构建双推 GHCR 与阿里云 ACR（国内服务器
+#     拉 GHCR 不稳，ACR 是同内容的国内镜像源）
+#   - workflow_dispatch → 只出 :test，不动 latest——手动跑一次验证整条流水线
+#     （双推、凭证、双架构）而不用真发版；测完的 test tag 可在两边控制台删掉
+#   - main 与 PR 都不构建镜像——仓库公开后 latest 的语义是"最新发布版"而非 main
+#     任意中间状态；编译回归由 ci.yml 的 go build 覆盖，这里再跑只是费时间。
 #
 # ⚠ 首次推送后包默认 private，改 public 是一次性手动操作：
-# github.com/users/SimonGino/packages/container/portage/settings → Change visibility。
+#   - GHCR：github.com/users/SimonGino/packages/container/portage/settings → Change visibility
+#   - ACR：个人版控制台把命名空间 simongino 设为默认公开（或逐仓库设），否则服务器拉取要先 docker login
 name: Docker
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   image:
@@ -34,16 +38,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ACR 个人版的访问凭证：用户名是阿里云账号全名，密码是控制台设的固定密码，
+      # 与本机 docker login 用的是同一对。
+      - uses: docker/login-action@v3
+        with:
+          registry: crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
           # 写死小写：GHCR 只认小写路径，而 github.repository 是 SimonGino/portage。
           # （metadata-action 会自己转小写，写死是为了让读的人不用知道这条规则。）
-          images: ghcr.io/simongino/portage
+          # 两行 = 同一次构建双推，tag 集合两边完全一致。
+          images: |
+            ghcr.io/simongino/portage
+            crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,enable={{is_default_branch}}
+            # latest 只跟 v* tag 走；手动触发只出 test，别把未发版内容标成 latest。
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=test,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - uses: docker/build-push-action@v6
         with:
