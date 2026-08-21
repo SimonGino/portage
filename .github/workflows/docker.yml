@@ -68,6 +68,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # buildx 默认附带 provenance 证明（一个空 config 的 OCI artifact），ACR 个人版
+          # 拒收它：denied: unknown manifest class for application/vnd.oci.empty.v1+json。
+          # 关掉——个人网关用不上供应链证明，换来两边 registry 都收。
+          provenance: false
           # npm ci 和 go mod download 两层最吃时间，GHA 缓存能让 web/ 与 go.sum
           # 不动的构建基本秒过。
           cache-from: type=gha
