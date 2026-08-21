@@ -102,16 +102,18 @@ PORTAGE_ADMIN_PASSWORD='想好的密码' \
 
 ### 3. 部署，纯转发
 
-把文件挂进去，`PORTAGE_CHANNELS` 指过去，管理密码一个都不设：
+部署机上一个目录、三个文件，镜像从 GHCR 拉，不需要仓库检出：
 
-```yaml
-# deploy/docker-compose.override.yml——compose 会自动合并进来
-services:
-  portage:
-    environment:
-      PORTAGE_CHANNELS: /etc/portage/channels.yaml
-    volumes:
-      - ./channels.yaml:/etc/portage/channels.yaml:ro
+```text
+portage/
+├── docker-compose.forward.yml   ← 从 deploy/ 拷来
+├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
+└── channels.yaml                ← 第 2 步导出的那份
+```
+
+```bash
+mkdir -p data && sudo chown 65532:65532 data
+docker compose -f docker-compose.forward.yml up -d
 ```
 
 挂了文件，这份文件就是业务配置的唯一事实源；配置里静态就能判出的错一律拒绝启动，退出码 1，

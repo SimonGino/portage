@@ -1,0 +1,46 @@
+# 带管理端形态的部署 compose——给没有仓库检出、又要跑管理端的机器用
+# （有检出的开发机用 docker-compose.yml 本机构建）。一个目录、两个文件：
+#
+#   portage/                       ← 部署目录，名字随意
+#   ├── docker-compose.admin.yml   ← 本文件
+#   └── config.yaml                ← 进程级配置（全局限流/端口/重试/保留期），
+#                                    以 config.example.yaml 为底拷出来改
+#
+#   mkdir -p data && sudo chown 65532:65532 data   # 库落这儿，属主必须是容器运行身份
+#   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f docker-compose.admin.yml up -d
+#
+# 镜像从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版；要钉版本：
+#   PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose ... up -d
+#
+# 这份文件是**拷走用的**：拷到部署目录之后就是你的配置，端口收窄这类改动直接改。
+#
+# 密码只用于**初始化**：首次启动写进库，之后改这个变量不生效，改密码走管理端界面。
+# 忘了密码就删 ./data 重来，或直接改库里的 settings 表。也可以把 admin_password
+# 写进挂载的 config.yaml（挂载文件不进镜像层，没有「烤进镜像」的顾虑），env 优先。
+#
+# 这台**永远不挂 channels.yaml**：库是业务配置的事实源，管理端保持可写；挂了文件
+# 管理端就变只读，「点着改」就没了。库一开始是空的，配出第一把 key 之前日志里会有
+# 「api_keys 表是空的，所有转发请求都会回 401」——警告不是失败，配完就没了。
+
+services:
+  portage:
+    image: ${PORTAGE_IMAGE:-ghcr.io/simongino/portage:latest}
+    restart: unless-stopped
+    environment:
+      # 宿主上没设这个变量时是空串，等于没设——那就成了没有管理端的纯转发形态。
+      PORTAGE_ADMIN_PASSWORD: ${PORTAGE_ADMIN_PASSWORD:-}
+    ports:
+      # 发布给所有网卡。公网 IP 机器上的风险与改法同 docker-compose.forward.yml
+      # 的 ports 注释：Docker 发布端口绕过 ufw/firewalld，要么写死内网网卡地址，
+      # 要么绑 127.0.0.1 挂 nginx 收 TLS。管理端形态还多一条：会话 cookie 在明文
+      # HTTP 下不带 Secure，同网段能被嗅到，管理端别走公网明文。
+      - "8317:8317"
+    volumes:
+      # 宿主 ./data 就是容器 /data，库落在 ./data/gateway.db，备份就是拷这个目录。
+      # 目录属主不是 65532 时启动报 `unable to open database file (14)`——是权限，
+      # 不是库坏了。
+      - ./data:/data
+      - ./config.yaml:/etc/portage/config.yaml:ro
+    healthcheck:
+      # 同 forward：scratch 里没有探活工具，健康检查交给外部。
+      disable: true

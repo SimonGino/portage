@@ -110,16 +110,19 @@ in `.gitignore`.
 
 ### 3. Deploy it, forwarding-only
 
-Mount the file, point `PORTAGE_CHANNELS` at it, and set no admin password:
+One directory and three files on the deployment machine, image pulled from GHCR, no
+repo checkout needed:
 
-```yaml
-# deploy/docker-compose.override.yml — compose merges this in automatically
-services:
-  portage:
-    environment:
-      PORTAGE_CHANNELS: /etc/portage/channels.yaml
-    volumes:
-      - ./channels.yaml:/etc/portage/channels.yaml:ro
+```text
+portage/
+├── docker-compose.forward.yml   ← copied from deploy/
+├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
+└── channels.yaml                ← the export from step 2
+```
+
+```bash
+mkdir -p data && sudo chown 65532:65532 data
+docker compose -f docker-compose.forward.yml up -d
 ```
 
 With a file mounted, that file is the only source of truth for business configuration;

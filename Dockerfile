@@ -55,7 +55,7 @@ FROM scratch
 # 上游全是 HTTPS，没有根证书连不上——症状是每个请求都 502，看不出是证书问题。
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/portage /portage
-COPY --from=build /src/deploy/config.docker.yaml /etc/portage/config.yaml
+COPY --from=build /src/deploy/config.example.yaml /etc/portage/config.yaml
 COPY --from=build --chown=65532:65532 /out/data /data
 
 # 非 root。scratch 里没有 /etc/passwd，所以只能给数字 uid；65532 是 distroless

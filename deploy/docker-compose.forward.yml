@@ -1,0 +1,48 @@
+# 纯转发形态（无管理端）的部署 compose。一个目录、三个文件就能跑，不需要仓库检出：
+#
+#   portage/                         ← 服务器上的部署目录，名字随意
+#   ├── docker-compose.forward.yml   ← 本文件
+#   ├── config.yaml                  ← 进程级配置（全局限流/端口/重试/保留期），
+#   │                                  以 config.example.yaml 为底拷出来改
+#   └── channels.yaml                ← 业务配置，配好的那台管理端导出（明文秘密，0600）
+#
+#   mkdir -p data && sudo chown 65532:65532 data   # 库落这儿，属主必须是容器运行身份
+#   docker compose -f docker-compose.forward.yml up -d
+#
+# 镜像从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版；要钉版本：
+#
+#   PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose -f docker-compose.forward.yml up -d
+#
+# 这份文件是**拷走用的**：拷到部署目录之后就是你的配置，绑哪张网卡这类只对那台机器
+# 成立的改动直接改你那份，不用 override 层。
+#
+# 形态由「不设管理密码」决定：/admin 整个不注册（路由级 404），只剩 /v1 转发面。
+# channels.yaml 是业务配置的唯一事实源，启动时 apply 进 DB；文件缺了或静态判得出错
+# （候选指向不存在的渠道、不认识的字段、api_keys 为空）一律拒启、退出码 1，容器表现
+# 为重启循环——这是要的效果，另一种活法是无声无息地拿库里的旧配置凑合转。
+
+services:
+  portage:
+    image: ${PORTAGE_IMAGE:-ghcr.io/simongino/portage:latest}
+    restart: unless-stopped
+    environment:
+      # 镜像 ENTRYPOINT 把 -config 写死了，声明文件路径只能走这个环境变量。
+      PORTAGE_CHANNELS: /etc/portage/channels.yaml
+    ports:
+      # 发布给所有网卡，供团队内网直连。
+      # ⚠ 宿主有公网 IP 时这一行就是把 8317 开到公网——且 Docker 发布端口直接写
+      # iptables 的 DOCKER 链，**绕过 ufw/firewalld 的 INPUT 规则**。那种机器上
+      # 要么写死内网网卡地址（"192.168.x.x:8317:8317"），要么绑 127.0.0.1 前面挂
+      # nginx 收 TLS 只放行 /v1（样例见仓库 deploy/nginx.conf.example）。
+      - "8317:8317"
+    volumes:
+      # 宿主 ./data 就是容器 /data，库落在 ./data/gateway.db，备份就是拷这个目录。
+      # 目录属主不是 65532 时启动报 `unable to open database file (14)`——看着像
+      # SQLite 坏了，其实是权限。
+      - ./data:/data
+      - ./config.yaml:/etc/portage/config.yaml:ro
+      - ./channels.yaml:/etc/portage/channels.yaml:ro
+    healthcheck:
+      # scratch 镜像里没有 curl/wget，塞一个只为探活的 shell 不值得。
+      # compose 只保证进程活着，健康检查交给外部。
+      disable: true

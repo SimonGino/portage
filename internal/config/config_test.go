@@ -146,7 +146,7 @@ func TestAdminPasswordFromEnv(t *testing.T) {
 		}
 	}
 
-	// 没有配置文件时 env 一样管用：镜像里那份 config.docker.yaml 就没写密码。
+	// 没有配置文件时 env 一样管用：镜像里那份 config.example.yaml 就没写密码。
 	t.Setenv("PORTAGE_ADMIN_PASSWORD", "only-env")
 	cfg, err := config.Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {

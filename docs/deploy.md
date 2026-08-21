@@ -48,6 +48,13 @@ The admin password comes from the environment, not the config file — anything 
 into a config file inside an image is baked into that image's layer history. It seeds
 the database on first boot; once a password is stored, changing the variable does nothing.
 
+The command above is for a machine with a repo checkout (it builds locally). To run the
+console shape on a machine without one, use
+[`deploy/docker-compose.admin.yml`](../deploy/docker-compose.admin.yml) instead: it pulls
+the GHCR image; copy it and a `config.yaml` (start from `deploy/config.example.yaml`)
+into a deployment directory, password via the same environment variable — usage is in
+the file's header comment.
+
 ## 2. Export `channels.yaml`
 
 One button at the foot of the console's left rail. It writes the whole business
@@ -64,37 +71,38 @@ and that one is a reference, not a config.
 ## 3. Deploy it, forwarding-only
 
 There is nothing to build on the deployment machine: CI publishes a multi-arch
-(amd64/arm64) image to GHCR on every push to main, public, no login needed. `latest`
-tracks main, `sha-…` pins an exact commit, and `v*` tags get a version tag of their own.
+(amd64/arm64) image to GHCR on every `v*` tag, public, no login needed. `latest`
+points at the newest release, and version tags like `1.2.3` pin an exact release.
+For servers in mainland China where GHCR is unreliable, the same build is also pushed
+to Alibaba Cloud ACR with an identical tag set — point `PORTAGE_IMAGE` at
+`crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage`.
 
-Mount the file, point `PORTAGE_CHANNELS` at it, and set no admin password:
+The deployment machine needs one directory and three files, all from the repo or from
+step 2 — no checkout required:
+
+```text
+portage/                         ← deployment directory, any name
+├── docker-compose.forward.yml   ← copied from deploy/
+├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
+└── channels.yaml                ← the export from step 2
+```
 
 ```bash
-docker run -d --name portage \
-  --restart unless-stopped \
-  -p 8317:8317 \
-  -v ai-gateway-data:/data \
-  -v "$PWD/channels.yaml:/etc/portage/channels.yaml:ro" \
-  -e PORTAGE_CHANNELS=/etc/portage/channels.yaml \
-  ghcr.io/simongino/portage:latest
+mkdir -p data && sudo chown 65532:65532 data   # the database lands here; owner must be the container uid
+docker compose -f docker-compose.forward.yml up -d
 ```
 
-With a repo checkout on the machine, the compose equivalent is an override:
+If `./data` isn't owned by 65532, boot fails with `unable to open database file (14)` —
+a permission problem, not a corrupt database. The database lives at `./data/gateway.db`;
+backing up is copying that directory. To pin a version instead of tracking `latest`:
+`PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose … up -d`.
 
-```yaml
-# deploy/docker-compose.override.yml — compose merges this in automatically
-services:
-  portage:
-    environment:
-      PORTAGE_CHANNELS: /etc/portage/channels.yaml
-    volumes:
-      - ./channels.yaml:/etc/portage/channels.yaml:ro
-```
-
-Outside a container it's the `-channels` flag; `PORTAGE_CHANNELS` overrides it. The
-environment variable has to exist because the image's `ENTRYPOINT` hard-codes `-config`.
-There is no implicit default path and no search — a mistyped filename must fail loudly,
-not degrade into silently serving whatever the database happened to hold.
+The compose file already points `PORTAGE_CHANNELS` at the mounted `channels.yaml` and
+sets no admin password anywhere — which is exactly the forwarding-only shape. Outside a
+container it's the `-channels` flag; `PORTAGE_CHANNELS` overrides it. The environment
+variable has to exist because the image's `ENTRYPOINT` hard-codes `-config`. There is no
+implicit default path and no search — a mistyped filename must fail loudly, not degrade
+into silently serving whatever the database happened to hold.
 
 With a file mounted, that file is the only source of truth for business configuration:
 it's applied into the database at boot, entities missing from it are deleted, and with
@@ -148,9 +156,13 @@ wrong and nothing errors, streams just hang or cut off.
 Two files, answering different questions.
 
 `config.yaml` covers startup only: listen address, database path, admin password seeding,
-retry parameters, and a global token bucket (10 QPS / burst 20 out of the box, applied to
-the forwarding plane only). The whole file is optional; every key has a default, and it's
-parsed leniently so an old deployment carrying a since-removed key still boots.
+retry parameters, a global token bucket (10 QPS / burst 20 out of the box, applied to
+the forwarding plane only), and the call-log retention window. The whole file is
+optional; every key has a default, and it's parsed leniently so an old deployment
+carrying a since-removed key still boots. In a container the image bakes in a default
+copy ([`deploy/config.example.yaml`](../deploy/config.example.yaml)); to change anything,
+start from that file, save it as `config.yaml`, and mount it over the baked one — the
+forward/admin compose files already declare that mount.
 
 Everything operational — channels, managed models, access points, candidates,
 credentials, API keys — has one source of truth, and *which* one depends on whether a

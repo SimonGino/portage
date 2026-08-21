@@ -35,6 +35,11 @@ PORTAGE_ADMIN_PASSWORD='想好的密码' \
 管理密码走环境变量而不是配置文件：镜像里那份配置是烤进镜像层历史的。它只用于初始化，库里
 已有密码后改它不生效。
 
+上面这条命令是给有仓库检出的机器的（本机构建）。没有检出、又要跑管理端形态的机器，改用
+[`deploy/docker-compose.admin.yml`](../deploy/docker-compose.admin.yml)：拉 GHCR 镜像，
+拷它和一份 `config.yaml`（以 `deploy/config.example.yaml` 为底改）到部署目录即可，密码
+同样走环境变量，用法见文件头注释。
+
 ## 2. 导出 `channels.yaml`
 
 管理端左栏底下那一个按钮。它把整份业务配置写成一个文件——渠道、纳管模型、凭证、接入点、
@@ -48,36 +53,33 @@ API Key 全在里面——运行期状态一样不带，所以你在本地撞出
 
 ## 3. 部署，纯转发
 
-镜像不用在部署机上构建：CI 在每次 main 推送后把双架构（amd64/arm64）镜像发到 GHCR，公开可
-拉，不用登录。`latest` 跟着 main 走，`sha-…` 钉具体提交，打过 `v*` tag 的另有版本号。
+镜像不用在部署机上构建：CI 在每次打 `v*` tag 后把双架构（amd64/arm64）镜像发到 GHCR，公开可
+拉，不用登录。`latest` 指向最新发布版，`1.2.3` 这样的版本号 tag 钉具体版本。国内服务器拉
+GHCR 不稳的话，同一次构建也双推了阿里云 ACR，tag 集合完全一致，`PORTAGE_IMAGE` 指过去即可：
+`crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage`。
 
-把文件挂进去，`PORTAGE_CHANNELS` 指过去，管理密码一个都不设：
+部署机上只要一个目录、三个文件，全部从仓库或第 2 步来，不需要检出：
+
+```text
+portage/                         ← 部署目录，名字随意
+├── docker-compose.forward.yml   ← 从 deploy/ 拷来
+├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
+└── channels.yaml                ← 第 2 步导出的那份
+```
 
 ```bash
-docker run -d --name portage \
-  --restart unless-stopped \
-  -p 8317:8317 \
-  -v ai-gateway-data:/data \
-  -v "$PWD/channels.yaml:/etc/portage/channels.yaml:ro" \
-  -e PORTAGE_CHANNELS=/etc/portage/channels.yaml \
-  ghcr.io/simongino/portage:latest
+mkdir -p data && sudo chown 65532:65532 data   # 库落这儿，属主必须是容器运行身份
+docker compose -f docker-compose.forward.yml up -d
 ```
 
-部署机上有仓库检出、想沿用 compose 的话，等价的是一份 override：
+`./data` 属主不是 65532 时启动报 `unable to open database file (14)`——是权限，不是库坏
+了。库落在 `./data/gateway.db`，备份就是拷这个目录。要钉版本不追 `latest`：
+`PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose … up -d`。
 
-```yaml
-# deploy/docker-compose.override.yml——compose 会自动合并进来
-services:
-  portage:
-    environment:
-      PORTAGE_CHANNELS: /etc/portage/channels.yaml
-    volumes:
-      - ./channels.yaml:/etc/portage/channels.yaml:ro
-```
-
-不在容器里跑就是 `-channels` 参数，`PORTAGE_CHANNELS` 覆盖它。容器里必须走环境变量，因为镜
-像的 `ENTRYPOINT` 把 `-config` 写死了。没有隐式默认路径，也不做搜索——文件名敲错就得当场炸
-给你看，而不是悄悄降级成「拿库里那份凑合着转」。
+compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密码一个都没设——这正
+是纯转发形态。不在容器里跑就是 `-channels` 参数，`PORTAGE_CHANNELS` 覆盖它。容器里必须走
+环境变量，因为镜像的 `ENTRYPOINT` 把 `-config` 写死了。没有隐式默认路径，也不做搜索——文
+件名敲错就得当场炸给你看，而不是悄悄降级成「拿库里那份凑合着转」。
 
 挂了文件之后，这份文件就是业务配置的唯一事实源：启动时 apply 进库，文件里没有的实体会被删
 掉；又没设管理密码，也就没有管理端能再去写它。凡是静态就能判错的——候选指向一个不存在的渠
@@ -122,8 +124,10 @@ make build          # 前端产物 embed 进 bin/portage
 两份文件，各答各的问题。
 
 `config.yaml` 只管启动：监听地址、库路径、管理密码初始化、重试参数、全局令牌桶（出厂
-10 QPS / 突发 20，只挂转发面）。整个文件都可以省，每个键都有默认值；解析是宽松的，老部署里
-留着早已删掉的键也照样起得来。
+10 QPS / 突发 20，只挂转发面）、流水保留期。整个文件都可以省，每个键都有默认值；解析是宽
+松的，老部署里留着早已删掉的键也照样起得来。容器里镜像烤了一份默认值（就是
+[`deploy/config.example.yaml`](../deploy/config.example.yaml)），要改就以它为底拷一份
+`config.yaml` 挂进去盖掉——forward/admin 两份 compose 已经写好了这个挂载。
 
 业务配置——渠道、纳管模型、接入点、候选、凭证、API Key——只有一个事实源，是哪一个取决于有
 没有挂声明文件：

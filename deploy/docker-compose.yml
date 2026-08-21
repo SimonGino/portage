@@ -1,3 +1,7 @@
+# 开发机（有仓库检出）的本机构建 compose。**部署不用这份**：没有检出的机器拉 GHCR
+# 镜像，纯转发形态用 docker-compose.forward.yml，带管理端形态用 docker-compose.admin.yml，
+# 两份都是拷走即用。
+#
 # 用法（在仓库根目录）：
 #
 #   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
@@ -6,7 +10,7 @@
 # 纳管模型、接入点、网关 key。库是空的很正常（日志里会有一条
 # `api_keys 表是空的，所有转发请求都会回 401`），配完就没了。
 #
-# 密码走环境变量而不是配置文件：config.docker.yaml 是**烤进镜像**的，写在里面
+# 密码走环境变量而不是配置文件：config.example.yaml 是**烤进镜像**的，写在里面
 # 等于写进镜像层历史；而为了设一个密码去挂一份配置文件，是在最常见的路径上
 # 要求最麻烦的操作。它只用来**初始化**——库里已经有密码了（包括在页面上改过的），
 # 这个变量给什么都不生效。忘了密码就删卷重来，或者直接改 settings 表。
@@ -59,9 +63,9 @@ services:
       # `compose up` 会新建一个空卷，渠道、key、全部流水留在旧卷里没人读。
       # 名字难看，但它是唯一一个改名有真实代价的标识符。
       - ai-gateway-data:/data
-      # 要改配置就把这行放开，改宿主上的 deploy/config.docker.yaml。
-      # 密码不必走这条路，用上面的环境变量。
-      # - ./config.docker.yaml:/etc/portage/config.yaml:ro
+      # 要改进程级配置就把这行放开：把 config.example.yaml 拷成同目录的
+      # config.yaml（已在 .gitignore 里）再改。密码不必走这条路，用上面的环境变量。
+      # - ./config.yaml:/etc/portage/config.yaml:ro
     healthcheck:
       # scratch 里没有 curl/wget，只能让网关自己探自己——portage 二进制不带
       # 探活子命令，所以这里用 Docker 25+ 的原生 CMD-SHELL 也不行。
