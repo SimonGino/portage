@@ -88,14 +88,29 @@ portage/                         ← deployment directory, any name
 ```
 
 ```bash
-mkdir -p data && sudo chown 65532:65532 data   # the database lands here; owner must be the container uid
+mkdir -p data && sudo chown 65532:65532 data   # required on Linux: the database lands here; owner must be the container uid
 docker compose -f docker-compose.forward.yml up -d
 ```
 
-If `./data` isn't owned by 65532, boot fails with `unable to open database file (14)` —
-a permission problem, not a corrupt database. The database lives at `./data/gateway.db`;
-backing up is copying that directory. To pin a version instead of tracking `latest`:
-`PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose … up -d`.
+The `chown 65532` is needed on **Linux** servers only — the container runs as uid 65532
+and bind mounts pass host permissions straight through; get the owner wrong and boot
+fails with `unable to open database file (14)`: a permission problem, not a corrupt
+database. Docker Desktop on macOS does its own permission mapping for bind mounts, so
+the step can be skipped there. The database lives at `./data/gateway.db`; backing up is
+copying that directory.
+
+**Switching the image source and pinning a version** both go through the
+`PORTAGE_IMAGE` environment variable — no compose edits. The default is GHCR `latest`;
+for a server in mainland China, or to pin an exact release:
+
+```bash
+# domestic mirror + pinned version (recommended)
+PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0 \
+  docker compose -f docker-compose.forward.yml up -d
+
+# tired of the prefix? put it in a .env file next to the compose file (compose reads it automatically):
+# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0
+```
 
 The compose file already points `PORTAGE_CHANNELS` at the mounted `channels.yaml` and
 sets no admin password anywhere — which is exactly the forwarding-only shape. Outside a

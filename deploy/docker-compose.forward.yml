@@ -6,12 +6,14 @@
 #   │                                  以 config.example.yaml 为底拷出来改
 #   └── channels.yaml                ← 业务配置，配好的那台管理端导出（明文秘密，0600）
 #
-#   mkdir -p data && sudo chown 65532:65532 data   # 库落这儿，属主必须是容器运行身份
+#   mkdir -p data && sudo chown 65532:65532 data   # Linux 必做；macOS Docker Desktop 可省
 #   docker compose -f docker-compose.forward.yml up -d
 #
-# 镜像从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版；要钉版本：
+# 镜像默认从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版。换镜像源/钉版本都
+# 走 PORTAGE_IMAGE（也可写进同目录 .env），国内服务器用 ACR，两边 tag 完全一致：
 #
-#   PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose -f docker-compose.forward.yml up -d
+#   PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0 \
+#     docker compose -f docker-compose.forward.yml up -d
 #
 # 这份文件是**拷走用的**：拷到部署目录之后就是你的配置，绑哪张网卡这类只对那台机器
 # 成立的改动直接改你那份，不用 override 层。

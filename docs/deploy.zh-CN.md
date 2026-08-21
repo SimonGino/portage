@@ -68,13 +68,26 @@ portage/                         ← 部署目录，名字随意
 ```
 
 ```bash
-mkdir -p data && sudo chown 65532:65532 data   # 库落这儿，属主必须是容器运行身份
+mkdir -p data && sudo chown 65532:65532 data   # Linux 必做：库落这儿，属主必须是容器运行身份
 docker compose -f docker-compose.forward.yml up -d
 ```
 
-`./data` 属主不是 65532 时启动报 `unable to open database file (14)`——是权限，不是库坏
-了。库落在 `./data/gateway.db`，备份就是拷这个目录。要钉版本不追 `latest`：
-`PORTAGE_IMAGE=ghcr.io/simongino/portage:1.2.3 docker compose … up -d`。
+`chown 65532` 只在 **Linux** 服务器上需要——容器以 uid 65532 跑，绑定挂载直通宿主权限，
+属主不对启动就报 `unable to open database file (14)`：是权限，不是库坏了。macOS 的
+Docker Desktop 对绑定挂载自己做了权限映射，这步可以省。库落在 `./data/gateway.db`，
+备份就是拷这个目录。
+
+**换镜像源 / 钉版本**都走 `PORTAGE_IMAGE` 环境变量，不用改 compose 文件。默认是 GHCR 的
+`latest`；国内服务器换 ACR、或钉具体版本：
+
+```bash
+# 国内源 + 钉版本（推荐）
+PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0 \
+  docker compose -f docker-compose.forward.yml up -d
+
+# 每次都带前缀太长的话，写进同目录 .env 文件（compose 自动读）：
+# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0
+```
 
 compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密码一个都没设——这正
 是纯转发形态。不在容器里跑就是 `-channels` 参数，`PORTAGE_CHANNELS` 覆盖它。容器里必须走
