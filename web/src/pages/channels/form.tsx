@@ -142,9 +142,8 @@ export function ChannelForm({
       <Field label={`${PROTOCOL_LABEL[p]} 地址`} hint={hint}>
         <input value={v} onChange={(e) => setURL(p, e.target.value)} placeholder="留空 = 不声明这个协议" />
         {v.trim() !== '' && (
-          <div className="url-preview">
-            <span className="muted">预览：</span>
-            <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
+          <div className="baseurl-preview" title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径">
+            → <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
           </div>
         )}
       </Field>

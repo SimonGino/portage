@@ -961,28 +961,6 @@ button, input, textarea, select {
   gap: 10px;
 }
 
-/* base_url + 各协议子路径拼出来的完整地址。等宽字体 + 凹一档的底：它是「机器会去
-   请求的那一串」，不是一句说明。 */
-.url-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 4px 0 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--paper);
-  font-size: 13px;
-}
-
-.well .url-preview {
-  background: var(--canvas);
-}
-
-.url-preview code {
-  font-family: var(--mono);
-  word-break: break-all;
-}
-
 /* 新增凭证那一格：输入框 + 「显示」。按钮不参与拉伸，输入框吃掉剩下的宽度。 */
 /* 两个字段并排：短输入（渠道名）+ 一排按钮（协议集），各占一整行是纯浪费。
    窄屏上换行，不去压缩输入框。 */
@@ -2347,28 +2325,62 @@ textarea:focus {
   font-size: 12px;
 }
 
-/* API 地址：每协议一行就地改（口径层 v0.96）。地址是标识符，等宽（DESIGN.md §3）。 */
+/* API 地址：每协议一行就地改（口径层 v0.96）。地址是标识符，等宽（DESIGN.md §3）。
+   协议名列定宽——OpenAI 与 Anthropic 词长不同，不定宽的话两行输入框左边参差。 */
+.baseurl-proto-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 52em;
+}
+
 .baseurl-proto-row + .baseurl-proto-row {
-  margin-top: 10px;
+  margin-top: 12px;
+}
+
+.baseurl-proto {
+  flex: none;
+  width: 6.5em;
+  padding-top: 8px; /* 与输入框首行文字对齐 */
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.baseurl-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .baseurl-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: 52em;
 }
 
-.baseurl-row .tag {
+/* 预览是输入框下的一行小字，不套底色盒：逐行紧随时（DESIGN v0.32 ②）盒装预览比
+   输入框本身还高，版面全是框。箭头说明它是「由上面那行拼出来的」。 */
+.baseurl-preview {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.baseurl-preview code {
+  font-family: var(--mono);
+}
+
+.baseurl-del {
   flex: none;
 }
 
-/* 「添加端点」行：与地址行同一层，靠间距分段，不另画盒子（§3）。 */
+/* 「添加端点」chips 与输入列同缘起排（跳过协议名列），一眼读出「加的是同一列东西」。 */
 .baseurl-add {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
+  margin-left: calc(6.5em + 10px);
   font-size: 12px;
 }
 
@@ -2382,11 +2394,6 @@ textarea:focus {
 .baseurl-state {
   flex: none;
   font-size: 12px;
-}
-
-.detail-block .url-preview {
-  max-width: 52em;
-  margin: 8px 0 0;
 }
 
 /* 常驻区块里的添加行不吃 .form 的 18px 内边距（那是给弹框表单的）。 */

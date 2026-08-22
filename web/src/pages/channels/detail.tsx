@@ -373,55 +373,61 @@ function BaseURLBlock({
         const v = urls[p] ?? ''
         const dirty = v.trim() !== (ch.base_url[p] ?? '')
         return (
+          /* 定宽协议名列 + 输入列：OpenAI 与 Anthropic 词长不同，不定宽的话
+             两行输入框左边参差。预览是输入列下的一行小字，不再套底色盒——
+             盒装预览是表单井里「一段汇总」的形制，逐行紧随时它比输入框还高。 */
           <div key={p} className="baseurl-proto-row">
-            <div className="baseurl-row">
-              <span className="tag" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
-                {PROTOCOL_SHORT[p] ?? p}
-              </span>
-              <input
-                className="baseurl-input"
-                value={v}
-                onChange={(e) => setUrls((prev) => ({ ...prev, [p]: e.target.value }))}
-                onBlur={() => save(p)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    save(p)
-                  }
-                }}
-                placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
-              />
-              {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
-              {dirty ? (
-                <span className="muted baseurl-state">回车保存</span>
-              ) : saved ? (
-                <span className="muted baseurl-state">已保存</span>
-              ) : null}
-              {/* 删行 = 取消声明这个协议，不加确认（口径层 v0.96 ②：恢复就是再填一次）。
-                  只剩一行时不给口——渠道至少要声明一个协议，服务端也会拒。 */}
-              {rows.length > 1 && (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
-                  onClick={() => remove(p)}
+            <span className="baseurl-proto" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
+              {PROTOCOL_SHORT[p] ?? p}
+            </span>
+            <div className="baseurl-main">
+              <div className="baseurl-row">
+                <input
+                  className="baseurl-input"
+                  value={v}
+                  onChange={(e) => setUrls((prev) => ({ ...prev, [p]: e.target.value }))}
+                  onBlur={() => save(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      save(p)
+                    }
+                  }}
+                  placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
+                />
+                {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
+                {dirty ? (
+                  <span className="muted baseurl-state">回车保存</span>
+                ) : saved ? (
+                  <span className="muted baseurl-state">已保存</span>
+                ) : null}
+                {/* 删行 = 取消声明这个协议，不加确认（口径层 v0.96 ②：恢复就是再填一次）。
+                    只剩一行时不给口——渠道至少要声明一个协议，服务端也会拒。 */}
+                {rows.length > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost baseurl-del"
+                    title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
+                    onClick={() => remove(p)}
+                  >
+                    删行
+                  </button>
+                )}
+              </div>
+              {v.trim() !== '' && (
+                <div
+                  className="baseurl-preview"
+                  title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径"
                 >
-                  删行
-                </button>
+                  → <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
+                </div>
               )}
             </div>
-            {v.trim() !== '' && (
-              <div className="url-preview">
-                <span className="muted">预览：</span>
-                <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
-              </div>
-            )}
           </div>
         )
       })}
       {addable.length > 0 && (
         <div className="baseurl-add">
-          <span className="muted">添加端点：</span>
           {addable.map((p) => (
             <button
               key={p}
