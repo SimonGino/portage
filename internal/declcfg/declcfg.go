@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // PlaceholderAPIKey 是 channels.example.yaml 里那把出厂 API Key 的值。
@@ -45,13 +47,18 @@ type File struct {
 //
 // 内嵌而不是平铺加外键引用：渠道名是自然键，凭证与纳管模型都只属于一个渠道，
 // 平铺会让文件里多出两处「这个 channel_name 拼对了吗」的手写引用。
+//
+// **没有 protocols 字段**（口径层 v0.96 ②）：支持协议集由「base_url 里给哪些协议
+// 填了地址」推导，文件里再写一份就能写出自相矛盾。手写 protocols 会被 KnownFields
+// 严格档当场拒掉，正是要的效果。
 type Channel struct {
-	Name           string   `yaml:"name"`
-	Protocols      []string `yaml:"protocols"`
-	BaseURL        string   `yaml:"base_url"`
-	CredentialType string   `yaml:"credential_type"`
-	KeyMode        string   `yaml:"key_mode"`
-	MaxConcurrency int      `yaml:"max_concurrency"`
+	Name string `yaml:"name"`
+	// BaseURL 是每协议出站根地址（口径层 v0.96 ②）：键是协议名，填了即声明该协议，
+	// 至少一个。同一上游共用前缀就是几个键填同一个值；地址仍是协议子路径之前的前缀。
+	BaseURL        store.BaseURLs `yaml:"base_url"`
+	CredentialType string         `yaml:"credential_type"`
+	KeyMode        string         `yaml:"key_mode"`
+	MaxConcurrency int            `yaml:"max_concurrency"`
 
 	SupportsCompaction bool `yaml:"supports_compaction"`
 	// SupportsStatefulResponses 是指针，因为它的 DDL 默认值是 **1**，与 Go 的 bool

@@ -1,11 +1,13 @@
 CREATE TABLE IF NOT EXISTS channels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  -- 支持协议集（口径层 v0.33）：逗号分隔，如 `openai,openai_responses`。取值见
-  -- internal/protocol；v0.36 之前写的 `openai_cc` 由 store.migrate 一次性改写。
-  -- 单值写法仍然合法，就是一元集合——v0.33 之前的行不用改数据。
-  protocols TEXT NOT NULL,
-  base_url TEXT NOT NULL,
+  -- 每协议出站根地址（口径层 v0.96 ②）：空串 = 未声明该协议。支持协议集由「哪些
+  -- 列非空」推导，不再单独存列——「勾了协议但那一侧没有地址」这种自相矛盾从此在
+  -- 形状上表达不出来。至少一列非空由启动闸把守（checkChannelFields）。v0.96 之前的
+  -- 单一 base_url × protocols 由 store.migrate 一次性展开（旧地址复制给每个协议）。
+  base_url_openai TEXT NOT NULL DEFAULT '',
+  base_url_openai_responses TEXT NOT NULL DEFAULT '',
+  base_url_anthropic TEXT NOT NULL DEFAULT '',
   credential_type TEXT NOT NULL DEFAULT 'api_key',
   key_mode TEXT NOT NULL DEFAULT 'polling',
   -- 渠道级最大并发（in-flight）上限（口径层 v0.49）：0 = 不限（默认）。闸在网关

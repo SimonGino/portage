@@ -23,6 +23,7 @@ import (
 	"github.com/SimonGino/portage/internal/admin"
 	"github.com/SimonGino/portage/internal/auth"
 	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/server"
 	"github.com/SimonGino/portage/internal/store"
 )
@@ -476,12 +477,30 @@ func SeedLegacyAPIKey(t *testing.T, db *sql.DB, name, plain string) {
 	}
 }
 
-// SeedChannel 种一个渠道。protocols 是支持协议集（口径层 v0.33），逗号分隔——
-// 传单个协议名就是一元集合，绝大多数用例都这么用。
+// SeedChannel 种一个渠道。protocols 仍按逗号分隔传（用例好读）；落库按口径层
+// v0.96 展开成每协议地址、同一个 baseURL——正是存量迁移之后的形状。各协议地址
+// 不同的用例用 SeedChannelURLs。
 func SeedChannel(t *testing.T, db *sql.DB, name, protocols, baseURL, credential string) int64 {
 	t.Helper()
+	set, err := protocol.ParseSet(protocols)
+	if err != nil {
+		t.Fatalf("解析协议集 %q: %v", protocols, err)
+	}
+	urls := map[protocol.Protocol]string{}
+	for _, p := range set {
+		urls[p] = baseURL
+	}
+	return SeedChannelURLs(t, db, name, urls, credential)
+}
+
+// SeedChannelURLs 种一个每协议地址各给各的渠道（口径层 v0.96：兼容型上游的
+// Anthropic 端点常挂在另一个根下）。
+func SeedChannelURLs(t *testing.T, db *sql.DB, name string, urls map[protocol.Protocol]string, credential string) int64 {
+	t.Helper()
 	res, err := db.Exec(
-		`INSERT INTO channels (name, protocols, base_url) VALUES (?, ?, ?)`, name, protocols, baseURL)
+		`INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic)
+		 VALUES (?, ?, ?, ?)`,
+		name, urls[protocol.OpenAI], urls[protocol.OpenAIResponses], urls[protocol.Anthropic])
 	if err != nil {
 		t.Fatalf("种渠道失败: %v", err)
 	}

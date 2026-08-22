@@ -186,7 +186,7 @@ func TestChannelNameWithSlashIsRejectedOnSave(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	status, body := a.Do(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"vendor/relay","protocols":["openai"],"base_url":"`+up.URL+`",
+		"name":"vendor/relay","base_url":{"openai":"`+up.URL+`"},
 		"credential":"sk-upstream"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("含 `/` 的渠道名应该在保存时就被挡，得到 %d %s", status, body)

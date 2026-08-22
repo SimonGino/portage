@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/SimonGino/portage/internal/protocol"
 	_ "modernc.org/sqlite"
 )
 
@@ -37,8 +36,7 @@ func TestUpdateChannelResetsResponsesBitsWhenProtocolDropped(t *testing.T) {
 	// stateful 默认 1 这里是 0）——归位断言要能同时看见两个方向。
 	id, err := CreateChannel(ctx, db, ChannelInput{
 		Name:                      "qwen",
-		Protocols:                 protocol.Set{protocol.OpenAI, protocol.OpenAIResponses},
-		BaseURL:                   "https://x",
+		BaseURLs:                  BaseURLs{OpenAI: "https://x", OpenAIResponses: "https://x"},
 		SupportsCompaction:        boolPtr(true),
 		SupportsStatefulResponses: boolPtr(false),
 	})
@@ -48,9 +46,8 @@ func TestUpdateChannelResetsResponsesBitsWhenProtocolDropped(t *testing.T) {
 
 	// 取消 Responses 协议保存，请求体不带两个位字段——前端真实的提交形态。
 	err = UpdateChannel(ctx, db, id, ChannelInput{
-		Name:      "qwen",
-		Protocols: protocol.Set{protocol.OpenAI},
-		BaseURL:   "https://x",
+		Name:     "qwen",
+		BaseURLs: BaseURLs{OpenAI: "https://x"},
 	})
 	if err != nil {
 		t.Fatalf("改渠道失败: %v", err)
@@ -70,8 +67,7 @@ func TestUpdateChannelKeepsBitsWhenResponsesStays(t *testing.T) {
 	ctx := context.Background()
 	id, err := CreateChannel(ctx, db, ChannelInput{
 		Name:                      "qwen",
-		Protocols:                 protocol.Set{protocol.OpenAI, protocol.OpenAIResponses},
-		BaseURL:                   "https://x",
+		BaseURLs:                  BaseURLs{OpenAI: "https://x", OpenAIResponses: "https://x"},
 		SupportsCompaction:        boolPtr(true),
 		SupportsStatefulResponses: boolPtr(false),
 	})
@@ -82,9 +78,8 @@ func TestUpdateChannelKeepsBitsWhenResponsesStays(t *testing.T) {
 	// 协议仍含 Responses、请求不带位字段：「nil = 整列不写」必须原样保住，
 	// 不能把 #33 的归位改成对这条路也生效。
 	err = UpdateChannel(ctx, db, id, ChannelInput{
-		Name:      "qwen",
-		Protocols: protocol.Set{protocol.OpenAI, protocol.OpenAIResponses},
-		BaseURL:   "https://y",
+		Name:     "qwen",
+		BaseURLs: BaseURLs{OpenAI: "https://y", OpenAIResponses: "https://y"},
 	})
 	if err != nil {
 		t.Fatalf("改渠道失败: %v", err)
@@ -103,8 +98,7 @@ func TestCreateChannelIgnoresResponsesBitsWithoutProtocol(t *testing.T) {
 	// API 能：不变式在后端，不信请求体。
 	id, err := CreateChannel(ctx, db, ChannelInput{
 		Name:                      "plain",
-		Protocols:                 protocol.Set{protocol.OpenAI},
-		BaseURL:                   "https://x",
+		BaseURLs:                  BaseURLs{OpenAI: "https://x"},
 		SupportsCompaction:        boolPtr(true),
 		SupportsStatefulResponses: boolPtr(false),
 	})

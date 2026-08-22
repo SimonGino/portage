@@ -12,12 +12,22 @@ import (
 )
 
 // seedChannel 灌一个渠道 + 一把启用凭证 + 一个纳管模型 + 一个指向它的接入点。
-// modelProtocols 为空串就是「继承渠道全集」那条常态路径。
+// channelProtocols 仍按逗号分隔传（用例好读），落库时展开成每协议地址、同一个值
+// （口径层 v0.96）。modelProtocols 为空串就是「继承渠道全集」那条常态路径。
 func seedChannel(t *testing.T, db *sql.DB, channelProtocols, modelProtocols string) {
 	t.Helper()
+	set, err := protocol.ParseSet(channelProtocols)
+	if err != nil {
+		t.Fatalf("解析协议集 %q: %v", channelProtocols, err)
+	}
+	var urls BaseURLs
+	for _, p := range set {
+		urls.Set(p, "https://up.example")
+	}
 	if _, err := db.Exec(
-		`INSERT INTO channels (id, name, protocols, base_url) VALUES (1, 'ch', ?, 'https://up.example')`,
-		channelProtocols); err != nil {
+		`INSERT INTO channels (id, name, base_url_openai, base_url_openai_responses, base_url_anthropic)
+		 VALUES (1, 'ch', ?, ?, ?)`,
+		urls.OpenAI, urls.OpenAIResponses, urls.Anthropic); err != nil {
 		t.Fatalf("插渠道: %v", err)
 	}
 	if _, err := db.Exec(

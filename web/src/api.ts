@@ -108,11 +108,31 @@ export const PROTOCOL_SHORT: Record<Protocol, string> = {
   openai_responses: 'Responses',
 }
 
-/** 上游子路径，写在协议勾选框旁边——填 base_url 时最容易搞错的就是它。 */
+/** 上游子路径，写在地址行旁边——填协议地址时最容易搞错的就是它。 */
 export const PROTOCOL_PATH: Record<Protocol, string> = {
   anthropic: '/v1/messages',
   openai: '/v1/chat/completions',
   openai_responses: '/v1/responses',
+}
+
+/**
+ * 每协议一份出站根地址（口径层 v0.96 ②）：键是协议名，**填了哪个键就是声明了哪个
+ * 协议**，支持协议集由它派生，没有独立的勾选。至少一个键。
+ */
+export type BaseURLs = Partial<Record<Protocol, string>>
+
+/** BaseURLs 的固定遍历序，同时是转换时的回退优先级（cc > responses > anthropic）。 */
+export const PROTOCOL_ORDER: Protocol[] = ['openai', 'openai_responses', 'anthropic']
+
+/** 已声明的协议，按回退序。 */
+export function declaredProtocols(urls: BaseURLs): Protocol[] {
+  return PROTOCOL_ORDER.filter((p) => (urls[p] ?? '').trim() !== '')
+}
+
+/** 第一份已填的地址：搜索、厂商图标这类「拿一个代表值」的地方用它。 */
+export function firstBaseURL(urls: BaseURLs): string {
+  const p = declaredProtocols(urls)[0]
+  return p ? urls[p]! : ''
 }
 
 /**
@@ -206,10 +226,12 @@ export interface Channel {
   name: string
   /**
    * 这个渠道能说的上游协议集（口径层 v0.33）。选哪个由入站端点定——能透传就透传，
-   * 所以协议不出现在对外模型名里。
+   * 所以协议不出现在对外模型名里。v0.96 起是**派生值**：由 base_url 里填了哪些键
+   * 推导，后端照旧发下来省得每处自己算。
    */
   protocols: Protocol[]
-  base_url: string
+  /** 每协议出站根地址（v0.96）：填了即声明该协议。写入时整个对象一起提交。 */
+  base_url: BaseURLs
   /** 凭证选取模式（口径层 v0.11）：轮询或随机。 */
   key_mode: KeyMode
   /** 渠道级并发上限（口径层 v0.49）：0 = 不限。 */

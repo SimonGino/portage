@@ -152,7 +152,7 @@ function AccessPointForm({
           value: m.id,
           label: m.upstream_model,
           group: ch.name,
-          keywords: ch.base_url,
+          keywords: Object.values(ch.base_url ?? {}).join(' '),
           icon: <ModelIcon model={m.upstream_model} size={18} />,
         })),
     )

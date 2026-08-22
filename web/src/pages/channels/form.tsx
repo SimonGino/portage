@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON } from '../../api'
-import type { Channel, Protocol } from '../../api'
+import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON, declaredProtocols, firstBaseURL } from '../../api'
+import type { BaseURLs, Channel, Protocol } from '../../api'
 import { ErrorBar, Field } from '../../ui'
-import { Segmented, SegmentedMulti } from '../../fields'
+import { Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
-
-const PROTOCOLS: Protocol[] = ['anthropic', 'openai', 'openai_responses']
 
 /**
  * joinURL 复刻服务端 `upstream.buildURL` 的拼法：右侧去尾斜杠，直接接子路径。
  *
  * 复刻而不是让服务端回一个预览字段——这一行的用途是**在保存之前**就把 `/v1/v1/…`
- * 摆出来，那一刻服务端还没见过这个 base_url。两处拼法必须一致，改一处得改另一处。
+ * 摆出来，那一刻服务端还没见过这个地址。两处拼法必须一致，改一处得改另一处。
  */
 export function joinURL(baseURL: string, path: string): string {
   return baseURL.trim().replace(/\/+$/, '') + path
@@ -42,21 +40,20 @@ export function ChannelForm({
   onDirtyChange?: (dirty: boolean) => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
-  // 支持协议集（口径层 v0.33）。默认只勾 OpenAI：绝大多数上游只提供它，多勾一个探测
-  // 不过反而要人回来改。
-  const [protos, setProtos] = useState<Protocol[]>(
-    channel?.protocols?.length ? channel.protocols : ['openai'],
-  )
-  // base_url 只在**新建**时出现在这张表单里。编辑走模型页上的「API 地址」常驻区块
-  // （PO 2026-08-20），这儿不再留一份：两处各存一份编辑态，后保存的会把先保存的
-  // 悄悄盖回去。
-  const [baseURL, setBaseURL] = useState(channel?.base_url ?? '')
+  // 每协议一份出站根地址（口径层 v0.96 ②）：**填了哪个协议的地址就是声明了哪个协议**，
+  // 没有独立的协议勾选。只在**新建**时出现在这张表单里——编辑走模型页上的「API 地址」
+  // 常驻区块（PO 2026-08-20），这儿不再留一份：两处各存一份编辑态，后保存的会把先
+  // 保存的悄悄盖回去。
+  const [urls, setUrls] = useState<BaseURLs>({})
+  // OpenAI Responses 收进「更多设置」（DESIGN.md v0.32 ③）：回退序里它排第二，但
+  // 用得最少——折叠的是使用频率不是优先级。填过值就自动展开，免得值被折叠藏住。
+  const [more, setMore] = useState(false)
   // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
   const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
-  // compaction 能力位（口径层 v0.54）。只在勾了 Responses 时露出来：它问的是「这个
+  // compaction 能力位（口径层 v0.54）。只在声明了 Responses 时露出来：它问的是「这个
   // 上游认不认 compaction_trigger」，而只有 Responses 透传那条路会去问。
   const [compaction, setCompaction] = useState(channel?.supports_compaction ?? false)
-  // 有状态续链能力位（口径层 v0.88）。同样只在勾了 Responses 时露出来，默认取**是**
+  // 有状态续链能力位（口径层 v0.88）。同样只在声明了 Responses 时露出来，默认取**是**
   // ——与上一位相反：关错会打断一条本来能用的续链，而开错只是让上游自己回一句客户端
   // 读得懂的 not_found。
   const [stateful, setStateful] = useState(channel?.supports_stateful_responses ?? true)
@@ -78,10 +75,12 @@ export function ChannelForm({
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
   const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
 
-  // 能力位只在 Responses 渠道上有意义，所以只有勾了它才露、也只有露着才传（不传 =
-  // 那一列不动，同 key_mode 的整体覆盖陷阱）。取消勾 Responses 之后不去清那一列：
-  // 清了也读不到，而勾回来时人还得再想一遍这个上游支不支持压缩。
-  const showCompaction = protos.includes('openai_responses')
+  const declared = channel ? (channel.protocols ?? []) : declaredProtocols(urls)
+
+  // 能力位只在 Responses 渠道上有意义，所以只有声明了它才露、也只有露着才传（不传 =
+  // 那一列不动，同 key_mode 的整体覆盖陷阱）。取消声明 Responses 之后不去清那一列：
+  // 清了也读不到，而声明回来时人还得再想一遍这个上游支不支持压缩。
+  const showCompaction = declared.includes('openai_responses')
   // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。
   const showStateful = showCompaction
 
@@ -90,12 +89,15 @@ export function ChannelForm({
     (name !== channel.name ||
       maxConcValue !== channel.max_concurrency ||
       (showCompaction && compaction !== channel.supports_compaction) ||
-      (showStateful && stateful !== channel.supports_stateful_responses) ||
-      protos.join(',') !== (channel.protocols ?? []).join(','))
+      (showStateful && stateful !== channel.supports_stateful_responses))
 
   useEffect(() => {
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
+
+  function setURL(p: Protocol, v: string) {
+    setUrls((prev) => ({ ...prev, [p]: v }))
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -110,10 +112,9 @@ export function ChannelForm({
       // 就会拿一份挂载时的旧值把刚拨的那下覆盖回去。
       const body = {
         name,
-        protocols: protos,
         // 编辑时 base_url 从 prop 读（同 disabled）：它的编辑入口在页面上的
         // 「API 地址」区块，这儿回传旧 state 会把那边刚存的覆盖掉。
-        base_url: channel ? channel.base_url : baseURL,
+        base_url: channel ? channel.base_url : urls,
         max_concurrency: maxConcValue,
         ...(showCompaction ? { supports_compaction: compaction } : {}),
         ...(showStateful ? { supports_stateful_responses: stateful } : {}),
@@ -134,6 +135,22 @@ export function ChannelForm({
     }
   }
 
+  /** 一行端点：协议名做标签，地址值即声明。预览紧随其下（§7：能拼出来的就摆出来）。 */
+  function endpointField(p: Protocol, hint?: string) {
+    const v = urls[p] ?? ''
+    return (
+      <Field label={`${PROTOCOL_LABEL[p]} 地址`} hint={hint}>
+        <input value={v} onChange={(e) => setURL(p, e.target.value)} placeholder="留空 = 不声明这个协议" />
+        {v.trim() !== '' && (
+          <div className="url-preview">
+            <span className="muted">预览：</span>
+            <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
+          </div>
+        )}
+      </Field>
+    )
+  }
+
   return (
     /* form 自己就是那一段，段标题栏在它内部——保存按钮因此能坐在标题右边，跟
        「检测」「获取模型列表」同一档位置，省掉表单底下那条只装一颗按钮的行。 */
@@ -147,56 +164,33 @@ export function ChannelForm({
               取消
             </button>
           )}
-          <button className="btn btn-primary" disabled={busy || !name.trim() || (channel !== null && !dirty)}>
+          <button
+            className="btn btn-primary"
+            disabled={busy || !name.trim() || (channel !== null && !dirty) || (channel === null && declared.length === 0)}
+          >
             {busy ? '保存中…' : channel ? '保存' : '创建'}
           </button>
         </div>
       </header>
 
-      {/* 图标是从 base_url 的 host 猜出来的（渠道没有「供应商」这个字段）。
+      {/* 图标是从地址的 host 猜出来的（渠道没有「供应商」这个字段）。
           边填边显示，等于顺手校验了域名有没有填错——图标一直是首字母块，
-          多半是 base_url 还没填对。 */}
+          多半是地址还没填对。 */}
       {!channel && (
         <div className="form-preview">
-          <Avatar vendor={vendorForChannel({ name, base_url: baseURL })} fallback={name || '?'} size={40} />
+          <Avatar vendor={vendorForChannel({ name, base_url: urls })} fallback={name || '?'} size={40} />
           <div>
             <div className="form-preview-name">{name || '未命名渠道'}</div>
-            <div className="muted">{baseURL || '还没填 base_url'}</div>
+            <div className="muted">{firstBaseURL(urls) || '还没填协议地址'}</div>
           </div>
         </div>
       )}
 
-      {/* 名字与协议集并排：一个短输入 + 三颗按钮，各自占一整行是纯浪费。 */}
+      {/* 名字与并发并排：一宽一窄，各占一行是浪费。 */}
       <div className="form-row">
         <Field label="渠道名" hint="限定名的前半截（如 bailian/qwen3-max），不能含 `/`">
           <input autoFocus={!channel} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="支持的上游协议" hint="这个上游能说的都勾上，不必按协议拆成两个渠道">
-          <SegmentedMulti
-            value={protos}
-            onChange={setProtos}
-            options={PROTOCOLS.map((p) => ({
-              value: p,
-              label: PROTOCOL_LABEL[p],
-              // 子路径只进 title，不摆在按钮里：下面那行完整地址预览已经把它显示
-              // 出来了，而且显示的是真会被请求的那一串；摆在这儿只会把三颗按钮
-              // 撑到换行。
-              title: PROTOCOL_PATH[p],
-            }))}
-            soon={PROTOCOL_SOON}
-          />
-        </Field>
-      </div>
-      {/* base_url 存的是「协议子路径之前」的前缀，子路径由网关自己接。这里不写
-          「不要带 /v1」那句提示了——下面那行预览把拼出来的结果直接摆出来，比任何
-          一句提示都硬。并发上限与它并排：一宽一窄，各占一行是浪费。
-          编辑态没有 Base URL（它在页面上的「API 地址」区块里），这一行只剩并发上限。 */}
-      <div className="form-row">
-        {!channel && (
-          <Field label="Base URL">
-            <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
-          </Field>
-        )}
         <Field label="并发上限" hint="同时打向这个上游的请求数上限，超出的在网关排队；留空 = 不限">
           <input
             type="number"
@@ -208,6 +202,35 @@ export function ChannelForm({
           />
         </Field>
       </div>
+
+      {/* 端点设置（口径层 v0.96 ②，DESIGN.md v0.32 ③）：每协议一行地址，**填了即声明
+          该协议**，没有勾选框。地址存的是「协议子路径之前」的前缀，子路径由网关自己接
+          ——每行下面的预览把拼出来的结果直接摆出来，比任何一句「不要带 /v1」都硬。
+          OpenAI / Anthropic 常驻，Responses 收「更多设置」。
+          编辑态没有这一段（它在页面上的「API 地址」区块里）。 */}
+      {!channel && (
+        <>
+          <div className="form-row">
+            {endpointField('openai', '填了即声明该协议，同一上游共用前缀就几行填同一个值')}
+            {endpointField('anthropic')}
+          </div>
+          {!more && !(urls.openai_responses ?? '').trim() ? (
+            <button type="button" className="btn btn-quiet" onClick={() => setMore(true)}>
+              更多设置（OpenAI Responses{PROTOCOL_SOON.length ? '、' + PROTOCOL_SOON.map((s) => s.label).join('、') : ''}）
+            </button>
+          ) : (
+            <div className="form-row">
+              {endpointField(
+                'openai_responses',
+                PROTOCOL_SOON.length
+                  ? PROTOCOL_SOON.map((s) => `${s.label} ${s.hint}`).join('；')
+                  : undefined,
+              )}
+            </div>
+          )}
+        </>
+      )}
+
       {/* Codex 压缩能力位（口径层 v0.54）。默认「不支持」，得人明确勾——上游认不认
           compaction_trigger 网关探不出来，而猜错的代价是 Codex 在长会话里直接 Fatal。 */}
       {showCompaction && (
@@ -242,20 +265,6 @@ export function ChannelForm({
             onChange={(v) => setStateful(v === 'yes')}
           />
         </Field>
-      )}
-      {/* 边填边把拼出来的完整地址摆出来。这是 base_url 那个必踩的坑唯一说得清的
-          方式——上面那句提示写了「不带 /v1」，但人是照着上游文档粘的，粘进来的多半
-          就带；只有把 `…/v1/v1/chat/completions` 摆在眼前，那句提示才真的被读到。
-          编辑态的预览跟着「API 地址」区块走了，这份只给新建。 */}
-      {!channel && baseURL.trim() !== '' && protos.length > 0 && (
-        <div className="url-preview">
-          {protos.map((p) => (
-            <div key={p}>
-              <span className="muted">预览 {PROTOCOL_LABEL[p]}：</span>
-              <code>{joinURL(baseURL, PROTOCOL_PATH[p] ?? '')}</code>
-            </div>
-          ))}
-        </div>
       )}
       {/* 提示语里曾有「只写不回读：保存之后页面上再也看不到它」，v0.47 之后那是假话
           ——建完在「上游凭证」段里能看能复制。 */}

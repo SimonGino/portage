@@ -22,7 +22,7 @@ func TestDeleteChannelNamesTheAccessPointsHoldingIt(t *testing.T) {
 		ID int64 `json:"id"`
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"old-resp","protocols":["openai_responses"],"base_url":"`+up.URL+`",
+		"name":"old-resp","base_url":{"openai_responses":"`+up.URL+`"},
 		"credential":"sk-upstream"}`, &ch)
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
 		`{"upstream_model":"gpt-5.6-luna"}`, nil)
@@ -55,7 +55,7 @@ func TestDeleteChannelModelNamesTheAccessPointsHoldingIt(t *testing.T) {
 		ID int64 `json:"id"`
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"old-resp","protocols":["openai_responses"],"base_url":"`+up.URL+`",
+		"name":"old-resp","base_url":{"openai_responses":"`+up.URL+`"},
 		"credential":"sk-upstream"}`, &ch)
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
 		`{"upstream_model":"gpt-5.6-luna"}`, nil)
@@ -87,7 +87,7 @@ func TestDeleteChannelSucceedsOnceTheAccessPointPointsElsewhere(t *testing.T) {
 			ID int64 `json:"id"`
 		}
 		a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-			"name":"`+name+`","protocols":["openai"],"base_url":"`+up.URL+`",
+			"name":"`+name+`","base_url":{"openai":"`+up.URL+`"},
 			"credential":"sk-upstream"}`, &ch)
 		a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
 			`{"upstream_model":"gpt-5.6-luna"}`, nil)

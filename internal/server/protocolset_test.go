@@ -99,13 +99,14 @@ func TestCountTokensNeedsAnthropicInTheSet(t *testing.T) {
 	}
 }
 
-// 启动闸：protocols 空了的渠道选不出出站协议，每次请求才 500——按 v0.21 通则
-// 启动即报。
+// 启动闸：一个协议地址都没填的渠道选不出出站协议，每次请求才 500——按 v0.21 通则
+// 启动即报。协议集是从地址派生的（v0.96），「协议集为空」如今就是「三列地址全空」。
 func TestStartupGateRejectsAnEmptyProtocolSet(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	ch := gatewaytest.SeedChannel(t, db, "broken", "openai", "https://example.invalid", "sk-x")
-	if _, err := db.Exec(`UPDATE channels SET protocols = '' WHERE id = ?`, ch); err != nil {
-		t.Fatalf("改坏 protocols 失败: %v", err)
+	if _, err := db.Exec(`UPDATE channels SET base_url_openai = '',
+		base_url_openai_responses = '', base_url_anthropic = '' WHERE id = ?`, ch); err != nil {
+		t.Fatalf("清空协议地址失败: %v", err)
 	}
 	err := store.Validate(t.Context(), db)
 	if err == nil || !strings.Contains(err.Error(), "broken") {
@@ -148,16 +149,19 @@ func TestOpenMigratesTheOldProtocolColumn(t *testing.T) {
 	}
 	defer db.Close()
 
-	var protocols string
-	if err := db.QueryRow(`SELECT protocols FROM channels WHERE name = 'old'`).Scan(&protocols); err != nil {
-		t.Fatalf("迁移后读不到 protocols: %v", err)
+	// v0.33 改列名（单值在新语义下就是一元集合），v0.36 把 openai_cc 折成现名，
+	// v0.96 再把「协议集 × 单一地址」展开成每协议一列——三次迁移串完，效果落在
+	// base_url_openai 上，别的两列必须还是空。
+	var urls store.BaseURLs
+	if err := db.QueryRow(`SELECT base_url_openai, base_url_openai_responses, base_url_anthropic
+		FROM channels WHERE name = 'old'`).
+		Scan(&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic); err != nil {
+		t.Fatalf("迁移后读不到协议地址列: %v", err)
 	}
-	// v0.33 那一步不动值（单值在新语义下就是一元集合），v0.36 那一步把它改成现名。
-	if protocols != "openai" {
-		t.Errorf("protocols = %q，期望两次迁移串完落到 openai", protocols)
+	if urls != (store.BaseURLs{OpenAI: "https://h"}) {
+		t.Errorf("迁移后 = %+v，期望只有 openai 落上 https://h", urls)
 	}
-	set, err := protocol.ParseSet(protocols)
-	if err != nil || !set.Has(protocol.OpenAI) {
-		t.Errorf("迁移后的值解不成集合: %v", err)
+	if !urls.Protocols().Has(protocol.OpenAI) {
+		t.Errorf("派生协议集里没有 openai: %v", urls.Protocols())
 	}
 }

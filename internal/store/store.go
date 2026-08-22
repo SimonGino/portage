@@ -102,7 +102,85 @@ func migrate(db *sql.DB) error {
 	if err := addEndpoint(db); err != nil {
 		return err
 	}
-	return addUpstreamEndpoint(db)
+	if err := addUpstreamEndpoint(db); err != nil {
+		return err
+	}
+	return expandBaseURLs(db)
+}
+
+// expandBaseURLs 把 v0.96 之前的单一 base_url × protocols 展开成每协议一列地址：
+// 旧地址复制给协议集里的每个协议，迁移前后行为逐字节等价（口径层 v0.96 ②）。
+//
+// 旧的 protocols / base_url 两列随手删掉——支持协议集从此由「哪些列非空」推导，
+// 留着旧列就是第二份事实源，谁写谁读都会漂。必须排在 renameOpenAICC 之后：
+// 复制按 ParseSet 解析旧集合，`openai_cc` 先折成现名这一步不欠新债（ParseSet 自己
+// 也折，但迁移的秩序不该靠这层巧合）。
+//
+// 解析不动 protocols 的行（手写 SQL 灌坏的、多半是停用渠道）不掀翻迁移：那种行
+// 迁完就是「一个协议都没声明」，启用它时启动闸自然会拦，比整个进程起不来好修得多。
+func expandBaseURLs(db *sql.DB) error {
+	has, err := hasColumn(db, "channels", "base_url")
+	if err != nil {
+		return fmt.Errorf("检查 channels.base_url: %w", err)
+	}
+	if !has {
+		return nil
+	}
+	for _, col := range []string{"base_url_openai", "base_url_openai_responses", "base_url_anthropic"} {
+		exists, err := hasColumn(db, "channels", col)
+		if err != nil {
+			return fmt.Errorf("检查 channels.%s: %w", col, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.Exec(
+			`ALTER TABLE channels ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("迁移 channels.%s: %w", col, err)
+		}
+	}
+	rows, err := db.Query(`SELECT id, protocols, base_url FROM channels`)
+	if err != nil {
+		return fmt.Errorf("读存量渠道: %w", err)
+	}
+	type expanded struct {
+		id   int64
+		urls BaseURLs
+	}
+	var todo []expanded
+	for rows.Next() {
+		var e expanded
+		var protocols, baseURL string
+		if err := rows.Scan(&e.id, &protocols, &baseURL); err != nil {
+			rows.Close()
+			return fmt.Errorf("读存量渠道: %w", err)
+		}
+		set, err := protocol.ParseSet(protocols)
+		if err != nil {
+			continue
+		}
+		for _, p := range set {
+			e.urls.Set(p, baseURL)
+		}
+		todo = append(todo, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("读存量渠道: %w", err)
+	}
+	for _, e := range todo {
+		if _, err := db.Exec(`UPDATE channels SET base_url_openai = ?,
+			base_url_openai_responses = ?, base_url_anthropic = ? WHERE id = ?`,
+			e.urls.OpenAI, e.urls.OpenAIResponses, e.urls.Anthropic, e.id); err != nil {
+			return fmt.Errorf("展开渠道 %d 的地址: %w", e.id, err)
+		}
+	}
+	for _, col := range []string{"base_url", "protocols"} {
+		if _, err := db.Exec(`ALTER TABLE channels DROP COLUMN ` + col); err != nil {
+			return fmt.Errorf("删旧列 channels.%s: %w", col, err)
+		}
+	}
+	return nil
 }
 
 // addEndpoint 补 call_logs.endpoint（#17）。
@@ -385,12 +463,22 @@ func addCredentialNames(db *sql.DB) error {
 // 不设「跑过没有」的标记：改完之后库里再没有 `openai_cc`，第二次跑就是零行命中。
 // 幂等本身就是它的守卫，比一张会跟实际形状漂移的版本表可信。
 func renameOpenAICC(db *sql.DB) error {
-	for _, stmt := range []string{
-		`UPDATE channels  SET protocols = REPLACE(protocols, 'openai_cc', 'openai')
-		   WHERE protocols LIKE '%openai_cc%'`,
+	stmts := []string{
 		`UPDATE call_logs SET client_protocol = 'openai'   WHERE client_protocol = 'openai_cc'`,
 		`UPDATE call_logs SET upstream_protocol = 'openai' WHERE upstream_protocol = 'openai_cc'`,
-	} {
+	}
+	// channels.protocols 只在 v0.96 之前的老库里还存在（之后支持协议集由每协议地址
+	// 推导，expandBaseURLs 把这列删了）；新库上这条 UPDATE 会因列不存在直接报错。
+	has, err := hasColumn(db, "channels", "protocols")
+	if err != nil {
+		return fmt.Errorf("检查 channels.protocols: %w", err)
+	}
+	if has {
+		stmts = append(stmts,
+			`UPDATE channels SET protocols = REPLACE(protocols, 'openai_cc', 'openai')
+			   WHERE protocols LIKE '%openai_cc%'`)
+	}
+	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("迁移协议名 openai_cc → openai: %w", err)
 		}
@@ -479,11 +567,12 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 	return resolveDirect(ctx, db, model, inbound)
 }
 
-// usableProtocols 把库里那两列收成「这个纳管模型当下真能走的协议集」。
+// usableProtocols 收出「这个纳管模型当下真能走的协议集」。
 //
-// channelRaw 是渠道的支持协议集，modelRaw 是纳管模型自己声明的子集（口径层 v0.40，
-// 空串 = 继承渠道全集）。真正可用的是两者的交集——渠道会说 anthropic 不代表它下面
-// 每个模型都在 `/v1/messages` 上存在，而那正是「渠道级探测全通、请求照样 404」的成因。
+// urls 是渠道的每协议地址（口径层 v0.96：支持协议集就是「哪些协议填了地址」），
+// modelRaw 是纳管模型自己声明的子集（口径层 v0.40，空串 = 继承渠道全集）。真正可用
+// 的是两者的交集——渠道会说 anthropic 不代表它下面每个模型都在 `/v1/messages` 上
+// 存在，而那正是「渠道级探测全通、请求照样 404」的成因。
 //
 // **路由（pickProtocol）与 /v1/models 的直连清单（ListExposedModels）共用这一个函数**，
 // 不是为了省几行：这两处各算各的交集，清单就会列出一个必然 503 的名字，而「列出来的
@@ -491,16 +580,16 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 //
 // 三种失败分两档，不能混：
 //
-//   - 两列**解析**失败 → 500。启动闸的 checkChannelFields 扫的是全部未停用渠道，
-//     这一列有问题的话进程根本起不来；真走到这儿说明库是在运行中被手写 SQL 改坏的，
-//     报错让它回 500，别猜一个协议继续往上游发。
+//   - 渠道**一个协议地址都没填**、或模型那列**解析**失败 → 500。启动闸的
+//     checkChannelFields / checkModelProtocols 扫的是全部未停用渠道，真走到这儿
+//     说明库是在运行中被手写 SQL 改坏的，报错让它回 500，别猜一个协议继续发。
 //   - 交集**为空** → ErrNoUsableCandidate（503）。这是合法配置下的正常收场，不是库
 //     坏了：渠道协议集缩小之后，模型上那份没跟着改的子集就与它不再重合。它跟「渠道
 //     停用」「凭证归零」是同一种「现在用不了」，报 500 会把人引去查数据损坏。
-func usableProtocols(channelRaw, modelRaw string) (protocol.Set, error) {
-	set, err := protocol.ParseSet(channelRaw)
-	if err != nil {
-		return nil, fmt.Errorf("渠道的 protocols 列不合法: %w", err)
+func usableProtocols(urls BaseURLs, modelRaw string) (protocol.Set, error) {
+	set := urls.Protocols()
+	if len(set) == 0 {
+		return nil, errors.New("渠道没有声明任何协议地址")
 	}
 	// 空串走继承，不进 ParseSet——它对空输入是报错的（「支持协议集不能为空」），
 	// 而这一列的空恰恰是最常见的正常值。
@@ -513,21 +602,21 @@ func usableProtocols(channelRaw, modelRaw string) (protocol.Set, error) {
 	}
 	if set = set.Intersect(sub); len(set) == 0 {
 		return nil, fmt.Errorf(
-			"纳管模型声明的协议 %q 与渠道的 %q 没有交集: %w",
-			modelRaw, channelRaw, ErrNoUsableCandidate)
+			"纳管模型声明的协议 %q 与渠道声明的 %q 没有交集: %w",
+			modelRaw, urls.Protocols().String(), ErrNoUsableCandidate)
 	}
 	return set, nil
 }
 
 // pickProtocol 从可用协议集里定本次请求打上游哪一个。失败分档见 usableProtocols。
-func pickProtocol(channelRaw, modelRaw string, inbound protocol.Protocol) (protocol.Protocol, error) {
-	set, err := usableProtocols(channelRaw, modelRaw)
+func pickProtocol(urls BaseURLs, modelRaw string, inbound protocol.Protocol) (protocol.Protocol, error) {
+	set, err := usableProtocols(urls, modelRaw)
 	if err != nil {
 		return "", err
 	}
 	p, ok := set.Choose(inbound)
 	if !ok {
-		return "", fmt.Errorf("渠道的 protocols 列选不出协议: %q", channelRaw)
+		return "", fmt.Errorf("渠道声明的协议集选不出协议: %q", set.String())
 	}
 	return p, nil
 }
@@ -552,9 +641,10 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	}
 
 	c := Candidate{RequestedModel: model}
-	var protocols, modelProtocols string
+	var urls BaseURLs
+	var modelProtocols string
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
+		SELECT cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
 		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
@@ -562,7 +652,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &modelProtocols, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
@@ -577,9 +667,11 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	if len(c.Credentials) == 0 {
 		return Candidate{}, ErrNoUsableCandidate
 	}
-	if c.Protocol, err = pickProtocol(protocols, modelProtocols, inbound); err != nil {
+	if c.Protocol, err = pickProtocol(urls, modelProtocols, inbound); err != nil {
 		return Candidate{}, fmt.Errorf("接入点 %q: %w", model, err)
 	}
+	// 出站根地址跟着命中协议走（口径层 v0.96）：同渠道各协议的地址可以不同。
+	c.BaseURL = urls.Get(c.Protocol)
 	return c, nil
 }
 
@@ -616,9 +708,10 @@ func loadCredentials(ctx context.Context, db *sql.DB, channelID int64) ([]Creden
 // 的模型 b/c 与渠道 a/b 的模型 c 会拼出同一个限定名，下面的 LIMIT 1 静默挑一个。
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
-	var protocols, modelProtocols string
+	var urls BaseURLs
+	var modelProtocols string
 	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, ch.protocols, cm.protocols, ch.base_url, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
+		SELECT cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
@@ -626,7 +719,7 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		  AND EXISTS (SELECT 1 FROM channel_keys ck
 		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &protocols, &modelProtocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &modelProtocols, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 	if err == nil {
 		if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 			return Candidate{}, err
@@ -634,9 +727,10 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		if len(c.Credentials) == 0 {
 			return Candidate{}, ErrNoUsableCandidate
 		}
-		if c.Protocol, err = pickProtocol(protocols, modelProtocols, inbound); err != nil {
+		if c.Protocol, err = pickProtocol(urls, modelProtocols, inbound); err != nil {
 			return Candidate{}, fmt.Errorf("纳管模型 %q: %w", model, err)
 		}
+		c.BaseURL = urls.Get(c.Protocol)
 		return c, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -695,12 +789,12 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id, '', ''
+		SELECT model, COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0), 0 AS direct, id, '', '', '', ''
 		FROM access_points WHERE disabled = 0
 		UNION ALL
 		SELECT ch.name || '/' || cm.upstream_model,
 		       COALESCE(CAST(strftime('%s', cm.created_at) AS INTEGER), 0), 1, cm.id,
-		       ch.protocols, cm.protocols
+		       ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, cm.protocols
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE cm.disabled = 0 AND ch.disabled = 0
@@ -720,13 +814,14 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 	for rows.Next() {
 		var m ExposedModel
 		var id int64
-		var channelProtocols, modelProtocols string
+		var urls BaseURLs
+		var modelProtocols string
 		if err := rows.Scan(
-			&m.ID, &m.CreatedAt, &m.Direct, &id, &channelProtocols, &modelProtocols); err != nil {
+			&m.ID, &m.CreatedAt, &m.Direct, &id, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &modelProtocols); err != nil {
 			return nil, err
 		}
 		if m.Direct {
-			if _, err := usableProtocols(channelProtocols, modelProtocols); err != nil {
+			if _, err := usableProtocols(urls, modelProtocols); err != nil {
 				continue
 			}
 		} else if dead[id] {
@@ -752,7 +847,7 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 // checkSingleCandidate），这里不替它改判。
 func deadAccessPoints(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT cd.access_point_id, ch.protocols, cm.protocols
+		SELECT cd.access_point_id, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, cm.protocols
 		FROM candidates cd
 		JOIN channel_models cm ON cm.id = cd.channel_model_id
 		JOIN channels ch       ON ch.id = cm.channel_id`)
@@ -764,11 +859,12 @@ func deadAccessPoints(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
 	alive, dead := make(map[int64]bool), make(map[int64]bool)
 	for rows.Next() {
 		var apID int64
-		var channelProtocols, modelProtocols string
-		if err := rows.Scan(&apID, &channelProtocols, &modelProtocols); err != nil {
+		var urls BaseURLs
+		var modelProtocols string
+		if err := rows.Scan(&apID, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &modelProtocols); err != nil {
 			return nil, err
 		}
-		if _, err := usableProtocols(channelProtocols, modelProtocols); err == nil {
+		if _, err := usableProtocols(urls, modelProtocols); err == nil {
 			alive[apID] = true
 		} else {
 			dead[apID] = true
@@ -938,12 +1034,13 @@ func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) 
 // are maintained until the admin UI lands in M3.
 func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT id, name, protocols, credential_type, base_url
+		SELECT id, name, credential_type, base_url_openai, base_url_openai_responses, base_url_anthropic
 		FROM channels WHERE disabled = 0`,
 		func(rows *sql.Rows) (string, error) {
 			var id int64
-			var name, protocols, credType, baseURL string
-			if err := rows.Scan(&id, &name, &protocols, &credType, &baseURL); err != nil {
+			var name, credType string
+			var urls BaseURLs
+			if err := rows.Scan(&id, &name, &credType, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic); err != nil {
 				return "", err
 			}
 			// 渠道名不能含 `/`：限定名 `渠道名/纳管模型名` 是拼起来比对的，两边都
@@ -953,22 +1050,25 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 				return fmt.Sprintf("渠道 %q (id=%d) 的名字含 `/`，会让限定名 `渠道名/纳管模型名` 产生歧义"+
 					"（纳管模型名本身常带 `/`）；改个不带 `/` 的渠道名", name, id), nil
 			}
-			// 支持协议集非空且逐项合法（v0.33）。这一列是逗号分隔的集合，不再是单值：
-			// 空集合的渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。
-			if _, err := protocol.ParseSet(protocols); err != nil {
-				return fmt.Sprintf("渠道 %q (id=%d) 的 protocols=%q 不合法：%v（逗号分隔，取值 anthropic/openai/openai_responses）",
-					name, id, protocols, err), nil
-			}
-			switch {
-			case credType != "api_key":
+			if credType != "api_key" {
 				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q，M0 只支持 api_key", name, id, credType), nil
 			}
-			// 只报「哪里不对」，不回显 base_url 本身——它可能带 userinfo，
-			// 那就是把上游密码打进 stderr（CLAUDE.md：错误回显严禁泄露 base_url）。
-			if why := badBaseURL(baseURL); why != "" {
-				return fmt.Sprintf("渠道 %q (id=%d) 的 base_url %s；它要填到「协议子路径之前」，"+
-					"例如 https://api.anthropic.com。按不泄露上游地址的约定这里不回显实际值，"+
-					"请查 channels 表核对", name, id, why), nil
+			// 至少一个协议要填地址（口径层 v0.96：支持协议集由地址推导）：零地址的
+			// 渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。
+			if len(urls.Protocols()) == 0 {
+				return fmt.Sprintf("渠道 %q (id=%d) 一个协议的出站根地址都没填；"+
+					"至少给一个协议填上 Base URL（base_url_openai / base_url_openai_responses / base_url_anthropic）",
+					name, id), nil
+			}
+			// 每份已填地址各过一遍（v0.21 通则逐份适用）。只报「哪个协议的地址哪里
+			// 不对」，不回显地址本身——它可能带 userinfo，那就是把上游密码打进
+			// stderr（CLAUDE.md：错误回显严禁泄露 base_url）。
+			for _, p := range urls.Protocols() {
+				if why := badBaseURL(urls.Get(p)); why != "" {
+					return fmt.Sprintf("渠道 %q (id=%d) 的 %s 协议地址%s；它要填到「协议子路径之前」，"+
+						"例如 https://api.anthropic.com。按不泄露上游地址的约定这里不回显实际值，"+
+						"请查 channels 表核对", name, id, p, why), nil
+				}
 			}
 			return "", nil
 		})

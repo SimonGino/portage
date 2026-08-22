@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.11
+> 状态：草案 v1.12
+> v1.12 变更（口径层 v0.96 ② 落地：渠道地址改「协议 → 出站根地址」映射，协议集降为派生值，[#41](https://github.com/SimonGino/portage/issues/41)，2026-08-22）：①**存储取三列不取子表**：`channels` 的 `protocols` + `base_url` 两列换成 `base_url_openai` / `base_url_openai_responses` / `base_url_anthropic`（TEXT NOT NULL DEFAULT ''，空串 = 未声明）——协议枚举封死在 3（v0.17 拒了第 4 家），热路径保持单行扫描；支持协议集自此是派生值，旧列随迁移删掉，不留第二事实源。迁移 `store.expandBaseURLs`（旧地址复制给每个已声明协议、ParseSet 解不动的存量行落三列全空交启动闸、迁完 DROP COLUMN——modernc.org/sqlite v1.56 支持），`renameOpenAICC` 的 channels 半边加 hasColumn 守卫（新库已无 `protocols` 列）。②**类型落点 `store.BaseURLs`**（json+yaml 双 tag，字段序 = 回退序 openai → responses → anthropic，导出稳定序靠它）：`Protocols()` 派生集合、`Get/Set`、`First()`（fetch-models 按回退序取第一份已填地址，单 URL 传给既有 `ListModelsFor` 不动）。`pickProtocol` / `usableProtocols` 改收 `BaseURLs`，命中协议后 `Candidate.BaseURL` 取那一列——`upstream.buildURL` 与热路径一字未动；零地址是 500 档普通错误（库坏），交集为空仍是 `ErrNoUsableCandidate`（503 档），两档分界原样。③**管理端 `base_url` 改协议名→地址对象**（双向）：入参收 `map[string]string` 不收结构体（结构体把拼错的键静默丢掉，报错会指错方向），未知键 400 点名；映射删空即拒（「删掉最后一行地址」的口，服务端闸）；`protocols` 字段不再收、回包保留（派生，省得前端每处自算）。probeModelMatrix 的协议子集与派生集取交（未声明的协议没有地址可探）。④**declcfg**：`Channel` 删 `Protocols` 字段（KnownFields 之下手写 `protocols` 当场拒，正是要的效果——文件里再写一份就能写出自相矛盾），`BaseURL` 改 `store.BaseURLs` 嵌套映射；示范与往返闸随 `PORTAGE_UPDATE_EXAMPLE=1` 重新生成。⑤**前端**（DESIGN v0.32 ②③）：API 地址区块每协议一行（失焦/回车即存、预览逐行紧随、「添加端点」加行、删行 = 取消声明不加确认、至少留一行），新建表单 OpenAI/Anthropic 地址常驻、Responses 收「更多设置」，协议勾选（SegmentedMulti）整个退场；左栏搜索匹配任意协议地址，厂商图标取回退序第一份。⑥**测试**：主缝 `internal/server/baseurlmap_test.go`（同渠道 openai/anthropic 各指一个假上游——透传与转换各按命中协议落到各自的根、派生集撑起 /v1/models 与路由、删最后一行 400、未知键 400 点名）；store 内测迁移三条（展开、脏行跳过、逐列启动闸不回显值）；既有用例换形：启动闸断言词从 `base_url` 改「协议地址」（报错文案换了，不回显值的纪律不变）、`TestStartupGateRejectsUnknownProtocol` 载体从渠道列改 `channel_models.protocols`（渠道侧拼错在新形状下表达不出来）、v0.33/v0.36 两次迁移的用例改为三次迁移串跑、断到 `base_url_*` 列上。检测弹层与子路径探测拆除是 [#42](https://github.com/SimonGino/portage/issues/42)，不在本票。修改人 jinpenga。
 > v1.11 变更（口径层 v0.95 落地：凭证 401 自动摘除整个拆除，PO 2026-08-21 裁定「不摘」，2026-08-21）：①**删三件**：`upstream.Client.Disable` 挂钩（连同 `do()` 里 401 命中时的调用）、`server.disableCredential`、`store.DisableCredential`——自动摘除的整条链只有这三处，401/403/429 换凭证重试的 key 层内环一字不动。②`channel_keys` 三列（disabled/reason/at）与人工停用/恢复接口原样保留，自此只有 `UpdateCredential` 一个写入方；`UpdateCredential` 停用侧的 COALESCE 保留（护住存量库里自动摘除时代写的原因）。③**用例改判**：`TestKeyRingSwitchesOn401AndDisablesOnlyThatCredential` 改 `…ButDisablesNothing`（401 换凭证成功 + 全部凭证状态不动），`TestDisabledCredentialIsNotSelectedAgain` 改 `TestDisabledCredentialIsNotSelected`（停用源从自动摘除改为 SQL 人工停用，「停用凭证不进候选集」这条语义照钉）；凭证耗尽与 429 预算两条的「不摘」断言扩到 401；`waitDisabled` 助手删除；`declcfg` 的 `TestApplyKeepsDisabledCredential` 停用源同改。④本层 §6 故障转移图、§7 DDL 注释、§7.9 那条「单凭证渠道摘除后重启拒启」交互记录同步改写；正文各处「401 摘除现场」读作「停用现场」（口径层 v0.95 尾注同此）。修改人 jinpenga。
 > v1.10 变更（[#8](https://github.com/SimonGino/portage/issues/8) 处置落地：转换流水竞态修复——收场次序重排（方案 B，PO 2026-08-20 裁定），复现用例转正，2026-08-20）：①**修法**：`streamConverted` 两个写出失败的 panic 分支（首次 `advance()` 失败与 `EncodeStream` 报错）统一改走 `abortDecode`——先 `resp.Body.Close()`（解码 goroutine 的下一次 Read 立刻出错收摊，排空因此有界，不会挂在一条还在灌数据的连接上）、再把事件通道排空**到关闭**（channel close 给出解码侧全部写入对 handler 侧的 happens-before 边）、之后才 `panic(http.ErrAbortHandler)`；panic 展开里 defer 的 `rec.Summarized(tap.Summary())` 与 LogBodies 的 body 收集器读到的都是解码侧写完的最终状态。**零锁**，一处改动同时治 Tap 与收集器，Summary 照到的是「上游连接断掉前收到的全部字节」——弃掉的 A 案（TapCore 加 mutex）只治「读到旧值」不治时机，且 LogBodies 那侧要另锁一处。②v1.08 ④ 记档的**首次 `advance()` 失败分支缺排空的 goroutine 泄漏顺手同修**（同一个 `abortDecode`，PO 同批裁定不另立票）。③**复现用例转正**（`convertrace_test.go` 去掉 `PORTAGE_RACE_REPRO` 跳过）：拓扑用例改钉**新收场次序**（`TestConvertStreamTapAbortOrderingHasNoRace`：先断读端、排空到关闭、才 Summary，-race 下 5 连跑全绿；修复前的 `go drain + Summary` 形态三连跑三报，若再报即回归）；整链用例原样转正（~35s 等写超时是形态本身的价格，仍断 `stream_aborted`，-race 绿）——「检出靠拓扑、可达性靠整链」的分工不变。④`drainEvents` 并入 `abortDecode`（唯一调用方就是这两个分支），`streamConverted` 签名加 `upstreamBody io.Closer`（defer 的 Close 会再关一次，无害）。修改人 jinpenga。
 > v1.09 变更（[#13](https://github.com/SimonGino/portage/issues/13) 落地：Anthropic 缓存两项的真实转录入库，2026-08-20）：PO 提供 pollo-sub2api 渠道（响应体逐字节透明的 Anthropic 协议中转，2026-08-15 实测依据见票面）后按票面采法执行。①**四份 golden 样本**：`anthropic-cache-write` / `anthropic-cache-hit`（非流式一对）与 `anthropic-stream-cache-write` / `anthropic-stream-cache-hit`（流式一对），claude-sonnet-5。请求是自造定长手册文本（60 段、流式与非流式用不同前缀变体各建各的缓存），system 块末尾挂 `cache_control:ephemeral`，同一请求连打两遍——建缓存那遍 `cache_creation_input_tokens=7059`、命中那遍 `cache_read_input_tokens=7059`，**两个字段各自都有真字节走到**。expect 用 python 扫字节独立重算，不取 goldenrec 预填值；`thinking_tokens` 键在值 0 → `ReasoningTokens=0 / HasReasoningTokens=true`（v0.66 的「报了但没思考」档）。②**两边各有断言**（口径层 v0.71 的分工，真字节各走一遍）：Tap 侧进 `golden_test.go` 新开的 `cacheSamples` 表（第四张单列表，理由同前三张——进度归属不同），断上游原样的**净值** 37；canonical 侧新增 `cachegolden_test.go`，断毛值 7096 = 37 + 7059、缓存两项明细不因归一而丢、`NetInput` 能减回 37。毛值在表里**手写成数**，不调 `protocol.GrossInput` 现算——用被测函数给自己出期望值，加法错了两边一起错。③**流水那一列的毛值**由 #6 的 `TestAnthropicTokenColumnsLandInCallLogs`（断 2091）盖住，不重复。④`testdata/fixtures` 的两份构造样本照 README 首段的规矩**留作形状回归**，不删不搬；README 缺口段改写——中转透明证明的是「这条链路没吃 usage 字段」，官方直连那一格仍归 #2。⑤`cache_creation` 的 5m/1h 细分键原样留在字节里，不新增列（票面「不在范围」第 2 条）。修改人 jinpenga。
@@ -537,7 +538,7 @@ logging：无论成败异步落 call_logs
 
 ### 6.1 透传实现细则（v0.10 定，M0 落地）
 
-**上游 URL 拼接**：`channels.base_url` 存「协议子路径之前」的前缀，网关按**本次选定的**出站协议（v0.33，见 §6 的选定规则）追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
+**上游 URL 拼接**：渠道按协议各存一份「协议子路径之前」的前缀（`channels.base_url_*` 三列，v1.12/口径层 v0.96；此前是单一 `base_url`），网关取**本次选定的**出站协议（v0.33，见 §6 的选定规则）那一列，追加固定后缀（`/v1/messages`、`/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`），尾部斜杠归一化。拼法本身一字未变——变的只是「取哪份前缀」。代价是百炼这类自带路径前缀的兼容端点须填 `https://dashscope.aliyuncs.com/compatible-mode`，而非官方文档里带 `/v1` 的那串；换来的是不按厂商特判拼 URL。new-api 走 base_url 存根域名 + 各家 adaptor 特判，该复杂度不取。**建渠道的示例 SQL 必须写明这条**，否则填错是必踩的坑。
 
 **客户端查询串整串照抄**（v0.24 定，PO 裁定 jinpenga）：入站 URL 上的 query 原样接在拼好的上游 URL 后面，不过滤、不重排、不解码再编码。原实现只拼固定后缀，查询串被静默丢弃——实测 Claude Code 发的是 `POST /v1/messages?beta=true`，上游收到的是另一个请求，而丢没丢不看日志根本发现不了。不做白名单是因为这里没有可枚举的对象：各家 harness 的私有参数不可穷举，而查询参数不像请求头那样天然带客户端指纹（那条是请求头白名单的立论，不能照搬）。若日后发现某个参数确实泄露信息，再按「哪个参数、泄露什么」逐个拦。拼接顺序只能是 `base + 固定后缀 + "?" + query`——§7 的启动校验已拦掉带查询串的 `base_url`，所以不会拼出两个 `?`；query 为空时不产生裸 `?`。
 
@@ -627,12 +628,12 @@ concurrency_queue:                 # 渠道并发闸的有界排队（口径层 
 > **配置校验规则（临时闸，随转换批次逐步放开）**：候选渠道协议与入口协议不同、且对应转换路径尚未实现时报错。这不是 v1 边界——全互转属 v1 承诺（口径层 C1 已收敛）。**portage-legacy#80 之后这道闸已无「尚未实现」可拦**：九格全开，剩下的只有 `count_tokens` 这个没有上游对应端点的入口，见下方 §2 与 §9.4。
 >
 > **校验时机拆两处**（v0.10）：接入点本身不绑定协议，入口协议要到请求时（由路径）才知道，因此「协议必须一致」无法在启动时判。
-> - **启动加载时 + 管理端保存时**：每个未停用接入点有且仅有一个 weight>0 的候选；每个未停用渠道**至少有一份**未停用凭证（上限那半已于口径层 v0.38 随凭证池放开，M3 起临时闸只剩单候选那一半）；每个候选引用的纳管模型确实属于存在的渠道；**未停用接入点的 weight>0 候选必须真的可达——其渠道、纳管模型、凭证均未停用**（v0.15，判定条件逐条对齐 `Resolve` 的 JOIN）；**未停用渠道的 `base_url` 必须是带 host 的绝对 http/https 地址，且不带查询串与 fragment**（v0.20——schema 只要求非 NULL，而配置是手写 SQL 灌进来的，空串 / 漏 scheme 的裸域名 / `ftp://` 都存得进去，过得了校验却每次请求才在 `http.Client.Do` 里失败回 502；查询串与 fragment 更隐蔽，`buildURL` 是字符串拼接，`https://h/p?x=1` 接上 `/v1/messages` 后 Go 解出来是 `path=/p`、`query=x=1/v1/messages`——协议子路径被整个吞进查询串，请求永远打到 `/p`，启动、日志、响应三处都看不出异常）。违规即拒绝启动，报错须点名违规记录的 id/name。
+> - **启动加载时 + 管理端保存时**：每个未停用接入点有且仅有一个 weight>0 的候选；每个未停用渠道**至少有一份**未停用凭证（上限那半已于口径层 v0.38 随凭证池放开，M3 起临时闸只剩单候选那一半）；每个候选引用的纳管模型确实属于存在的渠道；**未停用接入点的 weight>0 候选必须真的可达——其渠道、纳管模型、凭证均未停用**（v0.15，判定条件逐条对齐 `Resolve` 的 JOIN）；**未停用渠道每份已填的协议地址（`base_url_*`）必须是带 host 的绝对 http/https 地址，且不带查询串与 fragment；且至少填了一份**（v0.20 立通则、v1.12 随口径层 v0.96 改为逐列适用——schema 只要求非 NULL，而配置是手写 SQL 灌进来的，漏 scheme 的裸域名 / `ftp://` 都存得进去，过得了校验却每次请求才在 `http.Client.Do` 里失败回 502；查询串与 fragment 更隐蔽，`buildURL` 是字符串拼接，`https://h/p?x=1` 接上 `/v1/messages` 后 Go 解出来是 `path=/p`、`query=x=1/v1/messages`——协议子路径被整个吞进查询串，请求永远打到 `/p`，启动、日志、响应三处都看不出异常；三列全空的渠道选不出出站协议，接的是 v0.33 那条空协议集的班）。违规即拒绝启动，报错须点名违规记录的 id/name 与哪个协议的地址。
 
 > **这条错误信息不回显 `base_url` 本身**：`cmd/gateway` 会把 `Validate` 的错误直接落 stderr，而 `base_url` 可以带 userinfo（`https://user:pw@host`），回显等于把上游密码打进日志。按 CLAUDE.md「错误回显严禁泄露上游 key 与 base_url」，只报「哪里不对」加渠道 name/id，让运维自己查 `channels` 表——可诊断性不靠回显原值。
 > - **请求时**：入口端点在本次选定的出站协议下没有对应路径 → 按入口协议原生格式回错，文案为「该端点没有对应的转换路径」（portage-legacy#80 前的文案是「该转换路径尚未实现」，九格全开后语义从「还没做」改为「没得做」）。
 >
-> **v0.33 追加**：未停用渠道的 `protocols` 必须非空且逐项合法（`store.checkChannelFields` 调 `protocol.ParseSet`）。空集合选不出出站协议，每次请求才 500——同属 v0.21 通则要拦的形态。`count_tokens` 不需要额外的闸：`conversionOpen` 的判据是**端点**而非协议，渠道不说 `anthropic` 时它必然落进「没有对应的转换路径」这一格，不会被回退顺序送去 `/v1/chat/completions`。（口径层 v0.80 之后这一格的收场由 501 改成本地估算回 200，判据本身不变——仍是按端点分流。）
+> **v0.33 追加**：未停用渠道的支持协议集必须非空（v1.12 后它是 `base_url_*` 三列的派生值，「非空」= 至少填了一份地址，并入上一条逐列校验；「逐项合法」在每协议列的形状下已表达不出拼错的协议名——`channel_models.protocols` 那列的 ParseSet 校验仍在）。空集合选不出出站协议，每次请求才 500——同属 v0.21 通则要拦的形态。`count_tokens` 不需要额外的闸：`conversionOpen` 的判据是**端点**而非协议，渠道不说 `anthropic` 时它必然落进「没有对应的转换路径」这一格，不会被回退顺序送去 `/v1/chat/completions`。（口径层 v0.80 之后这一格的收场由 501 改成本地估算回 200，判据本身不变——仍是按端点分流。）
 
 ### SQLite 表
 
@@ -640,8 +641,13 @@ concurrency_queue:                 # 渠道并发闸的有界排队（口径层 
 CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职责
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
-  protocols TEXT NOT NULL,         -- 支持协议集（v0.33）：逗号分隔，取值 anthropic | openai | openai_responses；单值即一元集合
-  base_url TEXT NOT NULL,
+  -- 每协议一份出站根地址（v1.12/口径层 v0.96）：**填了哪列（非空）就是声明了哪个协议**，
+  -- 支持协议集由三列的非空情况派生，不再单存。空串 = 未声明。取三列不取子表：协议枚举
+  -- 封死在 3（v0.17 拒了第 4 家），热路径保持单行扫描。老库的 protocols + base_url
+  -- 由 store.expandBaseURLs 展开（旧地址复制给每个已声明协议，行为逐字节等价）后删旧列。
+  base_url_openai TEXT NOT NULL DEFAULT '',
+  base_url_openai_responses TEXT NOT NULL DEFAULT '',
+  base_url_anthropic TEXT NOT NULL DEFAULT '',
   credential_type TEXT NOT NULL DEFAULT 'api_key',  -- api_key | service_account（Vertex：SA JSON→token 刷新，v0.17）
   key_mode TEXT NOT NULL DEFAULT 'polling',  -- polling | random：凭证池选取模式
   max_concurrency INTEGER NOT NULL DEFAULT 0,  -- 渠道并发上限（口径层 v0.49）：in-flight 上限，0 = 不限；老库靠 store.migrate 的既有 ALTER 模式补列。见 §7.5
@@ -677,7 +683,7 @@ CREATE TABLE channel_models (      -- 渠道纳管的可用模型（上游模型
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   upstream_model TEXT NOT NULL,
-  protocols TEXT NOT NULL DEFAULT '',  -- 这个模型自己能走的协议子集（v0.38/口径层 v0.40）：逗号分隔，取值同 channels.protocols。
+  protocols TEXT NOT NULL DEFAULT '',  -- 这个模型自己能走的协议子集（v0.38/口径层 v0.40）：逗号分隔，取值 anthropic | openai | openai_responses（渠道集自 v1.12 起由 base_url_* 三列派生）。
                                        -- **空串 = 继承渠道全集**，绝大多数模型都该是空的；存原样、不校验它是不是渠道集的子集，
                                        -- 路由时取交集（store.pickProtocol）
   disabled INTEGER NOT NULL DEFAULT 0,
@@ -922,8 +928,9 @@ store.Validate            ← 既有六项不变，不与上面那道合并
 ```yaml
 channels:
   - name: qwen                      # 自然键；同时是限定名的前半，改它 = 删旧建新
-    protocols: [openai]             # 存库时逗号分隔（channels.protocols）
-    base_url: https://example.internal/v1
+    base_url:                       # 每协议一份根地址（v1.12/口径层 v0.96）：填了哪个键
+      openai: https://example.internal/v1  # 就是声明了哪个协议，不再单写 protocols——
+                                    # 再写一份就能写出自相矛盾，手写会被 KnownFields 当场拒
     credential_type: api_key        # api_key | service_account
     key_mode: polling               # polling | random
     max_concurrency: 4              # 0 = 不限
@@ -994,7 +1001,7 @@ api_keys:
 | POST | `/admin/api/logout` | |
 | GET | `/admin/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
 | POST | `/admin/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
-| GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证 |
+| GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证。`base_url` 是协议名→根地址的对象（v1.12/口径层 v0.96）：填了哪个键就是声明了哪个协议，映射删到空即拒（渠道至少声明一个）；未知协议键 400 并点名（入参收 map 不收结构体，结构体会把拼错的键静默丢掉）；`protocols` 不再收，回包里仍带（派生值，省得前端每处自己算） |
 | ~~PUT~~ | ~~`/admin/api/channels/:id/credential`~~ | 整把替换，**v0.35 起作废**（口径层 v0.38 放开多凭证） |
 | GET POST | `/admin/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
 | PUT DELETE | `/admin/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |

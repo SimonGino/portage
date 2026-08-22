@@ -106,11 +106,13 @@ type ChannelModel struct {
 type Channel struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	// Protocols 是渠道能说的上游协议集（口径层 v0.33）。对前端是个字符串数组；
-	// 库里是逗号分隔的一列。
+	// Protocols 是渠道能说的上游协议集——自口径层 v0.96 起是**推导值**：哪些协议
+	// 填了出站根地址就是声明了哪些。照发给前端，省得每处消费端自己再推一遍。
 	Protocols protocol.Set `json:"protocols"`
-	BaseURL   string       `json:"base_url"`
-	KeyMode   string       `json:"key_mode"`
+	// BaseURLs 是每协议出站根地址（口径层 v0.96 ②）。JSON 字段名沿用 base_url，
+	// 只是从单串变成了协议 → 地址的映射。
+	BaseURLs BaseURLs `json:"base_url"`
+	KeyMode  string   `json:"key_mode"`
 	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
 	MaxConcurrency int `json:"max_concurrency"`
 	// SupportsCompaction 记上游认不认 Codex 的 compaction_trigger（口径层 v0.54）。
@@ -132,7 +134,8 @@ type Channel struct {
 // 纳管模型清单。
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ch.id, ch.name, ch.protocols, ch.base_url, ch.key_mode, ch.max_concurrency,
+		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
+		       ch.key_mode, ch.max_concurrency,
 		       ch.supports_compaction, ch.supports_stateful_responses, ch.disabled,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
@@ -146,15 +149,15 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	byID := map[int64]int{}
 	for rows.Next() {
 		var c Channel
-		var protocols string
-		if err := rows.Scan(&c.ID, &c.Name, &protocols, &c.BaseURL, &c.KeyMode, &c.MaxConcurrency,
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
+			&c.KeyMode, &c.MaxConcurrency,
 			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Disabled,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
 		}
-		// 解不动就留空数组交给页面显示，不让整张列表 500：这一列可以是手写 SQL
-		// 灌坏的，而管理端恰恰是去修它的地方。真正拦下它的是启动闸。
-		c.Protocols, _ = protocol.ParseSet(protocols)
+		// 协议集是地址的推导值（口径层 v0.96）：一个地址都没填就是空数组，页面上
+		// 显示「无协议」，人去补地址即可。真正拦下它的是启动闸。
+		c.Protocols = c.BaseURLs.Protocols()
 		if c.Protocols == nil {
 			c.Protocols = protocol.Set{}
 		}
@@ -199,9 +202,10 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 // ChannelInput 是新建/修改渠道时可写的字段。credential 不在里面，它走凭证池那套逐条
 // CRUD（credential.go）——分开是为了让「保存渠道」这个动作不可能顺手清掉凭证。
 type ChannelInput struct {
-	Name      string       `json:"name"`
-	Protocols protocol.Set `json:"protocols"`
-	BaseURL   string       `json:"base_url"`
+	Name string `json:"name"`
+	// BaseURLs 是每协议出站根地址（口径层 v0.96 ②）：填了哪个协议就是声明了哪个，
+	// 至少要有一个；从映射里去掉一个协议就是取消声明，服务端拒绝删空（normalized）。
+	BaseURLs BaseURLs `json:"base_url"`
 	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
 	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
 	KeyMode string `json:"key_mode"`
@@ -222,20 +226,22 @@ type ChannelInput struct {
 	Disabled                  bool  `json:"disabled"`
 }
 
-// normalized 校验并归一化支持协议集：去空格、去重、保序，空集合直接拒。
+// normalized 校验并归一化每协议地址：去空格，一个协议都没填直接拒——「删掉最后
+// 一行地址」造出来的是一个没有任何协议、永远路由不到的渠道（口径层 v0.96）。
 //
 // 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
 // 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
-func (in ChannelInput) normalized() (protocol.Set, error) {
+func (in ChannelInput) normalized() (BaseURLs, error) {
 	if strings.Contains(in.Name, "/") {
-		return nil, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+		return BaseURLs{}, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
 			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
 	}
-	set, err := protocol.ParseSet(in.Protocols.String())
-	if err != nil {
-		return nil, InvalidInput{Reason: err.Error()}
+	urls := in.BaseURLs.trimmed()
+	if len(urls.Protocols()) == 0 {
+		return BaseURLs{}, InvalidInput{Reason: "至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，" +
+			"一个都不填的渠道永远路由不到"}
 	}
-	return set, nil
+	return urls, nil
 }
 
 // keyMode 归一化选取模式，**空串原样返回**表示「这次请求没提这个字段」——建渠道时
@@ -266,10 +272,11 @@ func (in ChannelInput) maxConcurrency() (*int, error) {
 
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
-	set, err := in.normalized()
+	urls, err := in.normalized()
 	if err != nil {
 		return 0, err
 	}
+	set := urls.Protocols()
 	mode, err := in.keyMode()
 	if err != nil {
 		return 0, err
@@ -306,10 +313,11 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 		stateful = true
 	}
 	res, err := db.ExecContext(ctx, `
-		INSERT INTO channels (name, protocols, base_url, key_mode, max_concurrency,
+		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
+		                      key_mode, max_concurrency,
 		                      supports_compaction, supports_stateful_responses, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, set.String(), in.BaseURL, mode, conc,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, mode, conc,
 		boolInt(compaction), boolInt(stateful), boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
@@ -320,10 +328,11 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 // UpdateChannel 覆盖渠道的可写字段，改名也走这里（合并渠道之后要给它起个不带协议
 // 后缀的新名字，口径层 v0.33 不做旧限定名的兼容期）。
 func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) error {
-	set, err := in.normalized()
+	urls, err := in.normalized()
 	if err != nil {
 		return err
 	}
+	set := urls.Protocols()
 	mode, err := in.keyMode()
 	if err != nil {
 		return err
@@ -335,8 +344,8 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	// key_mode / max_concurrency 缺省时整列不写（分别见 keyMode 与 MaxConcurrency
 	// 的注释）。其余字段仍是整体覆盖——它们从第一版起就在表单里，请求体里没有等于
 	// 人真把它清空了。
-	sets := `name = ?, protocols = ?, base_url = ?, disabled = ?`
-	args := []any{in.Name, set.String(), in.BaseURL, boolInt(in.Disabled)}
+	sets := `name = ?, base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?, disabled = ?`
+	args := []any{in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, boolInt(in.Disabled)}
 	if mode != "" {
 		sets += `, key_mode = ?`
 		args = append(args, mode)
@@ -373,8 +382,10 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 // Credentials 是唯一一处凭证值离开 store 的地方，它只流向 upstream.Probe，**不进
 // 任何 JSON 响应**——「只写不回读」那条约束管的是回读给人看，不是进程内自用。
 type ProbeTarget struct {
-	Name      string
-	BaseURL   string
+	Name string
+	// BaseURLs 是每协议出站根地址（口径层 v0.96）；Protocols 是它的推导值，顺序
+	// 即回退序。探测与拉模型列表按协议各取各的地址。
+	BaseURLs  BaseURLs
 	Protocols protocol.Set
 	// Credentials 含**已停用**的凭证（口径层 v0.38 逐把凭证探）：「这把停用的凭证
 	// 现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
@@ -404,18 +415,18 @@ type ProbeModel struct {
 // ChannelProbeTarget 按 id 取探测目标。
 func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
 	var t ProbeTarget
-	var protocols string
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url, ch.protocols FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURL, &protocols)
+		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic
+		FROM channels ch WHERE ch.id = ?`, id).
+		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound
 	}
 	if err != nil {
 		return ProbeTarget{}, err
 	}
-	if t.Protocols, err = protocol.ParseSet(protocols); err != nil {
-		return ProbeTarget{}, InvalidInput{Reason: err.Error()}
+	if t.Protocols = t.BaseURLs.Protocols(); len(t.Protocols) == 0 {
+		return ProbeTarget{}, InvalidInput{Reason: "这个渠道一个协议的出站根地址都没填，没有可探测的目标"}
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT name, credential, disabled FROM channel_keys WHERE channel_id = ? ORDER BY id`, id)

@@ -170,9 +170,11 @@ func (h *Handler) listChannels(c *gin.Context) {
 // 接口根本不看这个字段，因此「改个名字」不可能顺手把凭证清空。
 type channelInput struct {
 	Name string `json:"name"`
-	// Protocols 是支持协议集（口径层 v0.33），至少一个。
-	Protocols []string `json:"protocols"`
-	BaseURL   string   `json:"base_url"`
+	// BaseURL 是每协议出站根地址（口径层 v0.96 ②）：键是协议名，**填了哪个协议就是
+	// 声明了哪个**，至少一个；从映射里去掉一个协议 = 取消声明，服务端拒绝删空。
+	// 收 map 而不是直接收 store.BaseURLs：结构体对认不得的键是静默丢弃，而这里拼错
+	// 协议名的下场该是一条点名的 400，不是一个悄悄少了协议的渠道。
+	BaseURL map[string]string `json:"base_url"`
 	// KeyMode 是凭证选取模式 polling/random（口径层 v0.44 起露在凭证池弹窗里，不在渠道表单）。
 	KeyMode string `json:"key_mode"`
 	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针留 nil 表示
@@ -189,21 +191,25 @@ type channelInput struct {
 	Credential                string `json:"credential"`
 }
 
-func (in channelInput) toStore() store.ChannelInput {
-	set := make(protocol.Set, 0, len(in.Protocols))
-	for _, p := range in.Protocols {
-		set = append(set, protocol.Protocol(strings.TrimSpace(p)))
+func (in channelInput) toStore() (store.ChannelInput, error) {
+	var urls store.BaseURLs
+	for key, url := range in.BaseURL {
+		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(key)))
+		if !p.Valid() {
+			return store.ChannelInput{}, store.InvalidInput{
+				Reason: "base_url 的键 " + strconv.Quote(key) + " 不是 anthropic/openai/openai_responses 之一"}
+		}
+		urls.Set(p, strings.TrimSpace(url))
 	}
 	return store.ChannelInput{
 		Name:                      strings.TrimSpace(in.Name),
-		Protocols:                 set,
-		BaseURL:                   strings.TrimSpace(in.BaseURL),
+		BaseURLs:                  urls,
 		KeyMode:                   strings.TrimSpace(in.KeyMode),
 		MaxConcurrency:            in.MaxConcurrency,
 		SupportsCompaction:        in.SupportsCompaction,
 		SupportsStatefulResponses: in.SupportsStatefulResponses,
 		Disabled:                  in.Disabled,
-	}
+	}, nil
 }
 
 func (h *Handler) createChannel(c *gin.Context) {
@@ -217,7 +223,11 @@ func (h *Handler) createChannel(c *gin.Context) {
 		return
 	}
 	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
-		id, err := store.CreateChannel(ctx, tx, in.toStore())
+		input, err := in.toStore()
+		if err != nil {
+			return nil, err
+		}
+		id, err := store.CreateChannel(ctx, tx, input)
 		if err != nil {
 			return nil, err
 		}
@@ -241,7 +251,11 @@ func (h *Handler) updateChannel(c *gin.Context) {
 		return
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.UpdateChannel(ctx, tx, id, in.toStore())
+		input, err := in.toStore()
+		if err != nil {
+			return err
+		}
+		return store.UpdateChannel(ctx, tx, id, input)
 	})
 }
 
@@ -274,7 +288,8 @@ func (h *Handler) probeChannel(c *gin.Context) {
 	for _, cred := range creds {
 		g := probeGroup{Credential: cred.Name, Disabled: cred.Disabled}
 		for _, p := range target.Protocols {
-			g.Results = append(g.Results, upstream.Probe(c.Request.Context(), target.BaseURL, p, cred.Value))
+			// 各协议打各的根地址（口径层 v0.96）：探的就是「这一侧真会被请求的那一串」。
+			g.Results = append(g.Results, upstream.Probe(c.Request.Context(), target.BaseURLs.Get(p), p, cred.Value))
 		}
 		groups = append(groups, g)
 	}
@@ -334,6 +349,11 @@ func probeModelMatrix(ctx context.Context, target store.ProbeTarget) ([]modelPro
 		protos := m.Protocols
 		if len(protos) == 0 {
 			protos = target.Protocols
+		} else {
+			// 只探声明了地址的那些协议（口径层 v0.96：可探范围严格 = 已声明协议）。
+			// 模型子集是按存的原样给的，可能还留着渠道已经不声明的协议——那一侧
+			// 如今连根地址都没有，没有东西可打。
+			protos = protos.Intersect(target.Protocols)
 		}
 		rows[i] = modelProbeRow{Model: m.Name, Results: make([]upstream.ModelProbeResult, len(protos))}
 		for j, p := range protos {
@@ -342,7 +362,7 @@ func probeModelMatrix(ctx context.Context, target store.ProbeTarget) ([]modelPro
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				rows[i].Results[j] = upstream.ProbeModel(ctx, target.BaseURL, p, cred.Value, model)
+				rows[i].Results[j] = upstream.ProbeModel(ctx, target.BaseURLs.Get(p), p, cred.Value, model)
 			}(i, j, p, m.Name)
 		}
 	}
@@ -401,7 +421,10 @@ func (h *Handler) fetchChannelModels(c *gin.Context) {
 			break
 		}
 	}
-	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURL, target.Protocols, cred)
+	// 根地址自动选：回退序取第一个已填协议的（口径层 v0.96，与出站协议选择同一条
+	// 秩序）。Protocols 的顺序就是回退序，取头一个即可。
+	_, baseURL := target.BaseURLs.First()
+	results := upstream.ListModelsFor(c.Request.Context(), baseURL, target.Protocols, cred)
 	// 只报渠道名与拉到几组，不报 base_url，更不报凭证值。
 	h.log.Info("拉上游模型列表", "channel", target.Name, "groups", len(results))
 	c.JSON(http.StatusOK, gin.H{"results": results})

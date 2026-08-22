@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
+import { api, PROTOCOL_LABEL, PROTOCOL_ORDER, PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
 import type {
+  BaseURLs,
   Channel,
   ChannelModel,
   ChannelProbe,
@@ -131,7 +132,6 @@ export function ChannelDetail({
                 void mutate(() =>
                   api.put(`/channels/${ch.id}`, {
                     name: ch.name,
-                    protocols: protos,
                     base_url: ch.base_url,
                     disabled: !on,
                   }),
@@ -286,12 +286,14 @@ export function ChannelDetail({
 }
 
 /**
- * BaseURLBlock 是 base_url 在模型页上的常驻一行（PO 2026-08-20 裁决，与上面的凭证
+ * BaseURLBlock 是 API 地址在模型页上的常驻区块（PO 2026-08-20 裁决，与上面的凭证
  * 区块一起从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层）。
  *
- * 就地改，回车或失焦即存；其余渠道字段照 prop 原样回传（修改接口是整体覆盖，
- * key_mode 与两个能力位不传 = 那一列不动，同 ChannelForm 的写法）。预览行跟着它
- * 走：`/v1/v1/…` 这个必踩的坑只有把拼出来的完整地址摆在眼前才真的被读到。
+ * v0.96 起**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行紧随其下；
+ * 「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是再填一次地址），
+ * 至少保留一行，删到最后一行的口被服务端和这里一起堵住。
+ * 其余渠道字段照 prop 原样回传（修改接口是整体覆盖，key_mode 与两个能力位不传 =
+ * 那一列不动，同 ChannelForm 的写法）。
  */
 function BaseURLBlock({
   ch,
@@ -300,10 +302,11 @@ function BaseURLBlock({
   ch: Channel
   mutate: (fn: () => Promise<unknown>) => Promise<boolean>
 }) {
-  const [url, setUrl] = useState(ch.base_url)
+  const [urls, setUrls] = useState<BaseURLs>({ ...ch.base_url })
+  // 「添加端点」刚加出来、还没填值的空行：值为空不算声明，不在 ch.base_url 里，
+  // 单独记着才不会一失焦就消失。
+  const [blank, setBlank] = useState<Protocol[]>([])
   const [saved, setSaved] = useState(false)
-  const protos = ch.protocols ?? []
-  const dirty = url.trim() !== ch.base_url
 
   useEffect(() => {
     if (!saved) return
@@ -311,53 +314,124 @@ function BaseURLBlock({
     return () => clearTimeout(t)
   }, [saved])
 
-  function save() {
-    const next = url.trim()
-    if (next === ch.base_url) return
-    void mutate(() =>
+  function put(next: BaseURLs) {
+    return mutate(() =>
       api.put(`/channels/${ch.id}`, {
         name: ch.name,
-        protocols: protos,
         base_url: next,
         max_concurrency: ch.max_concurrency,
         disabled: ch.disabled,
       }),
-    ).then((ok) => {
+    )
+  }
+
+  function save(p: Protocol) {
+    const next = (urls[p] ?? '').trim()
+    const prev = ch.base_url[p] ?? ''
+    if (next === prev) return
+    // 清空后失焦不当「取消声明」提交：取消声明只走「删行」那一个口（口径层 v0.96 ②），
+    // 清空多半是要重填。已声明的行清空就退回库里的值，别把一次犹豫变成一次删除。
+    if (next === '' && prev !== '') {
+      setUrls((u) => ({ ...u, [p]: prev }))
+      return
+    }
+    if (next === '') return
+    void put({ ...urls, [p]: next }).then((ok) => {
       if (ok) setSaved(true)
     })
   }
 
+  function remove(p: Protocol) {
+    if (blank.includes(p)) {
+      setBlank((prev) => prev.filter((x) => x !== p))
+      setUrls((prev) => {
+        const map = { ...prev }
+        delete map[p]
+        return map
+      })
+      return
+    }
+    const map = { ...urls }
+    delete map[p]
+    void put(map).then((ok) => {
+      if (!ok) return
+      setUrls(map)
+      setSaved(true)
+    })
+  }
+
+  // 行 = 已声明的协议 + 刚加出来的空行，按固定回退序排，别跟着敲键盘的顺序跳。
+  const rows = PROTOCOL_ORDER.filter(
+    (p) => (ch.base_url[p] ?? '') !== '' || blank.includes(p) || (urls[p] ?? '').trim() !== '',
+  )
+  const addable = PROTOCOL_ORDER.filter((p) => !rows.includes(p))
+
   return (
     <section className="detail-block">
       <div className="detail-block-title">API 地址</div>
-      <div className="baseurl-row">
-        <input
-          className="baseurl-input"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onBlur={save}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              save()
-            }
-          }}
-          placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
-        />
-        {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
-        {dirty ? (
-          <span className="muted baseurl-state">回车保存</span>
-        ) : saved ? (
-          <span className="muted baseurl-state">已保存</span>
-        ) : null}
-      </div>
-      {url.trim() !== '' && protos.length > 0 && (
-        <div className="url-preview">
-          {protos.map((p) => (
-            <div key={p}>
-              <span className="muted">预览 {PROTOCOL_LABEL[p]}：</span>
-              <code>{joinURL(url, PROTOCOL_PATH[p] ?? '')}</code>
+      {rows.map((p) => {
+        const v = urls[p] ?? ''
+        const dirty = v.trim() !== (ch.base_url[p] ?? '')
+        return (
+          <div key={p} className="baseurl-proto-row">
+            <div className="baseurl-row">
+              <span className="tag" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
+                {PROTOCOL_SHORT[p] ?? p}
+              </span>
+              <input
+                className="baseurl-input"
+                value={v}
+                onChange={(e) => setUrls((prev) => ({ ...prev, [p]: e.target.value }))}
+                onBlur={() => save(p)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    save(p)
+                  }
+                }}
+                placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
+              />
+              {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
+              {dirty ? (
+                <span className="muted baseurl-state">回车保存</span>
+              ) : saved ? (
+                <span className="muted baseurl-state">已保存</span>
+              ) : null}
+              {/* 删行 = 取消声明这个协议，不加确认（口径层 v0.96 ②：恢复就是再填一次）。
+                  只剩一行时不给口——渠道至少要声明一个协议，服务端也会拒。 */}
+              {rows.length > 1 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
+                  onClick={() => remove(p)}
+                >
+                  删行
+                </button>
+              )}
             </div>
+            {v.trim() !== '' && (
+              <div className="url-preview">
+                <span className="muted">预览：</span>
+                <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {addable.length > 0 && (
+        <div className="baseurl-add">
+          <span className="muted">添加端点：</span>
+          {addable.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="chip-toggle"
+              title={`给 ${PROTOCOL_LABEL[p]} 加一行地址，填了即声明该协议`}
+              onClick={() => setBlank((prev) => [...prev, p])}
+            >
+              + {PROTOCOL_SHORT[p] ?? p}
+            </button>
           ))}
         </div>
       )}

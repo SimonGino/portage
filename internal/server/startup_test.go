@@ -200,12 +200,15 @@ func TestStartupGateIgnoresZeroWeightCandidateOnDisabledChannel(t *testing.T) {
 	}
 }
 
+// 渠道侧的协议名拼错在 v0.96 之后表达不出来了（协议集从每协议地址列派生），但
+// channel_models.protocols 还是手写 SQL 能灌坏的一列，拼错的名字仍要启动即拒。
 func TestStartupGateRejectsUnknownProtocol(t *testing.T) {
 	db := gatewaytest.NewDB(t)
-	channelID := gatewaytest.SeedChannel(t, db, "typo-channel", "anthropic_messages", "https://api.anthropic.com", "sk-a")
+	channelID := gatewaytest.SeedChannel(t, db, "typo-channel", "anthropic", "https://api.anthropic.com", "sk-a")
 	modelID := gatewaytest.SeedChannelModel(t, db, channelID, "claude-sonnet-4-5")
 	apID := gatewaytest.SeedAccessPoint(t, db, "gw-sonnet")
 	gatewaytest.SeedCandidate(t, db, apID, modelID, 100)
+	mustExec(t, db, `UPDATE channel_models SET protocols = 'anthropic_messages' WHERE id = ?`, modelID)
 
 	err := store.Validate(t.Context(), db)
 
@@ -240,7 +243,9 @@ func TestStartupGateRejectsUnusableBaseURL(t *testing.T) {
 
 			err := store.Validate(t.Context(), db)
 
-			assertRejects(t, err, "bad-url", "base_url")
+			// 空串在 v0.96 之后落到「一个协议地址都没填」那条报文，其余落到
+			// 「哪个协议的地址哪里不对」，公共词是「地址」。
+			assertRejects(t, err, "bad-url", "地址")
 		})
 	}
 }
@@ -265,8 +270,8 @@ func TestStartupGateDoesNotEchoBaseURL(t *testing.T) {
 			t.Errorf("错误信息泄露了 %q：%v", leak, err)
 		}
 	}
-	// 不回显值不等于不可诊断：仍要点名是哪条渠道、哪里不对。
-	for _, want := range []string{"leaky", "base_url", "查询串"} {
+	// 不回显值不等于不可诊断：仍要点名是哪条渠道、哪个协议的地址、哪里不对。
+	for _, want := range []string{"leaky", "anthropic", "协议地址", "查询串"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("错误信息缺少 %q，无法定位：%v", want, err)
 		}

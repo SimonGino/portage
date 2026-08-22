@@ -1,5 +1,7 @@
 package declcfg
 
+import "github.com/SimonGino/portage/internal/store"
+
 // Example 是 channels.example.yaml 的数据源：一份假但**能真跑通**的配置。
 //
 // 示范文件由导出器生成而不是手写（口径层 §2.9 #34）。手写的示范没有闸护着，字段
@@ -14,9 +16,10 @@ func Example() *File {
 	return &File{
 		Channels: []Channel{
 			{
-				Name:                      "anthropic",
-				Protocols:                 []string{"anthropic"},
-				BaseURL:                   "https://api.anthropic.com",
+				Name: "anthropic",
+				// 每协议一份出站根地址（口径层 v0.96）：给哪个协议填了地址就是声明
+				// 了哪个协议，不再单写 protocols。
+				BaseURL:                   store.BaseURLs{Anthropic: "https://api.anthropic.com"},
 				CredentialType:            "api_key",
 				KeyMode:                   "polling",
 				MaxConcurrency:            0,
@@ -35,9 +38,12 @@ func Example() *File {
 				},
 			},
 			{
-				Name:           "自建-vllm",
-				Protocols:      []string{"openai", "openai_responses"},
-				BaseURL:        "https://vllm.example.internal",
+				Name: "自建-vllm",
+				// 两个协议共用前缀就是两个键填同一个值；挂在别的根下就各填各的。
+				BaseURL: store.BaseURLs{
+					OpenAI:          "https://vllm.example.internal",
+					OpenAIResponses: "https://vllm.example.internal",
+				},
 				CredentialType: "api_key",
 				KeyMode:        "polling",
 				// max_concurrency > 0 才有并发闸；自建推理服务超发会排队甚至拖垮。

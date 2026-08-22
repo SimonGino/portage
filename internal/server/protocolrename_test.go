@@ -13,13 +13,25 @@ import (
 func TestOpenRenamesLegacyProtocolName(t *testing.T) {
 	path := t.TempDir() + "/legacy.db"
 
-	// 先让 Open 建出当前形状的库，再往里塞旧取值——直接手写 CREATE TABLE 只会让这个
-	// 用例跟 schema.sql 慢慢漂移。
+	// 先让 Open 建出当前形状的库（call_logs 不手写，免得跟 schema.sql 漂移），再把
+	// channels 换回 v0.96 之前的老形状——旧取值 openai_cc 只存在于那个形状里，当前
+	// 表已经没有 protocols 列可塞。
 	db, err := store.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
+		DROP TABLE channels;
+		CREATE TABLE channels (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  name TEXT NOT NULL UNIQUE,
+		  protocols TEXT NOT NULL,
+		  base_url TEXT NOT NULL,
+		  credential_type TEXT NOT NULL DEFAULT 'api_key',
+		  key_mode TEXT NOT NULL DEFAULT 'polling',
+		  disabled INTEGER NOT NULL DEFAULT 0,
+		  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
 		INSERT INTO channels (name, protocols, base_url) VALUES
 		  ('single', 'openai_cc', 'https://h'),
 		  ('mixed',  'openai_cc,openai_responses', 'https://h2'),
@@ -41,19 +53,26 @@ func TestOpenRenamesLegacyProtocolName(t *testing.T) {
 			t.Fatalf("第 %d 遍打开失败: %v", round, err)
 		}
 
-		for _, c := range []struct{ name, want string }{
-			{"single", "openai"},
+		// 改名之后紧跟 v0.96 的展开：openai_cc 折成 openai 的效果落在
+		// base_url_openai 那一列上（改错名就落不上）。
+		for _, c := range []struct {
+			name string
+			want store.BaseURLs
+		}{
+			{"single", store.BaseURLs{OpenAI: "https://h"}},
 			// 集合里夹在中间的那一个也要改，且不能误伤 openai_responses。
-			{"mixed", "openai,openai_responses"},
-			{"other", "anthropic"},
+			{"mixed", store.BaseURLs{OpenAI: "https://h2", OpenAIResponses: "https://h2"}},
+			{"other", store.BaseURLs{Anthropic: "https://h3"}},
 		} {
-			var got string
+			var got store.BaseURLs
 			if err := db.QueryRow(
-				`SELECT protocols FROM channels WHERE name = ?`, c.name).Scan(&got); err != nil {
+				`SELECT base_url_openai, base_url_openai_responses, base_url_anthropic
+				 FROM channels WHERE name = ?`, c.name).
+				Scan(&got.OpenAI, &got.OpenAIResponses, &got.Anthropic); err != nil {
 				t.Fatal(err)
 			}
 			if got != c.want {
-				t.Errorf("第 %d 遍 channels[%s].protocols = %q，期望 %q", round, c.name, got, c.want)
+				t.Errorf("第 %d 遍 channels[%s] 迁移后 = %+v，期望 %+v", round, c.name, got, c.want)
 			}
 		}
 

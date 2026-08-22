@@ -132,19 +132,22 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 			stateful = 0
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO channels (name, protocols, base_url, credential_type, key_mode,
+			INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
+			                      credential_type, key_mode,
 			                      max_concurrency, supports_compaction, supports_stateful_responses, disabled)
-			VALUES (?,?,?,?,?,?,?,?,?)
+			VALUES (?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(name) DO UPDATE SET
-			  protocols = excluded.protocols,
-			  base_url = excluded.base_url,
+			  base_url_openai = excluded.base_url_openai,
+			  base_url_openai_responses = excluded.base_url_openai_responses,
+			  base_url_anthropic = excluded.base_url_anthropic,
 			  credential_type = excluded.credential_type,
 			  key_mode = excluded.key_mode,
 			  max_concurrency = excluded.max_concurrency,
 			  supports_compaction = excluded.supports_compaction,
 			  supports_stateful_responses = excluded.supports_stateful_responses,
 			  disabled = excluded.disabled`,
-			name, parseProtocols(ch.Protocols), strings.TrimSpace(ch.BaseURL),
+			name, strings.TrimSpace(ch.BaseURL.OpenAI), strings.TrimSpace(ch.BaseURL.OpenAIResponses),
+			strings.TrimSpace(ch.BaseURL.Anthropic),
 			orDefault(ch.CredentialType, "api_key"), orDefault(ch.KeyMode, store.KeyModePolling),
 			ch.MaxConcurrency, boolInt(ch.SupportsCompaction), stateful, boolInt(ch.Disabled),
 		); err != nil {

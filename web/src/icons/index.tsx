@@ -13,6 +13,8 @@
 // ./README.md。
 
 import type { ReactNode } from 'react'
+import { firstBaseURL } from '../api'
+import type { BaseURLs } from '../api'
 
 // eager 是有意的：整套图标一共 ~94KB（gzip），而管理端是 embed 进单二进制的 SPA，
 // 拆成异步 chunk 只会让每张列表首次渲染闪一下空白，省不下任何东西。
@@ -165,14 +167,17 @@ export function vendorForModel(model: string): string | null {
  * vendorForChannel 只认官方渠道：先 host，再渠道名。对不上就是首字母。
  *
  * 不回落到 MODEL_PATTERNS——渠道叫什么跟它上面跑的模型是两件事。
- * base_url 解析失败不算错，退回按名字猜；失败模式只能是「没有图标」。
+ * 地址解析失败不算错，退回按名字猜；失败模式只能是「没有图标」。
+ * base_url 是每协议一份的映射（v0.96），拿回退序第一份当代表——官方渠道几份地址
+ * 同一个 host，中转站本来就匹配不上。
  */
-export function vendorForChannel(channel: { name: string; base_url: string }): string | null {
+export function vendorForChannel(channel: { name: string; base_url: BaseURLs }): string | null {
+  const url = firstBaseURL(channel.base_url ?? {})
   let host = ''
   try {
-    host = new URL(channel.base_url).host.toLowerCase()
+    host = new URL(url).host.toLowerCase()
   } catch {
-    host = channel.base_url.toLowerCase()
+    host = url.toLowerCase()
   }
   return matchFirst(CHANNEL_HOSTS, host) ?? matchFirst(CHANNEL_NAMES, channel.name.toLowerCase())
 }
@@ -220,7 +225,7 @@ export function ChannelIcon({
   channel,
   size,
 }: {
-  channel: { name: string; base_url: string }
+  channel: { name: string; base_url: BaseURLs }
   size?: number
 }) {
   return <Avatar vendor={vendorForChannel(channel)} fallback={channel.name} size={size} title={channel.name} />

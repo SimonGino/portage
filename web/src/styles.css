@@ -1914,44 +1914,6 @@ textarea:focus {
   background: var(--sunken);
 }
 
-/* 路线图占位项：摆出来回答「为什么没有 Gemini」，但点不动。压到 hover 之下，
-   免得鼠标扫过去时它亮起来像是可选的。 */
-.segment.is-soon,
-.segment.is-soon:hover {
-  color: var(--muted);
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-/* 横排一行。曾经竖排过一阵，理由是「每个选项都带一条子路径，横排会压成两行」——
-   子路径现在由 Base URL 底下那行完整地址预览负责（它显示的是真的会被请求的那一串，
-   比这里挂一个后缀更有用），选项本身只剩三个词，横排一行就够。竖排四行占掉一百多
-   像素，而这一页最缺的就是纵向空间。 */
-.segmented-multi {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-self: flex-start;
-}
-
-.segmented-multi .segment {
-  padding: 5px 10px;
-}
-
-/* 定宽占位，选没选中都占同一格——不然勾上的那一行会把文字往右顶。 */
-.segment-check {
-  display: inline-block;
-  width: 12px;
-  color: var(--text);
-  font-size: 11px;
-}
-
-.segment-hint {
-  margin-left: auto;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
 /* ── 协议探测结果 ──────────────────────────────────────────────────── */
 /* 只提示，不是错误条：它不表示保存失败。所以不画框也不上色，缩进一格 + 一条左线
    说明「这是挂在上面那个渠道下的一句话」——层级靠位置，不靠又一个盒子（§3）。 */
@@ -2385,12 +2347,29 @@ textarea:focus {
   font-size: 12px;
 }
 
-/* API 地址：就地改的一行。base_url 是标识符，等宽（DESIGN.md §3）。 */
+/* API 地址：每协议一行就地改（口径层 v0.96）。地址是标识符，等宽（DESIGN.md §3）。 */
+.baseurl-proto-row + .baseurl-proto-row {
+  margin-top: 10px;
+}
+
 .baseurl-row {
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: 52em;
+}
+
+.baseurl-row .tag {
+  flex: none;
+}
+
+/* 「添加端点」行：与地址行同一层，靠间距分段，不另画盒子（§3）。 */
+.baseurl-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .baseurl-input {

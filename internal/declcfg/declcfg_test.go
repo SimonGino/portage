@@ -18,8 +18,8 @@ import (
 const goodFile = `
 channels:
   - name: qwen
-    protocols: [openai]
-    base_url: https://example.internal/v1
+    base_url:
+      openai: https://example.internal/v1
     credentials:
       - name: 主号
         credential: sk-upstream-1
@@ -133,8 +133,8 @@ func TestReportsEveryProblemAtOnce(t *testing.T) {
 	msg := applyErr(t, db, `
 channels:
   - name: a
-    protocols: [openai]
-    base_url: https://example.internal/v1
+    base_url:
+      openai: https://example.internal/v1
     key_mode: 乱写
     credentials:
       - name: ""
@@ -194,15 +194,15 @@ func TestApplyIsOneTransaction(t *testing.T) {
 	mustApply(t, db, goodFile)
 	// base_url 缺 scheme：selfCheck 放行（那是 Validate 的判据），Validate 拦下。
 	msg := applyErr(t, db, strings.Replace(goodFile, "https://example.internal/v1", "example.internal", 1))
-	if !strings.Contains(msg, "base_url") {
+	if !strings.Contains(msg, "协议地址") {
 		t.Fatalf("期望被 store.Validate 拦下，实际：%s", msg)
 	}
 	var got string
-	if err := db.QueryRow(`SELECT base_url FROM channels WHERE name='qwen'`).Scan(&got); err != nil {
+	if err := db.QueryRow(`SELECT base_url_openai FROM channels WHERE name='qwen'`).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got != "https://example.internal/v1" {
-		t.Fatalf("闸二拦下之后库里不该留下半份配置，base_url 已变成 %q", got)
+		t.Fatalf("闸二拦下之后库里不该留下半份配置，base_url_openai 已变成 %q", got)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestApplyKeepsDisabledCredential(t *testing.T) {
 func TestApplyDeletesEntitiesMissingFromFile(t *testing.T) {
 	db := openDB(t)
 	two := strings.Replace(goodFile, "access_points:", `  - name: spare
-    protocols: [anthropic]
-    base_url: https://spare.internal
+    base_url:
+      anthropic: https://spare.internal
     credentials:
       - name: 备号
         credential: sk-upstream-2

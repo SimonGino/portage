@@ -71,7 +71,8 @@ func Snapshot(ctx context.Context, db store.Queryer) (*File, error) {
 
 func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, name, protocols, base_url, credential_type, key_mode,
+		SELECT id, name, base_url_openai, base_url_openai_responses, base_url_anthropic,
+		       credential_type, key_mode,
 		       max_concurrency, supports_compaction, supports_stateful_responses, disabled
 		FROM channels ORDER BY name`)
 	if err != nil {
@@ -83,13 +84,12 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	for rows.Next() {
 		var id int64
 		var ch Channel
-		var protocols string
 		var compaction, stateful, disabled int
-		if err := rows.Scan(&id, &ch.Name, &protocols, &ch.BaseURL, &ch.CredentialType,
+		if err := rows.Scan(&id, &ch.Name, &ch.BaseURL.OpenAI, &ch.BaseURL.OpenAIResponses,
+			&ch.BaseURL.Anthropic, &ch.CredentialType,
 			&ch.KeyMode, &ch.MaxConcurrency, &compaction, &stateful, &disabled); err != nil {
 			return nil, err
 		}
-		ch.Protocols = splitProtocols(protocols)
 		ch.SupportsCompaction = compaction != 0
 		bit := stateful != 0
 		ch.SupportsStatefulResponses = &bit

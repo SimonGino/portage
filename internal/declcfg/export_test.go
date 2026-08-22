@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/portage/internal/declcfg"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // exampleFile 是仓库根那份示范文件的路径（用例工作目录是包目录）。
@@ -33,8 +34,7 @@ func roundtripFixture() *declcfg.File {
 	zero, hundred := 0, 100
 	f.Channels = append(f.Channels, declcfg.Channel{
 		Name:           "停用的旧渠道",
-		Protocols:      []string{"openai"},
-		BaseURL:        "https://old.example.internal",
+		BaseURL:        store.BaseURLs{OpenAI: "https://old.example.internal"},
 		CredentialType: "api_key",
 		KeyMode:        "polling",
 		Disabled:       true,
@@ -108,7 +108,7 @@ func TestExportSortsByNaturalKeyNotID(t *testing.T) {
 	f := &declcfg.File{
 		Channels: []declcfg.Channel{
 			{
-				Name: "zeta", Protocols: []string{"openai"}, BaseURL: "https://z.example.internal",
+				Name: "zeta", BaseURL: store.BaseURLs{OpenAI: "https://z.example.internal"},
 				CredentialType: "api_key", KeyMode: "polling",
 				Credentials: []declcfg.Credential{
 					{Name: "z2", Credential: "sk-z2"},
@@ -117,7 +117,7 @@ func TestExportSortsByNaturalKeyNotID(t *testing.T) {
 				Models: []declcfg.Model{{UpstreamModel: "m-z2"}, {UpstreamModel: "m-z1"}},
 			},
 			{
-				Name: "alpha", Protocols: []string{"openai"}, BaseURL: "https://a.example.internal",
+				Name: "alpha", BaseURL: store.BaseURLs{OpenAI: "https://a.example.internal"},
 				CredentialType: "api_key", KeyMode: "polling",
 				Credentials: []declcfg.Credential{{Name: "a1", Credential: "sk-a1"}},
 				Models:      []declcfg.Model{{UpstreamModel: "m-a1"}},

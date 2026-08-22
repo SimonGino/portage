@@ -59,9 +59,13 @@ export default function Channels() {
   const creating = id === 'new'
   const current = creating ? null : channels.find((c) => String(c.id) === id) ?? channels[0] ?? null
   const q = query.trim().toLowerCase()
+  // 搜索匹配任意一个协议的地址（口径层 v0.96）：同一家上游可能只有某一协议挂在
+  // 特征域名下，只搜第一份会漏。
   const visible = q
     ? channels.filter(
-        (c) => c.name.toLowerCase().includes(q) || (c.base_url ?? '').toLowerCase().includes(q),
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          Object.values(c.base_url ?? {}).some((u) => (u ?? '').toLowerCase().includes(q)),
       )
     : channels
 

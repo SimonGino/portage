@@ -119,7 +119,6 @@ function CredentialsDialog({
       api
         .put(`/channels/${channel.id}`, {
           name: channel.name,
-          protocols: channel.protocols ?? [],
           base_url: channel.base_url,
           key_mode: mode,
           disabled: channel.disabled,

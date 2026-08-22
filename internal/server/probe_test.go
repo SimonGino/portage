@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // 协议可达性探测（口径层 v0.33 §2.2）：只提示、不落库、不参与路由。它要回答的是
@@ -135,12 +136,14 @@ func TestProbeDoesNotPersistAnything(t *testing.T) {
 
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", nil)
 
-	var protocols string
-	if err := db.QueryRow(`SELECT protocols FROM channels WHERE id = ?`, ch).Scan(&protocols); err != nil {
-		t.Fatalf("读 protocols 失败: %v", err)
+	var urls store.BaseURLs
+	if err := db.QueryRow(`SELECT base_url_openai, base_url_openai_responses, base_url_anthropic
+		FROM channels WHERE id = ?`, ch).
+		Scan(&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic); err != nil {
+		t.Fatalf("读协议地址列失败: %v", err)
 	}
-	if protocols != "openai,openai_responses" {
-		t.Errorf("探测改了协议集：%q——它只该提示", protocols)
+	if got := urls.Protocols().String(); got != "openai,openai_responses" {
+		t.Errorf("探测改了协议地址：派生集 %q——它只该提示", got)
 	}
 }
 
