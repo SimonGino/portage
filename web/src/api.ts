@@ -145,7 +145,7 @@ export interface ProbeResult {
 /**
  * 探测结果按凭证分组（口径层 v0.38 逐把凭证探，含已停用的）。
  *
- * 含停用的那些是有意的：恢复只人工做，「这把被摘的凭证现在还坏不坏」除了删掉重配
+ * 含停用的那些是有意的：「这把停用的凭证现在还坏不坏」除了删掉重配
  * 就没有别的办法回答。一份凭证都没有时后端仍回一组，credential 是空串。
  */
 export interface ProbeGroup {
@@ -260,7 +260,7 @@ export interface Credential {
   /** 明文的上游 key。 */
   credential: string
   disabled: boolean
-  /** 401 摘除的现场：只有 401 会自动摘，且只人工恢复。 */
+  /** 停用现场：为什么、何时停的。停用与恢复都只人工做（v0.95 去掉 401 自动摘除）。 */
   disabled_reason: string
   disabled_at: string
   created_at: string

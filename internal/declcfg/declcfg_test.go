@@ -208,15 +208,16 @@ func TestApplyIsOneTransaction(t *testing.T) {
 
 // TestApplyKeepsDisabledCredential 是本票最要紧的一条回归。
 //
-// 401 摘除现场挂在 channel_keys 的 disabled / disabled_reason / disabled_at 上，那三列
-// **整组**是运行期状态、不进文件（口径层 §2.9 #28 ①）。delete-all + insert 会把死 key
+// 停用现场挂在 channel_keys 的 disabled / disabled_reason / disabled_at 上，那三列
+// **整组**是运行期状态、不进文件（口径层 §2.9 #28 ①；v0.95 之后只有人工停用会写它，
+// 老库里还可能躺着当年 401 自动摘除写的行）。delete-all + insert 会把停用的 key
 // 拉回轮询池；把 disabled 当意图列收进文件也会——只是入口更隐蔽。
 func TestApplyKeepsDisabledCredential(t *testing.T) {
 	db := openDB(t)
 	// 用**双凭证**而不是 goodFile 的单凭证，因为 store.Validate 的
-	// checkChannelHasCredential 要求每个未停用渠道至少留一份启用凭证：单凭证渠道摘掉
+	// checkChannelHasCredential 要求每个未停用渠道至少留一份启用凭证：单凭证渠道停掉
 	// 唯一那把之后，下次启动会被那道闸拒——**那是既有闸与本形态的真实交互，不是这条
-	// 用例要测的东西**（已单独报给 PO）。这里要钉的是「摘除现场跨 apply 活着」。
+	// 用例要测的东西**（已单独报给 PO）。这里要钉的是「停用现场跨 apply 活着」。
 	pool := strings.Replace(goodFile,
 		"      - name: 主号\n        credential: sk-upstream-1\n",
 		"      - name: 主号\n        credential: sk-upstream-1\n      - name: 备号\n        credential: sk-upstream-2\n", 1)
@@ -226,8 +227,10 @@ func TestApplyKeepsDisabledCredential(t *testing.T) {
 	if err := db.QueryRow(`SELECT id FROM channel_keys WHERE name='主号'`).Scan(&credID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DisableCredential(context.Background(), db, credID, "上游回了 401"); err != nil {
-		t.Fatalf("DisableCredential: %v", err)
+	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1,
+		disabled_reason = '人工停用', disabled_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, credID); err != nil {
+		t.Fatalf("停用凭证: %v", err)
 	}
 
 	// 同一份文件再 apply 一遍，模拟一次重启。
@@ -240,10 +243,10 @@ func TestApplyKeepsDisabledCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if disabled != 1 {
-		t.Error("重启 apply 之后死 key 被拉回了轮询池——401 摘除现场丢了")
+		t.Error("重启 apply 之后停用的 key 被拉回了轮询池——停用现场丢了")
 	}
 	if !reason.Valid || reason.String == "" {
-		t.Error("摘除原因被 apply 抹掉了；那三列整组是运行期状态，apply 不该碰")
+		t.Error("停用原因被 apply 抹掉了；那三列整组是运行期状态，apply 不该碰")
 	}
 }
 

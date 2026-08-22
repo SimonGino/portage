@@ -542,7 +542,7 @@ func SeedCredential(t *testing.T, db *sql.DB, channelID int64, credential string
 	SeedNamedCredential(t, db, channelID, fmt.Sprintf("凭证 %d", n+1), credential)
 }
 
-// SeedNamedCredential 种一份带名字的凭证，返回它的 id——摘除类用例要用 id 去核对
+// SeedNamedCredential 种一份带名字的凭证，返回它的 id——停用类用例要用 id 去核对
 // disabled_reason / disabled_at。
 func SeedNamedCredential(t *testing.T, db *sql.DB, channelID int64, name, credential string) int64 {
 	t.Helper()

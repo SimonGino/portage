@@ -28,8 +28,8 @@ type CredentialInfo struct {
 	// 掩码等于既发了值又发了个假的，两份都得维护。
 	Credential string `json:"credential"`
 	Disabled   bool   `json:"disabled"`
-	// DisabledReason / DisabledAt 是 401 摘除的现场（口径层 v0.38 只摘 401）。
-	// 恢复是纯人工的，所以这两项就是「这把为什么不转了」的唯一记录。
+	// DisabledReason / DisabledAt 记这把为什么、何时被停用。停用与恢复都只有人工
+	// 一条路（口径层 v0.95 去掉 401 自动摘除；老库里可能还留着当年自动摘除写的原因）。
 	DisabledReason string `json:"disabled_reason"`
 	DisabledAt     string `json:"disabled_at"`
 	CreatedAt      string `json:"created_at"`
@@ -69,7 +69,7 @@ type NewCredential struct {
 //
 // 语义是追加而不是整把替换（口径层 v0.38 改写 v0.28 的写入形态）。v0.47 让值可回读之后
 // 「页面上对不齐」那半条理由没了，但另半条还在，而且是决定性的：覆盖会连带清掉已停用
-// 的凭证，那是 401 摘除的现场，也是「这把为什么不转了」的唯一记录。
+// 的凭证，连同停用原因与时刻——那是「这把为什么不转了」的唯一记录。
 func AddChannelCredentials(ctx context.Context, db Conn, channelID int64, items []NewCredential) error {
 	for _, it := range items {
 		value := strings.TrimSpace(it.Value)
@@ -133,15 +133,14 @@ type CredentialUpdate struct {
 // UpdateCredential 改名 / 换值 / 停用 / 启用。
 //
 // 启用（Disabled=false）时顺手清掉停用原因与时刻：那两列描述的是「当下为什么停
-// 着」，留着一个已经恢复的凭证挂着一句「上游回 401」只会误导下一个看日志的人。
-// 这也正是口径层 v0.38 说的「只人工恢复」——恢复的动作只有这一个。
+// 着」，凭证恢复了还挂着一句停用原因只会误导下一个看日志的人。
 func UpdateCredential(ctx context.Context, db Conn, id int64, in CredentialUpdate) error {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return InvalidInput{Reason: "凭证名不能为空"}
 	}
-	// COALESCE 而不是直接赋值：这份凭证可能是被 401 自动摘掉的，人再点一次「停用」
-	// 不该把那个原因与时刻抹成「人工停用」——现场比动作重要。
+	// COALESCE 而不是直接赋值：老库里这份凭证可能还带着 v0.95 之前 401 自动摘除写下
+	// 的原因与时刻，人再点一次「停用」不该把那个现场抹成「人工停用」。
 	state := `disabled = 1,
 	          disabled_reason = COALESCE(disabled_reason, '人工停用'),
 	          disabled_at     = COALESCE(disabled_at, CURRENT_TIMESTAMP)`
@@ -170,19 +169,6 @@ func UpdateCredential(ctx context.Context, db Conn, id int64, in CredentialUpdat
 func DeleteCredential(ctx context.Context, db Conn, id int64) error {
 	res, err := db.ExecContext(ctx, `DELETE FROM channel_keys WHERE id = ?`, id)
 	return affectedOne(res, err)
-}
-
-// DisableCredential 摘掉一份凭证，记下原因与时刻。转发端在收到 401 时调它
-// （口径层 v0.38：**只有 401 摘**，403 换而不摘，429 换而不摘也不冷却）。
-//
-// 只在还启用着的时候写，这样 disabled_at 记的是**第一次**被摘的时刻，不会被后续
-// 并发进来的请求一次次刷新。
-func DisableCredential(ctx context.Context, db Conn, id int64, reason string) error {
-	_, err := db.ExecContext(ctx, `
-		UPDATE channel_keys
-		SET disabled = 1, disabled_reason = ?, disabled_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND disabled = 0`, reason, id)
-	return err
 }
 
 // credentialNameConflict 把唯一索引的冲突翻成一句人话。

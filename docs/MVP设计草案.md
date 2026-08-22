@@ -1,6 +1,7 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.10
+> 状态：草案 v1.11
+> v1.11 变更（口径层 v0.95 落地：凭证 401 自动摘除整个拆除，PO 2026-08-21 裁定「不摘」，2026-08-21）：①**删三件**：`upstream.Client.Disable` 挂钩（连同 `do()` 里 401 命中时的调用）、`server.disableCredential`、`store.DisableCredential`——自动摘除的整条链只有这三处，401/403/429 换凭证重试的 key 层内环一字不动。②`channel_keys` 三列（disabled/reason/at）与人工停用/恢复接口原样保留，自此只有 `UpdateCredential` 一个写入方；`UpdateCredential` 停用侧的 COALESCE 保留（护住存量库里自动摘除时代写的原因）。③**用例改判**：`TestKeyRingSwitchesOn401AndDisablesOnlyThatCredential` 改 `…ButDisablesNothing`（401 换凭证成功 + 全部凭证状态不动），`TestDisabledCredentialIsNotSelectedAgain` 改 `TestDisabledCredentialIsNotSelected`（停用源从自动摘除改为 SQL 人工停用，「停用凭证不进候选集」这条语义照钉）；凭证耗尽与 429 预算两条的「不摘」断言扩到 401；`waitDisabled` 助手删除；`declcfg` 的 `TestApplyKeepsDisabledCredential` 停用源同改。④本层 §6 故障转移图、§7 DDL 注释、§7.9 那条「单凭证渠道摘除后重启拒启」交互记录同步改写；正文各处「401 摘除现场」读作「停用现场」（口径层 v0.95 尾注同此）。修改人 jinpenga。
 > v1.10 变更（[#8](https://github.com/SimonGino/portage/issues/8) 处置落地：转换流水竞态修复——收场次序重排（方案 B，PO 2026-08-20 裁定），复现用例转正，2026-08-20）：①**修法**：`streamConverted` 两个写出失败的 panic 分支（首次 `advance()` 失败与 `EncodeStream` 报错）统一改走 `abortDecode`——先 `resp.Body.Close()`（解码 goroutine 的下一次 Read 立刻出错收摊，排空因此有界，不会挂在一条还在灌数据的连接上）、再把事件通道排空**到关闭**（channel close 给出解码侧全部写入对 handler 侧的 happens-before 边）、之后才 `panic(http.ErrAbortHandler)`；panic 展开里 defer 的 `rec.Summarized(tap.Summary())` 与 LogBodies 的 body 收集器读到的都是解码侧写完的最终状态。**零锁**，一处改动同时治 Tap 与收集器，Summary 照到的是「上游连接断掉前收到的全部字节」——弃掉的 A 案（TapCore 加 mutex）只治「读到旧值」不治时机，且 LogBodies 那侧要另锁一处。②v1.08 ④ 记档的**首次 `advance()` 失败分支缺排空的 goroutine 泄漏顺手同修**（同一个 `abortDecode`，PO 同批裁定不另立票）。③**复现用例转正**（`convertrace_test.go` 去掉 `PORTAGE_RACE_REPRO` 跳过）：拓扑用例改钉**新收场次序**（`TestConvertStreamTapAbortOrderingHasNoRace`：先断读端、排空到关闭、才 Summary，-race 下 5 连跑全绿；修复前的 `go drain + Summary` 形态三连跑三报，若再报即回归）；整链用例原样转正（~35s 等写超时是形态本身的价格，仍断 `stream_aborted`，-race 绿）——「检出靠拓扑、可达性靠整链」的分工不变。④`drainEvents` 并入 `abortDecode`（唯一调用方就是这两个分支），`streamConverted` 签名加 `upstreamBody io.Closer`（defer 的 Close 会再关一次，无害）。修改人 jinpenga。
 > v1.09 变更（[#13](https://github.com/SimonGino/portage/issues/13) 落地：Anthropic 缓存两项的真实转录入库，2026-08-20）：PO 提供 pollo-sub2api 渠道（响应体逐字节透明的 Anthropic 协议中转，2026-08-15 实测依据见票面）后按票面采法执行。①**四份 golden 样本**：`anthropic-cache-write` / `anthropic-cache-hit`（非流式一对）与 `anthropic-stream-cache-write` / `anthropic-stream-cache-hit`（流式一对），claude-sonnet-5。请求是自造定长手册文本（60 段、流式与非流式用不同前缀变体各建各的缓存），system 块末尾挂 `cache_control:ephemeral`，同一请求连打两遍——建缓存那遍 `cache_creation_input_tokens=7059`、命中那遍 `cache_read_input_tokens=7059`，**两个字段各自都有真字节走到**。expect 用 python 扫字节独立重算，不取 goldenrec 预填值；`thinking_tokens` 键在值 0 → `ReasoningTokens=0 / HasReasoningTokens=true`（v0.66 的「报了但没思考」档）。②**两边各有断言**（口径层 v0.71 的分工，真字节各走一遍）：Tap 侧进 `golden_test.go` 新开的 `cacheSamples` 表（第四张单列表，理由同前三张——进度归属不同），断上游原样的**净值** 37；canonical 侧新增 `cachegolden_test.go`，断毛值 7096 = 37 + 7059、缓存两项明细不因归一而丢、`NetInput` 能减回 37。毛值在表里**手写成数**，不调 `protocol.GrossInput` 现算——用被测函数给自己出期望值，加法错了两边一起错。③**流水那一列的毛值**由 #6 的 `TestAnthropicTokenColumnsLandInCallLogs`（断 2091）盖住，不重复。④`testdata/fixtures` 的两份构造样本照 README 首段的规矩**留作形状回归**，不删不搬；README 缺口段改写——中转透明证明的是「这条链路没吃 usage 字段」，官方直连那一格仍归 #2。⑤`cache_creation` 的 5m/1h 细分键原样留在字节里，不新增列（票面「不在范围」第 2 条）。修改人 jinpenga。
 > v1.08 变更（[#8](https://github.com/SimonGino/portage/issues/8) 第一步落定：转换流水竞态**坐实**，复现用例入库，处置待 PO 裁，2026-08-20）：票面的第一步是「构造能让 race detector 报警的用例，或论证不可达」——结论是**前者**。①**竞态是真的**：`streamConverted` 里 `outCodec.DecodeStream` 在解码 goroutine 上读 TeeReader（`tap.Write` 与 LogBodies 的 body 收集器都在那条线上被写）；`EncodeStream` 写出失败时 handler 走 `go drainEvents + panic(http.ErrAbortHandler)`，panic 展开里 `relayConverted` 的 defer 按 LIFO **先**跑 `rec.Summarized(tap.Summary())`、**后**跑 `resp.Body.Close()`——Summary 被调那一刻上游连接还开着、drainEvents 又保证解码侧没卡在发事件上，两条线在 `TapCore` 的 `sum`/`finished`/`scanner` 上无同步重叠。②**复现用例两条**（`internal/server/convertrace_test.go`，处置未定前默认跳过，`PORTAGE_RACE_REPRO=1` + `-race` 才跑）：**拓扑用例**把这套 goroutine 拓扑用生产类型原样缩微（TeeReader 挂 Tap、DecodeStream、先正常收几条、go drain + Summary），-race 下**必报**，报警栈就是生产栈（`TapCore.Summary/finish` 对 `teeReader.Read → TapCore.Write/consume`）；**整链用例**证明触发路径可达——客户端**停读不断连**（断连会连带 ctx 取消杀掉上游，解码侧立刻收摊，20 轮逮不到；停读则上游继续灌、30s writeDeadline 到期才报错进 panic 路径），断言钉在流水以 `stream_aborted` 收场。整链上 race 自身报不报警是微秒级调度彩票（解码侧被 drain 放行后要在 `Body.Close` 前抢到下一次 Read，本机实测多为 Close 先到），检出交给拓扑用例，可达性由整链用例钉住。③**处置不在本批**：票面明令「不要上来就加锁」，修法（TapCore 加锁 vs 收场次序重排——先 Close 再排空到通道关闭、拿到 happens-before 边之后才 Summary）已连同建议交 PO 裁。④顺带记一处相邻观察：`streamConverted` 首次 `advance()` 失败那条 panic 分支（写头之前那个）**没有** drainEvents，解码 goroutine 若已停在发事件上会永久泄漏——触发条件罕见（SetWriteDeadline 报错），记档不扩票。修改人 jinpenga。
@@ -509,8 +510,8 @@ upstream 驱动候选间故障转移（C4 已决语义；A-14 D3：不探测、�
           请求上游成功 ──► 透传 / 转换下行（写出首字节后不再切换）
           429/5xx/网络错误（未写首字节）──► 同候选同凭证退避重试（最内环，v0.19，实现在 M2）
           429/401/403（未写首字节，同候选重试耗尽后）──► 渠道内换未试过的启用凭证重试；
-                                                    **只有 401 同时摘除该凭证**（记原因与时刻，只人工恢复）；
-                                                    403 换而不摘；429 换而不摘、也不冷却
+                                                    **任何状态码都不摘凭证**（口径层 v0.95 推翻 v0.38
+                                                    的「只有 401 摘」，停用只人工做）；429 也不冷却
           5xx/网络错误/连接超时（同上，重试耗尽后）──► 不换凭证，跳出内环
       全局尝试上限 `retry.max_attempts` 耗尽 ──► 立即停止，按入口协议原生格式回最后一次上游错误
       渠道内凭证耗尽 或 5xx/网络错误/连接超时 ──► 剔除该候选，继续 loop
@@ -656,7 +657,7 @@ CREATE TABLE channel_keys (        -- 渠道凭证池（new-api 密钥聚合的�
   name TEXT NOT NULL,              -- 人写的凭证名（v0.35/口径层 v0.38），日志与用量归因用；不填由管理端给 `凭证 N`
   credential TEXT NOT NULL,        -- 静态 key 或 SA JSON（按渠道 credential_type）；仅存服务端，错误回显严禁泄露
   disabled INTEGER NOT NULL DEFAULT 0,
-  disabled_reason TEXT,            -- 仅 401 自动摘除（口径层 v0.38：403 换而不摘）；429/5xx 不摘；只人工恢复
+  disabled_reason TEXT,            -- 停用原因；只人工停用/恢复（口径层 v0.95 去掉 401 自动摘除；存量行可能留着旧原因）
   disabled_at DATETIME,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   -- 渠道内唯一（日志里两行都叫「主号」就废掉了归因本身）落成**独立唯一索引**
@@ -967,7 +968,7 @@ api_keys:
 
 **三处过期注释已随 [#37](https://github.com/SimonGino/portage/issues/37) 改掉**（v1.01）：仓库根 `config.yaml`（gitignore 覆盖，本机那份）与 `deploy/config.docker.yaml` 头部原写着「业务配置……全部落 DB，不写这里」，现在两处都写全了「落哪儿要看有没有挂声明文件」；`cmd/portage/main.go` 空 `api_keys` 那条警告的注释原本只写了「为什么刻意不拒启」这一半立论，现在两侧都在。
 
-**实现时撞出来的两条既有闸交互**（口径层从没讨论过，逐条见 v1.01 ③④）：单凭证渠道的凭证被 401 摘除后**重启即拒启**；`weight=0` 在 M4 之前对**未停用**接入点表达不出来。两条都不是本票引入的缺陷，是既有闸与新形态相遇的结果。
+**实现时撞出来的两条既有闸交互**（口径层从没讨论过，逐条见 v1.01 ③④）：单凭证渠道的唯一凭证被停用后**重启即拒启**（v1.01 记档时的触发源是 401 自动摘除，口径层 v0.95 拆掉它之后只剩人工停用这一条路，交互本身仍在）；`weight=0` 在 M4 之前对**未停用**接入点表达不出来。两条都不是本票引入的缺陷，是既有闸与新形态相遇的结果。
 
 ## 8. 最小管理接口
 

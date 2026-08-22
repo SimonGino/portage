@@ -114,7 +114,7 @@ func reconcile(ctx context.Context, tx *sql.Tx, f *File) ([]string, error) {
 // applyChannels upsert 渠道并删掉文件里没有的，返回 name → id。
 //
 // 按自然键 upsert 而不是 delete-all + insert（口径层 §2.9 #29）：整表重建会换掉
-// channels.id，而 channel_keys 的 401 摘除现场挂在 channel_keys.id 上、靠 channel_id
+// channels.id，而 channel_keys 的停用现场挂在 channel_keys.id 上、靠 channel_id
 // 串着——删父行 CASCADE 一走，那份现场就没了。
 func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]int64, []string, error) {
 	before, err := namesOf(ctx, tx, `SELECT name FROM channels`)
@@ -172,8 +172,8 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 // applyCredentials 是全套 reconcile 里**唯一一处刻意只写一列**的地方。
 //
 // ON CONFLICT 只覆盖 credential，**不碰 disabled / disabled_reason / disabled_at**：
-// 那三列整组是 401 摘除的运行期现场（口径层 §2.9 #28 ①），不进文件也就没有值可写。
-// 若跟着别的表一起把 disabled 覆成 0，每次重启都会把刚被摘掉的死 key 推回轮询池——
+// 那三列整组是停用的运行期现场（口径层 §2.9 #28 ①），不进文件也就没有值可写。
+// 若跟着别的表一起把 disabled 覆成 0，每次重启都会把停用的 key 推回轮询池——
 // 那正是「必须 upsert、不能 delete-all + insert」要防的事，只是换了个更隐蔽的入口。
 func applyCredentials(ctx context.Context, tx *sql.Tx, channel string, channelID int64, list []Credential) ([]string, error) {
 	before, err := namesOf(ctx, tx, `SELECT name FROM channel_keys WHERE channel_id = ?`, channelID)

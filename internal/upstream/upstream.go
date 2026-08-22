@@ -27,15 +27,8 @@ type Client struct {
 	http  *http.Client
 	retry RetryPolicy
 
-	// Disable 是 401 摘除凭证的挂钩（口径层 v0.38），由 server 接到 store 上。
-	// nil 即不摘——用例与探测路径不需要它。
-	//
-	// 摘除是**副作用**而不是返回值：401 可能发生在中间某一份凭证上，而那次请求
-	// 最终是成功的，返回值里没有地方安放「顺带摘了一把」。
-	Disable func(cred store.Credential, reason string)
-
-	// Queue 是渠道并发闸的排队参数（口径层 v0.50），由 server 从配置接上，
-	// 与 Disable 同一个挂法。零值 Wait 会让排队立即超时，兜底在 config.Load。
+	// Queue 是渠道并发闸的排队参数（口径层 v0.50），由 server 从配置接上。
+	// 零值 Wait 会让排队立即超时，兜底在 config.Load。
 	Queue QueuePolicy
 
 	// gates 是渠道并发闸，按渠道 id 一份（见 gate.go），与 cursor 同锁。
@@ -100,10 +93,10 @@ func (a Attempt) Retries() int {
 // Do 把 body 原样透传给候选所在渠道，返回实时响应与这次的尝试过程。
 // 调用方负责 Close resp.Body。
 //
-// 两层重试（口径层 v0.19 + v0.38）：内层对**同一份凭证**按 RetryPolicy 退避重试，
-// 外层是 key 层内环——401/403/429 换渠道内下一份启用凭证再来，其中**只有 401 顺带
-// 摘除那份凭证**（403 换而不摘：它在上游还可能是「这把没开通这个模型」，摘掉的却是
-// 渠道级资源）。5xx/网络错误不换凭证，直接跳出交给候选间转移（M4）。
+// 两层重试（口径层 v0.19 + v0.38，v0.95 去掉 401 自动摘除）：内层对**同一份凭证**按
+// RetryPolicy 退避重试，外层是 key 层内环——401/403/429 换渠道内下一份启用凭证再来，
+// **换归换，凭证状态一律不动**：停用只由人在管理端做，网关不写 disabled。
+// 5xx/网络错误不换凭证，直接跳出交给候选间转移（M4）。
 //
 // 全部重试都发生在向客户端写出首字节之前——Do 返回之后 relay 才开始写响应头，所以
 // 「首字节边界即承诺边界」这条约束不受影响。
@@ -144,11 +137,6 @@ func (c *Client) do(ctx context.Context, cand store.Candidate, ep protocol.Endpo
 	for i, cred := range creds {
 		at.Credential = cred.Name
 		resp, err := c.send(ctx, cand, cred, ep, rawQuery, body, clientHdr, stream, &at)
-		if resp != nil && resp.StatusCode == http.StatusUnauthorized && c.Disable != nil {
-			// 摘除在这里而不是循环外：401 可能发生在中间某一份凭证上，而这次请求
-			// 最终由后面某一份跑成了——那把坏凭证照样得摘。
-			c.Disable(cred, "上游回 401")
-		}
 		if !switchCredential(err, resp) || i == len(creds)-1 || c.budgetOut(at) {
 			return resp, at, err
 		}

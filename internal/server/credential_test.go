@@ -60,9 +60,9 @@ func credentialState(t *testing.T, db *sql.DB, id int64) (disabled bool, reason,
 	return disabled, r.String, a.String
 }
 
-// 401 是**确定性失效**：这一把再打一万次也一样，所以换下一把，并且把它摘掉。
-// 摘的只有 401 的那一把——另一把是好的，摘它等于把渠道也一起废了。
-func TestKeyRingSwitchesOn401AndDisablesOnlyThatCredential(t *testing.T) {
+// 401 换下一把，但**不摘**（口径层 v0.95 推翻 v0.38 的「只有 401 摘」）：网关不改
+// 凭证状态，停用只由人在管理端做。换到好凭证照样成功，坏的那把状态原样躺着。
+func TestKeyRingSwitchesOn401ButDisablesNothing(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	byCredential(up, map[string]int{"sk-bad": http.StatusUnauthorized})
 	db := gatewaytest.NewDB(t)
@@ -78,14 +78,13 @@ func TestKeyRingSwitchesOn401AndDisablesOnlyThatCredential(t *testing.T) {
 		t.Errorf("最后一次上游请求用的凭证是 %q，期望换到 sk-good", got)
 	}
 
-	// 摘除是异步于响应的（Disable 用的是自己的 ctx），等它落下来。
-	waitDisabled(t, db, ids["坏号"])
-	disabled, reason, at := credentialState(t, db, ids["坏号"])
-	if !disabled || reason == "" || at == "" {
-		t.Errorf("401 的凭证要被摘掉并留下原因与时刻，得到 disabled=%v reason=%q at=%q", disabled, reason, at)
-	}
-	if disabled, _, _ := credentialState(t, db, ids["好号"]); disabled {
-		t.Error("好凭证被连坐摘了")
+	// 等一小会儿再看：v0.95 之前摘除是异步落库的，要证明「没有摘」，得给一个还在摘
+	// 的实现留出摘的时间。
+	time.Sleep(100 * time.Millisecond)
+	for name, id := range ids {
+		if disabled, _, _ := credentialState(t, db, id); disabled {
+			t.Errorf("401 摘掉了凭证 %s——v0.95 之后网关不许动凭证状态", name)
+		}
 	}
 
 	// 归因记的是**真正发出请求**的那一份，不是第一次试的那一份。
@@ -98,33 +97,33 @@ func TestKeyRingSwitchesOn401AndDisablesOnlyThatCredential(t *testing.T) {
 	}
 }
 
-// 被摘掉的凭证不再进候选集：下一个请求直接用好的那把，上游一次都不会再看到坏的。
-func TestDisabledCredentialIsNotSelectedAgain(t *testing.T) {
+// 人工停用的凭证不进候选集：请求直接用好的那把，上游一次都不会看到停用的。
+func TestDisabledCredentialIsNotSelected(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
-	byCredential(up, map[string]int{"sk-bad": http.StatusUnauthorized})
 	db := gatewaytest.NewDB(t)
-	ids := seedPool(t, db, up.URL, [2]string{"坏号", "sk-bad"}, [2]string{"好号", "sk-good"})
+	ids := seedPool(t, db, up.URL, [2]string{"停用号", "sk-off"}, [2]string{"好号", "sk-good"})
+	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1,
+		disabled_reason = '人工停用', disabled_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, ids["停用号"]); err != nil {
+		t.Fatal(err)
+	}
 	g := gatewaytest.StartWith(t, db, gatewaytest.Options{})
-
-	g.Post(t, "/v1/messages", `{"model":"gw-sonnet","messages":[]}`, nil)
-	waitDisabled(t, db, ids["坏号"])
-	before := up.Count()
 
 	resp := g.Post(t, "/v1/messages", `{"model":"gw-sonnet","messages":[]}`, nil)
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("第二次请求失败：%d", resp.StatusCode)
+		t.Fatalf("请求失败：%d", resp.StatusCode)
 	}
-	if got := up.Count() - before; got != 1 {
-		t.Errorf("第二次请求打了 %d 次上游，摘掉的凭证不该再被试", got)
+	if got := up.Count(); got != 1 {
+		t.Errorf("请求打了 %d 次上游，停用的凭证不该被试", got)
 	}
 	if got := up.Last(t).Header.Get("x-api-key"); got != "sk-good" {
-		t.Errorf("第二次请求用的凭证是 %q", got)
+		t.Errorf("请求用的凭证是 %q", got)
 	}
 }
 
-// 403 换而**不摘**（口径层 v0.38 推翻 v0.11 的「401/403 都摘」）：403 在上游还可能是
-// 「这把凭证没开通这个模型」，摘掉的却是渠道级资源——误伤代价不对称，而漏网代价很轻。
+// 403 换而**不摘**——v0.38 起如此（当年只有 401 摘），v0.95 之后「不摘」成了全部
+// 状态码的通则，这条继续钉着 403 的换凭证路径。
 func TestForbiddenSwitchesCredentialButDisablesNothing(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	byCredential(up, map[string]int{"sk-first": http.StatusForbidden})
@@ -149,8 +148,8 @@ func TestForbiddenSwitchesCredentialButDisablesNothing(t *testing.T) {
 	}
 }
 
-// 凭证耗尽就是耗尽：不做「最后一把不许摘」的保底（口径层 v0.38）。那把已经 401 了，
-// 留着只会让**每个**请求都吃一次确定性失效，把「凭证过期」伪装成「上游偶发抖动」。
+// 凭证耗尽就是耗尽：最后一次上游响应原样透出去，网关不改写不吞，也不动任何一把的
+// 状态（v0.95）。
 func TestAllCredentialsExhaustedReturnsUpstreamErrorVerbatim(t *testing.T) {
 	up := gatewaytest.NewUpstream(t)
 	byCredential(up, map[string]int{"sk-a": http.StatusUnauthorized, "sk-b": http.StatusUnauthorized})
@@ -164,10 +163,10 @@ func TestAllCredentialsExhaustedReturnsUpstreamErrorVerbatim(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("凭证耗尽应原样回上游的 401，得到 %d", resp.StatusCode)
 	}
+	time.Sleep(100 * time.Millisecond)
 	for name, id := range ids {
-		waitDisabled(t, db, id)
-		if disabled, _, _ := credentialState(t, db, id); !disabled {
-			t.Errorf("凭证 %s 回了 401 却没被摘", name)
+		if disabled, _, _ := credentialState(t, db, id); disabled {
+			t.Errorf("凭证 %s 被摘了——v0.95 之后 401 也不摘", name)
 		}
 	}
 	// 失败的这一行也要记下最后用的是哪把（口径层 v0.38）：一次全军覆没的调用恰恰
@@ -199,9 +198,8 @@ func TestGlobalAttemptBudgetCapsUpstreamSends(t *testing.T) {
 	if got := up.Count(); got != 3 {
 		t.Errorf("上游收到 %d 次请求，max_attempts=3 应当封在 3 次", got)
 	}
-	// 429 换而**不摘**，也不做冷却（口径层 v0.38）：限流不是确定性失效，摘掉它等于
-	// 让一次上游抖动把凭证永久下线，而恢复只有人工那一条路。等一小会儿再看，给一个
-	// 会摘的实现留出摘的时间。
+	// 429 换而**不摘**，也不做冷却（v0.38 起如此，v0.95 扩成通则）。等一小会儿再看，
+	// 给一个会摘的实现留出摘的时间。
 	time.Sleep(100 * time.Millisecond)
 	for name, id := range ids {
 		if disabled, _, _ := credentialState(t, db, id); disabled {
@@ -323,21 +321,5 @@ func TestOpenBackfillsCredentialNames(t *testing.T) {
 			t.Errorf("第 %d 遍聚合结果 = %+v，期望一行「(未记录凭证)」×1", round, rows)
 		}
 		db.Close()
-	}
-}
-
-// waitDisabled 等摘除落库。摘除走的是自己的 ctx（不随请求取消），因此响应回到客户端
-// 时它未必已经写完。
-func waitDisabled(t *testing.T, db *sql.DB, id int64) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if disabled, _, _ := credentialState(t, db, id); disabled {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("3s 内凭证 %d 没有被摘除", id)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }

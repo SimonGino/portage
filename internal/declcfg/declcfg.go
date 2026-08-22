@@ -69,12 +69,13 @@ type Channel struct {
 // Credential 是凭证池里的一条。**只有名字与值，没有 disabled。**
 //
 // 这是全文件唯一一处「实体有 disabled 列却不进文件」（口径层 §2.9 #28 ①）：
-// channel_keys 的 disabled / disabled_reason / disabled_at 三列**整组**是 401 摘除的
-// 运行期现场，由网关写。意图列进文件说的是**另外四张表**的 disabled（channels、
-// channel_models、access_points、api_keys）加上 candidates.weight。
+// channel_keys 的 disabled / disabled_reason / disabled_at 三列**整组**是运行期状态
+// （人工停用的现场；v0.95 之前还有 401 自动摘除写它），不进文件。意图列进文件说的是
+// **另外四张表**的 disabled（channels、channel_models、access_points、api_keys）加上
+// candidates.weight。
 //
-// 若把它当意图列收进来，每次重启 apply 都会拿文件里那个 disabled: false 把刚被 401
-// 摘掉的死 key 重新推回轮询池——那正是「必须 upsert、不能 delete-all+insert」这条
+// 若把它当意图列收进来，每次重启 apply 都会拿文件里那个 disabled: false 把停用的
+// key 重新推回轮询池——那正是「必须 upsert、不能 delete-all+insert」这条
 // 要防的事，只是换了个更隐蔽的入口。人要停用一把凭证，就把它从文件里删掉。
 type Credential struct {
 	Name       string `yaml:"name"`

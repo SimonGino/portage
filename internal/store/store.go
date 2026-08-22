@@ -447,7 +447,7 @@ const (
 //
 // Name 是给人看的归因标识（渠道内唯一），会进日志与用量；Value 只在进程内流向
 // upstream，永不进任何 JSON 响应——回读走的是管理端那条独立的 CredentialInfo
-// （v0.47），热路径这个结构不该是它的出口。ID 是 401 摘除时要改的那一行。
+// （v0.47），热路径这个结构不该是它的出口。ID 定位库里的那一行。
 type Credential struct {
 	ID    int64
 	Name  string
@@ -572,7 +572,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 		return Candidate{}, err
 	}
-	// EXISTS 与这一趟之间隔着一次 401 摘除的可能——那时凭证刚好归零，与「渠道没有
+	// EXISTS 与这一趟之间隔着一次人工停用的可能——那时凭证刚好归零，与「渠道没有
 	// 启用凭证」是同一种收场，交给 503 而不是发一个不带凭证的请求。
 	if len(c.Credentials) == 0 {
 		return Candidate{}, ErrNoUsableCandidate

@@ -376,8 +376,8 @@ type ProbeTarget struct {
 	Name      string
 	BaseURL   string
 	Protocols protocol.Set
-	// Credentials 含**已停用**的凭证（口径层 v0.38 逐把凭证探）：恢复既然是纯人工
-	// 的，「这把被摘的凭证现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
+	// Credentials 含**已停用**的凭证（口径层 v0.38 逐把凭证探）：「这把停用的凭证
+	// 现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
 	// 是那个答案。一份都没有时是空切片——照样探，只是不带凭证，上游多半回 401，
 	// 而 401 同样证明子路径存在，这正是探测要问的。
 	Credentials []ProbeCredential

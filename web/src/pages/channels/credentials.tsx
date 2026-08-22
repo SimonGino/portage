@@ -9,7 +9,7 @@ import { Segmented } from '../../fields'
  * 「凭证收井默认收起」那一条；布局参照 Cherry Studio 的服务商页，视觉与命名不跟）。
  *
  * 页面上只摆**正在被用的那一把**（掩码 + 显示 / 复制）和「管理」「检测」两颗按钮；
- * 池子的逐条 CRUD、选取模式、401 摘除现场都在「管理」弹框里。检测跟着凭证走——
+ * 池子的逐条 CRUD、选取模式、停用现场都在「管理」弹框里。检测跟着凭证走——
  * 它验的首先就是这把 key 能不能过上游的门。
  */
 export function CredentialBlock({
@@ -92,7 +92,7 @@ export function CredentialBlock({
 /**
  * CredentialsDialog 是凭证池的管理弹框（口径层 v0.38 的池子语义原样搬进来）。
  *
- * 逐条 CRUD，不是整把替换：覆盖会连带清掉已停用的凭证，那是 401 摘除的现场，是
+ * 逐条 CRUD，不是整把替换：覆盖会连带清掉已停用的凭证，连同停用原因与时刻——
  * 「这把为什么不转了」的唯一记录。列表里有名字、**值**（v0.47 起可回读，默认掩码）、
  * 状态与时间。段名仍是「上游凭证」不是「API 密钥」（v0.48）：导航上那个「API Key」
  * 指的是网关下发给客户端的 key，两个词摆在同一个界面里同形不同义。
@@ -171,7 +171,7 @@ function CredentialsDialog({
 }
 
 /** CredentialRow 是池子里的一行：值、改名、停用/启用、删除。值能看能复制（v0.47），
- *  但改不了——换 key 就是加一份新的、把旧的停掉，那样 401 摘除的现场还留着。 */
+ *  但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。 */
 function CredentialRow({
   cred,
   mutate,
@@ -202,8 +202,7 @@ function CredentialRow({
       <SecretValue value={cred.credential} />
       <div className="cred-state">
         {cred.disabled ? (
-          /* 摘除只人工恢复（口径层 v0.38），所以原因与时刻要一直摆着——它就是
-             「这把为什么不转了」的唯一记录。 */
+          /* 停用原因与时刻要一直摆着——它就是「这把为什么不转了」的唯一记录。 */
           <span className="tag tag-off" title={cred.disabled_at}>
             {cred.disabled_reason || '已停用'}
           </span>

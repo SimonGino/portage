@@ -114,8 +114,8 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 // exportCredentials 只取 name 与 credential。
 //
 // **运行期状态列一个都不取**（口径层 §2.9 #32）：disabled / disabled_reason /
-// disabled_at 三列只由网关写，是 401 摘除的现场。带上它们等于把本地这台撞过的 401
-// 记录一起搬到生产机——那台从没打过那把 key，却带着一条「它坏了」的判决上线。
+// disabled_at 三列是这台机器上的停用现场。带上它们等于把本地的停用判决一起搬到
+// 生产机——那台从没打过那把 key，却带着一条「它坏了」的判决上线。
 func exportCredentials(ctx context.Context, db store.Queryer, channelID int64) ([]Credential, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT name, credential FROM channel_keys WHERE channel_id = ? ORDER BY name`, channelID)
