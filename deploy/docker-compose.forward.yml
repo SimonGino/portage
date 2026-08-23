@@ -36,7 +36,7 @@ services:
       # iptables 的 DOCKER 链，**绕过 ufw/firewalld 的 INPUT 规则**。那种机器上
       # 要么写死内网网卡地址（"192.168.x.x:8317:8317"），要么绑 127.0.0.1 前面挂
       # nginx 收 TLS 只放行 /v1（样例见仓库 deploy/nginx.conf.example）。
-      - "8317:8317"
+      - "18317:8317"
     volumes:
       # 宿主 ./data 就是容器 /data，库落在 ./data/gateway.db，备份就是拷这个目录。
       # 目录属主不是 65532 时启动报 `unable to open database file (14)`——看着像
