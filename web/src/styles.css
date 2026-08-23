@@ -1888,10 +1888,19 @@ textarea:focus {
 
 /* ── 检测弹层（口径层 v0.96：发起、勾选、结果同一个容器，关弹层即失） ── */
 
+/* 形制同 .form（对话框里的表单都是 18px 内衬 + 纵向栈），另起一个类只因为它
+   尾巴上还挂着结果区。 */
 .probe-dialog {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.probe-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .probe-protos {
@@ -1900,10 +1909,18 @@ textarea:focus {
   gap: 8px;
 }
 
-.probe-dialog-run {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* 结果区与表单之间画一条真实分组处的细线（发起与结论是两段）；矩阵行多时
+   自己滚，别把「检测」按钮顶出视口——按钮不动，人才能就地再测一把。 */
+.probe-results {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  max-height: 44vh;
+  overflow-y: auto;
+}
+
+.probe-results .probe {
+  margin: 0;
 }
 
 /* ── 检测结论 ──────────────────────────────────────────────────────── */

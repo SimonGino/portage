@@ -76,10 +76,12 @@ export function ProbeDialog({
   }
 
   return (
-    <Dialog title="检测" wide onClose={onClose}>
+    /* 不放宽（ui.tsx 那条：装列表的框才放宽，表单不跟着变宽）——这框先是一张
+       三个字段的表单，矩阵行在 520px 里也装得下。 */
+    <Dialog title="检测" onClose={onClose}>
       <div className="probe-dialog">
-        <p className="muted">
-          每格发一个带模型名的最小真实请求（max_tokens 压到最小）——只提示，不落库也不影响路由；结果关掉这个框就没了。
+        <p className="muted probe-note">
+          发带模型名的最小真实请求（max_tokens 压到最小）——只提示，不落库也不影响路由；结果关掉这个框就没了。
         </p>
 
         {/* 控件走 Picker 不走原生 select（fields.tsx 的通则）：凭证行要带停用标注，
@@ -133,21 +135,31 @@ export function ProbeDialog({
           </div>
         </Field>
 
-        <div className="probe-dialog-run">
+        {error && <div className="bar bar-warn">{error}</div>}
+
+        {/* 主动作按对话框成例右对齐、实心墨（同 Keys / 接入点的表单框）；发不出去的
+            原因用一句小字摆在按钮旁，不靠 disabled 让人猜。 */}
+        <div className="form-actions">
+          {models.length === 0 ? (
+            <span className="muted">还没有启用中的纳管模型，没有可检测的目标</span>
+          ) : picked.length === 0 ? (
+            <span className="muted">至少勾一个协议</span>
+          ) : null}
           <button
             type="button"
-            className="btn"
+            className="btn btn-primary"
             onClick={() => void run()}
             disabled={running || picked.length === 0 || models.length === 0}
           >
             {running ? '检测中…' : '检测'}
           </button>
-          {models.length === 0 && <span className="muted">还没有启用中的纳管模型，没有可检测的目标。</span>}
-          {models.length > 0 && picked.length === 0 && <span className="muted">至少勾一个协议。</span>}
         </div>
 
-        {error && <div className="bar bar-warn">{error}</div>}
-        {result && <ProbeMatrix rows={result.models} credential={result.credential} />}
+        {result && (
+          <div className="probe-results">
+            <ProbeMatrix rows={result.models} credential={result.credential} />
+          </div>
+        )}
       </div>
     </Dialog>
   )
