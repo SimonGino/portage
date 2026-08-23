@@ -101,7 +101,7 @@ export function ProbeDialog({
           />
         </Field>
 
-        <Field label="模型">
+        <Field label="模型" hint={models.length === 0 ? '还没有启用中的纳管模型，没有可检测的目标' : undefined}>
           <Picker
             value={model}
             options={[
@@ -119,7 +119,16 @@ export function ProbeDialog({
           />
         </Field>
 
-        <Field label="协议" hint="可选项 = 已声明协议。想测别的协议，先在「API 地址」给它填一行地址">
+        {/* 发不出去的原因写在出问题的那个字段下面（12px hint），不在按钮旁摆大字
+            ——按钮旁的说明和按钮抢分量，而 hint 的位置读者本来就会看。 */}
+        <Field
+          label="协议"
+          hint={
+            picked.length === 0
+              ? '至少勾一个协议'
+              : '可选项 = 已声明协议。想测别的协议，先在「API 地址」给它填一行地址'
+          }
+        >
           <div className="probe-protos">
             {fallback.map((p) => (
               <button
@@ -137,14 +146,8 @@ export function ProbeDialog({
 
         {error && <div className="bar bar-warn">{error}</div>}
 
-        {/* 主动作按对话框成例右对齐、实心墨（同 Keys / 接入点的表单框）；发不出去的
-            原因用一句小字摆在按钮旁，不靠 disabled 让人猜。 */}
+        {/* 主动作按对话框成例右对齐、实心墨（同 Keys / 接入点的表单框）。 */}
         <div className="form-actions">
-          {models.length === 0 ? (
-            <span className="muted">还没有启用中的纳管模型，没有可检测的目标</span>
-          ) : picked.length === 0 ? (
-            <span className="muted">至少勾一个协议</span>
-          ) : null}
           <button
             type="button"
             className="btn btn-primary"
