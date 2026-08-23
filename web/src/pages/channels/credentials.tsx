@@ -3,32 +3,33 @@ import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
 import { Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
 import { Segmented } from '../../fields'
+import { ProbeDialog } from './probe'
 
 /**
  * CredentialBlock 是渠道凭证在模型页上的常驻一行（PO 2026-08-20 裁决，推翻 v0.46
  * 「凭证收井默认收起」那一条；布局参照 Cherry Studio 的服务商页，视觉与命名不跟）。
  *
  * 页面上只摆**正在被用的那一把**（掩码 + 显示 / 复制）和「管理」「检测」两颗按钮；
- * 池子的逐条 CRUD、选取模式、停用现场都在「管理」弹框里。检测跟着凭证走——
- * 它验的首先就是这把 key 能不能过上游的门。
+ * 池子的逐条 CRUD、选取模式、停用现场都在「管理」弹框里。检测点开检测弹层
+ * （口径层 v0.96 ③）：这里的入口预选当前在用的那把；「管理」弹框每行的检测预选
+ * 那一把（含已停用）。两处开的是同一个弹层。
  */
 export function CredentialBlock({
   channel,
   onChanged,
-  probing,
-  onProbe,
 }: {
   channel: Channel
   /** 池子变了就通知外面重拉渠道——「缺凭证」那个标记挂在渠道对象上。 */
   onChanged: () => void
-  probing: boolean
-  onProbe: () => void
 }) {
   const { data, error, reload, setError } = useList(() =>
     api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
   )
   const list = data ?? []
   const [managing, setManaging] = useState(false)
+  // 检测弹层预选的那把凭证；null = 没开弹层。从「管理」进来时把管理框关掉——
+  // 两个弹框叠着，Esc 会把两层一起带走。
+  const [probing, setProbing] = useState<Credential | null>(null)
   const enabled = list.filter((c) => !c.disabled)
   // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表——
   // 完整的池子在弹框里，行尾的计数提醒着「不止这一把」。
@@ -69,11 +70,11 @@ export function CredentialBlock({
           <button
             type="button"
             className="btn btn-quiet"
-            onClick={onProbe}
-            disabled={probing}
-            title="给勾选的协议子路径各发一个最小请求；只提示，不落库也不影响路由"
+            onClick={() => setProbing(primary)}
+            disabled={!primary}
+            title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
           >
-            {probing ? '检测中…' : '检测'}
+            检测
           </button>
         </div>
       )}
@@ -83,6 +84,18 @@ export function CredentialBlock({
           list={list}
           mutate={mutate}
           onClose={() => setManaging(false)}
+          onProbe={(c) => {
+            setManaging(false)
+            setProbing(c)
+          }}
+        />
+      )}
+      {probing && (
+        <ProbeDialog
+          channel={channel}
+          credentials={list}
+          initial={probing}
+          onClose={() => setProbing(null)}
         />
       )}
     </section>
@@ -102,11 +115,14 @@ function CredentialsDialog({
   list,
   mutate,
   onClose,
+  onProbe,
 }: {
   channel: Channel
   list: Credential[]
   mutate: (fn: () => Promise<unknown>) => Promise<void>
   onClose: () => void
+  /** 这一行的检测：关掉管理框、开检测弹层并预选这把（含已停用的）。 */
+  onProbe: (c: Credential) => void
 }) {
   const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
   const enabled = list.filter((c) => !c.disabled).length
@@ -140,7 +156,7 @@ function CredentialsDialog({
         ) : (
           <div className="cred-list">
             {list.map((c) => (
-              <CredentialRow key={c.id} cred={c} mutate={mutate} />
+              <CredentialRow key={c.id} cred={c} mutate={mutate} onProbe={() => onProbe(c)} />
             ))}
           </div>
         )}
@@ -169,14 +185,16 @@ function CredentialsDialog({
   )
 }
 
-/** CredentialRow 是池子里的一行：值、改名、停用/启用、删除。值能看能复制（v0.47），
- *  但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。 */
+/** CredentialRow 是池子里的一行：值、改名、检测、停用/启用、删除。值能看能复制
+ *  （v0.47），但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。 */
 function CredentialRow({
   cred,
   mutate,
+  onProbe,
 }: {
   cred: Credential
   mutate: (fn: () => Promise<unknown>) => Promise<void>
+  onProbe: () => void
 }) {
   const [name, setName] = useState(cred.name)
 
@@ -214,6 +232,16 @@ function CredentialRow({
         )}
       </div>
       <div className="row-actions">
+        {/* 停用的也给检测（口径层 v0.96 承接 v0.38）：恢复是纯人工的，「这把还
+            坏不坏」除了发一次请求没有别的办法回答。 */}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={onProbe}
+          title="用这把凭证检测；只提示，不落库也不影响路由"
+        >
+          检测
+        </button>
         <Toggle
           on={!cred.disabled}
           label={cred.name}

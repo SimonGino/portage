@@ -4,7 +4,6 @@ import type {
   BaseURLs,
   Channel,
   ChannelModel,
-  ChannelProbe,
   ModelListResult,
   Protocol,
 } from '../../api'
@@ -13,7 +12,6 @@ import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
 import { ChannelForm, joinURL } from './form'
 import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
-import { ModelProbeGrid, ProbeRow } from './probe'
 
 /**
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
@@ -21,14 +19,12 @@ import { ModelProbeGrid, ProbeRow } from './probe'
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
  * 「上游凭证」「API 地址」是身份条下的**常驻区块**（PO 2026-08-20 裁决，布局参照
  * Cherry Studio 的服务商页，推翻 v0.46 里这两样收井的那一半）；「上游设置」（改名、
- * 协议集、并发、能力位）仍是条内文字按钮点开的井，默认收起。检测挪到凭证行里——
- * 它验的首先就是这把 key 能不能过上游的门，结论仍落在模型列表上方。
- * 获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
+ * 协议集、并发、能力位）仍是条内文字按钮点开的井，默认收起。检测在凭证行里，点开
+ * 检测弹层（口径层 v0.96 ③）：发起、勾选、结果都在弹层里，关弹层即失——页面上
+ * 不再有常驻探测区块。获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
  */
 export function ChannelDetail({
   ch,
-  probe,
-  onProbe,
   fetched,
   onFetchModelsDone,
   onCredentialsChanged,
@@ -37,8 +33,6 @@ export function ChannelDetail({
   mutate,
 }: {
   ch: Channel
-  probe?: ChannelProbe | 'running'
-  onProbe: () => void
   /**
    * 上游拉到的模型列表（裁决 1A——保留 fetched state）。拉取本身已收进弹框，
    * 这一份是弹框 onResults 回吐回来、写进上层 state 的成果，供模型格子里的
@@ -176,27 +170,10 @@ export function ChannelDetail({
         </div>
       )}
 
-      <CredentialBlock
-        channel={ch}
-        onChanged={onCredentialsChanged}
-        probing={probe === 'running'}
-        onProbe={onProbe}
-      />
+      <CredentialBlock channel={ch} onChanged={onCredentialsChanged} />
 
       <BaseURLBlock ch={ch} mutate={mutate} />
 
-      {/* 探测结论落在两个常驻区块之后、模型列表之前：按钮在凭证行里，结论的另一半
-          （模型矩阵）本来就要挨着模型列表。 */}
-      {probe && probe !== 'running' && (
-        <div className="detail-probes">
-          {probe.credentials.map((g) => (
-            <ProbeRow key={g.credential} group={g} multi={probe.credentials.length > 1} />
-          ))}
-        </div>
-      )}
-      {probe && probe !== 'running' && (probe.models?.length ?? 0) > 0 && (
-        <ModelProbeGrid rows={probe.models!} credential={probe.model_credential} />
-      )}
       {picking && (
         <ModelPicker
           channel={ch}

@@ -259,17 +259,32 @@ func (h *Handler) updateChannel(c *gin.Context) {
 	})
 }
 
-// probeChannel 逐个协议问上游「你提供这个子路径吗」，回一组结果给页面显示。
+// probeInput 是一次检测的入参（口径层 v0.96 ③）：点哪把凭证用哪把（含已停用）、
+// 全部纳管模型或单选一个、勾了哪几个协议。勾选不落库，结果也不落库。
+type probeInput struct {
+	CredentialID int64 `json:"credential_id"`
+	// Model 空串 = 全部启用中的纳管模型；非空必须是其中之一。
+	Model     string   `json:"model"`
+	Protocols []string `json:"protocols"`
+}
+
+// probeChannel 跑一次模型级检测（口径层 v0.96 检测收成一层）：选中的模型 × 勾选的
+// 协议，每格发一个带模型名的最小真实请求，回一个三态矩阵给弹层就地显示。
 //
-// **只提示、不做闸**（口径层 v0.33）：不落库、不参与路由、不影响保存成败——所以它是
-// 独立的一次 POST，而不是缝在保存事务里。前端在保存成功之后调它，勾错协议集的人当场
-// 就能看见，而这条信息不会变成一份会过期的缓存躺在库里。
+// **只提示、不做闸**（v0.33 血统）：不落库、不参与路由、不影响保存成败。它只由人
+// 手点——保存渠道/设置后什么都不跑（v0.96 ①），真实请求的钱只在人手点时花。也因此
+// 参数不对就整个拒掉、一个请求都不发：参数错误不该花钱。
 //
-// 串行不并发：最多三个协议，而并发起来时上游那边看到的是三个几乎同时到达的请求，
-// 有些中转会按这个判限流。
+// 并发压到 4：这一层的请求形状就是普通推理流量，4 路并发是任何客户端都会有的样子；
+// 串行在 20 个模型 × 8 秒超时的最坏情形下要等三分钟，人在弹层前面等不了那么久。
 func (h *Handler) probeChannel(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
+		return
+	}
+	var in probeInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
 	target, err := store.ChannelProbeTarget(c.Request.Context(), h.db, id)
@@ -277,100 +292,90 @@ func (h *Handler) probeChannel(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	// 逐把凭证探（口径层 v0.38），含已停用的——「这把停用的凭证现在还坏不坏」除了
-	// 删掉重配就没有别的办法回答。一份凭证都没有时仍探一轮空凭证：
-	// 401 同样证明子路径存在，而那正是探测要问的。
-	creds := target.Credentials
-	if len(creds) == 0 {
-		creds = []store.ProbeCredential{{Name: ""}}
-	}
-	groups := make([]probeGroup, 0, len(creds))
-	for _, cred := range creds {
-		g := probeGroup{Credential: cred.Name, Disabled: cred.Disabled}
-		for _, p := range target.Protocols {
-			// 各协议打各的根地址（口径层 v0.96）：探的就是「这一侧真会被请求的那一串」。
-			g.Results = append(g.Results, upstream.Probe(c.Request.Context(), target.BaseURLs.Get(p), p, cred.Value))
-		}
-		groups = append(groups, g)
-	}
 
-	// 模型矩阵要花钱，所以**默认不跑**，由调用方显式 `?models=1` 要（口径层 v0.43 ①
-	// 「只由人手点」）。缺省站在不花钱那一侧：上面那层是保存渠道后自动跑的（v0.33），
-	// 把矩阵默认挂上去等于每改一次 base_url 就静默打出「模型数 × 协议数」次真实推理。
-	// 写成 opt-out（`?models=0`）的话，将来漏传参数的代价是花钱，opt-in 漏传只是少一层提示。
-	var models []modelProbeRow
-	var modelCred string
-	if c.Query("models") == "1" {
-		models, modelCred = probeModelMatrix(c.Request.Context(), target)
-	}
-
-	// 只报渠道名，不报 base_url，更不报凭证值。
-	h.log.Info("渠道协议探测", "channel", target.Name,
-		"credentials", len(groups), "models", len(models))
-	c.JSON(http.StatusOK, gin.H{
-		"credentials":      groups,
-		"models":           models,
-		"model_credential": modelCred,
-	})
-}
-
-// probeModelMatrix 跑模型级探测（口径层 v0.43）：启用中的纳管模型 × 各自的有效协议
-// 集（自己声明的子集，空则继承渠道全集），每格发一个带模型名的最小真实请求。
-//
-// 只用第一把**启用**凭证：这一层每格都是要花钱的真请求，逐把凭证轰全矩阵是
-// 模型数 × 协议数 × 凭证数的立方爆炸；「这把凭证还活不活」的问题上面那层已经
-// 逐把答过了。403 的格子固定词表里写明「可能是这把凭证没开通」——那正是 403 的
-// 凭证相关含义，所以响应里带上探的是哪把（model_credential），页面照实标注。
-//
-// 并发跑但压到 4：与上面那层「串行防中转按并发判限流」的顾虑相对，这一层的请求
-// 形状就是普通推理流量，4 路并发是任何客户端都会有的样子；串行在 20 个模型 ×
-// 8 秒超时的最坏情形下要等三分钟，人在对话框前面等不了那么久。
-func probeModelMatrix(ctx context.Context, target store.ProbeTarget) ([]modelProbeRow, string) {
-	if len(target.Models) == 0 {
-		return nil, ""
-	}
+	// 凭证按 id 找，**含已停用的**（v0.38 的立论承接）：恢复是纯人工的，「这把还
+	// 坏不坏」除了发一次请求没有别的办法回答。
 	var cred store.ProbeCredential
+	found := false
 	for _, x := range target.Credentials {
-		if !x.Disabled {
-			cred = x
+		if x.ID == in.CredentialID {
+			cred, found = x, true
 			break
 		}
 	}
-	if cred.Value == "" {
-		// 一把启用的凭证都没有：拿空凭证发请求只会攒一屏 401 说不清，不如不发。
-		// 上面那层同样会是空的，页面只剩子路径探测不到东西的提示。
-		return nil, ""
+	if !found {
+		fail(c, http.StatusBadRequest, "这个渠道里没有这份凭证")
+		return
 	}
 
-	rows := make([]modelProbeRow, len(target.Models))
+	// 协议集合必须 ⊆ 已声明协议：没声明的那一侧连出站根地址都没有，没有东西可打。
+	if len(in.Protocols) == 0 {
+		fail(c, http.StatusBadRequest, "至少勾一个协议")
+		return
+	}
+	var protos protocol.Set
+	for _, raw := range in.Protocols {
+		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(raw)))
+		if !p.Valid() {
+			fail(c, http.StatusBadRequest, "协议 "+strconv.Quote(raw)+" 不是 anthropic/openai/openai_responses 之一")
+			return
+		}
+		if !target.Protocols.Has(p) {
+			fail(c, http.StatusBadRequest, "渠道没有声明 "+string(p)+"（没填它的出站根地址），不能检测这一侧")
+			return
+		}
+		if !protos.Has(p) {
+			protos = append(protos, p)
+		}
+	}
+
+	models := target.Models
+	if in.Model != "" {
+		models = nil
+		for _, m := range target.Models {
+			if m == in.Model {
+				models = []string{m}
+				break
+			}
+		}
+		if models == nil {
+			fail(c, http.StatusBadRequest, "这个渠道里没有这个启用中的纳管模型")
+			return
+		}
+	}
+	if len(models) == 0 {
+		fail(c, http.StatusBadRequest, "这个渠道还没有启用中的纳管模型，先纳管再检测")
+		return
+	}
+
+	rows := make([]modelProbeRow, len(models))
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
-	for i, m := range target.Models {
-		protos := m.Protocols
-		if len(protos) == 0 {
-			protos = target.Protocols
-		} else {
-			// 只探声明了地址的那些协议（口径层 v0.96：可探范围严格 = 已声明协议）。
-			// 模型子集是按存的原样给的，可能还留着渠道已经不声明的协议——那一侧
-			// 如今连根地址都没有，没有东西可打。
-			protos = protos.Intersect(target.Protocols)
-		}
-		rows[i] = modelProbeRow{Model: m.Name, Results: make([]upstream.ModelProbeResult, len(protos))}
+	for i, m := range models {
+		rows[i] = modelProbeRow{Model: m, Results: make([]upstream.ModelProbeResult, len(protos))}
 		for j, p := range protos {
 			wg.Add(1)
 			go func(i, j int, p protocol.Protocol, model string) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				rows[i].Results[j] = upstream.ProbeModel(ctx, target.BaseURLs.Get(p), p, cred.Value, model)
-			}(i, j, p, m.Name)
+				// 各协议打各的根地址（口径层 v0.96）：测的就是「这一侧真会被请求的那一串」。
+				rows[i].Results[j] = upstream.ProbeModel(c.Request.Context(), target.BaseURLs.Get(p), p, cred.Value, model)
+			}(i, j, p, m)
 		}
 	}
 	wg.Wait()
-	return rows, cred.Name
+
+	// 只报渠道名与规模，不报 base_url，更不报凭证值。响应带凭证名——403 的格子要
+	// 靠它说清「用的是哪把」（那正是 403 的凭证相关含义）。
+	h.log.Info("模型检测", "channel", target.Name, "models", len(rows), "protocols", protos.String())
+	c.JSON(http.StatusOK, gin.H{
+		"credential": cred.Name,
+		"models":     rows,
+	})
 }
 
-// modelProbeRow 是一个纳管模型的探测结论行。凭证值不在里面，也不会有掩码。
+// modelProbeRow 是一个纳管模型的检测结论行。凭证值不在里面，也不会有掩码。
 type modelProbeRow struct {
 	Model   string                      `json:"model"`
 	Results []upstream.ModelProbeResult `json:"results"`
@@ -384,13 +389,6 @@ func (h *Handler) deleteChannel(c *gin.Context) {
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		return store.DeleteChannel(ctx, tx, id)
 	})
-}
-
-// probeGroup 是一份凭证的探测结果分组。凭证值不在里面，也不会有掩码。
-type probeGroup struct {
-	Credential string                 `json:"credential"`
-	Disabled   bool                   `json:"disabled"`
-	Results    []upstream.ProbeResult `json:"results"`
 }
 
 // fetchChannelModels 朝渠道声明的每个协议侧拉一次模型列表，回给表单做预勾选

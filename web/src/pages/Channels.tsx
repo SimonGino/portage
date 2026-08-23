@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
-import type { Channel, ChannelProbe, ModelListResult } from '../api'
+import type { Channel, ModelListResult } from '../api'
 import { Empty, ErrorBar, useList } from '../ui'
 import { ChannelIcon } from '../icons'
 import { ChannelDetail } from './channels/detail'
@@ -19,28 +19,11 @@ export default function Channels() {
     api.get<Channel[] | null>('/channels'),
   )
   const [query, setQuery] = useState('')
-  const [probes, setProbes] = useState<Record<number, ChannelProbe | 'running'>>({})
   const [fetched, setFetched] = useState<Record<number, ModelListResult[]>>({})
 
   useEffect(() => {
     document.querySelector('.main')?.scrollTo(0, 0)
   }, [id])
-
-  async function probe(cid: number, withModels: boolean) {
-    setProbes((p) => ({ ...p, [cid]: 'running' }))
-    try {
-      const r = await api.post<ChannelProbe>(
-        `/channels/${cid}/probe${withModels ? '?models=1' : ''}`,
-      )
-      setProbes((p) => ({ ...p, [cid]: r }))
-    } catch {
-      setProbes((p) => {
-        const next = { ...p }
-        delete next[cid]
-        return next
-      })
-    }
-  }
 
   async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
     try {
@@ -131,9 +114,9 @@ export default function Channels() {
             channel={null}
             onCancel={() => nav(current ? `/channels/${current.id}` : '/channels')}
             onSaved={(newID) => {
+              // 保存后什么都不跑（口径层 v0.96 ①）：真实请求的钱只在人手点检测时花。
               void reload()
               nav(`/channels/${newID}`, { replace: true })
-              void probe(newID, false)
             }}
           />
         </>
@@ -141,8 +124,6 @@ export default function Channels() {
         <ChannelDetail
           key={current.id}
           ch={current}
-          probe={probes[current.id]}
-          onProbe={() => void probe(current.id, true)}
           fetched={fetched[current.id]}
           onFetchModelsDone={(results) =>
             setFetched((p) => ({ ...p, [current.id]: results }))
@@ -153,10 +134,7 @@ export default function Channels() {
               if (ok) nav('/channels', { replace: true })
             })
           }}
-          onSaved={(savedID) => {
-            void reload()
-            void probe(savedID, false)
-          }}
+          onSaved={() => void reload()}
           mutate={mutate}
         />
       ) : (

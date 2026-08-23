@@ -1,80 +1,177 @@
-import { PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
-import type { ModelProbeRow, ProbeGroup } from '../../api'
+import { useState } from 'react'
+import { api, PROTOCOL_LABEL, PROTOCOL_ORDER, PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
+import type { Channel, ChannelProbe, Credential, ModelProbeRow, Protocol } from '../../api'
+import { Dialog, Field } from '../../ui'
+import { Picker } from '../../fields'
+import { ModelIcon } from '../../icons'
 
 /**
- * ProbeRow 是一份凭证的探测结论（口径层 v0.33 / v0.38，三态见 v0.89）。
+ * ProbeDialog 是检测弹层（口径层 v0.96 ③，DESIGN v0.32 ①）：发起、勾选、结果都在
+ * 这一个容器里，关弹层即失——检测是一次性采样，页面上不再有常驻探测区块。
  *
- * 四段而不是两段：全通、子路径不存在、**没拿到响应**、子路径存在但上游回了非 2xx。
+ * 两处入口开的是同一个弹层，只差预选哪把凭证：凭证行「检测」预选当前在用的那把，
+ * 「管理」弹框每行的检测预选那一把（含已停用——恢复是纯人工的，「这把还坏不坏」
+ * 除了发一次请求没有别的办法回答）。
  *
- * 「没拿到响应」单列是 v0.89 的口径修正：它原先并进「不存在」那一段，于是超时被
- * 照实画成「这个协议的客户端打过来会 404」——而实测有上游（EAS 上挂的 llm-gateway）
- * 对探测用的空 `{}` 既不 400 也不 401，直接挂着不回，它的子路径其实条条可用。
- * 所以这一段也不转警告色：只有确定的「不通」才配亮灯，与模型矩阵同一条纪律。
- *
- * 非 2xx 那一段也不是哑的：`Probe` 把 404/405 之外的一切都判存在（那正是它的判据
- * ——任何真实上游都会拿 400/401 回绝一个空 `{}`，而那恰恰证明路由存在），于是一个
- * 每条子路径都回 401 的渠道在页面上显示「探测通过」。路由确实通，凭证确实是坏的，
- * 两句话都得说。400 不算：空 `{}` 被拒是这次探测的正常结果，不是异常。
+ * 协议勾选默认只勾 openai（不为用不上的协议侧多花 token），声明集里没有 openai 时
+ * 按回退序取命中的第一个——与出站协议选择同一条秩序，不另发明。勾选不落库。
  */
-export function ProbeRow({ group, multi }: { group: ProbeGroup; multi: boolean }) {
-  const missing = group.results.filter((r) => r.state === 'missing')
-  const unclear = group.results.filter((r) => r.state === 'unclear')
-  // 401/403/429/5xx：路由在，但这一把凭证这一刻打过去是这个下场。
-  const notable = group.results.filter((r) => r.state === 'ok' && r.status > 400)
-  const who = group.credential ? group.credential + (group.disabled ? '（已停用）' : '') : ''
-  const prefix = multi && who ? `${who}：` : ''
-  const listed = [...missing, ...unclear, ...notable]
+export function ProbeDialog({
+  channel,
+  credentials,
+  initial,
+  onClose,
+}: {
+  channel: Channel
+  credentials: Credential[]
+  /** 预选的那把凭证。 */
+  initial: Credential
+  onClose: () => void
+}) {
+  const declared = (channel.protocols ?? []) as Protocol[]
+  const models = (channel.models ?? []).filter((m) => !m.disabled)
+  const fallback = PROTOCOL_ORDER.filter((p) => declared.includes(p))
+  const defaultProto = fallback.includes('openai') ? 'openai' : fallback[0]
+
+  const [credID, setCredID] = useState(initial.id)
+  // 空串 = 全部纳管模型；非空 = 单选那一个（新加一个模型不用整个矩阵重跑）。
+  const [model, setModel] = useState('')
+  const [picked, setPicked] = useState<Protocol[]>(defaultProto ? [defaultProto] : [])
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<ChannelProbe | null>(null)
+  const [error, setError] = useState('')
+
+  /** 改任何一个勾选就把旧结果撤下来：矩阵旁边摆着一套已经不对应的参数是撒谎。 */
+  function reset() {
+    setResult(null)
+    setError('')
+  }
+
+  function toggleProto(p: Protocol) {
+    reset()
+    // 勾上时过一遍 fallback 归一顺序：矩阵列序跟回退序走，不跟点击顺序跳。
+    setPicked((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : fallback.filter((x) => prev.includes(x) || x === p),
+    )
+  }
+
+  async function run() {
+    setRunning(true)
+    setError('')
+    setResult(null)
+    try {
+      const r = await api.post<ChannelProbe>(`/channels/${channel.id}/probe`, {
+        credential_id: credID,
+        model,
+        protocols: picked,
+      })
+      setResult(r)
+    } catch (e) {
+      // 措辞纪律（口径层 v0.96 ③）：失败永远是「本次检测失败」，不定性「不支持」
+      // ——检测是一次采样，限流、上游抖动都会让它失败，定性交给人。
+      setError('本次检测失败：' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setRunning(false)
+    }
+  }
 
   return (
-    <div className={'probe' + (missing.length > 0 || notable.length > 0 ? ' probe-bad' : '')}>
-      <span>
-        {prefix}
-        {missing.length > 0
-          ? `探测未通过 ${missing.length} 项——只是提示，不影响保存与路由，但这些协议的客户端打过来会 404：`
-          : unclear.length > 0
-            ? `${unclear.length} 项说不清：上游没回话。可能是网络不通，也可能是这家上游对探测用的空请求体不作答——后者不影响真实请求，跑一次模型探测就能分辨：`
-            : notable.length === 0
-              ? `探测通过：勾选的 ${group.results.length} 个协议子路径上游都有`
-              : `子路径都在，但上游回了非 2xx——路由没问题，是这把凭证或上游状态的问题：`}
-      </span>
-      {listed.length > 0 && (
-        <ul>
-          {listed.map((r) => (
-            <li key={r.protocol}>
-              <code>{PROTOCOL_PATH[r.protocol] ?? r.protocol}</code> {r.detail}
-              {/* 只给「不存在」补状态码：非 2xx 那段的固定词表自带括号里的数字，
-                  「说不清」压根没有状态码可补（status 是 0）。 */}
-              {r.state === 'missing' && r.status > 0 && ` (HTTP ${r.status})`}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Dialog title="检测" wide onClose={onClose}>
+      <div className="probe-dialog">
+        <p className="muted">
+          每格发一个带模型名的最小真实请求（max_tokens 压到最小）——只提示，不落库也不影响路由；结果关掉这个框就没了。
+        </p>
+
+        {/* 控件走 Picker 不走原生 select（fields.tsx 的通则）：凭证行要带停用标注，
+            模型多了要能搜。 */}
+        <Field label="凭证">
+          <Picker
+            value={credID}
+            options={credentials.map((c) => ({
+              value: c.id,
+              label: c.name,
+              hint: c.disabled ? '已停用' : undefined,
+            }))}
+            onChange={(v) => {
+              reset()
+              setCredID(v)
+            }}
+          />
+        </Field>
+
+        <Field label="模型">
+          <Picker
+            value={model}
+            options={[
+              { value: '', label: `全部纳管模型（${models.length} 个）` },
+              ...models.map((m) => ({
+                value: m.upstream_model,
+                label: m.upstream_model,
+                icon: <ModelIcon model={m.upstream_model} size={16} />,
+              })),
+            ]}
+            onChange={(v) => {
+              reset()
+              setModel(v)
+            }}
+          />
+        </Field>
+
+        <Field label="协议" hint="可选项 = 已声明协议。想测别的协议，先在「API 地址」给它填一行地址">
+          <div className="probe-protos">
+            {fallback.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={'chip-toggle' + (picked.includes(p) ? ' is-on' : '')}
+                onClick={() => toggleProto(p)}
+                title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}
+              >
+                {PROTOCOL_SHORT[p] ?? p}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <div className="probe-dialog-run">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void run()}
+            disabled={running || picked.length === 0 || models.length === 0}
+          >
+            {running ? '检测中…' : '检测'}
+          </button>
+          {models.length === 0 && <span className="muted">还没有启用中的纳管模型，没有可检测的目标。</span>}
+          {models.length > 0 && picked.length === 0 && <span className="muted">至少勾一个协议。</span>}
+        </div>
+
+        {error && <div className="bar bar-warn">{error}</div>}
+        {result && <ProbeMatrix rows={result.models} credential={result.credential} />}
+      </div>
+    </Dialog>
   )
 }
 
 /**
- * ModelProbeGrid 是模型级探测的结论（口径层 v0.43）：每个启用中的纳管模型一行，
- * 它的有效协议集里每一侧一格。
+ * ProbeMatrix 是检测结论：每个选中的模型一行，勾选的协议每一侧一格。
  *
- * 三态不是二态：把 429 画成 ✗、把 400 画成 ✓ 都是撒谎，而探测的口径是只提示——
+ * 三态不是二态：把 429 画成 ✗、把 400 画成 ✓ 都是撒谎，而检测的口径是只提示——
  * 提示就得诚实。「说不清」画 ?，状态码摆出来，判断留给人。符号是非颜色线索
  * （DESIGN.md §3：语义色必须配一个不靠颜色的线索）。
  *
  * 非通的格子把摘要**摆在屏幕上**，不只挂 title：`? 429` 这四个字符本身不解释任何
  * 事，而 tooltip 里的东西等于没写——没人会去悬停一片自己看着还行的网格。摘要用的
- * 仍是我方固定词表，不带上游原文（v0.43 ②）。
+ * 仍是我方固定词表，不带上游原文（v0.43 ②）；403 注明用的是哪把凭证——它有
+ * 「这把凭证没开通这个模型」的含义。
  */
-export function ModelProbeGrid({ rows, credential }: { rows: ModelProbeRow[]; credential: string }) {
+function ProbeMatrix({ rows, credential }: { rows: ModelProbeRow[]; credential: string }) {
   // 只有确定的「不通」才把左线转警告色；「说不清」不算——凭证 401 时整个矩阵都是
   // 说不清，把它画成警告等于每次都在喊狼来了。
   const bad = rows.some((r) => r.results.some((x) => x.state === 'missing'))
   return (
     <div className={'probe' + (bad ? ' probe-bad' : '')}>
-      <span>
-        模型探测{credential ? `（用「${credential}」）` : ''}：每格发了一个带模型名的最小真实请求
-        ——只提示，不落库也不影响路由
-      </span>
+      <span>用「{credential}」检测的结果：</span>
       <ul className="probe-models">
         {rows.map((r) => {
           const off = r.results.filter((x) => x.state !== 'ok')
@@ -96,6 +193,7 @@ export function ModelProbeGrid({ rows, credential }: { rows: ModelProbeRow[]; cr
                        自己也带着括号里的数字，三处同一个数只是噪音。 */
                     <span key={x.protocol}>
                       {PROTOCOL_SHORT[x.protocol] ?? x.protocol}：{x.detail}
+                      {x.status === 403 && `（用的是「${credential}」）`}
                     </span>
                   ))}
                 </div>

@@ -146,53 +146,35 @@ export const PROTOCOL_SOON: { value: string; label: string; hint: string }[] = [
 ]
 
 /**
- * 一格探测的三态结论。子路径层与模型级共用（口径层 v0.43 立，v0.89 子路径层跟上）。
+ * 一格检测的三态结论（口径层 v0.43 立，v0.96 起检测只剩模型级这一层）。
  *
  * 刻意不是二态：把 429 画成「不通」、把 400 画成「通」、把超时画成「不存在」都是
- * 撒谎，而探测的口径是只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
+ * 撒谎，而检测的口径是只提示——提示就得诚实。「说不清」摆出状态码，判断留给人。
  */
 export type ProbeState = 'ok' | 'missing' | 'unclear'
 
-/** 一次协议可达性探测的结果。只提示，不落库、不参与路由（口径层 v0.33）。 */
-export interface ProbeResult {
-  protocol: Protocol
-  /** ok=子路径存在、missing=404/405、unclear=没拿到响应。 */
-  state: ProbeState
-  status: number
-  detail: string
-}
-
-/**
- * 探测结果按凭证分组（口径层 v0.38 逐把凭证探，含已停用的）。
- *
- * 含停用的那些是有意的：「这把停用的凭证现在还坏不坏」除了删掉重配
- * 就没有别的办法回答。一份凭证都没有时后端仍回一组，credential 是空串。
- */
-export interface ProbeGroup {
-  credential: string
-  disabled: boolean
-  results: ProbeResult[]
-}
-
 export interface ModelProbeResult {
   protocol: Protocol
+  /** ok=2xx 真回了话、missing=404/405、unclear=其余（含没拿到响应，status 为 0）。 */
   state: ProbeState
   status: number
   detail: string
 }
 
-/** 一个纳管模型的探测结论行：它的有效协议集里每一侧一格。 */
+/** 一个纳管模型的检测结论行：勾选的协议每一侧一格。 */
 export interface ModelProbeRow {
   model: string
   results: ModelProbeResult[]
 }
 
-/** 一次「探测协议」的完整回包：子路径层（逐凭证）+ 模型矩阵（第一把启用凭证）。 */
+/**
+ * 一次检测的完整回包（口径层 v0.96）：模型 × 协议矩阵 + 用的哪把凭证。
+ * 只提示，不落库、不参与路由；结果只活在弹层里，关弹层即失。
+ */
 export interface ChannelProbe {
-  credentials: ProbeGroup[]
-  models: ModelProbeRow[] | null
-  /** 模型矩阵用的那把凭证的名字。403 的格子要靠它说清「探的是哪把」。 */
-  model_credential: string
+  /** 检测用的那把凭证的名字。403 的格子要靠它说清「用的是哪把」。 */
+  credential: string
+  models: ModelProbeRow[]
 }
 
 export interface ChannelModel {

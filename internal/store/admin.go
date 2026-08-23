@@ -377,42 +377,35 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	return affectedOne(res, err)
 }
 
-// ProbeTarget 是跑一次协议可达性探测要的东西：打哪儿、试哪几个协议、用哪几份凭证。
+// ProbeTarget 是跑一次模型级检测要的东西：打哪儿、声明了哪几个协议、有哪几份凭证、
+// 有哪些模型（口径层 v0.96 检测收成一层，子路径可达性探测随层拆除）。
 //
-// Credentials 是唯一一处凭证值离开 store 的地方，它只流向 upstream.Probe，**不进
-// 任何 JSON 响应**——「只写不回读」那条约束管的是回读给人看，不是进程内自用。
+// Credentials 是唯一一处凭证值离开 store 的地方，它只流向 upstream.ProbeModel，
+// **不进任何 JSON 响应**——「只写不回读」那条约束管的是回读给人看，不是进程内自用。
 type ProbeTarget struct {
 	Name string
 	// BaseURLs 是每协议出站根地址（口径层 v0.96）；Protocols 是它的推导值，顺序
-	// 即回退序。探测与拉模型列表按协议各取各的地址。
+	// 即回退序。检测与拉模型列表按协议各取各的地址。
 	BaseURLs  BaseURLs
 	Protocols protocol.Set
-	// Credentials 含**已停用**的凭证（口径层 v0.38 逐把凭证探）：「这把停用的凭证
-	// 现在还坏不坏」除了删掉重配就没有别的办法回答，逐把探正好
-	// 是那个答案。一份都没有时是空切片——照样探，只是不带凭证，上游多半回 401，
-	// 而 401 同样证明子路径存在，这正是探测要问的。
+	// Credentials 含**已停用**的凭证（口径层 v0.96 承接 v0.38 的立论）：恢复是
+	// 纯人工的，「这把停用的凭证还坏不坏」除了发一次请求没有别的办法回答——
+	// 检测就得能选中它。
 	Credentials []ProbeCredential
-	// Models 是**启用中**的纳管模型（模型级探测，口径层 v0.43）。停用的不探：
-	// 它本来就路由不到，探出来的结论没有消费者。
-	Models []ProbeModel
+	// Models 是**启用中**的纳管模型名（口径层 v0.43）。停用的不测：它本来就
+	// 路由不到，测出来的结论没有消费者。
+	Models []string
 }
 
-// ProbeCredential 是探测时用的一份凭证：显示用名字 + 进程内自用的值 + 当下状态。
+// ProbeCredential 是检测可选的一份凭证：选中用 ID + 显示用名字 + 进程内自用的值。
 type ProbeCredential struct {
+	ID       int64
 	Name     string
 	Value    string
 	Disabled bool
 }
 
-// ProbeModel 是模型级探测的一格目标：模型名 + 它自己的协议子集（口径层 v0.40，
-// 空 = 继承渠道全集）。子集按**存的原样**给出，不与渠道集取交——探测答的是
-// 「上游有没有」，跟路由取交集是两个问题；人填了什么就照什么探。
-type ProbeModel struct {
-	Name      string
-	Protocols protocol.Set
-}
-
-// ChannelProbeTarget 按 id 取探测目标。
+// ChannelProbeTarget 按 id 取检测目标。
 func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
 	var t ProbeTarget
 	err := db.QueryRowContext(ctx, `
@@ -426,17 +419,17 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 		return ProbeTarget{}, err
 	}
 	if t.Protocols = t.BaseURLs.Protocols(); len(t.Protocols) == 0 {
-		return ProbeTarget{}, InvalidInput{Reason: "这个渠道一个协议的出站根地址都没填，没有可探测的目标"}
+		return ProbeTarget{}, InvalidInput{Reason: "这个渠道一个协议的出站根地址都没填，没有可检测的目标"}
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT name, credential, disabled FROM channel_keys WHERE channel_id = ? ORDER BY id`, id)
+		`SELECT id, name, credential, disabled FROM channel_keys WHERE channel_id = ? ORDER BY id`, id)
 	if err != nil {
 		return ProbeTarget{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var cp ProbeCredential
-		if err := rows.Scan(&cp.Name, &cp.Value, &cp.Disabled); err != nil {
+		if err := rows.Scan(&cp.ID, &cp.Name, &cp.Value, &cp.Disabled); err != nil {
 			return ProbeTarget{}, err
 		}
 		t.Credentials = append(t.Credentials, cp)
@@ -446,25 +439,18 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 	}
 
 	mrows, err := db.QueryContext(ctx, `
-		SELECT upstream_model, protocols FROM channel_models
+		SELECT upstream_model FROM channel_models
 		WHERE channel_id = ? AND disabled = 0 ORDER BY upstream_model`, id)
 	if err != nil {
 		return ProbeTarget{}, err
 	}
 	defer mrows.Close()
 	for mrows.Next() {
-		var pm ProbeModel
-		var raw string
-		if err := mrows.Scan(&pm.Name, &raw); err != nil {
+		var name string
+		if err := mrows.Scan(&name); err != nil {
 			return ProbeTarget{}, err
 		}
-		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
-		if raw != "" {
-			if pm.Protocols, err = protocol.ParseSet(raw); err != nil {
-				return ProbeTarget{}, InvalidInput{Reason: err.Error()}
-			}
-		}
-		t.Models = append(t.Models, pm)
+		t.Models = append(t.Models, name)
 	}
 	return t, mrows.Err()
 }

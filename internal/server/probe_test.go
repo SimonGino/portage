@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,27 +11,16 @@ import (
 	"testing"
 
 	"github.com/SimonGino/portage/internal/gatewaytest"
-	"github.com/SimonGino/portage/internal/store"
 )
 
-// 协议可达性探测（口径层 v0.33 §2.2）：只提示、不落库、不参与路由。它要回答的是
-// 「勾上的这几个子路径上游到底提供不提供」——勾错了的后果是那一半客户端全 404，
-// 而启动闸看不见（那要发包才知道）。
+// 检测只剩一层：模型级真实请求（口径层 v0.96 ①③，拆除子路径可达性探测层）。
+// 契约：入参 = 指定凭证（允许已停用）+ 模型选择（空 = 全部启用中的纳管模型）+
+// 协议集合（必须 ⊆ 已声明协议）；响应 = 模型 × 协议矩阵 + 用的哪把凭证。
+// 只提示、不落库、不进路由；三态沿 v0.43：2xx 通 / 404、405 不通 / 其余说不清。
 
-// 探测结果两层（口径层 v0.43）：子路径层按凭证分组（v0.38 逐把凭证探），
-// 模型矩阵每模型一行、每侧一格。
 type probeResponse struct {
-	Credentials []struct {
-		Credential string `json:"credential"`
-		Disabled   bool   `json:"disabled"`
-		Results    []struct {
-			Protocol string `json:"protocol"`
-			State    string `json:"state"`
-			Status   int    `json:"status"`
-			Detail   string `json:"detail"`
-		} `json:"results"`
-	} `json:"credentials"`
-	Models []struct {
+	Credential string `json:"credential"`
+	Models     []struct {
 		Model   string `json:"model"`
 		Results []struct {
 			Protocol string `json:"protocol"`
@@ -39,160 +29,26 @@ type probeResponse struct {
 			Detail   string `json:"detail"`
 		} `json:"results"`
 	} `json:"models"`
-	ModelCredential string `json:"model_credential"`
 }
 
-// only 取唯一那一组凭证的结果——单凭证渠道的用例都只关心那一组。
-func (p probeResponse) only(t *testing.T) []struct {
-	Protocol string `json:"protocol"`
-	State    string `json:"state"`
-	Status   int    `json:"status"`
-	Detail   string `json:"detail"`
-} {
-	t.Helper()
-	if len(p.Credentials) != 1 {
-		t.Fatalf("期望一组凭证的结果，得到 %+v", p.Credentials)
-	}
-	return p.Credentials[0].Results
+func probeBody(credID int64, model string, protocols ...string) string {
+	raw, _ := json.Marshal(map[string]any{
+		"credential_id": credID, "model": model, "protocols": protocols,
+	})
+	return string(raw)
 }
 
-// 一个只提供 CC 的上游：/v1/chat/completions 回 400（缺 model），/v1/responses 回
-// 404。判据正是这个区别——**不是 2xx**：探测发的是空 JSON 体，任何真实上游都会拿
-// 400 或 401 回绝它，而那恰恰证明路由存在。
-func ccOnlyUpstream(t *testing.T) string {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/chat/completions" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"message":"missing model"}}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-func TestProbeSeparatesMissingSubPathFromExistingOne(t *testing.T) {
-	url := ccOnlyUpstream(t)
-	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai,openai_responses", url, "sk-upstream")
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-
-	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", &got)
-
-	results := got.only(t)
-	if len(results) != 2 {
-		t.Fatalf("期望两个协议各一条结果，得到 %+v", results)
-	}
-	byProto := map[string]string{}
-	for _, r := range results {
-		byProto[r.Protocol] = r.State
-	}
-	if byProto["openai"] != "ok" {
-		t.Errorf("上游回 400 说明子路径存在，不该判成不可达：%q", byProto["openai"])
-	}
-	if byProto["openai_responses"] != "missing" {
-		t.Errorf("上游回 404，应判为子路径不存在：%q", byProto["openai_responses"])
-	}
-}
-
-// 拿不到响应 ≠ 子路径不存在（口径层 v0.89）。真实把这条逼出来的是阿里云 PAI-EAS 上
-// 挂的 llm-gateway：过了鉴权之后，它对缺 messages 的请求体既不 400 也不 401，直接挂着
-// 不回，而那个渠道的两条子路径带上真实请求体全都 200。二态时这种上游被画成「客户端
-// 打过来会 404」——对着一个好渠道喊狼来了。
-//
-// 这里拿一个必然连不上的地址走同一条分支：真挂死要等满 probeTimeout，测试等不起。
-func TestProbeKeepsNoResponseApartFromMissingSubPath(t *testing.T) {
-	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "dead", "openai", "http://127.0.0.1:1", "sk-upstream")
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-
-	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", &got)
-
-	results := got.only(t)
-	if len(results) != 1 {
-		t.Fatalf("期望一条结果，得到 %+v", results)
-	}
-	if results[0].State != "unclear" {
-		t.Errorf("没拿到响应应判「说不清」而不是 %q——超时并进「子路径不存在」是撒谎", results[0].State)
-	}
-	if results[0].Status != 0 {
-		t.Errorf("没拿到响应时状态码该是 0：%+v", results[0])
-	}
-}
-
-// 探测不改任何东西：它是独立的一次 POST，不缝在保存事务里，跑完渠道还是原样。
-func TestProbeDoesNotPersistAnything(t *testing.T) {
-	url := ccOnlyUpstream(t)
-	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "half-open", "openai,openai_responses", url, "sk-upstream")
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", nil)
-
-	var urls store.BaseURLs
-	if err := db.QueryRow(`SELECT base_url_openai, base_url_openai_responses, base_url_anthropic
-		FROM channels WHERE id = ?`, ch).
-		Scan(&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic); err != nil {
-		t.Fatalf("读协议地址列失败: %v", err)
-	}
-	if got := urls.Protocols().String(); got != "openai,openai_responses" {
-		t.Errorf("探测改了协议地址：派生集 %q——它只该提示", got)
-	}
-}
-
-// 上游 key 与 base_url 不能出现在探测响应里（CLAUDE.md 的硬约束）。连不上时最容易
-// 漏——Go 的传输错误原文里带着完整 URL。种一个纳管模型让模型矩阵那一段也跑起来：
-// 它的「连不上」文案走的是同一条 Redact 路径，也得盖住。
-func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
-	db := gatewaytest.NewDB(t)
-	const baseURL = "http://127.0.0.1:1/tenant7-secret-path"
-	ch := gatewaytest.SeedChannel(t, db, "dead", "openai", baseURL, "sk-upstream-secret")
-	gatewaytest.SeedChannelModel(t, db, ch, "some-model")
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-
-	_, body := a.Do(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe?models=1", "")
-	if strings.Contains(body, "tenant7-secret-path") || strings.Contains(body, "sk-upstream-secret") {
-		t.Errorf("探测响应泄露了上游地址或凭证：%s", body)
-	}
-
-	var got probeResponse
-	if err := json.Unmarshal([]byte(body), &got); err != nil {
-		t.Fatalf("响应不是合法 JSON: %v", err)
-	}
-	if results := got.only(t); len(results) != 1 || results[0].State != "unclear" {
-		t.Errorf("连不上的渠道应判为说不清：%+v", results)
-	}
-	if len(got.Models) != 1 || len(got.Models[0].Results) != 1 {
-		t.Fatalf("期望模型矩阵一行一格，得到 %+v", got.Models)
-	}
-	if cell := got.Models[0].Results[0]; cell.State != "unclear" || cell.Status != 0 {
-		t.Errorf("连不上的格子应是 unclear 且状态码 0：%+v", cell)
-	}
-}
-
-// ── 模型矩阵（口径层 v0.43）─────────────────────────────────────────────
-//
-// 子路径层答「协议集勾对没有」，答不了 v0.40 那个坑「渠道级探测全通、请求照样
-// 404」。矩阵对每个启用中的纳管模型、按它的有效协议集逐侧发一个带模型名的最小
-// 真实请求，三态回报：通（2xx）/ 不通（404/405）/ 说不清（其余）。
-
-// modelMatrixUpstream 按请求体里的模型名演不同的上游：good 回 200、gone 回 404、
-// limited 回 429。顺带把收到的请求存下来，给「发的到底是什么」那些断言用。
+// probedRequest 是假上游收到的一次请求：好测试只看外部行为，而检测的外部行为一半
+// 在响应里、另一半就是这些发出去的字节。
 type probedRequest struct {
 	Path string
 	Auth string
 	Body map[string]any
 }
 
-func modelMatrixUpstream(t *testing.T, seen *[]probedRequest) string {
+// matrixUpstream 按请求体里的模型名演不同的上游：good 回 200、gone 回 404、
+// limited 回 429。顺带把收到的请求存下来，给「发的到底是什么、用的哪把凭证」用。
+func matrixUpstream(t *testing.T, seen *[]probedRequest) string {
 	t.Helper()
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +67,6 @@ func modelMatrixUpstream(t *testing.T, seen *[]probedRequest) string {
 		case "limited":
 			w.WriteHeader(http.StatusTooManyRequests)
 		default:
-			// 空 `{}`（子路径层）落在这儿：400 证明路由存在。
 			w.WriteHeader(http.StatusBadRequest)
 		}
 	}))
@@ -219,10 +74,13 @@ func modelMatrixUpstream(t *testing.T, seen *[]probedRequest) string {
 	return srv.URL
 }
 
-func TestProbeModelMatrixReportsThreeStates(t *testing.T) {
+// 三态判定（口径层 v0.43 沿用）：2xx = 通，404/405 = 不通，其余 = 说不清。
+// 顺带断言发的是带模型名的最小真实请求：max_tokens 压到 1，别真花钱。
+func TestProbeReportsThreeStates(t *testing.T) {
 	var seen []probedRequest
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "matrix", "openai", modelMatrixUpstream(t, &seen), "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "matrix", "openai", matrixUpstream(t, &seen), "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "good")
 	gatewaytest.SeedChannelModel(t, db, ch, "gone")
 	gatewaytest.SeedChannelModel(t, db, ch, "limited")
@@ -230,12 +88,16 @@ func TestProbeModelMatrixReportsThreeStates(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe?models=1", "", &got)
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(cred, "", "openai"), &got)
 
+	if got.Credential != "主力" {
+		t.Errorf("响应该带用的哪把凭证（403 的格子靠它说清），得到 %q", got.Credential)
+	}
 	states := map[string]string{}
 	for _, row := range got.Models {
 		if len(row.Results) != 1 {
-			t.Fatalf("单协议渠道每行该只有一格：%+v", row)
+			t.Fatalf("只勾了一个协议，每行该只有一格：%+v", row)
 		}
 		states[row.Model] = row.Results[0].State
 	}
@@ -245,147 +107,227 @@ func TestProbeModelMatrixReportsThreeStates(t *testing.T) {
 			t.Errorf("模型 %s 的三态 = %q，期望 %q", model, states[model], state)
 		}
 	}
-
-	// 发的得是带模型名的最小真实请求：max_tokens 压到 1，别真花钱。
 	for _, req := range seen {
-		if req.Body["model"] == nil {
-			continue // 子路径层的空 {}
-		}
 		if req.Body["max_tokens"] != float64(1) {
-			t.Errorf("模型 %v 的探测请求没把 max_tokens 压到 1：%+v", req.Body["model"], req.Body)
+			t.Errorf("模型 %v 的检测请求没把 max_tokens 压到 1：%+v", req.Body["model"], req.Body)
 		}
 	}
 }
 
-// 模型自己声明了协议子集（口径层 v0.40）就只探那几侧；没声明的继承渠道全集。
-// Responses 侧的请求体形状不一样：input + max_output_tokens（OpenAI 定了 16 的下限）。
-func TestProbeModelMatrixHonorsModelProtocolSubset(t *testing.T) {
+// 指定凭证生效（口径层 v0.96 ③：用户点哪把用哪把，不再固定第一把启用）。
+func TestProbeUsesTheChosenCredential(t *testing.T) {
 	var seen []probedRequest
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "subset", "openai,openai_responses", modelMatrixUpstream(t, &seen), "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "pick", "openai", matrixUpstream(t, &seen), "")
+	gatewaytest.SeedNamedCredential(t, db, ch, "第一把", "sk-first")
+	second := gatewaytest.SeedNamedCredential(t, db, ch, "第二把", "sk-second")
 	gatewaytest.SeedChannelModel(t, db, ch, "good")
-	sub := gatewaytest.SeedChannelModel(t, db, ch, "gone")
-	if _, err := db.Exec(`UPDATE channel_models SET protocols = 'openai' WHERE id = ?`, sub); err != nil {
-		t.Fatalf("设子集失败: %v", err)
-	}
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe?models=1", "", &got)
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(second, "", "openai"), &got)
 
-	cells := map[string]int{}
-	for _, row := range got.Models {
-		cells[row.Model] = len(row.Results)
+	if got.Credential != "第二把" {
+		t.Errorf("credential = %q，期望点的那把「第二把」", got.Credential)
 	}
-	if cells["good"] != 2 {
-		t.Errorf("没声明子集的模型该继承渠道全集探两侧，得到 %d 格", cells["good"])
-	}
-	if cells["gone"] != 1 {
-		t.Errorf("声明了 openai 子集的模型该只探一侧，得到 %d 格", cells["gone"])
-	}
-
 	for _, req := range seen {
-		if req.Path != "/v1/responses" || req.Body["model"] == nil {
-			continue
+		if req.Auth != "Bearer sk-second" {
+			t.Errorf("检测用错凭证：%q，期望点的那把 sk-second", req.Auth)
 		}
-		if req.Body["max_output_tokens"] != float64(16) {
+	}
+}
+
+// 已停用的凭证也能测（口径层 v0.38 立论承接）：恢复是纯人工的，「这把还坏不坏」
+// 除了发一次请求没有别的办法回答。
+func TestProbeAllowsDisabledCredential(t *testing.T) {
+	var seen []probedRequest
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "revive", "openai", matrixUpstream(t, &seen), "")
+	gatewaytest.SeedNamedCredential(t, db, ch, "活着的", "sk-live")
+	dead := gatewaytest.SeedNamedCredential(t, db, ch, "被停的", "sk-dead")
+	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1 WHERE id = ?`, dead); err != nil {
+		t.Fatalf("停用凭证失败: %v", err)
+	}
+	gatewaytest.SeedChannelModel(t, db, ch, "good")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var got probeResponse
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(dead, "", "openai"), &got)
+
+	if got.Credential != "被停的" {
+		t.Errorf("credential = %q，期望已停用的那把「被停的」", got.Credential)
+	}
+	if len(got.Models) != 1 || got.Models[0].Results[0].State != "ok" {
+		t.Errorf("停用凭证照样发真实请求、照样回三态：%+v", got.Models)
+	}
+	for _, req := range seen {
+		if req.Auth != "Bearer sk-dead" {
+			t.Errorf("检测没用指定的停用凭证：%q", req.Auth)
+		}
+	}
+}
+
+// 协议参数过滤矩阵列：渠道声明两个协议、只勾一个，每行一格，另一侧零请求。
+func TestProbeProtocolsFilterMatrixColumns(t *testing.T) {
+	var seen []probedRequest
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "cols", "openai,openai_responses", matrixUpstream(t, &seen), "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, ch, "good")
+	gatewaytest.SeedChannelModel(t, db, ch, "gone")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var got probeResponse
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(cred, "", "openai"), &got)
+
+	for _, row := range got.Models {
+		if len(row.Results) != 1 || row.Results[0].Protocol != "openai" {
+			t.Errorf("只勾了 openai，行里却有别的格：%+v", row)
+		}
+	}
+	for _, req := range seen {
+		if req.Path != "/v1/chat/completions" {
+			t.Errorf("没勾的协议侧发出了请求：%s", req.Path)
+		}
+	}
+}
+
+// 单选一个模型就只测那一个（口径层 v0.96 ③：新加一个模型不用整个矩阵重跑）。
+// Responses 侧的请求体形状不一样：input + max_output_tokens（OpenAI 定了 16 的下限）。
+func TestProbeSingleModelAcrossProtocols(t *testing.T) {
+	var seen []probedRequest
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "single", "openai,openai_responses", matrixUpstream(t, &seen), "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, ch, "good")
+	gatewaytest.SeedChannelModel(t, db, ch, "gone")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var got probeResponse
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(cred, "good", "openai", "openai_responses"), &got)
+
+	if len(got.Models) != 1 || got.Models[0].Model != "good" {
+		t.Fatalf("单选了 good，矩阵却是 %+v", got.Models)
+	}
+	if len(got.Models[0].Results) != 2 {
+		t.Errorf("勾了两个协议该有两格：%+v", got.Models[0].Results)
+	}
+	for _, req := range seen {
+		if req.Body["model"] != "good" {
+			t.Errorf("没选的模型发出了请求：%v", req.Body["model"])
+		}
+		if req.Path == "/v1/responses" && req.Body["max_output_tokens"] != float64(16) {
 			t.Errorf("Responses 侧该用 max_output_tokens: 16（OpenAI 的下限）：%+v", req.Body)
 		}
-		if req.Body["model"] != "good" {
-			t.Errorf("Responses 侧只该出现没声明子集的模型，出现了 %v", req.Body["model"])
-		}
 	}
 }
 
-// 矩阵只用第一把**启用**凭证（每格都花钱，不逐把轰），停用的模型不探（路由不到，
-// 结论没有消费者）。model_credential 让页面能标注「探的是哪把」——403 有「这把
-// 凭证没开通这个模型」的含义。
-func TestProbeModelMatrixUsesFirstEnabledCredentialAndSkipsDisabledModels(t *testing.T) {
+// 协议参数越出声明集被拒：可探范围严格 = 已声明协议（那一侧连根地址都没有）。
+// 拒了就得一个请求都没发——参数错误不该花钱。
+func TestProbeRejectsUndeclaredProtocol(t *testing.T) {
 	var seen []probedRequest
 	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "creds", "openai", modelMatrixUpstream(t, &seen), "")
-	gatewaytest.SeedNamedCredential(t, db, ch, "被摘的", "sk-dead")
-	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1 WHERE channel_id = ?`, ch); err != nil {
-		t.Fatalf("停用凭证失败: %v", err)
-	}
-	gatewaytest.SeedNamedCredential(t, db, ch, "活着的", "sk-live")
-	gatewaytest.SeedChannelModel(t, db, ch, "good")
-	off := gatewaytest.SeedChannelModel(t, db, ch, "gone")
-	if _, err := db.Exec(`UPDATE channel_models SET disabled = 1 WHERE id = ?`, off); err != nil {
-		t.Fatalf("停用模型失败: %v", err)
-	}
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-
-	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe?models=1", "", &got)
-
-	if got.ModelCredential != "活着的" {
-		t.Errorf("model_credential = %q，期望第一把启用凭证「活着的」", got.ModelCredential)
-	}
-	if len(got.Models) != 1 || got.Models[0].Model != "good" {
-		t.Errorf("停用的模型不该被探：%+v", got.Models)
-	}
-	for _, req := range seen {
-		if req.Body["model"] == "gone" {
-			t.Error("停用的模型发出了探测请求")
-		}
-		if req.Body["model"] == "good" && req.Auth != "Bearer sk-live" {
-			t.Errorf("矩阵用错凭证：%q，期望第一把启用的 sk-live", req.Auth)
-		}
-	}
-}
-
-// 一把启用的凭证都没有时矩阵整个跳过：拿空凭证发请求只会攒一屏 401 说不清。
-// 这个状态启动闸不放行，只能在运行期出现——启动后把最后一把停用，探测入口照样能按。
-func TestProbeModelMatrixSkipsWhenNoEnabledCredential(t *testing.T) {
-	var seen []probedRequest
-	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "no-live-key", "openai", modelMatrixUpstream(t, &seen), "sk-dead")
-	gatewaytest.SeedChannelModel(t, db, ch, "good")
-	g := gatewaytest.Start(t, db)
-	a := g.LoggedIn(t)
-	if _, err := db.Exec(`UPDATE channel_keys SET disabled = 1 WHERE channel_id = ?`, ch); err != nil {
-		t.Fatalf("停用凭证失败: %v", err)
-	}
-
-	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe?models=1", "", &got)
-
-	if len(got.Models) != 0 || got.ModelCredential != "" {
-		t.Errorf("没有启用凭证还探了矩阵：models=%+v credential=%q", got.Models, got.ModelCredential)
-	}
-	for _, req := range seen {
-		if req.Body["model"] != nil {
-			t.Errorf("没有启用凭证却发出了带模型名的请求：%+v", req.Body)
-		}
-	}
-}
-
-// 矩阵默认不跑，要显式 `?models=1`（口径层 v0.43 ①「只由人手点」）。免费的子路径层
-// 是保存渠道后自动跑的（v0.33），矩阵跟着默认挂上去的话，改一次 base_url 就静默打出
-// 「模型数 × 协议数」次真实推理。缺省站在不花钱那一侧。
-func TestProbeSkipsModelMatrixUnlessAskedFor(t *testing.T) {
-	var seen []probedRequest
-	db := gatewaytest.NewDB(t)
-	ch := gatewaytest.SeedChannel(t, db, "default-free", "openai", modelMatrixUpstream(t, &seen), "sk-upstream")
+	ch := gatewaytest.SeedChannel(t, db, "narrow", "openai", matrixUpstream(t, &seen), "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream")
 	gatewaytest.SeedChannelModel(t, db, ch, "good")
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
-	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe", "", &got)
+	status, body := a.Do(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(cred, "", "anthropic"))
+	if status != http.StatusBadRequest {
+		t.Errorf("越出声明集期望 400，得到 %d：%s", status, body)
+	}
+	if len(seen) != 0 {
+		t.Errorf("被拒的检测发出了 %d 个请求", len(seen))
+	}
+}
 
-	if len(got.Credentials) != 1 {
-		t.Errorf("子路径层照跑不误：%+v", got.Credentials)
+// 参数不对的另外三个口：没这把凭证、没这个模型、协议一个没勾。都得 400、都零请求。
+func TestProbeRejectsBadInput(t *testing.T) {
+	var seen []probedRequest
+	db := gatewaytest.NewDB(t)
+	ch := gatewaytest.SeedChannel(t, db, "guard", "openai", matrixUpstream(t, &seen), "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream")
+	gatewaytest.SeedChannelModel(t, db, ch, "good")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	cases := map[string]string{
+		"凭证不存在":  probeBody(cred+999, "", "openai"),
+		"模型不存在":  probeBody(cred, "no-such-model", "openai"),
+		"协议一个没勾": probeBody(cred, ""),
 	}
-	if len(got.Models) != 0 || got.ModelCredential != "" {
-		t.Errorf("没要矩阵却跑了：models=%+v credential=%q", got.Models, got.ModelCredential)
-	}
-	for _, req := range seen {
-		if req.Body["model"] != nil {
-			t.Errorf("没要矩阵却发出了带模型名的花钱请求：%+v", req.Body)
+	for name, body := range cases {
+		if status, resp := a.Do(t, http.MethodPost,
+			"/admin/api/channels/"+itoa(ch)+"/probe", body); status != http.StatusBadRequest {
+			t.Errorf("%s 期望 400，得到 %d：%s", name, status, resp)
 		}
+	}
+	if len(seen) != 0 {
+		t.Errorf("被拒的检测发出了 %d 个请求", len(seen))
+	}
+}
+
+// 保存后什么都不跑（口径层 v0.96 ①）：建渠道、改渠道的管理 API 调用之后，
+// 上游收到的请求数为零——自动探测确已拆除，真实请求的钱只在人手点检测时花。
+func TestSavingChannelSendsNothingUpstream(t *testing.T) {
+	var seen []probedRequest
+	db := gatewaytest.NewDB(t)
+	url := matrixUpstream(t, &seen)
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels",
+		fmt.Sprintf(`{"name":"quiet","base_url":{"openai":%q},"credential":"sk-upstream"}`, url), &created)
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID),
+		fmt.Sprintf(`{"name":"quiet-2","base_url":{"openai":%q}}`, url), nil)
+
+	if len(seen) != 0 {
+		t.Errorf("保存渠道后上游收到了 %d 个请求——保存后不该有任何探测", len(seen))
+	}
+}
+
+// 上游 key 与 base_url 不能出现在检测响应里（CLAUDE.md 的硬约束）。连不上时最容易
+// 漏——Go 的传输错误原文里带着完整 URL。失败措辞的纪律也在这儿把关：说不清的格子
+// 永远不定性「不支持」（口径层 v0.96 ③：检测是一次采样，定性交给人）。
+func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	const baseURL = "http://127.0.0.1:1/tenant7-secret-path"
+	ch := gatewaytest.SeedChannel(t, db, "dead", "openai", baseURL, "")
+	cred := gatewaytest.SeedNamedCredential(t, db, ch, "主力", "sk-upstream-secret")
+	gatewaytest.SeedChannelModel(t, db, ch, "some-model")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	_, body := a.Do(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+		probeBody(cred, "", "openai"))
+	if strings.Contains(body, "tenant7-secret-path") || strings.Contains(body, "sk-upstream-secret") {
+		t.Errorf("检测响应泄露了上游地址或凭证：%s", body)
+	}
+	if strings.Contains(body, "不支持") {
+		t.Errorf("检测失败被定性成了「不支持」——它只是一次采样：%s", body)
+	}
+
+	var got probeResponse
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if len(got.Models) != 1 || len(got.Models[0].Results) != 1 {
+		t.Fatalf("期望矩阵一行一格，得到 %+v", got.Models)
+	}
+	if cell := got.Models[0].Results[0]; cell.State != "unclear" || cell.Status != 0 {
+		t.Errorf("连不上的格子应是 unclear 且状态码 0：%+v", cell)
 	}
 }
