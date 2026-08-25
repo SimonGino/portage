@@ -5,13 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/SimonGino/portage/internal/calllog"
+	"github.com/SimonGino/portage/internal/exchange"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/codecs"
 	"github.com/SimonGino/portage/internal/protocol/openairesponses"
-	"github.com/SimonGino/portage/internal/protocol/taps"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
 
@@ -123,55 +122,34 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 			"inbound", ep.Proto, "channel_protocol", cand.Protocol, "dropped", dropped)
 	}
 
-	// 出站端点在这一刻才记（#20），不在上面算出 outEp 的地方：中间还夹着解码 400、
-	// 编码 500 两条早退，那些行同样没打上游，记了就是在说一件没发生的事。
-	rec.Dialing(outEp.Path)
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
-	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味。portage-legacy#20 定的
-	//「整串照抄」管的是同协议透传那条路（那是拆库前的编号，与上一段的 #20 无关）。
-	resp, at, err := s.up.Do(c.Request.Context(), cand, outEp, "", outBody, c.Request.Header, stream)
-	rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
-	if err != nil {
-		if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
-			return
-		}
-		// 与透传路径同：这一支没有响应体，落库的原文就是传输错误本身（v0.53）。
-		rec.Failed(calllog.UpstreamError, upstream.Redact(err).Error())
-		s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
-		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
+	// /v1/messages?beta=true），照抄到 CC 端点上不是保真是串味（portage-legacy#20 的
+	//「整串照抄」管的是同协议透传那条路）。错误原文不占旁路坑（TapErrorBody 为假）：
+	// 这条路非 2xx 的字节由下面的 writeUpstreamError 读全在手（rec.UpstreamRejected）。
+	// Tap 与 body 记录照样挂在**上游原始字节**上：usage 要的是上游自己报的数，
+	// 不是网关重编出来的响应。
+	res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
+		Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: outEp,
+		Body: outBody, Header: c.Request.Header, Stream: stream,
+	})
+	if !ok {
 		return
 	}
-	defer resp.Body.Close()
+	defer res.Close()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
-	// 照记这个 id：找上游对账与走的是哪条路无关（口径层 v0.56，#2）。三档的取舍与
-	// 透传路径同一处（calllog.Recorder.Finish），包括错误体那一档（v0.74）。
-	rec.RequestIDs(upstream.RequestIDs(resp.Header))
+	// 照记了 request-id（exchange 写回）：找上游对账与走的是哪条路无关（口径层
+	// v0.56，#2）。三档的取舍仍在 calllog.Recorder.Finish，包括错误体那一档（v0.74）。
 
-	// Tap 与 body 记录挂在上游原始字节上，与透传路径一致：usage 要的是上游自己
-	// 报的数，不是网关重编出来的响应。
-	var observers []io.Writer
-	if tap := taps.New(cand.Protocol, stream); tap != nil {
-		observers = append(observers, tap)
-		defer func() { rec.Summarized(tap.Summary()) }()
-	}
-	if s.cfg.LogBodies {
-		observers = append(observers, rec.TapResponseBody())
-	}
-	src := io.Reader(resp.Body)
-	if len(observers) > 0 {
-		src = io.TeeReader(resp.Body, io.MultiWriter(observers...))
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		s.writeUpstreamError(c, rec, ep, resp.StatusCode, src)
+	if res.Status < 200 || res.Status >= 300 {
+		s.writeUpstreamError(c, rec, ep, res.Status, res.Body)
 		return
 	}
 
 	if stream {
-		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, src, resp.Body)
+		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, res.Body, res.UpstreamBody())
 		return
 	}
-	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, src)
+	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, res.Body)
 }
 
 // encodeRequest 走 RequestEncodeReporter 拿丢弃清单，拿不到就退回普通编码。
@@ -240,8 +218,8 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	c.Writer.WriteHeader(http.StatusOK)
 	rec.Succeeded()
 
-	w := &clientStream{w: c.Writer, rc: http.NewResponseController(c.Writer), onFirstByte: rec.FirstByte}
-	if err := w.advance(); err != nil {
+	w := exchange.NewWriter(c.Writer, rec.FirstByte)
+	if err := w.Advance(); err != nil {
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
 		abortDecode(upstreamBody, events)
@@ -310,49 +288,10 @@ func (s *Server) bufferConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	c.Writer.WriteHeader(http.StatusOK)
 	rec.Succeeded()
 	rec.FirstByte()
-	if _, err := c.Writer.Write(out); err != nil {
+	// 也走 exchange.Writer：此前这条缓冲路是三份写盘纪律里唯一丢了写超时的那份
+	//（#9 点名的病），收成一份之后按构造齐全。首字节上面已亲手记过，回调传 nil。
+	if _, err := exchange.NewWriter(c.Writer, nil).Write(out); err != nil {
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
 	}
-}
-
-// clientStream 是 EncodeStream 写下行 SSE 用的 writer。
-//
-// 它把透传路径 relayBody 里那三件事搬到转换路径上：首字节回调（ttfb 日志）、每写
-// 一块推进写超时、写完 flush。少任何一件，要么日志缺 ttfb，要么慢客户端挂死连接，
-// 要么「逐字输出」变成攒完一次性吐出。
-type clientStream struct {
-	w           gin.ResponseWriter
-	rc          *http.ResponseController
-	onFirstByte func()
-	first       bool
-}
-
-func (s *clientStream) Write(p []byte) (int, error) {
-	if !s.first {
-		s.first = true
-		if s.onFirstByte != nil {
-			s.onFirstByte()
-		}
-	}
-	if err := s.advance(); err != nil {
-		return 0, err
-	}
-	return s.w.Write(p)
-}
-
-// Flush 满足 anthropic.Flusher：每帧之后被调一次。
-func (s *clientStream) Flush() {
-	if err := s.rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		// Flush 失败说明连接已经坏了，下一次 Write 会拿到同样的错误并把它带上来。
-		// 这里不能返回错误（Flusher 没有返回值），静默是唯一选择。
-		return
-	}
-}
-
-func (s *clientStream) advance() error {
-	if err := s.rc.SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		return err
-	}
-	return nil
 }

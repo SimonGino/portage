@@ -16,63 +16,14 @@ import (
 	"github.com/SimonGino/portage/internal/admin"
 	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/config"
+	"github.com/SimonGino/portage/internal/exchange"
 	"github.com/SimonGino/portage/internal/protocol"
-	"github.com/SimonGino/portage/internal/protocol/taps"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
-
-const (
-	// writeDeadline 是单次向客户端写出的上限，每写一块推进一次。它约束的是「客户端
-	// 收得多慢」，不是「流总共多长」——所以长流不会被它掐断，挂死的慢客户端会。
-	writeDeadline = 30 * time.Second
-
-	// copyBufferSize 是透传的读写块大小。按字节块复制、永不按帧切分：透传路径对 SSE
-	// 帧边界一无所知，因此并行工具调用那种远超缓冲区的大参数帧也不会被截断。
-	copyBufferSize = 32 * 1024
-)
-
-// relayBody 把上游响应按字节块复制给客户端，每块 flush 一次。
-//
-// 不用 io.Copy：它不 flush，SSE 帧会攒在 net/http 的缓冲里，客户端要等攒满或流结束
-// 才看得到——正是「逐字输出」失效的成因。也不用 bufio.Scanner 按行读再重组：那会引入
-// 换行/空行的重写风险，且 Scanner 的 token 上限会变成透传路径的截断上限。
-func relayBody(w gin.ResponseWriter, body io.Reader, onFirstByte func()) error {
-	rc := http.NewResponseController(w)
-	// 先兜住响应头本身与空 body 的情形，之后每写一块再推进一次。
-	if err := advanceWriteDeadline(rc); err != nil {
-		return err
-	}
-	buf := make([]byte, copyBufferSize)
-	first := true
-	for {
-		n, readErr := body.Read(buf)
-		if n > 0 {
-			if first {
-				first = false
-				onFirstByte()
-			}
-			if err := advanceWriteDeadline(rc); err != nil {
-				return err
-			}
-			if _, err := w.Write(buf[:n]); err != nil {
-				return err
-			}
-			if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-				return err
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
-}
 
 // setNoBuffering 给 SSE 响应盖上 X-Accel-Buffering: no（口径层 v0.30 裁定）。
 //
@@ -93,26 +44,17 @@ func isEventStream(contentType string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/event-stream")
 }
 
-// advanceWriteDeadline 把「这一次写出」的截止时间往后推。ErrNotSupported 说明底层
-// writer 不支持 deadline（本项目的 gin ResponseWriter 支持），不该因此中断透传。
-func advanceWriteDeadline(rc *http.ResponseController) error {
-	if err := rc.SetWriteDeadline(time.Now().Add(writeDeadline)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		return err
-	}
-	return nil
-}
-
 type Server struct {
 	cfg config.Config
 	db  *sql.DB
-	up  *upstream.Client
+	// ex 是「一次上游交换」的编排方（#9）：dial→attempt→错误收场→观察者装配都在
+	// 它里面，透传与转换两条 relay 只当 adapter。
+	ex  *exchange.Client
 	log *slog.Logger
 	// genLim 是生成面那三个端点共用的全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
 	genLim *rate.Limiter
 	// countTokensLim 是 count_tokens 独占的那只（#16），配置同 genLim。选桶见 pickLimiter。
 	countTokensLim *rate.Limiter
-	// queueRetryAfter 是并发闸 429 的 Retry-After 值（整秒字符串），启动时换算一次。
-	queueRetryAfter string
 }
 
 func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
@@ -129,54 +71,20 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 	// countTokensLim（#16，理由见 pickLimiter）。桶数是刻意停在 2 的——若改成在
 	// rateLimit(ep) 里逐端点 new，四个端点各得一只，配 10 QPS 实收 40 而且看不出来。
 	s := &Server{
-		cfg: cfg, db: db, up: upstream.NewClient(retry), log: log,
+		cfg: cfg, db: db, log: log,
 		genLim:         newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 		countTokensLim: newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 	}
+	up := upstream.NewClient(retry)
 	// 渠道并发闸的排队参数（口径层 v0.50）在这里从配置接上。Retry-After 在这里就换算
 	// 成整秒字符串：它的单位是整秒，不足 1 秒的配置向上顶成 1，回一个 0 等于让
 	// 客户端立刻再撞一次闸。
-	s.up.Queue = upstream.QueuePolicy{Factor: cfg.Queue.Factor, Wait: cfg.Queue.Wait}
-	s.queueRetryAfter = strconv.Itoa(max(1, int(cfg.Queue.RetryAfter/time.Second)))
-	return s
-}
-
-// writeQueueReject 译写渠道并发闸的三种收场（口径层 v0.50/v0.52）；不是闸的错误
-// 则返回 false，调用方接着走通用的 upstream_error 分支。透传与转换两条路共用。
-//
-// 认下的三档一律走 rec.QueueRejected：它顺带把出站端点清回空串（#20）——那一格在
-// 两个调用点的 Do 之前一刻就记上了，而闸在 Do 里面、拨号之前就回绝，这三档一个
-// 字节都没到上游，同 401 / 429 / 501 那批。返回 false 那档不走它，那是真打过上游
-// 之后的失败（拨不通、读超时）。
-func (s *Server) writeQueueReject(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, channel string, err error) bool {
-	var word calllog.Outcome
-	var msg string
-	switch {
-	case errors.Is(err, upstream.ErrQueueFull):
-		word, msg = calllog.QueueFull, "渠道并发已满，请稍后重试"
-	case errors.Is(err, upstream.ErrQueueTimeout):
-		word, msg = calllog.QueueTimeout, "渠道并发排队超时，请稍后重试"
-	case errors.Is(err, upstream.ErrQueueAbandoned):
-		// 客户端在排队途中自己断了：没人在听，不写错误体；状态记 499（nginx 的
-		// client closed request 惯例码），流水靠 error=queue_abandoned 归因，
-		// 与「打到上游后失败」（upstream_error）分开——这种请求没碰过上游。
-		rec.QueueRejected(calllog.QueueAbandoned)
-		s.log.Info("排队途中客户端断开", "channel", channel,
-			"queue_wait_ms", rec.QueueWaitMs())
-		c.Writer.WriteHeader(499)
-		return true
-	default:
-		return false
+	up.Queue = upstream.QueuePolicy{Factor: cfg.Queue.Factor, Wait: cfg.Queue.Wait}
+	s.ex = &exchange.Client{
+		Up: up, Log: log, LogBodies: cfg.LogBodies,
+		QueueRetryAfter: strconv.Itoa(max(1, int(cfg.Queue.RetryAfter/time.Second))),
 	}
-	rec.QueueRejected(word)
-	s.log.Warn("渠道并发闸拒绝", "channel", channel, "reason", word.String(),
-		"queue_wait_ms", rec.QueueWaitMs())
-	// Retry-After 要赶在 WriteError 之前设（同 rateLimit）：那里面就 WriteHeader
-	// 了，之后再往 Header() 里写什么都不会发出去。回 429 而不是 503：对 Codex 这类
-	// harness 429 是「稍后重试」，503 是「换地方」，闸满要的是前者（口径层 v0.50）。
-	c.Writer.Header().Set("Retry-After", s.queueRetryAfter)
-	ep.Proto.WriteError(c.Writer, http.StatusTooManyRequests, msg)
-	return true
+	return s
 }
 
 func (s *Server) Engine() *gin.Engine {
@@ -400,59 +308,28 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		}
 
 		// 同协议透传的出站端点就是入站那条（#20）：这条路上入口即出口，count_tokens
-		// 透传到 anthropic 渠道打的也还是 /v1/messages/count_tokens。记在这一刻而不是
-		// 选完渠道那一刻——上面的 RewriteModel 400 同样没打上游。
-		rec.Dialing(ep.Path)
-		resp, at, err := s.up.Do(c.Request.Context(), cand, ep, c.Request.URL.RawQuery, forward, c.Request.Header, head.Stream)
-		rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
-		if err != nil {
-			if s.writeQueueReject(c, rec, ep, cand.ChannelName, err) {
-				return
-			}
-			// 只报渠道名；Redact 摘掉传输错误里内嵌的 base_url。
-			// 这一支没有响应体可截，落库的原文就是这条传输错误本身（口径层 v0.53）。
-			// 不落的话，最想看细节的那半边——连不上、握手失败、读超时——恰好永远是空。
-			rec.Failed(calllog.UpstreamError, upstream.Redact(err).Error())
-			s.log.Error("上游请求失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
-			ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游渠道 "+cand.ChannelName+" 请求失败")
+		// 透传到 anthropic 渠道打的也还是 /v1/messages/count_tokens。RawQuery 整串
+		// 照抄（portage-legacy#20）；错误原文挂旁路占坑（TapErrorBody）——透传路径上
+		// 响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
+		res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
+			Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: ep,
+			RawQuery: c.Request.URL.RawQuery, Body: forward, Header: c.Request.Header,
+			Stream: head.Stream, TapErrorBody: true,
+		})
+		if !ok {
 			return
 		}
-		defer resp.Body.Close()
-		// 在写响应头之前取：之后 c.Writer.Header() 里也有同一个值，但从上游的
-		// resp.Header 拿才是「上游报的」，不受本地补头（X-Accel-Buffering）干扰。
-		// 只取两档头候选，最终取哪个由流水收尾时定——中间那档在错误体里（v0.74）。
-		rec.RequestIDs(upstream.RequestIDs(resp.Header))
+		defer res.Close()
 
-		// Tap 与 body 记录都挂旁路：拿到的是与转发**同一份**字节，且都写不坏
-		// 转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。
-		var observers []io.Writer
-		if tap := taps.New(cand.Protocol, head.Stream); tap != nil {
-			observers = append(observers, tap)
-			defer func() { rec.Summarized(tap.Summary()) }()
-		}
-		if s.cfg.LogBodies {
-			observers = append(observers, rec.TapResponseBody())
-		}
-		// 上游说不行时，把它说的话截一段落库（口径层 v0.53）。挂旁路而不是先读后转：
-		// 透传路径上响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
-		// 判据是状态码而非 error 列——透传 4xx 的 error 列是空的（v0.28 纪律）。
-		if resp.StatusCode >= 400 {
-			observers = append(observers, rec.TapUpstreamErrorBody())
-		}
-		src := io.Reader(resp.Body)
-		if len(observers) > 0 {
-			src = io.TeeReader(resp.Body, io.MultiWriter(observers...))
-		}
-
-		upstream.CopyResponseHeaders(c.Writer.Header(), resp.Header)
+		upstream.CopyResponseHeaders(c.Writer.Header(), res.Header)
 		// 只在这一处偏离「原样透传上游响应头」：SSE 时补 X-Accel-Buffering: no。
 		// 补在 CopyResponseHeaders 之后是有意的——上游若自己发了这个头，以我们的为准。
 		if isEventStream(c.Writer.Header().Get("Content-Type")) {
 			setNoBuffering(c.Writer.Header())
 		}
-		c.Writer.WriteHeader(resp.StatusCode)
+		c.Writer.WriteHeader(res.Status)
 		rec.Succeeded()
-		if err := relayBody(c.Writer, src, rec.FirstByte); err != nil {
+		if err := exchange.NewWriter(c.Writer, rec.FirstByte).Copy(res.Body); err != nil {
 			// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 			rec.Failed(calllog.StreamAborted, "")
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
