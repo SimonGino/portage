@@ -74,8 +74,8 @@ export function ChannelForm({
   const declared = channel ? (channel.protocols ?? []) : declaredProtocols(urls)
 
   // 能力位只在 Responses 渠道上有意义，所以只有声明了它才露、也只有露着才传（不传 =
-  // 那一列不动，同 key_mode 的整体覆盖陷阱）。取消声明 Responses 之后不去清那一列：
-  // 清了也读不到，而声明回来时人还得再想一遍这个上游支不支持压缩。
+  // 那一列不动）。取消声明 Responses 之后不去清那一列：清了也读不到，而声明回来时
+  // 人还得再想一遍这个上游支不支持压缩（真正的归位由服务端在删协议那一笔上做，#33）。
   const showCompaction = declared.includes('openai_responses')
   // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。
   const showStateful = showCompaction
@@ -99,28 +99,26 @@ export function ChannelForm({
     e.preventDefault()
     setBusy(true)
     try {
-      // key_mode 不在这张表单上（v0.38 ⑨ 的位置已由 v0.44 修订到凭证池），干脆
-      // 不传：后端对缺省的 key_mode 是「整列不写」（v0.35 ⑸），比回传 prop 上的
-      // 旧值安全——凭证池那边刚改过的话，这儿的 prop 还是老的。
-      //
-      // disabled 直接从 prop 读、不进表单状态：启停已经挪到右栏抬头那个开关上
-      // （v0.46），它改的是同一个字段。存成 state 的话，抬头拨一下、这儿再保存，
-      // 就会拿一份挂载时的旧值把刚拨的那下覆盖回去。
-      const body = {
-        name,
-        // 编辑时 base_url 从 prop 读（同 disabled）：它的编辑入口在页面上的
-        // 「API 地址」区块，这儿回传旧 state 会把那边刚存的覆盖掉。
-        base_url: channel ? channel.base_url : urls,
-        max_concurrency: maxConcValue,
-        ...(showCompaction ? { supports_compaction: compaction } : {}),
-        ...(showStateful ? { supports_stateful_responses: stateful } : {}),
-        disabled: channel?.disabled ?? false,
-      }
       if (channel) {
-        await api.put(`/channels/${channel.id}`, body)
+        // 编辑走「上游设置」这一笔意图写（#48 批2）：只发这张表单上有的字段，
+        // base_url / key_mode / disabled 各有各的写点，这里不回传也回传不了。
+        // 能力位只有露着才传（不传 = 那一列不动）。
+        await api.put(`/channels/${channel.id}/settings`, {
+          name,
+          max_concurrency: maxConcValue,
+          ...(showCompaction ? { supports_compaction: compaction } : {}),
+          ...(showStateful ? { supports_stateful_responses: stateful } : {}),
+        })
         onSaved(channel.id)
       } else {
-        const created = await api.post<{ id: number }>('/channels', { ...body, credential })
+        const created = await api.post<{ id: number }>('/channels', {
+          name,
+          base_url: urls,
+          max_concurrency: maxConcValue,
+          ...(showCompaction ? { supports_compaction: compaction } : {}),
+          ...(showStateful ? { supports_stateful_responses: stateful } : {}),
+          credential,
+        })
         onSaved(created.id)
       }
     } catch (err) {

@@ -98,7 +98,13 @@ func (h *Handler) Mount(r *gin.Engine) {
 
 	auth.GET("/channels", h.listChannels)
 	cw.POST("/channels", h.createChannel)
-	cw.PUT("/channels/:id", h.updateChannel)
+	// 修改是四笔按意图的字段写（#48 批2），没有整体覆盖的 PUT /channels/:id：
+	// 那个接口逼每个调用点回传全量渠道，「回传旧 state 覆盖别处刚存的」在两个
+	// 前端文件里各咬过一次。
+	cw.PUT("/channels/:id/base-url", h.putChannelBaseURL)
+	cw.PUT("/channels/:id/key-mode", h.putChannelKeyMode)
+	cw.PUT("/channels/:id/disabled", h.putChannelDisabled)
+	cw.PUT("/channels/:id/settings", h.putChannelSettings)
 	cw.DELETE("/channels/:id", h.deleteChannel)
 	// 凭证池：逐条 CRUD + 追加式批量粘贴（口径层 v0.38 改写 v0.28 的整把替换）。
 	// 依旧**没有任何读凭证值的接口**——GET 回的是名字与状态。

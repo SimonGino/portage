@@ -165,9 +165,9 @@ func (h *Handler) listChannels(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
-// channelInput 是渠道表单。credential 只在**创建**时可选带一把（省去「建完再去加
-// 凭证」这一步）——之后凭证走 /channels/:id/credentials 那套逐条 CRUD，而修改渠道的
-// 接口根本不看这个字段，因此「改个名字」不可能顺手把凭证清空。
+// channelInput 是**新建**渠道的表单（#48 批2 起修改走四笔按意图的字段写，不再用它）。
+// credential 可选带一把（省去「建完再去加凭证」这一步）——之后凭证走
+// /channels/:id/credentials 那套逐条 CRUD。
 type channelInput struct {
 	Name string `json:"name"`
 	// BaseURL 是每协议出站根地址（口径层 v0.96 ②）：键是协议名，**填了哪个协议就是
@@ -191,15 +191,25 @@ type channelInput struct {
 	Credential                string `json:"credential"`
 }
 
-func (in channelInput) toStore() (store.ChannelInput, error) {
+// parseBaseURLs 把请求体里的「协议名 → 地址」映射落到 store.BaseURLs。收 map 的
+// 理由见 channelInput.BaseURL；拼错协议名回点名的 400。
+func parseBaseURLs(m map[string]string) (store.BaseURLs, error) {
 	var urls store.BaseURLs
-	for key, url := range in.BaseURL {
+	for key, url := range m {
 		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(key)))
 		if !p.Valid() {
-			return store.ChannelInput{}, store.InvalidInput{
+			return store.BaseURLs{}, store.InvalidInput{
 				Reason: "base_url 的键 " + strconv.Quote(key) + " 不是 anthropic/openai/openai_responses 之一"}
 		}
 		urls.Set(p, strings.TrimSpace(url))
+	}
+	return urls, nil
+}
+
+func (in channelInput) toStore() (store.ChannelInput, error) {
+	urls, err := parseBaseURLs(in.BaseURL)
+	if err != nil {
+		return store.ChannelInput{}, err
 	}
 	return store.ChannelInput{
 		Name:                      strings.TrimSpace(in.Name),
@@ -240,22 +250,82 @@ func (h *Handler) createChannel(c *gin.Context) {
 	})
 }
 
-func (h *Handler) updateChannel(c *gin.Context) {
+// 渠道的修改是四笔按意图的字段写（#48 批2），不再有整体覆盖的 PUT：页面上哪个控件
+// 动了就打哪一笔，前端不回传自己没编辑的字段，「哪些列动」的判断全在 store 的意图
+// writer 里。
+
+func (h *Handler) putChannelBaseURL(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
 		return
 	}
-	var in channelInput
+	var in struct {
+		BaseURL map[string]string `json:"base_url"`
+	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		input, err := in.toStore()
+		urls, err := parseBaseURLs(in.BaseURL)
 		if err != nil {
 			return err
 		}
-		return store.UpdateChannel(ctx, tx, id, input)
+		return store.UpdateChannelBaseURLs(ctx, tx, id, urls)
+	})
+}
+
+func (h *Handler) putChannelKeyMode(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		KeyMode string `json:"key_mode"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.UpdateChannelKeyMode(ctx, tx, id, in.KeyMode)
+	})
+}
+
+func (h *Handler) putChannelDisabled(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.SetChannelDisabled(ctx, tx, id, in.Disabled)
+	})
+}
+
+func (h *Handler) putChannelSettings(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in store.ChannelSettings
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		fail(c, http.StatusBadRequest, "渠道名不能为空")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.UpdateChannelSettings(ctx, tx, id, in)
 	})
 }
 

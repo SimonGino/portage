@@ -127,22 +127,15 @@ function CredentialsDialog({
   const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
   const enabled = list.filter((c) => !c.disabled).length
 
-  /** 改选取模式立即落库。渠道的修改接口是整体覆盖，其余字段原样回传。 */
+  /** 改选取模式立即落库，走单字段的意图写（#48 批2），别的列碰不到。 */
   function saveKeyMode(mode: KeyMode) {
     const prev = keyMode
     setKeyMode(mode)
     void mutate(() =>
-      api
-        .put(`/channels/${channel.id}`, {
-          name: channel.name,
-          base_url: channel.base_url,
-          key_mode: mode,
-          disabled: channel.disabled,
-        })
-        .catch((e) => {
-          setKeyMode(prev) // 没写成就把单选钮拨回去，别让页面撒谎
-          throw e
-        }),
+      api.put(`/channels/${channel.id}/key-mode`, { key_mode: mode }).catch((e) => {
+        setKeyMode(prev) // 没写成就把单选钮拨回去，别让页面撒谎
+        throw e
+      }),
     )
   }
 

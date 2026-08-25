@@ -291,8 +291,10 @@ func TestSavingChannelSendsNothingUpstream(t *testing.T) {
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels",
 		fmt.Sprintf(`{"name":"quiet","base_url":{"openai":%q},"credential":"sk-upstream"}`, url), &created)
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID),
-		fmt.Sprintf(`{"name":"quiet-2","base_url":{"openai":%q}}`, url), nil)
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings",
+		`{"name":"quiet-2"}`, nil)
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+		fmt.Sprintf(`{"base_url":{"openai":%q}}`, url), nil)
 
 	if len(seen) != 0 {
 		t.Errorf("保存渠道后上游收到了 %d 个请求——保存后不该有任何探测", len(seen))

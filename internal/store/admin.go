@@ -389,6 +389,101 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	return affectedOne(res, err)
 }
 
+// ── 按意图的字段写（#48 批2）──────────────────────────────────────────────
+//
+// 管理端的修改从「整体覆盖 + 哨兵」拆成四笔意图写：页面上哪个控件动了就写哪一笔，
+// 「哪些列动」的判断收回服务端，前端不再回传自己没编辑的字段——「回传旧 state 会把
+// 别处刚存的覆盖掉」那整类坑随接口形状消失。UpdateChannel 的整体覆盖语义保留给
+// declcfg：文件是总量，那条路的语义本来就是覆盖。
+
+// UpdateChannelBaseURLs 单写每协议出站根地址。地址即协议声明（口径层 v0.96 ②），
+// 这一笔写的其实是协议集：Responses 被删出集合时两个能力位随手归位默认值（#33）
+// ——门多了一扇，规则还是同一条。
+func UpdateChannelBaseURLs(ctx context.Context, db Conn, id int64, urls BaseURLs) error {
+	trimmed := urls.trimmed()
+	if len(trimmed.Protocols()) == 0 {
+		return InvalidInput{Reason: "至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，" +
+			"一个都不填的渠道永远路由不到"}
+	}
+	sets := `base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?`
+	args := []any{trimmed.OpenAI, trimmed.OpenAIResponses, trimmed.Anthropic}
+	if !trimmed.Protocols().Has(protocol.OpenAIResponses) {
+		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
+	}
+	args = append(args, id)
+	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
+	return affectedOne(res, err)
+}
+
+// UpdateChannelKeyMode 单写凭证选取模式。意图写没有「没提这个字段」的形态，空串
+// 在这里不再是哨兵，就是一个非法值。
+func UpdateChannelKeyMode(ctx context.Context, db Conn, id int64, mode string) error {
+	switch mode = strings.TrimSpace(mode); mode {
+	case KeyModePolling, KeyModeRandom:
+	default:
+		return InvalidInput{Reason: "凭证选取模式只能是 polling（轮询）或 random（随机）"}
+	}
+	res, err := db.ExecContext(ctx, `UPDATE channels SET key_mode = ? WHERE id = ?`, mode, id)
+	return affectedOne(res, err)
+}
+
+// SetChannelDisabled 渠道启停。
+func SetChannelDisabled(ctx context.Context, db Conn, id int64, disabled bool) error {
+	res, err := db.ExecContext(ctx, `UPDATE channels SET disabled = ? WHERE id = ?`, boolInt(disabled), id)
+	return affectedOne(res, err)
+}
+
+// ChannelSettings 是「上游设置」弹框那一笔：改名、并发、能力位。位字段的 nil =
+// 「弹框没渲染这个控件」（协议不含 Responses 时它们不在屏幕上），那一列不动。
+type ChannelSettings struct {
+	Name                      string `json:"name"`
+	MaxConcurrency            *int   `json:"max_concurrency"`
+	SupportsCompaction        *bool  `json:"supports_compaction"`
+	SupportsStatefulResponses *bool  `json:"supports_stateful_responses"`
+}
+
+// UpdateChannelSettings 写「上游设置」那一笔。这一笔不碰地址，协议集从库里现值读：
+// 不含 Responses 时两个位一律写默认值、请求体里带来的不作数（#33 的 Create 侧同一
+// 条立论——UI 造不出这种请求，直接打 API 能，不变式在后端、不信请求体）。
+func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSettings) error {
+	if strings.Contains(s.Name, "/") {
+		return InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
+	}
+	if s.MaxConcurrency != nil && *s.MaxConcurrency < 0 {
+		return InvalidInput{Reason: "并发上限不能是负数：0 表示不限，正整数表示上限"}
+	}
+	var respURL string
+	switch err := db.QueryRowContext(ctx,
+		`SELECT base_url_openai_responses FROM channels WHERE id = ?`, id).Scan(&respURL); {
+	case err == sql.ErrNoRows:
+		return ErrNotFound
+	case err != nil:
+		return err
+	}
+	sets := `name = ?`
+	args := []any{s.Name}
+	if s.MaxConcurrency != nil {
+		sets += `, max_concurrency = ?`
+		args = append(args, *s.MaxConcurrency)
+	}
+	if strings.TrimSpace(respURL) != "" {
+		if s.SupportsCompaction != nil {
+			sets += `, supports_compaction = ?`
+			args = append(args, boolInt(*s.SupportsCompaction))
+		}
+		if s.SupportsStatefulResponses != nil {
+			sets += `, supports_stateful_responses = ?`
+			args = append(args, boolInt(*s.SupportsStatefulResponses))
+		}
+	} else {
+		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
+	}
+	args = append(args, id)
+	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
+	return affectedOne(res, err)
+}
+
 // ProbeTarget 是跑一次模型级检测要的东西：打哪儿、声明了哪几个协议、有哪几份凭证、
 // 有哪些模型（口径层 v0.96 检测收成一层，子路径可达性探测随层拆除）。
 //

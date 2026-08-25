@@ -247,10 +247,10 @@ func TestAdminReturnsCredentialOnlyFromThePool(t *testing.T) {
 	}
 }
 
-// PUT 不带 key_mode 时那一列不动：这个字段 v0.38 才露到表单上，老前端与手写的请求体
-// 里没有它，在服务端补默认等于把一个配好 random 的渠道静默改回轮询——而「为什么总是
-// 第一把在跑」正是多凭证放开后最难自己想明白的问题，让它被一次无关的改名悄悄改掉更甚。
-func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
+// 改名（settings 那一笔）碰不到 key_mode：#48 批2 把整体覆盖的 PUT 拆成四笔意图写
+// 之后，「一次无关的改名把配好 random 的渠道静默改回轮询」在接口形状上就表达不出来
+// ——旧接口靠「缺省整列不写」的哨兵防这一幕，新接口靠各写各的。
+func TestChannelSettingsDoNotTouchKeyMode(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
@@ -261,29 +261,32 @@ func TestUpdateChannelKeepsKeyModeWhenAbsent(t *testing.T) {
 		"name":"pool","base_url":{"anthropic":"https://api.example.com"},
 		"key_mode":"random","credential":"sk-x"}`, &created)
 
-	// 一次只改名字的保存，请求体里没有 key_mode。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
-		"name":"pool-renamed","base_url":{"anthropic":"https://api.example.com"}}`, nil)
+	// 只改名字的保存。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings",
+		`{"name":"pool-renamed"}`, nil)
 
 	var channels []adminChannel
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
 	if len(channels) != 1 || channels[0].KeyMode != "random" {
 		t.Fatalf("key_mode 被静默重置了：%+v", channels)
 	}
-	// 显式给的仍然要生效，否则「不动」就变成了「改不动」。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID), `{
-		"name":"pool-renamed","base_url":{"anthropic":"https://api.example.com"},
-		"key_mode":"polling"}`, nil)
+	// key_mode 走自己那一笔。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/key-mode",
+		`{"key_mode":"polling"}`, nil)
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
 	if channels[0].KeyMode != "polling" {
-		t.Errorf("显式改成 polling 没生效：%+v", channels)
+		t.Errorf("key-mode 那一笔没生效：%+v", channels)
+	}
+	if channels[0].Name != "pool-renamed" {
+		t.Errorf("key-mode 那一笔不该动名字：%+v", channels)
 	}
 }
 
-// compaction 能力位（口径层 v0.54）与 key_mode 同一个整体覆盖陷阱，但更险：它的哨兵
-// 是 nil 而不是零值——false 是**有意义的默认取值**，缺省当 false 处理与「不动那一列」
-// 在页面上长得一模一样，而后果是一个勾过的渠道在别处保存一次就被静默关掉压缩。
-func TestUpdateChannelKeepsCompactionBitWhenAbsent(t *testing.T) {
+// 能力位走 settings 那一笔：显式给的生效、缺省（弹框没渲染那个控件）整列不动。
+// compaction 位的缺省当 false 处理与「不动那一列」在页面上长得一模一样，而后果是
+// 一个勾过的渠道在一次只改名字的保存里被静默关掉压缩——所以哨兵仍是 nil 指针，
+// 只是从八字段的整体覆盖缩进了四字段的 settings。
+func TestChannelSettingsBitSentinels(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
@@ -296,41 +299,41 @@ func TestUpdateChannelKeepsCompactionBitWhenAbsent(t *testing.T) {
 
 	var channels []adminChannel
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if len(channels) != 1 || channels[0].SupportsCompaction {
-		t.Fatalf("新建渠道的能力位默认该是否（PO 2026-08-13 裁定）：%+v", channels)
+	if len(channels) != 1 || channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
+		t.Fatalf("新建渠道的能力位默认该是 (否, 是)（PO 裁定）：%+v", channels)
 	}
 
 	id := itoa(created.ID)
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp","base_url":{"openai_responses":"https://api.example.com"},
-		"supports_compaction":true}`, nil)
+	// 显式拨离默认值。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{
+		"name":"resp","supports_compaction":true,"supports_stateful_responses":false}`, nil)
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if !channels[0].SupportsCompaction {
-		t.Fatalf("显式勾上没生效：%+v", channels)
+	if !channels[0].SupportsCompaction || channels[0].SupportsStatefulResponses {
+		t.Fatalf("显式设的位没生效：%+v", channels)
 	}
 
-	// 一次只改名字的保存，请求体里没有这个字段。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp-renamed","base_url":{"openai_responses":"https://api.example.com"}}`, nil)
+	// 一次只改名字的保存，请求体里没有位字段：两位都不该动。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{"name":"resp-renamed"}`, nil)
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
 	if !channels[0].SupportsCompaction {
-		t.Errorf("能力位被静默关掉了：%+v", channels)
+		t.Errorf("compaction 位被静默关掉了：%+v", channels)
+	}
+	if channels[0].SupportsStatefulResponses {
+		t.Errorf("缺省的字段把关掉的续链位翻回去了：%+v", channels)
 	}
 
-	// 显式取消仍然要生效，否则「不动」就变成了「关不掉」。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp-renamed","base_url":{"openai_responses":"https://api.example.com"},
-		"supports_compaction":false}`, nil)
+	// 拨回去仍然要生效，否则「不动」就变成了「改不动」。
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{
+		"name":"resp-renamed","supports_compaction":false,"supports_stateful_responses":true}`, nil)
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if channels[0].SupportsCompaction {
-		t.Errorf("显式取消没生效：%+v", channels)
+	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
+		t.Errorf("拨回默认没生效：%+v", channels)
 	}
 }
 
-// 有状态续链位（口径层 v0.88）与 compaction 位同一个陷阱、默认方向相反：它默认是
-// **true**，所以拿零值当哨兵会让每一次「只改名字」的保存都把渠道静默关掉续链——那
-// 正是这一位配错时最贵的方向（打断一条本来能用的续链，页面上看不出来）。
-func TestUpdateChannelKeepsStatefulBitWhenAbsent(t *testing.T) {
+// settings 那一笔在不含 Responses 协议的渠道上不认位字段（#33 的 Create 侧同一条
+// 立论）：UI 造不出这种请求，直接打 API 能——不变式在后端，不信请求体。
+func TestChannelSettingsForceBitDefaultsWithoutResponses(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
@@ -338,40 +341,41 @@ func TestUpdateChannelKeepsStatefulBitWhenAbsent(t *testing.T) {
 		ID int64 `json:"id"`
 	}
 	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
-		"name":"resp","base_url":{"openai_responses":"https://api.example.com"},
+		"name":"plain","base_url":{"openai":"https://api.example.com"},
 		"credential":"sk-x"}`, &created)
+
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings", `{
+		"name":"plain","supports_compaction":true,"supports_stateful_responses":false}`, nil)
 
 	var channels []adminChannel
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if len(channels) != 1 || !channels[0].SupportsStatefulResponses {
-		t.Fatalf("新建渠道的有状态续链位默认该是是（PO 裁定）：%+v", channels)
+	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
+		t.Fatalf("不含 Responses 的渠道两位该钉在默认值 (否, 是)：%+v", channels)
 	}
+}
 
-	id := itoa(created.ID)
-	// 显式关掉。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp","base_url":{"openai_responses":"https://api.example.com"},
-		"supports_stateful_responses":false}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if channels[0].SupportsStatefulResponses {
-		t.Fatalf("显式关掉没生效：%+v", channels)
+// base-url 那一笔把 Responses 删出协议集时，两个能力位随手归位默认值（#33）——
+// 这正是当年撞出 #33 的那条真实路径：页面上取消 Responses 协议保存，残值留库，
+// 哪天勾回来原样复活。
+func TestBaseURLWriteResetsBitsWhenResponsesDropped(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	var created struct {
+		ID int64 `json:"id"`
 	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		"name":"resp","base_url":{"openai":"https://a.example.com","openai_responses":"https://api.example.com"},
+		"supports_compaction":true,"supports_stateful_responses":false,
+		"credential":"sk-x"}`, &created)
 
-	// 一次只改名字的保存，请求体里没有这个字段：关掉的那一位也不该被「不动」翻回去。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp-renamed","base_url":{"openai_responses":"https://api.example.com"}}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if channels[0].SupportsStatefulResponses {
-		t.Errorf("缺省的字段把关掉的能力位翻回去了：%+v", channels)
-	}
+	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+		`{"base_url":{"openai":"https://a.example.com"}}`, nil)
 
-	// 勾回来仍然要生效。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id, `{
-		"name":"resp-renamed","base_url":{"openai_responses":"https://api.example.com"},
-		"supports_stateful_responses":true}`, nil)
+	var channels []adminChannel
 	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
-	if !channels[0].SupportsStatefulResponses {
-		t.Errorf("勾回来没生效：%+v", channels)
+	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
+		t.Fatalf("删掉 Responses 地址后两位该归位默认值 (否, 是)：%+v", channels)
 	}
 }
 
@@ -627,7 +631,10 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 
 	writes := []struct{ method, path string }{
 		{http.MethodPost, "/admin/api/channels"},
-		{http.MethodPut, "/admin/api/channels/1"},
+		{http.MethodPut, "/admin/api/channels/1/base-url"},
+		{http.MethodPut, "/admin/api/channels/1/key-mode"},
+		{http.MethodPut, "/admin/api/channels/1/disabled"},
+		{http.MethodPut, "/admin/api/channels/1/settings"},
 		{http.MethodDelete, "/admin/api/channels/1"},
 		{http.MethodPost, "/admin/api/channels/1/credentials"},
 		{http.MethodPut, "/admin/api/credentials/1"},

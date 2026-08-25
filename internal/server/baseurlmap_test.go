@@ -117,8 +117,8 @@ func TestAdminRejectsDeletingTheLastBaseURL(t *testing.T) {
 		"name":"one-root","base_url":{"anthropic":"https://api.example.com"},
 		"credential":"sk-x"}`, &created)
 
-	status, body := a.Do(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID),
-		`{"name":"one-root","base_url":{}}`)
+	status, body := a.Do(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+		`{"base_url":{}}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("删到零地址应 400，得到 %d：%s", status, body)
 	}

@@ -118,15 +118,7 @@ export function ChannelDetail({
             <Toggle
               on={!ch.disabled}
               label={ch.name}
-              onChange={(on) =>
-                void mutate(() =>
-                  api.put(`/channels/${ch.id}`, {
-                    name: ch.name,
-                    base_url: ch.base_url,
-                    disabled: !on,
-                  }),
-                )
-              }
+              onChange={(on) => void mutate(() => api.put(`/channels/${ch.id}/disabled`, { disabled: !on }))}
             />
           </div>
           <div className="ch-acts">
@@ -268,8 +260,7 @@ export function ChannelDetail({
  * v0.96 起**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行紧随其下；
  * 「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是再填一次地址），
  * 至少保留一行，删到最后一行的口被服务端和这里一起堵住。
- * 其余渠道字段照 prop 原样回传（修改接口是整体覆盖，key_mode 与两个能力位不传 =
- * 那一列不动，同 ChannelForm 的写法）。
+ * 写走 base-url 那一笔意图写（#48 批2），别的渠道字段碰不到。
  */
 function BaseURLBlock({
   ch,
@@ -291,14 +282,7 @@ function BaseURLBlock({
   }, [saved])
 
   function put(next: BaseURLs) {
-    return mutate(() =>
-      api.put(`/channels/${ch.id}`, {
-        name: ch.name,
-        base_url: next,
-        max_concurrency: ch.max_concurrency,
-        disabled: ch.disabled,
-      }),
-    )
+    return mutate(() => api.put(`/channels/${ch.id}/base-url`, { base_url: next }))
   }
 
   function save(p: Protocol) {
