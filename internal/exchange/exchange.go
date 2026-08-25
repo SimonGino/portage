@@ -53,37 +53,59 @@ type Request struct {
 	TapErrorBody bool
 }
 
-// Result 是一次拿到响应头之后的交换现场。Body 是已挂好观察者的读端；收场统一走
-// Close（挂进调用方的 defer），顺序在那里定死。
+// Result 是一次拿到响应头之后的交换现场：状态行加一个响应观察者。收场统一走
+// Close（挂进调用方的 defer），顺序在观察者的构造里定死。
 type Result struct {
 	Status int
 	Header http.Header
-	// Body 是给调用方消费的读端：Tap、LogBodies 收集器、错误原文旁路都已经 tee 在
-	// 上面，拿到的是与转发**同一份**字节，且都写不坏转发——它们的 Write 恒不报错，
-	// io.MultiWriter 因此也不会。
-	Body io.Reader
-
-	resp *http.Response
-	rec  *calllog.Recorder
-	tap  protocol.Tap
+	*ResponseObserver
 }
 
-// UpstreamBody 是上游响应体本尊（Body 是它包了 Tee 的读端）。写出失败的收场要
-// 先关它再排空解码通道（#8，见 server 侧的 abortDecode）——那一步要的是「断上游」
-// 这个动作本身，不能拿包过 Tee 的读端去关。
-func (r *Result) UpstreamBody() io.Closer { return r.resp.Body }
+// ResponseObserver 包住上游响应体与挂在它上面的观察者（Tap、LogBodies 收集器、
+// 错误原文旁路），并把 #8 的收场序做进构造：Close 一律按「先断上游 → 排空解码侧
+// 到通道关闭 → 才 Summarize」执行。此前这条序活在 abortDecode 的注释与调用顺序里，
+// 靠「写出失败分支记得先调它再 panic」维持；现在收场只有 Close 一个入口，panic
+// 展开里的 defer 走的就是同一条序，想绕都绕不开。
+type ResponseObserver struct {
+	// Body 是给调用方消费的读端：观察者都已经 tee 在上面，拿到的是与转发**同一份**
+	// 字节，且都写不坏转发——它们的 Write 恒不报错，io.MultiWriter 因此也不会。
+	Body io.Reader
 
-// Close 收场：先交 usage（若挂了 Tap），再关上游 body。收成**一个** defer 而不是
-// 两个，顺序（Summarize 先于 Close）在这里定死，调用方不可能注册反。
+	upstream io.Closer
+	rec      *calllog.Recorder
+	tap      protocol.Tap
+	// events 是转换路径挂上来的解码侧出口（AttachStream）。非空时它是「上游字节
+	// 还有另一条线在读」的证据，收场必须先排空它才能 Summarize。
+	events <-chan protocol.Event
+}
+
+// AttachStream 把解码侧的事件通道挂进收场序（转换流式路径）。解码 goroutine 在
+// 另一条线上读 Body，Tap 的写因此也在那条线上——从这一刻起，Close 的排空步骤
+// 就是 Summarize 对那些写入的 happens-before 边（#8）。
+func (o *ResponseObserver) AttachStream(events <-chan protocol.Event) { o.events = events }
+
+// Close 收场，次序即同步语义（#8）：
 //
-// panic 展开路径（首字节后写出失败）它同样兜住：透传路径的 Tap 写发生在调用方自己
-// 的读循环里，展开时早已停止；转换路径由 abortDecode 先排空到通道关闭才 panic，
-// Summary 读到的都是解码侧写完的最终状态（#8 的 happens-before 边）。
-func (r *Result) Close() {
-	if r.tap != nil {
-		r.rec.Summarized(r.tap.Summary())
+//  1. 先断上游——解码 goroutine 的下一次 Read 立刻出错收摊，排空因此有界，
+//     不会把这次调用挂在一条还在灌数据的连接上；
+//  2. 把事件通道排空**到关闭**——通道关闭给出解码侧全部写入对本侧的
+//     happens-before 边，Tap 与 LogBodies 收集器两处都零锁；
+//  3. 之后 Summarize 才安全，读到的是解码侧写完的最终状态（上游连接断掉前
+//     收到的全部字节）。
+//
+// 没挂解码侧（透传、缓冲、错误早退）时它退化成 Summarize + 断上游：那些路上
+// Tap 的写发生在调用方自己的读循环里，走到这里早已停止。正常收完的流走的也是
+// 同一条序——通道已关、排空即返回，多关一次上游 body 无害。
+func (o *ResponseObserver) Close() {
+	o.upstream.Close()
+	// nil 通道 range 会永久阻塞，没挂解码侧时必须跳过——不是优化是正确性。
+	if o.events != nil {
+		for range o.events {
+		}
 	}
-	r.resp.Body.Close()
+	if o.tap != nil {
+		o.rec.Summarized(o.tap.Summary())
+	}
 }
 
 // Do 跑一次上游交换：记出站端点 → 发请求 → 回填 attempt 三数 → 错误则按入站协议
@@ -113,11 +135,11 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 	// 只取两档头候选，最终取哪个由流水收尾时定——中间那档在错误体里（v0.74）。
 	rec.RequestIDs(upstream.RequestIDs(resp.Header))
 
-	res := &Result{Status: resp.StatusCode, Header: resp.Header, resp: resp, rec: rec}
+	obs := &ResponseObserver{upstream: resp.Body, rec: rec}
 	var observers []io.Writer
 	if tap := taps.New(req.Cand.Protocol, req.Stream); tap != nil {
 		observers = append(observers, tap)
-		res.tap = tap
+		obs.tap = tap
 	}
 	if x.LogBodies {
 		observers = append(observers, rec.TapResponseBody())
@@ -128,11 +150,11 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 	if req.TapErrorBody && resp.StatusCode >= 400 {
 		observers = append(observers, rec.TapUpstreamErrorBody())
 	}
-	res.Body = resp.Body
+	obs.Body = resp.Body
 	if len(observers) > 0 {
-		res.Body = io.TeeReader(resp.Body, io.MultiWriter(observers...))
+		obs.Body = io.TeeReader(resp.Body, io.MultiWriter(observers...))
 	}
-	return res, true
+	return &Result{Status: resp.StatusCode, Header: resp.Header, ResponseObserver: obs}, true
 }
 
 // writeQueueReject 译写渠道并发闸的三种收场（口径层 v0.50/v0.52）；不是闸的错误

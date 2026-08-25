@@ -146,7 +146,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	}
 
 	if stream {
-		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, res.Body, res.UpstreamBody())
+		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, res)
 		return
 	}
 	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, res.Body)
@@ -197,16 +197,19 @@ func upstreamErrorMessage(raw []byte) string {
 
 // streamConverted 跑流式转换：上游 SSE → canonical 事件 → 入口协议 SSE。
 //
-// upstreamBody 是上游响应体本尊（src 是它包了 Tee 的读端）：写出失败的收场要先
-// 关它——见 abortDecode。
-func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader, upstreamBody io.Closer) {
-	events, err := outCodec.DecodeStream(src)
+// 写出失败的收场序（#8：先断上游 → 排空到关闭 → 才 Summarize）不在本函数里——
+// AttachStream 把解码侧挂进 res 之后，relayConverted 那个 defer 的 res.Close()
+// 按构造走这条序，panic 展开与正常返回走的是同一个收场。
+func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, res *exchange.Result) {
+	events, err := outCodec.DecodeStream(res.Body)
 	if err != nil {
 		rec.Failed(calllog.UpstreamError, "")
 		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流无法解析")
 		return
 	}
+	// 从这一刻起解码 goroutine 在另一条线上读上游字节，收场必须先排空它（#8）。
+	res.AttachStream(events)
 
 	// 响应头自己造，不抄上游：body 已经换了协议，上游那套 Content-Type 与
 	// Content-Encoding 描述的是另一份字节。
@@ -222,7 +225,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	if err := w.Advance(); err != nil {
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
-		abortDecode(upstreamBody, events)
+		// 收场序在 panic 展开里：relayConverted defer 的 res.Close()（#8）。
 		panic(http.ErrAbortHandler)
 	}
 
@@ -230,7 +233,6 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 		rec.Failed(calllog.StreamAborted, "")
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
-		abortDecode(upstreamBody, events)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -244,19 +246,6 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 			rec.Failed(calllog.StreamAborted, upstream.Redact(err).Error())
 			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		}
-	}
-}
-
-// abortDecode 是写出失败分支的收场次序（#8）：先断上游、再把事件通道排空到关闭，
-// 之后调用方才能 panic。次序就是同步语义：Close 让解码 goroutine 的下一次 Read
-// 立刻出错收摊，排空因此有界，不会把这次调用挂在一条还在灌数据的连接上；通道
-// 关闭给出解码侧全部写入对 handler 侧的 happens-before 边——panic 展开里 defer 的
-// rec.Summarized(tap.Summary()) 与 LogBodies 的 body 收集器读到的都是解码侧写完的
-// 最终状态（上游连接断掉前收到的全部字节），Tap 与收集器两处都零锁。
-// relayConverted 里 defer 的 resp.Body.Close() 会再关一次，无害。
-func abortDecode(upstreamBody io.Closer, events <-chan protocol.Event) {
-	upstreamBody.Close()
-	for range events {
 	}
 }
 

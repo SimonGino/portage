@@ -294,8 +294,9 @@ func (r *Recorder) Failed(o Outcome, detail string) {
 // 两条约束的交点，散出去就会有人按落库那个 2KB 去读。
 //
 // 与 TapUpstreamErrorBody 是同一件事在两条链路上的两个名字，区别只是谁先拿到
-// 字节：透传那边要占坑边收边转，这边可以一口气读完。合并它们要求两条链路的
-// 错误处理先长得一样，那是 #9（attempt module）的活，不在这一层做。
+// 字节：透传那边要占坑边收边转，这边可以一口气读完。#9 之后两条链路的编排已经
+// 长得一样（差异收进 exchange.Request 的 TapErrorBody 参数），两个动词合并进
+// 阶段对象是 #52 的活，不在这一层做。
 func (r *Recorder) UpstreamRejected(body io.Reader) []byte {
 	// 读错误不额外处理：读到多少算多少，那段字节本来就只是给人看的排障材料。
 	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))
