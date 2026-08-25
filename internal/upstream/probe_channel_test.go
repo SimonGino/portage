@@ -66,7 +66,7 @@ func probeTarget(baseURLs store.BaseURLs) store.ProbeTarget {
 }
 
 // 选择校验：参数不对整个拒掉、一个请求都不发（参数错误不该花钱），错误全归
-// InvalidInput（管理端翻成 400），文案与旧 handler 逐字相同。
+// SelectionError（adapter 翻成 400），文案与旧 handler 逐字相同。
 func TestProbeChannelRejectsBadSelection(t *testing.T) {
 	cu, url := newCountingUpstream(t, http.StatusOK)
 	target := probeTarget(store.BaseURLs{OpenAI: url})
@@ -90,8 +90,9 @@ func TestProbeChannelRejectsBadSelection(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s：期望报错，得到 nil", name)
 		}
-		if !errors.Is(err, store.ErrInvalidInput) {
-			t.Errorf("%s：错误该是 InvalidInput，得到 %T", name, err)
+		var sel SelectionError
+		if !errors.As(err, &sel) {
+			t.Errorf("%s：错误该是 SelectionError，得到 %T", name, err)
 		}
 		if err.Error() != tc.want {
 			t.Errorf("%s：文案 = %q，期望 %q", name, err.Error(), tc.want)

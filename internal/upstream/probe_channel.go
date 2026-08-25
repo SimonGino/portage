@@ -40,13 +40,20 @@ type ProbeMatrix struct {
 // 弹层前面等不了那么久。
 const probeConcurrency = 4
 
+// SelectionError 是 ProbeChannel 的选择类错误：人勾的参数（凭证/模型/协议）对不上
+// 渠道现状。文案写给人看，不含上游凭证与 base_url。upstream 不铸 store 层的错误
+// 类型——怎么翻成 HTTP 是 adapter 的事。
+type SelectionError struct{ Reason string }
+
+func (e SelectionError) Error() string { return e.Reason }
+
 // ProbeChannel 跑一次模型级检测（口径层 v0.96 检测收成一层）：选中的模型 × 勾选的
 // 协议，每格发一个带模型名的最小真实请求，回一个三态矩阵。
 //
 // **只提示、不做闸**（v0.33 血统）：不落库、不参与路由、不影响保存成败。它只由人
 // 手点——保存渠道/设置后什么都不跑（v0.96 ①），真实请求的钱只在人手点时花。也因此
 // 参数不对就整个拒掉、一个请求都不发：参数错误不该花钱。选择类错误一律是
-// store.InvalidInput，管理端翻成 400 原文回显。
+// SelectionError，错误分类是管理面语义，由 adapter 翻成 400 原文回显。
 func ProbeChannel(ctx context.Context, target store.ProbeTarget, sel ProbeSelection) (ProbeMatrix, error) {
 	// 凭证按 id 找，**含已停用的**（v0.38 的立论承接）：恢复是纯人工的，「这把还
 	// 坏不坏」除了发一次请求没有别的办法回答。
@@ -59,21 +66,21 @@ func ProbeChannel(ctx context.Context, target store.ProbeTarget, sel ProbeSelect
 		}
 	}
 	if !found {
-		return ProbeMatrix{}, store.InvalidInput{Reason: "这个渠道里没有这份凭证"}
+		return ProbeMatrix{}, SelectionError{Reason: "这个渠道里没有这份凭证"}
 	}
 
 	// 协议集合必须 ⊆ 已声明协议：没声明的那一侧连出站根地址都没有，没有东西可打。
 	if len(sel.Protocols) == 0 {
-		return ProbeMatrix{}, store.InvalidInput{Reason: "至少勾一个协议"}
+		return ProbeMatrix{}, SelectionError{Reason: "至少勾一个协议"}
 	}
 	var protos protocol.Set
 	for _, raw := range sel.Protocols {
 		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(raw)))
 		if !p.Valid() {
-			return ProbeMatrix{}, store.InvalidInput{Reason: "协议 " + strconv.Quote(raw) + " 不是 anthropic/openai/openai_responses 之一"}
+			return ProbeMatrix{}, SelectionError{Reason: "协议 " + strconv.Quote(raw) + " 不是 anthropic/openai/openai_responses 之一"}
 		}
 		if !target.Protocols.Has(p) {
-			return ProbeMatrix{}, store.InvalidInput{Reason: "渠道没有声明 " + string(p) + "（没填它的出站根地址），不能检测这一侧"}
+			return ProbeMatrix{}, SelectionError{Reason: "渠道没有声明 " + string(p) + "（没填它的出站根地址），不能检测这一侧"}
 		}
 		if !protos.Has(p) {
 			protos = append(protos, p)
@@ -90,11 +97,11 @@ func ProbeChannel(ctx context.Context, target store.ProbeTarget, sel ProbeSelect
 			}
 		}
 		if models == nil {
-			return ProbeMatrix{}, store.InvalidInput{Reason: "这个渠道里没有这个启用中的纳管模型"}
+			return ProbeMatrix{}, SelectionError{Reason: "这个渠道里没有这个启用中的纳管模型"}
 		}
 	}
 	if len(models) == 0 {
-		return ProbeMatrix{}, store.InvalidInput{Reason: "这个渠道还没有启用中的纳管模型，先纳管再检测"}
+		return ProbeMatrix{}, SelectionError{Reason: "这个渠道还没有启用中的纳管模型，先纳管再检测"}
 	}
 
 	rows := make([]ModelProbeRow, len(models))

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -361,6 +362,12 @@ func (h *Handler) probeChannel(c *gin.Context) {
 		Protocols:    in.Protocols,
 	})
 	if err != nil {
+		// 选择类错误在 upstream 只是「参数对不上渠道现状」，翻成 400 是这层 adapter 的事。
+		var sel upstream.SelectionError
+		if errors.As(err, &sel) {
+			fail(c, http.StatusBadRequest, sel.Reason)
+			return
+		}
 		h.writeError(c, err)
 		return
 	}
