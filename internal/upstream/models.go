@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SimonGino/portage/internal/protocol"
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // listModelsTimeout 比探测宽一点：这是人点了按钮在等的一次拉取，而模型列表在聚合型
@@ -113,29 +114,35 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, creden
 	return res
 }
 
-// ListModelsFor 按渠道的支持协议集拉模型列表，共用同一个 URL 的协议只拉一次。
+// ListModelsFor 按渠道声明的每个协议拉模型列表，**各协议打各的出站根地址**（口径层
+// v0.96 ②，#49——此前收单个 baseURL，把回退序第一个地址打给了全部协议，多协议渠道
+// 的 anthropic 列表会拉到 openai 的根上；ProbeModel 那边一直是对的）。
 //
 // 串行而不是并发：拉的是同一个上游同一把凭证，两三次请求并发过去省不下多少，却容易
 // 在限流严的中转站上把两次都撞成 429。这跟 Probe 逐凭证串行探是同一个取舍。
-func ListModelsFor(ctx context.Context, baseURL string, set protocol.Set, credential string) []ModelListResult {
+func ListModelsFor(ctx context.Context, urls store.BaseURLs, credential string) []ModelListResult {
+	set := urls.Protocols()
 	out := []ModelListResult{}
 	done := map[protocol.Protocol]bool{}
 	for _, p := range set {
 		if done[p] {
 			continue
 		}
-		res := ListModels(ctx, baseURL, p, credential)
-		// 标记整组，而不只是 p：openai 拉过之后 openai_responses 就不用再打一次。
-		// 但回给前端的 Protocols 要收窄到渠道真声明了的那些——渠道只勾了
-		// openai_responses 时，说这份列表对 openai 也成立会让表单勾出一个渠道
-		// 根本不支持的协议。
+		base := urls.Get(p)
+		res := ListModels(ctx, base, p, credential)
+		// 一份结果只对「同组**且同地址**」的协议成立：openai 拉过之后
+		// openai_responses 不用再打一次的前提是两者挂在同一个根下，v0.96 起它们
+		// 可以各挂各的，地址不同就是两份答案、各拉各的。顺带把回给前端的
+		// Protocols 收窄到渠道真声明了的那些——渠道只勾了 openai_responses 时，
+		// 说这份列表对 openai 也成立会让表单勾出一个渠道根本不支持的协议。
 		group := res.Protocols
 		res.Protocols = nil
 		for _, q := range group {
-			done[q] = true
-			if set.Has(q) {
-				res.Protocols = append(res.Protocols, q)
+			if !set.Has(q) || urls.Get(q) != base {
+				continue
 			}
+			done[q] = true
+			res.Protocols = append(res.Protocols, q)
 		}
 		out = append(out, res)
 	}
