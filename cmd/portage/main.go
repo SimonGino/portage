@@ -60,6 +60,10 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// 挂了文件即声明文件形态：文件是业务配置唯一事实源，管理端写接口回 409（#48）。
+	// 在这里填而不是在 config.Load 里——声明文件的路径本就不进 config.yaml（#34），
+	// 只有 main 同时看得见两边。
+	cfg.Declarative = file != nil
 
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {

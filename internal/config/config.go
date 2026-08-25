@@ -30,6 +30,12 @@ type Config struct {
 	// 可以用环境变量 PORTAGE_ADMIN_PASSWORD 覆盖，见 Load。
 	AdminPassword string `yaml:"admin_password"`
 
+	// Declarative 是「本进程挂了声明文件」的形态旗（#48）：管理端对业务配置全只读，
+	// 写接口回 409。**不是 config.yaml 字段**（yaml:"-"）——声明文件的路径就刻意不进
+	// 这份文件（口径层 §2.9 #34），形态旗同理；main 按 channelsPath 是否非空填它。
+	// 形态是进程属性、闸不看库，与 AdminPassword 那道形态闸同一条立论。
+	Declarative bool `yaml:"-"`
+
 	// RateLimitQPS / RateLimitBurst 是全局令牌桶（口径层 §2.7，v0.15 定 10/20）。
 	// **配 0 即关闭限流**；只配了 qps 时 burst 由 newLimiter 兜底。
 	// v0.81 起桶是两只（生成面一只、count_tokens 一只，见 server.pickLimiter），

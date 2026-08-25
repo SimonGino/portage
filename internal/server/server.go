@@ -216,7 +216,7 @@ func (s *Server) Engine() *gin.Engine {
 	// 路由本来是无条件挂的，凭证回读接口照常活着。「编译期去掉 UI」从来不等于「有了
 	// 无 UI 的部署形态」，这道运行期的闸才是。
 	if strings.TrimSpace(s.cfg.AdminPassword) != "" {
-		admin.New(s.db, s.log).Mount(r)
+		admin.New(s.db, s.log, s.cfg.Declarative).Mount(r)
 	}
 	return r
 }

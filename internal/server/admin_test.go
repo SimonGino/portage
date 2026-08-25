@@ -611,3 +611,67 @@ func TestUnknownAdminAPIPathReturnsJSON(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// ── 声明文件形态：业务配置只读（#48）──────────────────────────────────────
+
+// TestDeclarativeModeMakesBusinessConfigReadOnly 钉住只读闸的两半：业务配置的写
+// 接口统一 409，而读、检测、fetch-models 这些不写业务配置的路照常。收门之前这条
+// 口径（挂了文件管理端全只读）只是纸面约定——写进去的配置活到下次重启被文件抹掉，
+// 页面上全程看着正常。
+func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "claude-direct", "anthropic", up.URL, "claude-3-5-sonnet", "sk-up")
+	g := gatewaytest.StartWith(t, db, gatewaytest.Options{Declarative: true})
+	a := g.LoggedIn(t)
+
+	writes := []struct{ method, path string }{
+		{http.MethodPost, "/admin/api/channels"},
+		{http.MethodPut, "/admin/api/channels/1"},
+		{http.MethodDelete, "/admin/api/channels/1"},
+		{http.MethodPost, "/admin/api/channels/1/credentials"},
+		{http.MethodPut, "/admin/api/credentials/1"},
+		{http.MethodDelete, "/admin/api/credentials/1"},
+		{http.MethodPost, "/admin/api/channels/1/models"},
+		{http.MethodPut, "/admin/api/channel-models/1"},
+		{http.MethodDelete, "/admin/api/channel-models/1"},
+		{http.MethodPost, "/admin/api/access-points"},
+		{http.MethodPut, "/admin/api/access-points/1"},
+		{http.MethodDelete, "/admin/api/access-points/1"},
+		{http.MethodPost, "/admin/api/keys"},
+		{http.MethodPut, "/admin/api/keys/1"},
+		{http.MethodDelete, "/admin/api/keys/1"},
+	}
+	for _, w := range writes {
+		if status, body := a.Do(t, w.method, w.path, "{}"); status != http.StatusConflict {
+			t.Errorf("%s %s 在声明文件形态下应 409，得到 %d：%s", w.method, w.path, status, body)
+		}
+	}
+
+	// 读与不写业务配置的 POST 照常：409 一个都不该出现。probe 缺参回 400、
+	// fetch-models 打的是假上游——状态码各是各的，这里只断言没被只读闸拦下。
+	passes := []struct{ method, path string }{
+		{http.MethodGet, "/admin/api/channels"},
+		{http.MethodGet, "/admin/api/channels/1/credentials"},
+		{http.MethodGet, "/admin/api/keys"},
+		{http.MethodGet, "/admin/api/export"},
+		{http.MethodGet, "/admin/api/logs"},
+		{http.MethodPost, "/admin/api/channels/1/probe"},
+		{http.MethodPost, "/admin/api/channels/1/fetch-models"},
+	}
+	for _, w := range passes {
+		if status, body := a.Do(t, w.method, w.path, "{}"); status == http.StatusConflict {
+			t.Errorf("%s %s 不写业务配置，不该被只读闸拦：%s", w.method, w.path, body)
+		}
+	}
+
+	t.Run("不挂文件时写接口照常", func(t *testing.T) {
+		g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+		a := g.LoggedIn(t)
+		status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
+			`{"name":"qwen","base_url":{"openai":"https://example.internal/v1"},"credential":"sk-up"}`)
+		if status != http.StatusOK {
+			t.Fatalf("普通形态建渠道应 200，得到 %d：%s", status, body)
+		}
+	})
+}

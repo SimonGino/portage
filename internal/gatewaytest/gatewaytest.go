@@ -381,6 +381,9 @@ type Options struct {
 	// 不会改变任何既有用例的行为；而 Wait 停在 0 会让闸上的每次排队立即超时——
 	// 那不是「关闭」，是一个没人想要的形态。
 	Queue config.Queue
+	// Declarative 模拟挂了声明文件的形态（#48）：管理端业务配置写接口回 409。
+	// 只置旗、不真挂文件——闸看的就是这面旗，文件到库的那半有 declcfg 自己的用例。
+	Declarative bool
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -425,6 +428,7 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 		cfg.Queue = opts.Queue
 	}
 	cfg.AdminPassword = AdminPassword
+	cfg.Declarative = opts.Declarative
 	// 走真正的 Bootstrap，不直接往 settings 里塞哈希：管理端测试要覆盖的正是
 	// 「配置里的明文只用来初始化」这条口径，绕过它就等于没测。
 	if _, err := admin.Bootstrap(t.Context(), db, cfg.AdminPassword); err != nil {

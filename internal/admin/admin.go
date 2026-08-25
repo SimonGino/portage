@@ -32,13 +32,17 @@ type Handler struct {
 	db       *sql.DB
 	log      *slog.Logger
 	sessions *sessionStore
+	// declarative 是声明文件形态旗（#48）：业务配置以文件为准，写接口回 409。
+	// 只读的是**业务配置**——检测、fetch-models、导出、流水/用量、改密码照常：
+	// 前两样不写库，导出与查询本就是读，密码是运行期状态、不在文件里（§2.9 #28）。
+	declarative bool
 }
 
-func New(db *sql.DB, log *slog.Logger) *Handler {
+func New(db *sql.DB, log *slog.Logger, declarative bool) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{db: db, log: log, sessions: newSessionStore()}
+	return &Handler{db: db, log: log, sessions: newSessionStore(), declarative: declarative}
 }
 
 // Bootstrap 用配置里的明文密码初始化管理端密码，**且只在库里还没有密码时**。
@@ -87,33 +91,38 @@ func (h *Handler) Mount(r *gin.Engine) {
 	auth := api.Group("", h.requireSession())
 	auth.POST("/password", h.changePassword)
 
+	// 业务配置的写接口全走这个组：声明文件形态下统一 409（#48）。「业务配置」即
+	// 声明文件里那四张表——渠道（含凭证与纳管模型）、接入点、API Key；组外留下的
+	// POST（改密码、检测、fetch-models）都不写业务配置。
+	cw := auth.Group("", h.rejectWritesWhenDeclarative())
+
 	auth.GET("/channels", h.listChannels)
-	auth.POST("/channels", h.createChannel)
-	auth.PUT("/channels/:id", h.updateChannel)
-	auth.DELETE("/channels/:id", h.deleteChannel)
+	cw.POST("/channels", h.createChannel)
+	cw.PUT("/channels/:id", h.updateChannel)
+	cw.DELETE("/channels/:id", h.deleteChannel)
 	// 凭证池：逐条 CRUD + 追加式批量粘贴（口径层 v0.38 改写 v0.28 的整把替换）。
 	// 依旧**没有任何读凭证值的接口**——GET 回的是名字与状态。
 	auth.GET("/channels/:id/credentials", h.listCredentials)
-	auth.POST("/channels/:id/credentials", h.addCredentials)
-	auth.PUT("/credentials/:id", h.updateCredential)
-	auth.DELETE("/credentials/:id", h.deleteCredential)
+	cw.POST("/channels/:id/credentials", h.addCredentials)
+	cw.PUT("/credentials/:id", h.updateCredential)
+	cw.DELETE("/credentials/:id", h.deleteCredential)
 	auth.POST("/channels/:id/probe", h.probeChannel)
 	// 拉上游模型列表给表单做预勾选（口径层 v0.40）。POST 而不是 GET：它会朝上游
 	// 发真请求、花上游的配额，不该被浏览器或中间层当成可缓存的读操作重放。
 	auth.POST("/channels/:id/fetch-models", h.fetchChannelModels)
-	auth.POST("/channels/:id/models", h.addChannelModel)
-	auth.PUT("/channel-models/:id", h.updateChannelModel)
-	auth.DELETE("/channel-models/:id", h.deleteChannelModel)
+	cw.POST("/channels/:id/models", h.addChannelModel)
+	cw.PUT("/channel-models/:id", h.updateChannelModel)
+	cw.DELETE("/channel-models/:id", h.deleteChannelModel)
 
 	auth.GET("/access-points", h.listAccessPoints)
-	auth.POST("/access-points", h.createAccessPoint)
-	auth.PUT("/access-points/:id", h.updateAccessPoint)
-	auth.DELETE("/access-points/:id", h.deleteAccessPoint)
+	cw.POST("/access-points", h.createAccessPoint)
+	cw.PUT("/access-points/:id", h.updateAccessPoint)
+	cw.DELETE("/access-points/:id", h.deleteAccessPoint)
 
 	auth.GET("/keys", h.listKeys)
-	auth.POST("/keys", h.createKey)
-	auth.PUT("/keys/:id", h.updateKey)
-	auth.DELETE("/keys/:id", h.deleteKey)
+	cw.POST("/keys", h.createKey)
+	cw.PUT("/keys/:id", h.updateKey)
+	cw.DELETE("/keys/:id", h.deleteKey)
 
 	// 导出整份业务配置为 channels.yaml（口径层 §2.9 #32）。在 auth 组里，且**没有**
 	// 第二条出口（不做 CLI 导出子命令）——见 export.go。
@@ -146,6 +155,18 @@ func (h *Handler) requireSession() gin.HandlerFunc {
 //
 // 形状是 {"error": "..."}，与转发端那三种协议原生错误刻意不同——管理端的调用方是
 // 我们自己的前端，不需要装成任何一家的 API，而形状一致能让前端只写一处解析。
+// rejectWritesWhenDeclarative 是声明文件形态的只读闸（#48）：库只是文件的物化副本，
+// 从管理端写进去的业务配置活不过下次重启——先漂移、后被文件抹掉，页面上全程看着
+// 正常。与其让人踩这一幕，不如在门口把话说清。409 而不是 403：不是权限问题，是
+// 「资源的事实源在别处」这个状态冲突。
+func (h *Handler) rejectWritesWhenDeclarative() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if h.declarative {
+			fail(c, http.StatusConflict, "本实例挂了声明文件，业务配置以文件为准：改 channels.yaml 后重启生效")
+		}
+	}
+}
+
 func fail(c *gin.Context, status int, msg string) {
 	c.AbortWithStatusJSON(status, gin.H{"error": msg})
 }
