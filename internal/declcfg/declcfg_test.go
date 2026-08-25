@@ -345,15 +345,54 @@ func TestStatefulBitDefaultsToTrue(t *testing.T) {
 		t.Fatal("没写 supports_stateful_responses 时该跟 DDL 默认取「是」，实得「否」")
 	}
 	t.Run("显式写 false 则是 false", func(t *testing.T) {
+		// 渠道得声明 Responses 协议这一位才轮得到人写：不含协议时 writer 强制归位
+		// 默认值（#33，见 TestResponsesBitsResetWhenProtocolAbsent）。
 		db := openDB(t)
 		mustApply(t, db, strings.Replace(goodFile, "    base_url:",
-			"    supports_stateful_responses: false\n    base_url:", 1))
+			"    supports_stateful_responses: false\n    base_url:\n      openai_responses: https://example.internal", 1))
 		var bit int
 		if err := db.QueryRow(`SELECT supports_stateful_responses FROM channels WHERE name='qwen'`).Scan(&bit); err != nil {
 			t.Fatal(err)
 		}
 		if bit != 0 {
 			t.Fatal("显式写的 false 没被写进去")
+		}
+	})
+}
+
+// TestResponsesBitsResetWhenProtocolAbsent 钉住 #48 收门要闭合的那个缺口：apply 走
+// store 的渠道 writer 之后，#33 的归位不变式对声明文件同样生效。
+//
+// 收门前的 raw upsert 会把 supports_compaction: true 原样写给一个没声明 Responses
+// 的渠道——正是 #33 要杀的那种行：界面上看不见、也改不掉，哪天把协议勾回来残值
+// 原样复活（supports_compaction 残留 1 会让 Codex 静默 Fatal，v0.54 ⑨）。
+func TestResponsesBitsResetWhenProtocolAbsent(t *testing.T) {
+	db := openDB(t)
+	mustApply(t, db, strings.Replace(goodFile, "    base_url:",
+		"    supports_compaction: true\n    supports_stateful_responses: false\n    base_url:", 1))
+	var compaction, stateful int
+	if err := db.QueryRow(`SELECT supports_compaction, supports_stateful_responses
+		FROM channels WHERE name='qwen'`).Scan(&compaction, &stateful); err != nil {
+		t.Fatal(err)
+	}
+	if compaction != 0 || stateful != 1 {
+		t.Fatalf("不含 Responses 协议的渠道两个能力位该归位默认值（0/1），实得 %d/%d", compaction, stateful)
+	}
+
+	t.Run("改渠道那条路同样归位", func(t *testing.T) {
+		// 先按含 Responses 的形态落一次非默认值，再去掉协议重新 apply——走的是
+		// UpdateChannel 那支。收门前这正是残值复活的入口。
+		db := openDB(t)
+		withResponses := strings.Replace(goodFile, "    base_url:",
+			"    supports_compaction: true\n    base_url:\n      openai_responses: https://example.internal", 1)
+		mustApply(t, db, withResponses)
+		mustApply(t, db, goodFile)
+		var compaction int
+		if err := db.QueryRow(`SELECT supports_compaction FROM channels WHERE name='qwen'`).Scan(&compaction); err != nil {
+			t.Fatal(err)
+		}
+		if compaction != 0 {
+			t.Fatal("去掉 Responses 协议再 apply，supports_compaction 残值没被归位")
 		}
 	})
 }

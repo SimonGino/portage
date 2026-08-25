@@ -206,6 +206,10 @@ type ChannelInput struct {
 	// BaseURLs 是每协议出站根地址（口径层 v0.96 ②）：填了哪个协议就是声明了哪个，
 	// 至少要有一个；从映射里去掉一个协议就是取消声明，服务端拒绝删空（normalized）。
 	BaseURLs BaseURLs `json:"base_url"`
+	// CredentialType 是渠道级凭证类型 api_key / service_account 二选一。空串是「没提
+	// 这个字段」——管理端从不发它（M0 只有 api_key，值域由 Validate 兜），建渠道时落
+	// DDL 默认 api_key，改渠道时不动；声明文件那条路（#48 起走这道门）显式给。
+	CredentialType string `json:"credential_type"`
 	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
 	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
 	KeyMode string `json:"key_mode"`
@@ -312,12 +316,16 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 		compaction = false
 		stateful = true
 	}
+	credType := strings.TrimSpace(in.CredentialType)
+	if credType == "" {
+		credType = "api_key"
+	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
-		                      key_mode, max_concurrency,
+		                      credential_type, key_mode, max_concurrency,
 		                      supports_compaction, supports_stateful_responses, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, mode, conc,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, conc,
 		boolInt(compaction), boolInt(stateful), boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
@@ -346,6 +354,10 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	// 人真把它清空了。
 	sets := `name = ?, base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?, disabled = ?`
 	args := []any{in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, boolInt(in.Disabled)}
+	if credType := strings.TrimSpace(in.CredentialType); credType != "" {
+		sets += `, credential_type = ?`
+		args = append(args, credType)
+	}
 	if mode != "" {
 		sets += `, key_mode = ?`
 		args = append(args, mode)

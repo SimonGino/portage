@@ -41,14 +41,25 @@ func checkChannels(f *File) []string {
 		default:
 			seen[name] = true
 		}
-		// key_mode 的值域在这里判而不留给 Validate：Validate 的六项里没有它
-		// （管理端写入时由 store.ChannelInput.keyMode 挡着，而声明文件绕过了那条路）。
+		// 下面四条 writer（store.ChannelInput，#48 起 apply 走它）都会拦，这里逐条
+		// 重述**只为一次报全**：writer 的报错首错即停、且要等闸一全过才见得到——
+		// 掉出闸一意味着「一把 key 都没有」这种错反而盖住了它们，一次重启变两次。
+		// 措辞跟 writer 保持同一套，人两边看到的是同一句话。
+		if strings.Contains(name, "/") {
+			p = append(p, fmt.Sprintf("渠道名 %q 不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`"+
+				"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了", name))
+		}
+		if strings.TrimSpace(ch.BaseURL.OpenAI) == "" && strings.TrimSpace(ch.BaseURL.OpenAIResponses) == "" &&
+			strings.TrimSpace(ch.BaseURL.Anthropic) == "" {
+			p = append(p, fmt.Sprintf("渠道 %q 至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，"+
+				"一个都不填的渠道永远路由不到", name))
+		}
 		if m := strings.TrimSpace(ch.KeyMode); m != "" && m != store.KeyModePolling && m != store.KeyModeRandom {
 			p = append(p, fmt.Sprintf("渠道 %q 的 key_mode=%q 不合法，只能是 %s（轮询）或 %s（随机）",
 				name, m, store.KeyModePolling, store.KeyModeRandom))
 		}
-		// 负数并发上限同样只在这里判。拒而不是当 0 用：写 -1 的人多半以为它是某种
-		// 「不限」的暗号，静默蒙对语义会让他下次写 -5 时困惑（同 store 的既有立论）。
+		// 拒而不是当 0 用：写 -1 的人多半以为它是某种「不限」的暗号，静默蒙对语义
+		// 会让他下次写 -5 时困惑（同 store 的既有立论）。
 		if ch.MaxConcurrency < 0 {
 			p = append(p, fmt.Sprintf("渠道 %q 的 max_concurrency=%d 是负数：0 表示不限，正整数才是上限", name, ch.MaxConcurrency))
 		}

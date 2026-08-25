@@ -111,11 +111,18 @@ func reconcile(ctx context.Context, tx *sql.Tx, f *File) ([]string, error) {
 	return append(changes, keyChanges...), nil
 }
 
-// applyChannels upsert 渠道并删掉文件里没有的，返回 name → id。
+// applyChannels 逐渠道走 store 的渠道 writer 并删掉文件里没有的，返回 name → id。
 //
-// 按自然键 upsert 而不是 delete-all + insert（口径层 §2.9 #29）：整表重建会换掉
+// 走 CreateChannel / UpdateChannel 而不是自己写 SQL（#48）：渠道的写入不变式——
+// 尤其「协议不含 Responses 时两个能力位强制归位默认值」（#33）——长在 writer 的
+// implementation 里，绕过它的那条 raw upsert 曾造出管理端造不出也修不了的行。文件
+// 语义是总量，这里把 ChannelInput 全字段显式填满，writer 的「缺省不动那列」哨兵
+// 一个都不触发；writer 侧的 InvalidInput 在 selfCheck 里都有对应的静态检查先拦
+// （一次报全），走到这儿还报即是 bug，按普通错误抛。
+//
+// 按自然键定位而不是 delete-all + insert（口径层 §2.9 #29）：整表重建会换掉
 // channels.id，而 channel_keys 的停用现场挂在 channel_keys.id 上、靠 channel_id
-// 串着——删父行 CASCADE 一走，那份现场就没了。
+// 串着——删父行 CASCADE 一走，那份现场就没了。UpdateChannel 按 id 覆盖，id 不动。
 func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]int64, []string, error) {
 	before, err := namesOf(ctx, tx, `SELECT name FROM channels`)
 	if err != nil {
@@ -127,40 +134,38 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 	for _, ch := range list {
 		name := strings.TrimSpace(ch.Name)
 		keep[name] = true
-		stateful := 1
-		if ch.SupportsStatefulResponses != nil && !*ch.SupportsStatefulResponses {
-			stateful = 0
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
-			                      credential_type, key_mode,
-			                      max_concurrency, supports_compaction, supports_stateful_responses, disabled)
-			VALUES (?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
-			  base_url_openai = excluded.base_url_openai,
-			  base_url_openai_responses = excluded.base_url_openai_responses,
-			  base_url_anthropic = excluded.base_url_anthropic,
-			  credential_type = excluded.credential_type,
-			  key_mode = excluded.key_mode,
-			  max_concurrency = excluded.max_concurrency,
-			  supports_compaction = excluded.supports_compaction,
-			  supports_stateful_responses = excluded.supports_stateful_responses,
-			  disabled = excluded.disabled`,
-			name, strings.TrimSpace(ch.BaseURL.OpenAI), strings.TrimSpace(ch.BaseURL.OpenAIResponses),
-			strings.TrimSpace(ch.BaseURL.Anthropic),
-			orDefault(ch.CredentialType, "api_key"), orDefault(ch.KeyMode, store.KeyModePolling),
-			ch.MaxConcurrency, boolInt(ch.SupportsCompaction), stateful, boolInt(ch.Disabled),
-		); err != nil {
-			return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
+		conc := ch.MaxConcurrency
+		compaction := ch.SupportsCompaction
+		stateful := ch.SupportsStatefulResponses == nil || *ch.SupportsStatefulResponses
+		in := store.ChannelInput{
+			Name: name,
+			BaseURLs: store.BaseURLs{
+				OpenAI:          strings.TrimSpace(ch.BaseURL.OpenAI),
+				OpenAIResponses: strings.TrimSpace(ch.BaseURL.OpenAIResponses),
+				Anthropic:       strings.TrimSpace(ch.BaseURL.Anthropic),
+			},
+			CredentialType:            orDefault(ch.CredentialType, "api_key"),
+			KeyMode:                   orDefault(ch.KeyMode, store.KeyModePolling),
+			MaxConcurrency:            &conc,
+			SupportsCompaction:        &compaction,
+			SupportsStatefulResponses: &stateful,
+			Disabled:                  ch.Disabled,
 		}
 		var id int64
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM channels WHERE name = ?`, name).Scan(&id); err != nil {
-			return nil, nil, fmt.Errorf("读回渠道 %q 的 id：%w", name, err)
+		switch err := tx.QueryRowContext(ctx, `SELECT id FROM channels WHERE name = ?`, name).Scan(&id); {
+		case err == sql.ErrNoRows:
+			if id, err = store.CreateChannel(ctx, tx, in); err != nil {
+				return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
+			}
+			changes = append(changes, "新增渠道 "+name)
+		case err != nil:
+			return nil, nil, fmt.Errorf("定位渠道 %q：%w", name, err)
+		default:
+			if err := store.UpdateChannel(ctx, tx, id, in); err != nil {
+				return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
+			}
 		}
 		ids[name] = id
-		if !before[name] {
-			changes = append(changes, "新增渠道 "+name)
-		}
 	}
 	gone, err := deleteMissing(ctx, tx, `DELETE FROM channels WHERE name = ?`, before, keep)
 	if err != nil {
