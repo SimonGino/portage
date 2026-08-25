@@ -7,7 +7,7 @@
 ```bash
 make build                # 前端 npm ci && vite build → internal/webui/dist，再 go build -tags webui
 go build ./cmd/portage    # 不带 -tags webui 也能过，/admin 出「前端未构建」页——CI 与无 Node 的机器走这条
-go test -count=1 ./...    # 禁缓存：改了 golden 样本要重跑
+go test -count=1 ./...    # 禁缓存：改了 golden 样本要重跑；涉并发/收场序的改动加 -race
 gofmt -w .                # CI 有独立 gofmt 闸，未格式化即红（vet 与 test 都不管格式）
 ```
 
