@@ -567,6 +567,51 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 	return resolveDirect(ctx, db, model, inbound)
 }
 
+// ── 「候选可用」谓词：一份定义，多个读点 ─────────────────────────────────
+//
+// 什么可路由 = 渠道启用 ∧ 模型启用 ∧ ≥1 启用凭证 ∧ weight>0 ∧ 协议交集非空。
+// SQL 判得动的三项收在 candidateUsable；协议交集要解析 protocols 列，收在
+// usableProtocols（谓词的 Go 半边）；weight>0 只在有 candidates 行的路径上加。
+// Resolve 两条路径、/v1/models 直连半边、启动闸 checkCandidateReachable 共用
+// 这一份——v0.40 那次漏对齐正是各算各的结果。
+const (
+	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
+
+	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
+	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
+	  AND EXISTS (SELECT 1 FROM channel_keys ck
+	              WHERE ck.channel_id = ch.id AND ck.disabled = 0)`
+)
+
+// scanCandidate 按 candidateCols 的列序扫一行。urls 与 modelProtocols 单拿出来，
+// 是因为它们还要喂给谓词的 Go 半边（finishCandidate），不属于 Candidate 本身。
+func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *string) error {
+	return row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
+		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
+		&c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+}
+
+// finishCandidate 是谓词的 Go 半边加收尾：凭证复查、协议交集、定出站根地址。
+//
+// candidateUsable 的 EXISTS 与这一趟之间隔着一次人工停用的可能——那时凭证刚好
+// 归零，与「渠道没有启用凭证」是同一种收场，交给 503 而不是发一个不带凭证的请求。
+func finishCandidate(ctx context.Context, db *sql.DB, c Candidate, urls BaseURLs, modelProtocols string, inbound protocol.Protocol, kind string) (Candidate, error) {
+	var err error
+	if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
+		return Candidate{}, err
+	}
+	if len(c.Credentials) == 0 {
+		return Candidate{}, ErrNoUsableCandidate
+	}
+	if c.Protocol, err = pickProtocol(urls, modelProtocols, inbound); err != nil {
+		return Candidate{}, fmt.Errorf("%s %q: %w", kind, c.RequestedModel, err)
+	}
+	// 出站根地址跟着命中协议走（口径层 v0.96）：同渠道各协议的地址可以不同。
+	c.BaseURL = urls.Get(c.Protocol)
+	return c, nil
+}
+
 // usableProtocols 收出「这个纳管模型当下真能走的协议集」。
 //
 // urls 是渠道的每协议地址（口径层 v0.96：支持协议集就是「哪些协议填了地址」），
@@ -643,36 +688,21 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	c := Candidate{RequestedModel: model}
 	var urls BaseURLs
 	var modelProtocols string
-	err = db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
+	err = scanCandidate(db.QueryRowContext(ctx, `
+		SELECT `+candidateCols+`
 		FROM candidates cd
-		JOIN channel_models cm ON cm.id = cd.channel_model_id AND cm.disabled = 0
-		JOIN channels ch       ON ch.id = cm.channel_id       AND ch.disabled = 0
+		JOIN channel_models cm ON cm.id = cd.channel_model_id
+		JOIN channels ch       ON ch.id = cm.channel_id
 		WHERE cd.access_point_id = ? AND cd.weight > 0
-		  AND EXISTS (SELECT 1 FROM channel_keys ck
-		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
-		LIMIT 1`, apID).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &modelProtocols, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		  AND `+candidateUsable+`
+		LIMIT 1`, apID), &c, &urls, &modelProtocols)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
 		return Candidate{}, err
 	}
-	if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
-		return Candidate{}, err
-	}
-	// EXISTS 与这一趟之间隔着一次人工停用的可能——那时凭证刚好归零，与「渠道没有
-	// 启用凭证」是同一种收场，交给 503 而不是发一个不带凭证的请求。
-	if len(c.Credentials) == 0 {
-		return Candidate{}, ErrNoUsableCandidate
-	}
-	if c.Protocol, err = pickProtocol(urls, modelProtocols, inbound); err != nil {
-		return Candidate{}, fmt.Errorf("接入点 %q: %w", model, err)
-	}
-	// 出站根地址跟着命中协议走（口径层 v0.96）：同渠道各协议的地址可以不同。
-	c.BaseURL = urls.Get(c.Protocol)
-	return c, nil
+	return finishCandidate(ctx, db, c, urls, modelProtocols, inbound, "接入点")
 }
 
 // loadCredentials 取渠道当下全部启用凭证，按 id 升序。
@@ -710,28 +740,15 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 	c := Candidate{RequestedModel: model, Direct: true}
 	var urls BaseURLs
 	var modelProtocols string
-	err := db.QueryRowContext(ctx, `
-		SELECT cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses
+	err := scanCandidate(db.QueryRowContext(ctx, `
+		SELECT `+candidateCols+`
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
-		  AND cm.disabled = 0 AND ch.disabled = 0
-		  AND EXISTS (SELECT 1 FROM channel_keys ck
-		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
-		LIMIT 1`, model).
-		Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, &modelProtocols, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		  AND `+candidateUsable+`
+		LIMIT 1`, model), &c, &urls, &modelProtocols)
 	if err == nil {
-		if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
-			return Candidate{}, err
-		}
-		if len(c.Credentials) == 0 {
-			return Candidate{}, ErrNoUsableCandidate
-		}
-		if c.Protocol, err = pickProtocol(urls, modelProtocols, inbound); err != nil {
-			return Candidate{}, fmt.Errorf("纳管模型 %q: %w", model, err)
-		}
-		c.BaseURL = urls.Get(c.Protocol)
-		return c, nil
+		return finishCandidate(ctx, db, c, urls, modelProtocols, inbound, "纳管模型")
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, err
@@ -768,8 +785,9 @@ type ExposedModel struct {
 //
 // 直连那半边只列**当下真能打通**的——渠道启用、模型启用、渠道有启用凭证，**且协议
 // 集与渠道的有交集**（v0.38，口径层 v0.40）。列表与可路由集合必须一致：harness 拉到
-// 清单就直接照着打，列一个必然 503 的名字等于给它挖个坑。判据走 usableProtocols，与
-// pickProtocol 同一个函数——各算各的正是这一处漏过的原因。
+// 清单就直接照着打，列一个必然 503 的名字等于给它挖个坑。判据与 Resolve 共用同一份
+// 谓词——SQL 半边 candidateUsable、Go 半边 usableProtocols——各算各的正是这一处
+// 漏过的原因。
 //
 // 解析失败的行也不列：那种行请求打过去会回 500（见 usableProtocols 的分档），同样不
 // 属于「当下真能打通」。整个清单不因一行脏数据而 500，理由同下面的 COALESCE。
@@ -797,9 +815,7 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 		       ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, cm.protocols
 		FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
-		WHERE cm.disabled = 0 AND ch.disabled = 0
-		  AND EXISTS (SELECT 1 FROM channel_keys ck
-		              WHERE ck.channel_id = ch.id AND ck.disabled = 0)
+		WHERE `+candidateUsable+`
 		ORDER BY direct, id`)
 	if err != nil {
 		return nil, err
@@ -997,8 +1013,8 @@ func checkDanglingCandidate(ctx context.Context, db Queryer) ([]string, error) {
 // only counts candidates, so the access point still passes the gate, still shows
 // up in /v1/models, and only fails at request time with a 503.
 //
-// 判定条件与 Resolve 的 JOIN 逐条对齐——渠道、纳管模型、凭证三者任一停用，Resolve
-// 就取不到候选。少对齐一条，那一种写法就会漏到 503 才暴露。
+// 判定就是把 Resolve 共用的 candidateUsable 整个取反——对齐是结构性的：改谓词
+// 一处，两边一起动，不再靠逐条人工对齐。
 func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT ap.id, ap.model, ch.name, ch.id, cm.upstream_model, ch.disabled, cm.disabled
@@ -1006,10 +1022,7 @@ func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) 
 		JOIN access_points ap  ON ap.id = cd.access_point_id AND ap.disabled = 0
 		JOIN channel_models cm ON cm.id = cd.channel_model_id
 		JOIN channels ch       ON ch.id = cm.channel_id
-		WHERE cd.weight > 0
-		  AND (ch.disabled <> 0 OR cm.disabled <> 0
-		       OR NOT EXISTS (SELECT 1 FROM channel_keys ck
-		                       WHERE ck.channel_id = ch.id AND ck.disabled = 0))`,
+		WHERE cd.weight > 0 AND NOT (`+candidateUsable+`)`,
 		func(rows *sql.Rows) (string, error) {
 			var apID, chID int64
 			var apModel, chName, upstreamModel string
