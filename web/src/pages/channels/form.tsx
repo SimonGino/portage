@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON, declaredProtocols, firstBaseURL } from '../../api'
 import type { BaseURLs, Channel, Protocol } from '../../api'
-import { ErrorBar, Field } from '../../ui'
+import { Confirm, ErrorBar, Field } from '../../ui'
 import { Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 
@@ -18,10 +18,12 @@ export function joinURL(baseURL: string, path: string): string {
 /**
  * ChannelForm 是渠道的上游设置表单。
  *
- * 它**长在右栏里**，不再是弹框（主从两栏之后弹框没有存在理由：右栏本来就是这个渠道
- * 的地方，再盖一层框只是把同一份内容挪到屏幕中间，还顺手挡住左边的列表）。新建时
- * 右栏整块就是这张表单，此时才摆头像预览——编辑时渠道名与图标已经在右栏抬头上了，
- * 重复一遍只是占地方。
+ * 新建时右栏整块就是这张表单，此时才摆头像预览——编辑时渠道名与图标已经在右栏
+ * 抬头上了，重复一遍只是占地方。编辑时它**装在「上游设置」弹框里**（PO 2026-08-24
+ * 裁决，推翻 v0.75 的展开井）：井剩下的内容只有改名、并发、能力位、删除，机制
+ * （展开顶开页面、独立保存、收起后靠小圆点提醒未保存）比内容重，而这一页别的
+ * 次级操作（管理、检测、挑选）全是弹框，井是仅存的第二种形制。弹框标题由 Dialog
+ * 给，编辑态因此不再画自己的段标题，保存沉到右下（同检测弹层的主按钮位）。
  *
  * `key` 由调用方按渠道 id 给：表单是非受控的（useState 初值只在挂载时取一次），
  * 切换渠道而不重挂的话，左边点了别家、右边还留着上一家的输入。
@@ -31,13 +33,16 @@ export function ChannelForm({
   onCancel,
   onSaved,
   onDirtyChange,
+  onDelete,
 }: {
   channel: Channel | null
-  /** 新建时是「放弃新建」；编辑时不给（表单是常驻的，没有可取消的东西）。 */
+  /** 新建时是「放弃新建」；编辑时不给（弹框自己有关闭）。 */
   onCancel?: () => void
   onSaved: (id: number) => void
-  /** 编辑态的未保存改动上报给井外——井收起后表单不可见，标记只能画在切换按钮上。 */
+  /** 编辑态的未保存改动上报给弹框——遮罩误点不该把改到一半的表单带走（Dialog guard）。 */
   onDirtyChange?: (dirty: boolean) => void
+  /** 编辑时给：删除渠道跟设置同住一个弹框，坐在保存对面。 */
+  onDelete?: () => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
   // 每协议一份出站根地址（口径层 v0.96 ②）：**填了哪个协议的地址就是声明了哪个协议**，
@@ -62,15 +67,6 @@ export function ChannelForm({
   const [credential, setCredential] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
-
-  // 「已保存」两秒后自己消失。表单常驻在右栏里，保存之后页面上什么都不动，
-  // 没有一句回执的话人分不清是存上了还是按钮没响应。
-  useEffect(() => {
-    if (!saved) return
-    const t = setTimeout(() => setSaved(false), 2000)
-    return () => clearTimeout(t)
-  }, [saved])
 
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
   const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
@@ -122,7 +118,6 @@ export function ChannelForm({
       }
       if (channel) {
         await api.put(`/channels/${channel.id}`, body)
-        setSaved(true)
         onSaved(channel.id)
       } else {
         const created = await api.post<{ id: number }>('/channels', { ...body, credential })
@@ -151,26 +146,28 @@ export function ChannelForm({
   }
 
   return (
-    /* form 自己就是那一段，段标题栏在它内部——保存按钮因此能坐在标题右边，跟
-       「检测」「获取模型列表」同一档位置，省掉表单底下那条只装一颗按钮的行。 */
-    <form className="section form" onSubmit={submit}>
-      <header className="section-head">
-        <h2>{channel ? '上游设置' : '新建渠道'}</h2>
-        <div className="row-actions">
-          {saved && <span className="muted">已保存</span>}
-          {onCancel && (
-            <button type="button" className="btn btn-quiet" onClick={onCancel}>
-              取消
+    /* 新建时 form 自己就是那一段，段标题栏在它内部——创建按钮因此能坐在标题右边，
+       跟「获取模型列表」同一档位置。编辑时它在弹框里，标题归 Dialog 画，这里不再
+       画段头，保存沉到 foot（弹框主按钮右下的通行位）。 */
+    <form className={channel ? 'form' : 'section form'} onSubmit={submit}>
+      {!channel && (
+        <header className="section-head">
+          <h2>新建渠道</h2>
+          <div className="row-actions">
+            {onCancel && (
+              <button type="button" className="btn btn-quiet" onClick={onCancel}>
+                取消
+              </button>
+            )}
+            <button
+              className="btn btn-primary"
+              disabled={busy || !name.trim() || declared.length === 0}
+            >
+              {busy ? '保存中…' : '创建'}
             </button>
-          )}
-          <button
-            className="btn btn-primary"
-            disabled={busy || !name.trim() || (channel !== null && !dirty) || (channel === null && declared.length === 0)}
-          >
-            {busy ? '保存中…' : channel ? '保存' : '创建'}
-          </button>
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
 
       {/* 图标是从地址的 host 猜出来的（渠道没有「供应商」这个字段）。
           边填边显示，等于顺手校验了域名有没有填错——图标一直是首字母块，
@@ -278,6 +275,16 @@ export function ChannelForm({
         </Field>
       )}
       <ErrorBar message={error} />
+      {channel && (
+        /* 删除与保存同住一行、各占一头：删除是这个弹框里唯一不属于「设置」的动作，
+           放左边 ghost 起步（Confirm 两段式），不跟主按钮挤在一起。 */
+        <div className="settings-foot">
+          {onDelete ? <Confirm ghost label="删除渠道" onConfirm={onDelete} /> : <span />}
+          <button className="btn btn-primary" disabled={busy || !name.trim() || !dirty}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      )}
     </form>
   )
 }

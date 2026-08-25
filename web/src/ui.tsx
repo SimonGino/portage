@@ -162,15 +162,18 @@ export function Confirm({
     return () => clearTimeout(t)
   }, [armed])
 
+  // type="button"：这个组件也会站在表单里（上游设置弹框的 foot），默认 submit
+  // 会让「点一下删除」顺手把表单交出去。
   if (!armed) {
     return (
-      <button className={'btn ' + (ghost ? 'btn-ghost' : 'btn-quiet')} onClick={() => setArmed(true)}>
+      <button type="button" className={'btn ' + (ghost ? 'btn-ghost' : 'btn-quiet')} onClick={() => setArmed(true)}>
         {label}
       </button>
     )
   }
   return (
     <button
+      type="button"
       className="btn btn-danger"
       onClick={() => {
         setArmed(false)

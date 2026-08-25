@@ -7,7 +7,7 @@ import type {
   ModelListResult,
   Protocol,
 } from '../../api'
-import { Confirm, CopyCode, Toggle } from '../../ui'
+import { Confirm, CopyCode, Dialog, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
 import { ChannelForm, joinURL } from './form'
 import { CredentialBlock } from './credentials'
@@ -17,9 +17,12 @@ import { ModelPicker } from './picker'
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
- * 「上游凭证」「API 地址」是身份条下的**常驻区块**（PO 2026-08-20 裁决，布局参照
- * Cherry Studio 的服务商页，推翻 v0.46 里这两样收井的那一半）；「上游设置」（改名、
- * 协议集、并发、能力位）仍是条内文字按钮点开的井，默认收起。检测在凭证行里，点开
+ * 「API 地址」「上游凭证」是身份条下的**常驻区块**（PO 2026-08-20 裁决常驻，
+ * 2026-08-24 裁决地址在上——地址定义这个渠道是谁、声明了哪些协议，凭证是从属物，
+ * 接一家上游也是先填地址再贴 key；推翻 08-20 参照 Cherry Studio 的 key 在上）。
+ * 「上游设置」（改名、并发、能力位、删除）是条内文字按钮点开的**弹框**（PO
+ * 2026-08-24 裁决，推翻 v0.75 的展开井：与管理、检测、挑选同一形制，页面上不再有
+ * 顶开内容的井，也不再需要「收起后未保存」那套小圆点机制）。检测在凭证行里，点开
  * 检测弹层（口径层 v0.96 ③）：发起、勾选、结果都在弹层里，关弹层即失——页面上
  * 不再有常驻探测区块。获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
  */
@@ -49,11 +52,9 @@ export function ChannelDetail({
 }) {
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [wellOpen, setWellOpen] = useState(false)
-  // 井打开过就不再卸载，收起只是 hidden。卸载的代价是「设置填了一半、收起再点开，
-  // 编辑全没了且无提示」——表单是非受控的，state 随卸载一起丢。
-  const [wellMounted, setWellMounted] = useState(false)
-  // 设置表单有没有未保存的改动。井收起时它在屏幕上不存在，这个点是它唯一的痕迹。
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  // 设置表单有没有未保存的改动——只喂给 Dialog 的 guard：改到一半时遮罩误点不关框。
+  // Esc 仍照 Dialog 的通则丢弃，弹框关了编辑就没了，不再有「收起还留着」的中间态。
   const [settingsDirty, setSettingsDirty] = useState(false)
   const models = ch.models ?? []
   const protos = ch.protocols ?? []
@@ -75,11 +76,6 @@ export function ChannelDetail({
   const listComplete =
     listed !== null &&
     protos.every((p) => listed.some((r) => r.models !== null && r.protocols.includes(p)))
-
-  function toggleWell() {
-    setWellMounted(true)
-    setWellOpen((v) => !v)
-  }
 
   return (
     <>
@@ -135,18 +131,9 @@ export function ChannelDetail({
           </div>
           <div className="ch-acts">
             {/* 检测挪去了凭证行（它验的首先是 key），凭证与地址成了常驻区块——
-                条上只剩「上游设置」这一口井的开关。 */}
-            <button
-              type="button"
-              className={'btn btn-text well-toggle' + (wellOpen ? ' is-on' : '')}
-              aria-expanded={wellOpen}
-              onClick={toggleWell}
-            >
+                条上只剩「上游设置」这一个弹框入口。 */}
+            <button type="button" className="btn btn-text" onClick={() => setSettingsOpen(true)}>
               上游设置
-              {/* 未保存标记：井收起后表单从屏幕上消失，改动还在但看不见——这个点
-                  就是「回来接着保存」的提醒。保存或撤销后它自己灭。 */}
-              {settingsDirty && <span className="well-dirty" title="有未保存的改动" />}
-              <WellCaret open={wellOpen} />
             </button>
           </div>
         </div>
@@ -158,21 +145,32 @@ export function ChannelDetail({
         </div>
       )}
 
-      {/* 井打开过就保持挂载，收起只藏不卸（hidden）：设置表单是非受控的，卸载即丢
-          输入。 */}
-      {wellMounted && (
-        <div className="well" hidden={!wellOpen}>
+      {settingsOpen && (
+        <Dialog
+          title="上游设置"
+          guard={settingsDirty}
+          onClose={() => {
+            setSettingsOpen(false)
+            setSettingsDirty(false)
+          }}
+        >
           {/* 不要再挂 key={ch.id}：调用方已经在 ChannelDetail 上挂了。 */}
-          <ChannelForm channel={ch} onSaved={onSaved} onDirtyChange={setSettingsDirty} />
-          <div className="well-foot">
-            <Confirm ghost label="删除渠道" onConfirm={onDelete} />
-          </div>
-        </div>
+          <ChannelForm
+            channel={ch}
+            onSaved={(id) => {
+              setSettingsOpen(false)
+              setSettingsDirty(false)
+              onSaved(id)
+            }}
+            onDirtyChange={setSettingsDirty}
+            onDelete={onDelete}
+          />
+        </Dialog>
       )}
 
-      <CredentialBlock channel={ch} onChanged={onCredentialsChanged} />
-
       <BaseURLBlock ch={ch} mutate={mutate} />
+
+      <CredentialBlock channel={ch} onChanged={onCredentialsChanged} />
 
       {picking && (
         <ModelPicker
@@ -263,8 +261,9 @@ export function ChannelDetail({
 }
 
 /**
- * BaseURLBlock 是 API 地址在模型页上的常驻区块（PO 2026-08-20 裁决，与上面的凭证
- * 区块一起从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层）。
+ * BaseURLBlock 是 API 地址在模型页上的常驻区块（PO 2026-08-20 裁决，与凭证区块
+ * 一起从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层；
+ * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物）。
  *
  * v0.96 起**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行紧随其下；
  * 「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是再填一次地址），
@@ -524,29 +523,6 @@ function ModelProtocols({
         </span>
       )}
     </div>
-  )
-}
-
-/** 井开合的朝向指示。文字按钮本身看不出「点开会在下面展开一块」，这个小箭头补的
- *  就是这一层：闭合朝下（可展开），打开朝上（可收起）。 */
-function WellCaret({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={'well-caret' + (open ? ' is-open' : '')}
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      fill="none"
-      aria-hidden
-    >
-      <path
-        d="M2.2 3.8 5 6.6l2.8-2.8"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }
 

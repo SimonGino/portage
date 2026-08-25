@@ -554,49 +554,14 @@ button, input, textarea, select {
   flex-wrap: wrap;
 }
 
-.well {
-  margin: 14px 0 8px;
-  background: var(--sunken);
-  border-radius: var(--r);
-  padding: 18px 20px 20px;
-}
-
-.well-foot {
+/* 上游设置弹框的收尾行：删除渠道与保存各占一头（弹框主按钮右下的通行位）。
+   删除不跟保存挤在一起——它是这框里唯一不属于「设置」的动作。 */
+.settings-foot {
   display: flex;
-  justify-content: flex-start;
-  margin-top: 8px;
-}
-
-.well .section-head {
-  border-bottom-color: transparent;
-  padding-bottom: 4px;
-}
-
-.well .section-head h2 {
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 18px;
-  letter-spacing: -0.03em;
-}
-
-.well .field input,
-.well .field textarea,
-.well input:not([type="checkbox"]):not([type="radio"]) {
-  background: var(--canvas);
-}
-
-/* 就地改名的 ghost-input 不吃上面这条统一底色：它是记录不是表单（.ghost-input
-   的立论）。负外边距也一并去掉——那 -10px 是把文字拉去贴**文字左轨**的，而井里
-   的左轨属于框边（下面就是真输入框）：留着它，聚焦时现形的框会比下面的框凸出
-   10px。去掉后静止文字与下面输入框的内文同缩进、聚焦框边与下面的框边同线，两个
-   状态都对齐，文字聚焦时也不跳。三个类叠满是为了跟上面那条打平特异性，靠源序赢。 */
-.well input.ghost-input.cred-name {
-  margin-left: 0;
-  background: transparent;
-}
-
-.well input.ghost-input.cred-name:focus {
-  background: var(--canvas);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .models-empty {
@@ -1266,39 +1231,6 @@ button, input, textarea, select {
   background: none;
 }
 
-.btn-text.is-on,
-.well-toggle.is-on {
-  color: var(--ink);
-  font-weight: 500;
-}
-
-/* 井切换按钮的开合指示与未保存标记。箭头跟着文字色走、比文字低半档，不抢字重
-   已经承担的选中态；旋转不加过渡（§7 默认静止）。 */
-.well-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.well-caret {
-  color: var(--faint);
-  flex: none;
-}
-
-.well-toggle.is-on .well-caret {
-  color: inherit;
-  transform: rotate(180deg);
-}
-
-/* 未保存的改动：状态色一粒点，不用强调蓝——它是「别忘了」不是「点这里」。 */
-.well-dirty {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--warn-line);
-  flex: none;
-}
-
 .btn-quiet.is-on {
   background: var(--sunken);
   color: var(--ink);
@@ -1876,14 +1808,6 @@ textarea:focus {
   color: var(--ink);
   font-weight: 500;
   box-shadow: none;
-}
-
-.well .segmented {
-  background: var(--canvas);
-}
-
-.well .segment.is-on {
-  background: var(--sunken);
 }
 
 /* ── 检测弹层（口径层 v0.96：发起、勾选、结果同一个容器，关弹层即失） ── */
