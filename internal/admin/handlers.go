@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
@@ -338,15 +337,9 @@ type probeInput struct {
 	Protocols []string `json:"protocols"`
 }
 
-// probeChannel 跑一次模型级检测（口径层 v0.96 检测收成一层）：选中的模型 × 勾选的
-// 协议，每格发一个带模型名的最小真实请求，回一个三态矩阵给弹层就地显示。
-//
-// **只提示、不做闸**（v0.33 血统）：不落库、不参与路由、不影响保存成败。它只由人
-// 手点——保存渠道/设置后什么都不跑（v0.96 ①），真实请求的钱只在人手点时花。也因此
-// 参数不对就整个拒掉、一个请求都不发：参数错误不该花钱。
-//
-// 并发压到 4：这一层的请求形状就是普通推理流量，4 路并发是任何客户端都会有的样子；
-// 串行在 20 个模型 × 8 秒超时的最坏情形下要等三分钟，人在弹层前面等不了那么久。
+// probeChannel 跑一次模型级检测：bind → upstream.ProbeChannel → JSON。检测的全部
+// 策略（选择校验、fan-out、矩阵组装、保密规则）在 upstream.ProbeChannel 里（#51），
+// 这里只是它的 HTTP adapter。
 func (h *Handler) probeChannel(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -362,93 +355,22 @@ func (h *Handler) probeChannel(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-
-	// 凭证按 id 找，**含已停用的**（v0.38 的立论承接）：恢复是纯人工的，「这把还
-	// 坏不坏」除了发一次请求没有别的办法回答。
-	var cred store.ProbeCredential
-	found := false
-	for _, x := range target.Credentials {
-		if x.ID == in.CredentialID {
-			cred, found = x, true
-			break
-		}
-	}
-	if !found {
-		fail(c, http.StatusBadRequest, "这个渠道里没有这份凭证")
+	m, err := upstream.ProbeChannel(c.Request.Context(), target, upstream.ProbeSelection{
+		CredentialID: in.CredentialID,
+		Model:        in.Model,
+		Protocols:    in.Protocols,
+	})
+	if err != nil {
+		h.writeError(c, err)
 		return
 	}
-
-	// 协议集合必须 ⊆ 已声明协议：没声明的那一侧连出站根地址都没有，没有东西可打。
-	if len(in.Protocols) == 0 {
-		fail(c, http.StatusBadRequest, "至少勾一个协议")
-		return
-	}
-	var protos protocol.Set
-	for _, raw := range in.Protocols {
-		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(raw)))
-		if !p.Valid() {
-			fail(c, http.StatusBadRequest, "协议 "+strconv.Quote(raw)+" 不是 anthropic/openai/openai_responses 之一")
-			return
-		}
-		if !target.Protocols.Has(p) {
-			fail(c, http.StatusBadRequest, "渠道没有声明 "+string(p)+"（没填它的出站根地址），不能检测这一侧")
-			return
-		}
-		if !protos.Has(p) {
-			protos = append(protos, p)
-		}
-	}
-
-	models := target.Models
-	if in.Model != "" {
-		models = nil
-		for _, m := range target.Models {
-			if m == in.Model {
-				models = []string{m}
-				break
-			}
-		}
-		if models == nil {
-			fail(c, http.StatusBadRequest, "这个渠道里没有这个启用中的纳管模型")
-			return
-		}
-	}
-	if len(models) == 0 {
-		fail(c, http.StatusBadRequest, "这个渠道还没有启用中的纳管模型，先纳管再检测")
-		return
-	}
-
-	rows := make([]modelProbeRow, len(models))
-	sem := make(chan struct{}, 4)
-	var wg sync.WaitGroup
-	for i, m := range models {
-		rows[i] = modelProbeRow{Model: m, Results: make([]upstream.ModelProbeResult, len(protos))}
-		for j, p := range protos {
-			wg.Add(1)
-			go func(i, j int, p protocol.Protocol, model string) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				// 各协议打各的根地址（口径层 v0.96）：测的就是「这一侧真会被请求的那一串」。
-				rows[i].Results[j] = upstream.ProbeModel(c.Request.Context(), target.BaseURLs.Get(p), p, cred.Value, model)
-			}(i, j, p, m)
-		}
-	}
-	wg.Wait()
-
 	// 只报渠道名与规模，不报 base_url，更不报凭证值。响应带凭证名——403 的格子要
 	// 靠它说清「用的是哪把」（那正是 403 的凭证相关含义）。
-	h.log.Info("模型检测", "channel", target.Name, "models", len(rows), "protocols", protos.String())
+	h.log.Info("模型检测", "channel", target.Name, "models", len(m.Rows), "protocols", m.Protocols.String())
 	c.JSON(http.StatusOK, gin.H{
-		"credential": cred.Name,
-		"models":     rows,
+		"credential": m.Credential,
+		"models":     m.Rows,
 	})
-}
-
-// modelProbeRow 是一个纳管模型的检测结论行。凭证值不在里面，也不会有掩码。
-type modelProbeRow struct {
-	Model   string                      `json:"model"`
-	Results []upstream.ModelProbeResult `json:"results"`
 }
 
 func (h *Handler) deleteChannel(c *gin.Context) {
