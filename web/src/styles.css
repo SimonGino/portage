@@ -1218,17 +1218,22 @@ button, input, textarea, select {
   color: var(--ink);
 }
 
-.btn-text {
+/* 行内文字动作（上游设置 / 删行 / 显示 / 复制 / 管理 / 检测）走墨蓝——§4 白名单②
+   「这段字能点」。此前它们是灰字 ghost/quiet，静止时与「协议」「API 地址」这类
+   标签同一副长相，能点与不能点分不出来。默认无下划线，悬停才加（同 .bar-link）。 */
+.btn-link {
   background: none;
-  color: var(--mute);
+  color: var(--accent);
   font-size: 13px;
   padding: 4px 6px;
   border-radius: 8px;
 }
 
-.btn-text:hover:not(:disabled) {
-  color: var(--ink);
+.btn-link:hover:not(:disabled) {
+  color: var(--accent);
   background: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .btn-quiet.is-on {
@@ -2248,7 +2253,7 @@ textarea:focus {
   color: var(--ok-text);
 }
 
-/* ── 常驻区块：上游凭证 / API 地址（PO 2026-08-20，布局参照 Cherry Studio）──── */
+/* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.34 默认收起）── */
 
 /* 与「纳管模型 · N」同一套小字标题（.models-title），三段读起来才是同一层：
    凭证、地址、模型都是这个渠道名下的清单项。 */
@@ -2260,7 +2265,40 @@ textarea:focus {
   font-size: 12px;
   color: var(--faint);
   letter-spacing: 0.02em;
+}
+
+/* 标题行整行是展开开关（v0.34 默认收起）。尖角排在标题后而不是前——前置会把
+   标题左缘顶得跟「纳管模型 · N」错开，三段就不是同一层了。 */
+.detail-block-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   margin-bottom: 8px;
+}
+
+.detail-block-head:hover .detail-block-title {
+  color: var(--mute);
+}
+
+.detail-block-caret {
+  display: inline-flex;
+  color: var(--faint);
+  transition: transform 0.15s ease;
+}
+
+.detail-block-caret.is-open {
+  transform: rotate(90deg);
+}
+
+/* 收起时的一句摘要：收起不该把「里面有什么」一并藏掉。 */
+.detail-block-summary {
+  font-size: 12px;
+  color: var(--mute);
+  margin-left: 4px;
 }
 
 /* 凭证行：掩码值 + 「管理」「检测」。52em 与弹框里的列表同一条右边界。 */
@@ -2443,8 +2481,8 @@ textarea:focus {
 .cred-add-alt {
   display: flex;
   gap: 6px;
-  /* -8px 抵掉 btn-ghost 的左内边距，让这句小字跟上面的凭证名对齐到同一条左边界。 */
-  margin: 2px 0 0 -8px;
+  /* -6px 抵掉 btn-link 的左内边距，让这句小字跟上面的凭证名对齐到同一条左边界。 */
+  margin: 2px 0 0 -6px;
 }
 
 /* ── 观测三页：概览 / 调用记录 / 排行（v0.17 由「用量页」一页拆开）─────── */
@@ -2651,9 +2689,8 @@ textarea:focus {
 
 /* 「详情」按钮跟着状态右对齐，压成一枚小字：一行里已经有状态、重试、错误词三行
    信息，它不该再抢一次注意力，只在人真的要看时才被找到。
-   同时它是**白名单 ②**：全站唯一一处「可点的文字」（SPEC §3 点名的「详情」），
-   默认墨蓝无下划线，悬停才加下划线。渠道页那两个「上游设置 / 上游凭证」不算——
-   它们是带 is-on 选中态的展开开关，属于「选中态不给墨蓝」那一族。 */
+   同时它是**白名单 ②**「可点的文字」（SPEC §3 点名的「详情」），默认墨蓝无
+   下划线，悬停才加下划线——v0.34 起行内文字动作统一走 .btn-link 同一套。 */
 .log-detail-toggle {
   margin: 2px -6px 0 auto;
   display: block;

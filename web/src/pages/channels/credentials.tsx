@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
-import { Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
+import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
 import { Segmented } from '../../fields'
 import { ProbeDialog } from './probe'
 
 /**
- * CredentialBlock 是渠道凭证在模型页上的常驻一行（PO 2026-08-20 裁决，推翻 v0.46
- * 「凭证收井默认收起」那一条；布局参照 Cherry Studio 的服务商页，视觉与命名不跟）。
+ * CredentialBlock 是渠道凭证在模型页上的区块（PO 2026-08-20 裁决从「上游设置」井
+ * 提出来，布局参照 Cherry Studio 的服务商页，视觉与命名不跟；2026-08-26 裁决默认
+ * 收起成一行摘要——但缺可用凭证时默认展开：警告条指着这里，收着就是把出口藏起来）。
  *
  * 页面上只摆**正在被用的那一把**（掩码 + 显示 / 复制）和「管理」「检测」两颗按钮；
  * 池子的逐条 CRUD、选取模式、停用现场都在「管理」弹框里。检测点开检测弹层
@@ -48,8 +49,11 @@ export function CredentialBlock({
   }
 
   return (
-    <section className="detail-block">
-      <div className="detail-block-title">上游凭证{list.length > 0 && ` · ${list.length}`}</div>
+    <DetailBlock
+      title={<>上游凭证{list.length > 0 && ` · ${list.length}`}</>}
+      summary={enabled.length > 0 ? `共 ${enabled.length} 把在轮` : undefined}
+      defaultOpen={channel.enabled_keys === 0}
+    >
       <ErrorBar message={error} />
       {list.length === 0 ? (
         /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
@@ -64,12 +68,12 @@ export function CredentialBlock({
           {enabled.length > 1 && (
             <span className="muted cred-inline-count">共 {enabled.length} 把在轮</span>
           )}
-          <button type="button" className="btn btn-quiet" onClick={() => setManaging(true)}>
+          <button type="button" className="btn btn-link" onClick={() => setManaging(true)}>
             管理
           </button>
           <button
             type="button"
-            className="btn btn-quiet"
+            className="btn btn-link"
             onClick={() => setProbing(primary)}
             disabled={!primary}
             title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
@@ -98,7 +102,7 @@ export function CredentialBlock({
           onClose={() => setProbing(null)}
         />
       )}
-    </section>
+    </DetailBlock>
   )
 }
 
@@ -229,7 +233,7 @@ function CredentialRow({
             坏不坏」除了发一次请求没有别的办法回答。 */}
         <button
           type="button"
-          className="btn btn-ghost"
+          className="btn btn-link"
           onClick={onProbe}
           title="用这把凭证检测；只提示，不落库也不影响路由"
         >
@@ -310,7 +314,7 @@ function AddCredentials({
           />
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-link"
             onClick={() => setReveal((v) => !v)}
             disabled={credential === ''}
             title={reveal ? '藏起来' : '看一眼刚粘进来的这串'}
@@ -325,7 +329,7 @@ function AddCredentials({
       {/* 批量粘贴是次要入口，一句安静的小字：单条那一行才是常走的路。批量模式下
           textarea 装不下按钮，「添加 N 份」才回到这一行来。 */}
       <div className="cred-add-alt">
-        <button type="button" className="btn btn-ghost" onClick={() => setBatch(!batch)}>
+        <button type="button" className="btn btn-link" onClick={() => setBatch(!batch)}>
           {batch ? '改为单条' : '批量粘贴'}
         </button>
         {batch && (

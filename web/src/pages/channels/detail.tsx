@@ -7,7 +7,7 @@ import type {
   ModelListResult,
   Protocol,
 } from '../../api'
-import { Confirm, CopyCode, Dialog, Toggle } from '../../ui'
+import { Confirm, CopyCode, DetailBlock, Dialog, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
 import { ChannelForm, joinURL } from './form'
 import { CredentialBlock } from './credentials'
@@ -17,9 +17,10 @@ import { ModelPicker } from './picker'
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
- * 「API 地址」「上游凭证」是身份条下的**常驻区块**（PO 2026-08-20 裁决常驻，
+ * 「API 地址」「上游凭证」是身份条下**默认收起的区块**（PO 2026-08-20 裁决提出井外，
  * 2026-08-24 裁决地址在上——地址定义这个渠道是谁、声明了哪些协议，凭证是从属物，
- * 接一家上游也是先填地址再贴 key；推翻 08-20 参照 Cherry Studio 的 key 在上）。
+ * 接一家上游也是先填地址再贴 key；2026-08-26 裁决默认收起成一行摘要、点开原地展开
+ * ——这页第一眼该是纳管模型，两块常驻会把模型列表推到一屏以下）。
  * 「上游设置」（改名、并发、能力位、删除）是条内文字按钮点开的**弹框**（PO
  * 2026-08-24 裁决，推翻 v0.75 的展开井：与管理、检测、挑选同一形制，页面上不再有
  * 顶开内容的井，也不再需要「收起后未保存」那套小圆点机制）。检测在凭证行里，点开
@@ -122,9 +123,9 @@ export function ChannelDetail({
             />
           </div>
           <div className="ch-acts">
-            {/* 检测挪去了凭证行（它验的首先是 key），凭证与地址成了常驻区块——
+            {/* 检测挪去了凭证行（它验的首先是 key），凭证与地址是身份条下的区块——
                 条上只剩「上游设置」这一个弹框入口。 */}
-            <button type="button" className="btn btn-text" onClick={() => setSettingsOpen(true)}>
+            <button type="button" className="btn btn-link" onClick={() => setSettingsOpen(true)}>
               上游设置
             </button>
           </div>
@@ -253,9 +254,10 @@ export function ChannelDetail({
 }
 
 /**
- * BaseURLBlock 是 API 地址在模型页上的常驻区块（PO 2026-08-20 裁决，与凭证区块
- * 一起从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层；
- * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物）。
+ * BaseURLBlock 是 API 地址在模型页上的区块（PO 2026-08-20 裁决与凭证区块一起
+ * 从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层；
+ * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物；2026-08-26
+ * 裁决默认收起，收起行摘要是已声明的协议——这页第一眼该是纳管模型）。
  *
  * v0.96 起**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行紧随其下；
  * 「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是再填一次地址），
@@ -325,10 +327,15 @@ function BaseURLBlock({
     (p) => (ch.base_url[p] ?? '') !== '' || blank.includes(p) || (urls[p] ?? '').trim() !== '',
   )
   const addable = PROTOCOL_ORDER.filter((p) => !rows.includes(p))
+  // 收起行的摘要是已声明的协议——地址本身太长，而「声明了哪些协议」正是这块
+  // 定义渠道身份的那一半。
+  const declared = PROTOCOL_ORDER.filter((p) => (ch.base_url[p] ?? '') !== '')
 
   return (
-    <section className="detail-block">
-      <div className="detail-block-title">API 地址</div>
+    <DetailBlock
+      title="API 地址"
+      summary={declared.map((p) => PROTOCOL_SHORT[p] ?? p).join(' + ')}
+    >
       {rows.map((p) => {
         const v = urls[p] ?? ''
         const dirty = v.trim() !== (ch.base_url[p] ?? '')
@@ -366,7 +373,7 @@ function BaseURLBlock({
                 {rows.length > 1 && (
                   <button
                     type="button"
-                    className="btn btn-ghost baseurl-del"
+                    className="btn btn-link baseurl-del"
                     title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
                     onClick={() => remove(p)}
                   >
@@ -401,7 +408,7 @@ function BaseURLBlock({
           ))}
         </div>
       )}
-    </section>
+    </DetailBlock>
   )
 }
 

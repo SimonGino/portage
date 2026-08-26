@@ -272,7 +272,7 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
       <code className="secret-value">{shown ? value : mask(value)}</code>
       <button
         type="button"
-        className="btn btn-ghost"
+        className="btn btn-link"
         onClick={() => setShown((v) => !v)}
         title={shown ? '藏起来' : '看明文'}
       >
@@ -280,7 +280,7 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
       </button>
       <button
         type="button"
-        className={'btn btn-ghost' + (copied ? ' is-copied' : '')}
+        className={'btn btn-link' + (copied ? ' is-copied' : '')}
         onClick={async () => {
           // clipboard API 在非 HTTPS 的非 localhost 页面上不可用（局域网访问就是
           // 这种情况）。失败了就把明文亮出来，让人自己选中——总比一颗没反应的按钮强。
@@ -310,6 +310,55 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
  */
 /** StateText 是 Toggle 的只读版：状态一样地写出来，但这里改不了（比如接入点的启用
  *  状态在编辑表单里改）。跟 Toggle 共用同一套类，免得同一件事在两页长得不一样。 */
+/**
+ * DetailBlock 是模型页身份条下的清单区块（「API 地址」「上游凭证」共用这一个壳）。
+ *
+ * v0.34 起默认收起成一行：标题 + 尖角 + 一句摘要，点标题行原地展开。日常进这页
+ * 是看纳管模型，地址与凭证是「接上游时填一次」的东西，常驻会把模型列表推到一屏
+ * 以下；但也不塞回「上游设置」弹框——v0.94「接一家上游要填的全部，不该藏两层」
+ * 仍成立，收起只是把常驻改成一击可达。defaultOpen 给「此刻必须看见它」的场合
+ * （渠道缺凭证时，警告条指着这里）。
+ */
+export function DetailBlock({
+  title,
+  summary,
+  defaultOpen,
+  children,
+}: {
+  title: ReactNode
+  /** 收起时跟在标题后的一句摘要——收起不该把「里面有什么」一并藏掉。 */
+  summary?: ReactNode
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
+  return (
+    <section className="detail-block">
+      <button
+        type="button"
+        className="detail-block-head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="detail-block-title">{title}</span>
+        <span className={'detail-block-caret' + (open ? ' is-open' : '')} aria-hidden>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path
+              d="M4.4 2.8 7.6 6l-3.2 3.2"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+        {!open && summary != null && <span className="detail-block-summary">{summary}</span>}
+      </button>
+      {open && children}
+    </section>
+  )
+}
+
 export function StateText({ on }: { on: boolean }) {
   return (
     <span className={'statetoggle is-static' + (on ? ' is-on' : '')}>
