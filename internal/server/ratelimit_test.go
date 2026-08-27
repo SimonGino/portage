@@ -97,7 +97,7 @@ func TestCountTokensStormDoesNotStarveMessages(t *testing.T) {
 
 	// 30 次是真机观测量级（26/24 次）的上取整。这里不看它们各自的状态码：
 	// count_tokens 自己那只桶被打空是应有的，要测的是它没动到生成面那只。
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		gw.Post(t, "/v1/messages/count_tokens", anthropicRequest, nil)
 	}
 

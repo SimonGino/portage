@@ -2,6 +2,7 @@ package openairesponses
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -142,7 +143,7 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 			}
 			if err != nil {
 				scanner.Flush(func(frame []byte) { st.frame(frame, out) })
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					// 记一笔给调用方：这条流是**断的**不是说完的（同 CC 侧，
 					// protocol.StreamReadReporter）。
 					c.SetStreamReadError(err)

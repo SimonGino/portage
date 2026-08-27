@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -322,8 +322,8 @@ func TestCanonicalModelCoversInboundSamples(t *testing.T) {
 			stale = append(stale, p)
 		}
 	}
-	sort.Strings(missing)
-	sort.Strings(stale)
+	slices.Sort(missing)
+	slices.Sort(stale)
 
 	if len(missing) > 0 {
 		t.Errorf("样本里有 canonical 模型没交代的字段，共 %d 条。\n"+

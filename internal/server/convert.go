@@ -77,8 +77,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 		// 两档 400：codec 明确造出来的 RequestError 逐字回显（它带着客户端要照办的
 		// 那句指引与 code，换成通用文案等于把这条错误存在的理由抹掉），其余仍回通用
 		// 那句——那一档客户端除了「请求体坏了」也读不出别的。
-		var reqErr *protocol.RequestError
-		if errors.As(err, &reqErr) {
+		if reqErr, ok := errors.AsType[*protocol.RequestError](err); ok {
 			s.log.Warn("入站请求被拒", "inbound", ep.Proto, "code", reqErr.Code, "param", reqErr.Param)
 			ep.Proto.WriteRequestError(c.Writer, reqErr)
 			return

@@ -90,8 +90,7 @@ func TestProbeChannelRejectsBadSelection(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s：期望报错，得到 nil", name)
 		}
-		var sel SelectionError
-		if !errors.As(err, &sel) {
+		if _, ok := errors.AsType[SelectionError](err); !ok {
 			t.Errorf("%s：错误该是 SelectionError，得到 %T", name, err)
 		}
 		if err.Error() != tc.want {

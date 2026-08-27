@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -215,7 +215,7 @@ func exportCandidates(ctx context.Context, db store.Queryer, apID int64) ([]Cand
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	slices.SortFunc(out, func(a, b Candidate) int { return strings.Compare(a.Target, b.Target) })
 	return out, nil
 }
 

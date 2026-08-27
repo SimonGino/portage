@@ -234,8 +234,8 @@ func TestDecodeRequestRejectsPreviousResponseID(t *testing.T) {
 	}
 	// 客户端要按 code 决定降级动作，所以这条错误必须是可识别的 RequestError，
 	// 不是一句只有人读得懂的话。
-	var reqErr *protocol.RequestError
-	if !errors.As(err, &reqErr) {
+	reqErr, ok := errors.AsType[*protocol.RequestError](err)
+	if !ok {
 		t.Fatalf("错误不是 *protocol.RequestError（回不成 400 带 code）: %T %v", err, err)
 	}
 	if reqErr.Code != CodePreviousResponseNotFound {

@@ -53,7 +53,7 @@ func TestConvertStreamTapAbortOrderingHasNoRace(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		<-events // EncodeStream 的前半段：正常消费，建立解码侧→handler 的接收边
 	}
 	// abortDecode 的收场次序，逐步对应：

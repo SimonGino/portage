@@ -3,9 +3,10 @@ package declcfg
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/auth"
@@ -153,7 +154,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 		}
 		var id int64
 		switch err := tx.QueryRowContext(ctx, `SELECT id FROM channels WHERE name = ?`, name).Scan(&id); {
-		case err == sql.ErrNoRows:
+		case errors.Is(err, sql.ErrNoRows):
 			if id, err = store.CreateChannel(ctx, tx, in); err != nil {
 				return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
 			}
@@ -394,7 +395,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, stmt string, before, keep ma
 			gone = append(gone, name)
 		}
 	}
-	sort.Strings(gone)
+	slices.Sort(gone)
 	for _, name := range gone {
 		if _, err := tx.ExecContext(ctx, stmt, append(append([]any{}, prefixArgs...), name)...); err != nil {
 			return nil, err

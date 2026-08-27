@@ -154,7 +154,7 @@ func TestLogsFilterByEndpoint(t *testing.T) {
 // 与总数都不受影响——而 offset 让「直接跳到第 N 页」成立，那是纯游标做不到的。
 func TestLogsPageJumpWithinAnchoredWindow(t *testing.T) {
 	gw, _ := seedTwoModelGateway(t)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		postModel(t, gw, "model-a")
 	}
 	gw.WaitCallRows(t, 5)

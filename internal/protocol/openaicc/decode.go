@@ -1,10 +1,13 @@
 package openaicc
 
 import (
+	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -109,7 +112,7 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 			}
 			if err != nil {
 				scanner.Flush(func(frame []byte) { st.frame(frame, out) })
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					// 记一笔给调用方：这条流是**断的**不是说完的。带内的 EvError
 					// 到了编码侧就与「上游回了个错误对象」混成一样，收场判不出来
 					// （protocol.StreamReadReporter）。
@@ -335,12 +338,8 @@ func (st *streamState) flushTools(out chan<- protocol.Event) {
 	if len(st.tools) == 0 {
 		return
 	}
-	idxs := make([]int, 0, len(st.tools))
-	for idx := range st.tools {
-		idxs = append(idxs, idx)
-	}
-	sort.Slice(idxs, func(a, b int) bool {
-		return st.tools[idxs[a]].seq < st.tools[idxs[b]].seq
+	idxs := slices.SortedFunc(maps.Keys(st.tools), func(a, b int) int {
+		return cmp.Compare(st.tools[a].seq, st.tools[b].seq)
 	})
 
 	for _, idx := range idxs {

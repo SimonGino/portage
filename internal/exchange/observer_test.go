@@ -45,7 +45,7 @@ func TestObserverCloseRunsAbortOrderingByConstruction(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		<-events // handler 正常消费的前半段，建立解码侧→本侧的接收边
 	}
 	obs.Close() // 收场序全在构造里：断上游 → 排空到关闭 → Summarize

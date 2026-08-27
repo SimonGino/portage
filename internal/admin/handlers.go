@@ -363,8 +363,7 @@ func (h *Handler) probeChannel(c *gin.Context) {
 	})
 	if err != nil {
 		// 选择类错误在 upstream 只是「参数对不上渠道现状」，翻成 400 是这层 adapter 的事。
-		var sel upstream.SelectionError
-		if errors.As(err, &sel) {
+		if sel, ok := errors.AsType[upstream.SelectionError](err); ok {
 			fail(c, http.StatusBadRequest, sel.Reason)
 			return
 		}
@@ -468,7 +467,7 @@ func (h *Handler) addCredentials(c *gin.Context) {
 	if cred := strings.TrimSpace(in.Credential); cred != "" {
 		items = append(items, store.NewCredential{Name: in.Name, Value: cred})
 	}
-	for _, line := range strings.Split(in.Credentials, "\n") {
+	for line := range strings.SplitSeq(in.Credentials, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			items = append(items, store.NewCredential{Value: line})
 		}
@@ -764,7 +763,7 @@ func generateKey() (string, error) {
 // normalizeAllowed 把白名单收拾干净：去空白、去空项，全空即 `*`（不限）。
 func normalizeAllowed(raw string) string {
 	var items []string
-	for _, item := range strings.Split(raw, ",") {
+	for item := range strings.SplitSeq(raw, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			items = append(items, item)
 		}

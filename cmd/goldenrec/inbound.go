@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -77,7 +77,7 @@ func loadStubScript(dir string) (*stubScript, error) {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) == 0 {
 		return nil, fmt.Errorf("%s 里没有 .sse / .json 应答脚本", dir)
 	}

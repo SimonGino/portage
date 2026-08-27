@@ -8,24 +8,18 @@ const DefaultImageMediaType = "image/png"
 // ParseDataURI 拆 data URI。非 data: 串返回 ok=false，调用方把整串当 URL。
 // 载荷为空或只剩空白时也返回 ok=false，调用方按「没有图」跳过。
 func ParseDataURI(s string) (mediaType, data string, ok bool) {
-	const prefix = "data:"
-	if !strings.HasPrefix(s, prefix) {
+	rest, hasPrefix := strings.CutPrefix(s, "data:")
+	if !hasPrefix {
 		return "", "", false
 	}
-	rest := s[len(prefix):]
-	comma := strings.IndexByte(rest, ',')
-	if comma < 0 {
+	meta, data, found := strings.Cut(rest, ",")
+	if !found {
 		return "", "", false
 	}
-	data = rest[comma+1:]
 	if IsEmptyBase64(data) {
 		return "", "", false
 	}
-	meta := rest[:comma]
-	mediaType = meta
-	if i := strings.IndexByte(meta, ';'); i >= 0 {
-		mediaType = meta[:i]
-	}
+	mediaType, _, _ = strings.Cut(meta, ";")
 	return mediaType, data, true
 }
 

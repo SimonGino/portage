@@ -43,7 +43,7 @@ func (k Key) Allows(model string) bool {
 	if list == "" || list == "*" {
 		return true
 	}
-	for _, item := range strings.Split(list, ",") {
+	for item := range strings.SplitSeq(list, ",") {
 		if item := strings.TrimSpace(item); item == "*" || item == model {
 			return true
 		}

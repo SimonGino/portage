@@ -2,7 +2,7 @@ package declcfg
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/auth"
@@ -213,12 +213,12 @@ func checkAPIKeys(f *File) []string {
 	var dup []string
 	for _, names := range byHash {
 		if len(names) > 1 {
-			sort.Strings(names)
+			slices.Sort(names)
 			dup = append(dup, fmt.Sprintf("API Key %s 用的是同一个明文；key 值本身唯一（api_keys.key_hash 上有 UNIQUE），"+
 				"两把一样的 key 在流水里也分不出是谁打的", quoteAll(names)))
 		}
 	}
-	sort.Strings(dup)
+	slices.Sort(dup)
 	return append(p, dup...)
 }
 

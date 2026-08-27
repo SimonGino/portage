@@ -55,8 +55,7 @@ func retriable(ctx context.Context, resp *http.Response, err error) bool {
 		return false
 	}
 	if err != nil {
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
+		if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 			return false
 		}
 		return true
@@ -82,9 +81,7 @@ func delayFor(p RetryPolicy, attempt int, resp *http.Response) (time.Duration, b
 		if after > p.MaxDelay {
 			return 0, false
 		}
-		if after > d {
-			d = after
-		}
+		d = max(d, after)
 	}
 	return d, true
 }

@@ -456,7 +456,7 @@ func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSett
 	var respURL string
 	switch err := db.QueryRowContext(ctx,
 		`SELECT base_url_openai_responses FROM channels WHERE id = ?`, id).Scan(&respURL); {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		return ErrNotFound
 	case err != nil:
 		return err

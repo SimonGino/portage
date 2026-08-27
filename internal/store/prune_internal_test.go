@@ -30,7 +30,7 @@ func TestDeleteCallLogsBefore(t *testing.T) {
 			t.Fatalf("种流水 %s 失败: %v", name, err)
 		}
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		seed("old", cutoff.Add(-time.Duration(i+1)*time.Hour))
 	}
 	seed("boundary", cutoff)

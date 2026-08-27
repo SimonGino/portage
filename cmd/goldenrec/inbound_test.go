@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,7 +52,7 @@ func readSamples(t *testing.T, dir string) []recorded {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	out := make([]recorded, 0, len(names))
 	for _, name := range names {

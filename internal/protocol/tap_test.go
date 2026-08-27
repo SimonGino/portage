@@ -34,7 +34,7 @@ func TestTapCorePanicOnOneFrameDoesNotPoisonTheRest(t *testing.T) {
 
 	// 逐字节喂：坏帧留在缓冲里时，后面每一块都会触发一次重放。
 	const raw = "data: bad\n\ndata: good1\n\ndata: good2\n\n"
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		if _, err := core.Write([]byte(raw[i : i+1])); err != nil {
 			t.Fatal(err)
 		}

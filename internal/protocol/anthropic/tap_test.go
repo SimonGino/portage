@@ -10,7 +10,7 @@ import (
 // feed 逐字节喂给 Tap。真实分块边界由 TCP 决定，逐字节是最恶劣的一种切法。
 func feed(t *testing.T, tap protocol.Tap, raw string) protocol.Summary {
 	t.Helper()
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		n, err := tap.Write([]byte(raw[i : i+1]))
 		if n != 1 || err != nil {
 			t.Fatalf("Tap.Write 必须恒定返回 (len(p), nil)，实得 (%d, %v)", n, err)

@@ -273,8 +273,7 @@ func buildURL(baseURL string, ep protocol.Endpoint, rawQuery string) string {
 // Redact strips the request URL out of a transport error so the 渠道 base_url does
 // not reach a log line or, later, call_logs.error.
 func Redact(err error) error {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if urlErr, ok := errors.AsType[*url.Error](err); ok {
 		return urlErr.Err
 	}
 	return err

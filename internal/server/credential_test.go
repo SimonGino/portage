@@ -217,7 +217,7 @@ func TestPollingRotatesAcrossRequests(t *testing.T) {
 	g := gatewaytest.StartWith(t, db, gatewaytest.Options{})
 
 	var used []string
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		g.Post(t, "/v1/messages", `{"model":"gw-sonnet","messages":[]}`, nil)
 		used = append(used, up.Last(t).Header.Get("x-api-key"))
 	}

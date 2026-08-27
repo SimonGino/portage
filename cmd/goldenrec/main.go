@@ -96,7 +96,7 @@ type sampleMeta struct {
 	Stream    bool   `json:"stream"`
 	Endpoint  string `json:"endpoint"`
 	// Status 只对 upstream 样本有意义：入站样本的状态码来自 stub，是道具不是事实。
-	Status int `json:"status,omitempty"`
+	Status int `json:"status,omitzero"`
 	// Headers 只对 inbound 样本有意义，且只收白名单里那几个**影响转换语义**的头
 	// （anthropic-beta 之类）。白名单而非黑名单：漏掉一个指纹头的代价是样本带着
 	// 客户端身份进 git，而漏掉一个语义头只是转换时少个线索，两边不对等。

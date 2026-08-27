@@ -625,7 +625,7 @@ func TestEncodeFillsMissingResponseID(t *testing.T) {
 func TestEncodeFilledResponseIDIsUnique(t *testing.T) {
 	events := []protocol.Event{{Type: protocol.EvTextDelta, Text: "hi"}, {Type: protocol.EvDone}}
 	seen := map[string]bool{}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		frames, _ := encodeStream(t, events)
 		id := startID(t, frames)
 		if seen[id] {

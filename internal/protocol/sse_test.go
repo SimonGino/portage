@@ -10,7 +10,7 @@ import (
 // 一种切法——任何「假设一次 Write 至少含一个完整帧」的实现都会在这里露馅。
 func pushByBytes(s *FrameScanner, in string) []string {
 	var got []string
-	for i := 0; i < len(in); i++ {
+	for i := range len(in) {
 		s.Push([]byte(in[i:i+1]), func(f []byte) { got = append(got, string(f)) })
 	}
 	return got

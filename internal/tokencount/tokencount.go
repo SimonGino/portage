@@ -22,18 +22,11 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 )
 
-var (
-	encOnce sync.Once
-	enc     tokenizer.Codec
-	encErr  error
-)
-
 // encoder 懒加载并缓存 O200kBase 编码器：词表构建有一次性成本，Claude Code 开场
 // 会连打二十几次（#18 立论里的实测），逐请求构建就是逐请求白付。
-func encoder() (tokenizer.Codec, error) {
-	encOnce.Do(func() { enc, encErr = tokenizer.Get(tokenizer.O200kBase) })
-	return enc, encErr
-}
+var encoder = sync.OnceValues(func() (tokenizer.Codec, error) {
+	return tokenizer.Get(tokenizer.O200kBase)
+})
 
 // Estimate 对一份 canonical 请求估算 input token 数，恒 ≥ 1。
 //

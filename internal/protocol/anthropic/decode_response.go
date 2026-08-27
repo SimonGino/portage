@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -46,7 +47,7 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 			}
 			if err != nil {
 				scanner.Flush(func(frame []byte) { st.frame(frame, out) })
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					// 记一笔给调用方：这条流是**断的**不是说完的。带内的 EvError
 					// 到了编码侧就与「上游回了个错误对象」混成一样，收场判不出来
 					// （protocol.StreamReadReporter）。

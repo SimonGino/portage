@@ -1,7 +1,7 @@
 package protocol_test
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,8 +87,8 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 					body, dropped := encodeWith(t, exit.enc, req)
 					got := append([]string(nil), dropped...)
 					want := append([]string(nil), tc.want[exit.name]...)
-					sort.Strings(got)
-					sort.Strings(want)
+					slices.Sort(got)
+					slices.Sort(want)
 					if strings.Join(got, ",") != strings.Join(want, ",") {
 						t.Errorf("dropped = %v, want %v", got, want)
 					}
