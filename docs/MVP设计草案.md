@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.17
+> 状态：草案 v1.18
+
+> v1.18 变更（口径层 v0.99 落地：纳管模型输入上限（估算），2026-08-28）：口径见口径层 v0.99，这里只记实现层落点。①**`channel_models` 加 `max_input_tokens` 列**（§7）：`INTEGER NOT NULL DEFAULT 0`，0 = 不限，语义与迁移路数完全照 `protocols` 那列的成例（`ALTER TABLE … ADD COLUMN` + `hasColumn` 判跑没跑过，存量行不回填、迁移前后行为一字不变——默认值 0 的语义恰是老库当下的语义）。②**闸在 `server.relay`**，位置在 `store.Resolve` 之后、压缩闸之前：`len(body)/4 > cand.MaxInputTokens` 即 `rec.Refused(calllog.RequestTooLarge)` + 413，message 带估算值与上限、只提对外模型名。**判据用 `ep != EndpointCountTokens` 豁免 count_tokens**——判端点不判协议，与 `pickLimiter`/`conversionOpen` 同一个坑的同一种避法。透传与转换两条路都在这道闸**之后**分岔，天然同一把尺；`RewriteModel` 对 body 的字节级 splice 发生在闸后，估的是入站原始字节。③**`store.Candidate` 加 `MaxInputTokens int`**，`candidateCols`/`scanCandidate` 各带一列，接入点与直连两条 resolve 路径同吃。④**词表第 11 词**：`calllog.RequestTooLarge = "request_too_large"`，回绝半区（`halves` 表登记，一个字节没到上游）。413 的错误型两侧现成：anthropic 落预留的那格 `request_too_large`，openai 侧走默认 `invalid_request_error`。⑤**管理端**：`store.ChannelModel` 加 `max_input_tokens` 字段（ListChannels 的模型行 SELECT 带上），`PUT /channel-models/:id` 收 `*int`（nil = 不动，0 = 清成不限，负数 400 点名；指针理由同 `protocols` 那条——「没提」与「清空」在 JSON 里不能长一样）。⑥**declcfg**：`Model` 加 `MaxInputTokens int`（yaml `max_input_tokens`，裸 int 不用指针——0 与缺席同义都是「不限」，没有 weight 那种零值陷阱），apply 的 upsert 带列，check 拦负数（文案同 `max_concurrency` 那条），export/example 同步再生成。⑦**前端**：模型行显示上限（未设不占位），编辑入口与协议子集同层。⑧**用例分工**：`internal/server` 主缝四条——透传超限 413 + 词 `request_too_large`、转换路径同一把尺、恰好压线不拦（边界取 `>`）、count_tokens 超限照放行；`internal/store` 迁移与回读各一；`internal/declcfg` 负数拒 + 往返一遍。修改人 jinpenga。
 
 > v1.17 变更（#51 复审跟进：选择类错误改 `upstream.SelectionError`，2026-08-25）：v1.15 ② 里「选择类错误归 `store.InvalidInput` 经 `writeError` 翻译」一句退役——upstream 不再铸 store 层错误类型（错误分类是管理面语义，检测层只报「参数对不上渠道现状」），`ProbeChannel` 六处改返 `upstream.SelectionError{Reason}`，probeChannel adapter 用 `errors.As` 翻成 400 + `{"error": msg}`，HTTP 形状与文案逐字不变；`probe_channel_test.go` 断言随改。修改人 jinpenga。
 > v1.16 变更（[#9](https://github.com/SimonGino/portage/issues/9) 落地：一次上游交换收成 `internal/exchange`，两条 relay 缩成 adapter，2026-08-25）：①**批1 立 `exchange.Client.Do`**，收 dial → attempt 记账回填 → 队列闸/传输错误收场（写回按入站协议） → request-id 候选写回 → 观察者装配（Tap / LogBodies / 错误原文旁路 + TeeReader）——#20 出站端点、v0.53 错误详情、v0.74 三级 request-id、v0.50/v0.52 闸拒三档的不变式自此只在一处推。透传与转换的差异收进 `exchange.Request` 三个参数：`Endpoint`（入口即出口 vs 渠道上游端点）、`RawQuery`（整串照抄 vs 不带）、`TapErrorBody`（≥400 旁路占坑 vs 调用方 `UpstreamRejected` 读全在手）。客户端写盘纪律三份（`relayBody` / `clientStream` / `bufferConverted`）收成 `exchange.Writer`（首字节回调、每写一块推进写超时、flush），缓冲路顺带补回此前丢掉的写超时——那是 #9 票面点名的病，不是顺手的行为漂移。②**批2 立 `ResponseObserver`**：#8 的收场序（先断上游 → 排空解码侧到通道关闭 → 才 Summarize）从 `abortDecode` 的注释与调用顺序**做进构造**——`Close()` 是收场唯一入口，转换流式路径经 `AttachStream` 挂上解码通道后，panic 展开与正常返回走同一条序，`abortDecode` 删除；`nil` 通道守卫是正确性（range nil 永久阻塞）。新用例两条（`exchange/observer_test.go`）：生产拓扑缩微钉「Close 即收场序」（-race 下必须绿）、无解码侧 Close 不阻塞；`convertrace_test.go` 两条原样绿，分工不变（那边钉可达性与装配性质，这边钉构造）。③recorder 的 17 动词 interface 一字未动——收成阶段对象是 [#52](https://github.com/SimonGino/portage/issues/52)（PO 2026-08-25 裁定不入本票）；`TapUpstreamErrorBody` 与 `UpstreamRejected` 两个名字保留，差异（谁先拿到字节）已收进 `TapErrorBody` 参数。修改人 jinpenga。
@@ -693,6 +695,8 @@ CREATE TABLE channel_models (      -- 渠道纳管的可用模型（上游模型
   protocols TEXT NOT NULL DEFAULT '',  -- 这个模型自己能走的协议子集（v0.38/口径层 v0.40）：逗号分隔，取值 anthropic | openai | openai_responses（渠道集自 v1.12 起由 base_url_* 三列派生）。
                                        -- **空串 = 继承渠道全集**，绝大多数模型都该是空的；存原样、不校验它是不是渠道集的子集，
                                        -- 路由时取交集（store.pickProtocol）
+  max_input_tokens INTEGER NOT NULL DEFAULT 0,  -- 输入上限（估算）（v1.18/口径层 v0.99）：0 = 不限（默认）。判据是入站原始 body 字节数 ÷ 4，
+                                       -- 超限 413 + 流水词 request_too_large；闸在 server.relay，Resolve 之后、并发闸之前
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)
@@ -951,6 +955,7 @@ channels:
     models:                         # → channel_models
       - upstream_model: Qwen3-27B
         protocols: []               # 空 = 继承渠道全集（对齐 DDL 里空串的语义）
+        max_input_tokens: 0         # 输入上限（估算），0 = 不限（v1.18/口径层 v0.99）
         disabled: false
 access_points:
   - model: claude-sonnet-4          # 自然键
@@ -1012,7 +1017,7 @@ api_keys:
 | ~~PUT~~ | ~~`/admin/api/channels/:id/credential`~~ | 整把替换，**v0.35 起作废**（口径层 v0.38 放开多凭证） |
 | GET POST | `/admin/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
 | PUT DELETE | `/admin/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |
-| POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除。两者的 body 都可带 `protocols`（v0.38，协议子集；PUT 不传该字段=不动它，传空数组=清成继承） |
+| POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除。两者的 body 都可带 `protocols`（v0.38，协议子集；PUT 不传该字段=不动它，传空数组=清成继承）；PUT 另可带 `max_input_tokens`（v1.18，`*int`：不传=不动，0=清成不限，负数 400） |
 | POST | `/admin/api/channels/:id/fetch-models` | 拉上游 `/v1/models` 给表单做预勾选（v0.38）。**POST 而非 GET**：它朝上游发真请求、花上游的配额，不该被浏览器或中间层当可缓存的读操作重放。回一组 `{protocols, models, status, detail}`，**不落库、不进路由** |
 | POST | `/admin/api/channels/:id/probe` | 模型级检测（v1.13/口径层 v0.96 ①③）：body `{credential_id, model, protocols}`——凭证按 id 指定（**允许已停用**）、`model` 空串 = 全部启用中的纳管模型、`protocols` 必须 ⊆ 已声明协议（越出 400 且**零请求**——参数错误不该花钱）。每格发带模型名的最小真实请求，回 `{credential, models}` 三态矩阵（2xx 通 / 404、405 不通 / 其余说不清，我方固定词表不带上游原文）；**不落库、不进路由、无任何自动触发** |
 | GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |

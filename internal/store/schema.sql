@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS channel_models (
   -- 「配置任何时刻自洽」换「你改渠道时我替你删配置」，而删掉的填法回不来。路由时
   -- 取交集即可（见 store.pickProtocol），渠道把协议勾回来这一行自动重新生效。
   protocols TEXT NOT NULL DEFAULT '',
+  -- 输入上限（估算）（口径层 v0.99）：0 = 不限（默认）。判据是入站原始请求体字节数
+  -- ÷ 4，不解析不分词——透传路径不解析 body 是硬约束，字节估算是唯一统一两条路的
+  -- 算法。超限 413 + 流水词 request_too_large；闸在 server.relay，Resolve 之后。
+  max_input_tokens INTEGER NOT NULL DEFAULT 0,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)

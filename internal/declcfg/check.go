@@ -104,6 +104,11 @@ func checkModels(channel string, models []Model) []string {
 		default:
 			seen[name] = true
 		}
+		// 拒而不是当 0 用，理由同 max_concurrency 那条。
+		if m.MaxInputTokens < 0 {
+			p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 max_input_tokens=%d 是负数：0 表示不限，正整数才是上限",
+				channel, name, m.MaxInputTokens))
+		}
 	}
 	return p
 }

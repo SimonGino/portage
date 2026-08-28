@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
 import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
@@ -7,8 +7,8 @@ import { ProbeDialog } from './probe'
 
 /**
  * CredentialBlock 是渠道凭证在模型页上的区块（PO 2026-08-20 裁决从「上游设置」井
- * 提出来，布局参照 Cherry Studio 的服务商页，视觉与命名不跟；2026-08-26 裁决默认
- * 收起成一行摘要——但缺可用凭证时默认展开：警告条指着这里，收着就是把出口藏起来）。
+ * 提出来，布局参照 Cherry Studio 的服务商页，视觉与命名不跟；2026-08-28 裁决回到
+ * 常驻展开——「管理」「检测」要一眼可见一击可点，折一层就是多一步，推翻 08-26 的默认收起）。
  *
  * 页面上只摆**正在被用的那一把**（掩码 + 显示 / 复制）和「管理」「检测」两颗按钮；
  * 池子的逐条 CRUD、选取模式、停用现场都在「管理」弹框里。检测点开检测弹层
@@ -49,11 +49,7 @@ export function CredentialBlock({
   }
 
   return (
-    <DetailBlock
-      title={<>上游凭证{list.length > 0 && ` · ${list.length}`}</>}
-      summary={enabled.length > 0 ? `共 ${enabled.length} 把在轮` : undefined}
-      defaultOpen={channel.enabled_keys === 0}
-    >
+    <DetailBlock title={<>上游凭证{list.length > 0 && ` · ${list.length}`}</>}>
       <ErrorBar message={error} />
       {list.length === 0 ? (
         /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
@@ -153,7 +149,14 @@ function CredentialsDialog({
         ) : (
           <div className="cred-list">
             {list.map((c) => (
-              <CredentialRow key={c.id} cred={c} mutate={mutate} onProbe={() => onProbe(c)} />
+              <CredentialRow
+                key={c.id}
+                cred={c}
+                channel={channel}
+                enabledCount={enabled}
+                mutate={mutate}
+                onProbe={() => onProbe(c)}
+              />
             ))}
           </div>
         )}
@@ -186,14 +189,40 @@ function CredentialsDialog({
  *  （v0.47），但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。 */
 function CredentialRow({
   cred,
+  channel,
+  enabledCount,
   mutate,
   onProbe,
 }: {
   cred: Credential
+  channel: Channel
+  /** 池子里启用凭证的总数——判断「这是最后一把」要看全池，不是看这一行。 */
+  enabledCount: number
   mutate: (fn: () => Promise<unknown>) => Promise<void>
   onProbe: () => void
 }) {
   const [name, setName] = useState(cred.name)
+  // 停用最后一把的举起态：同 Confirm 的两击，3 秒不按第二下自动放下。
+  const [armedOff, setArmedOff] = useState(false)
+
+  useEffect(() => {
+    if (!armedOff) return
+    const t = setTimeout(() => setArmedOff(false), 3000)
+    return () => clearTimeout(t)
+  }, [armedOff])
+
+  // 这是启用渠道的最后一把启用凭证：删掉或停掉它都会撞上「能保存的配置一定能启动」
+  // 的写后校验（启用渠道零可用凭证过不去）。失效的 key 必须删得掉（PO 2026-08-28
+  // 裁决），出路是把后果摆进确认文案、确认后先停用渠道再动凭证——校验不放宽，
+  // 提示给足，但不拦人。
+  const cascade = !cred.disabled && enabledCount === 1 && !channel.disabled
+
+  /** 先停渠道再动凭证：顺序反过来第一笔就被校验打回。两笔各自成事务，第二笔
+   *  失败时渠道已停——状态照实摆在页面上，不藏。 */
+  async function withChannelOff(fn: () => Promise<unknown>) {
+    await api.put(`/channels/${channel.id}/disabled`, { disabled: true })
+    await fn()
+  }
 
   return (
     <div className={'cred' + (cred.disabled ? ' is-off' : '')}>
@@ -239,14 +268,43 @@ function CredentialRow({
         >
           检测
         </button>
-        <Toggle
-          on={!cred.disabled}
-          label={cred.name}
-          onChange={(on) =>
-            void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: !on }))
+        {armedOff ? (
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => {
+              setArmedOff(false)
+              void mutate(() =>
+                withChannelOff(() => api.put(`/credentials/${cred.id}`, { name, disabled: true })),
+              )
+            }}
+          >
+            连渠道一起停用？
+          </button>
+        ) : (
+          <Toggle
+            on={!cred.disabled}
+            label={cred.name}
+            onChange={(on) => {
+              if (!on && cascade) {
+                setArmedOff(true)
+                return
+              }
+              void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: !on }))
+            }}
+          />
+        )}
+        <Confirm
+          ghost
+          confirm={cascade ? '删除并停用渠道？' : undefined}
+          onConfirm={() =>
+            void mutate(() =>
+              cascade
+                ? withChannelOff(() => api.del(`/credentials/${cred.id}`))
+                : api.del(`/credentials/${cred.id}`),
+            )
           }
         />
-        <Confirm ghost onConfirm={() => void mutate(() => api.del(`/credentials/${cred.id}`))} />
       </div>
     </div>
   )

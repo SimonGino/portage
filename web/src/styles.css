@@ -1012,6 +1012,25 @@ button, input, textarea, select {
   font-size: 12px;
 }
 
+/* 输入上限（口径层 v0.99，DESIGN v0.36）：与协议子集同层同形的一行。
+   链接压到行内小字号，负左边距抵掉 .btn-link 的内边距对齐左边界（同凭证区成例）。 */
+.model-limit-link {
+  font-size: 12px;
+  margin-left: -6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-limit-input {
+  width: 90px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 协议芯片（可点，是控件）。原先这一块写的是 --fg / --fg-muted：这两个 token
    本项目根本没定义过，实际一直在静默继承父级颜色，只是碰巧看不出错。
    选中态不再是蓝底蓝字——「选中」不是四个语义色里的任何一个（§1.4），改成
@@ -2253,7 +2272,7 @@ textarea:focus {
   color: var(--ok-text);
 }
 
-/* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.34 默认收起）── */
+/* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.35 常驻展开）── */
 
 /* 与「纳管模型 · N」同一套小字标题（.models-title），三段读起来才是同一层：
    凭证、地址、模型都是这个渠道名下的清单项。 */
@@ -2261,44 +2280,18 @@ textarea:focus {
   margin: 0 0 18px;
 }
 
+/* 标题行：标题 + 可选的「编辑 / 完成」文字动作（v0.35，API 地址用）。 */
+.detail-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
 .detail-block-title {
   font-size: 12px;
   color: var(--faint);
   letter-spacing: 0.02em;
-}
-
-/* 标题行整行是展开开关（v0.34 默认收起）。尖角排在标题后而不是前——前置会把
-   标题左缘顶得跟「纳管模型 · N」错开，三段就不是同一层了。 */
-.detail-block-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-
-.detail-block-head:hover .detail-block-title {
-  color: var(--mute);
-}
-
-.detail-block-caret {
-  display: inline-flex;
-  color: var(--faint);
-  transition: transform 0.15s ease;
-}
-
-.detail-block-caret.is-open {
-  transform: rotate(90deg);
-}
-
-/* 收起时的一句摘要：收起不该把「里面有什么」一并藏掉。 */
-.detail-block-summary {
-  font-size: 12px;
-  color: var(--mute);
-  margin-left: 4px;
 }
 
 /* 凭证行：掩码值 + 「管理」「检测」。52em 与弹框里的列表同一条右边界。 */
@@ -2365,6 +2358,29 @@ textarea:focus {
 
 .baseurl-del {
   flex: none;
+}
+
+/* 只读态（v0.35 默认）：每协议一行预览地址。协议名列与编辑态同宽，切换时不跳。 */
+.baseurl-view-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: 52em;
+}
+
+.baseurl-view-row + .baseurl-view-row {
+  margin-top: 6px;
+}
+
+.baseurl-view-row .baseurl-proto {
+  padding-top: 0; /* 没有输入框可对齐 */
+}
+
+.baseurl-view-url {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  word-break: break-all;
 }
 
 /* 「添加端点」chips 与输入列同缘起排（跳过协议名列），一眼读出「加的是同一列东西」。 */

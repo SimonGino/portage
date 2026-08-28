@@ -75,6 +75,9 @@ func migrate(db *sql.DB) error {
 	if err := addModelProtocols(db); err != nil {
 		return err
 	}
+	if err := addModelMaxInputTokens(db); err != nil {
+		return err
+	}
 	if err := addKeyPlain(db); err != nil {
 		return err
 	}
@@ -402,6 +405,23 @@ func addModelProtocols(db *sql.DB) error {
 	return nil
 }
 
+// addModelMaxInputTokens 给纳管模型补输入上限（估算）列（口径层 v0.99）。默认值 0
+// 的语义（不限）恰是老库当下的语义，存量行不回填、迁移前后行为一字不变。
+func addModelMaxInputTokens(db *sql.DB) error {
+	has, err := hasColumn(db, "channel_models", "max_input_tokens")
+	if err != nil {
+		return fmt.Errorf("检查 channel_models.max_input_tokens: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(
+		`ALTER TABLE channel_models ADD COLUMN max_input_tokens INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("迁移 channel_models.max_input_tokens: %w", err)
+	}
+	return nil
+}
+
 // hasColumn 问库里某张表有没有这一列。迁移是否已跑过全靠它判断。
 func hasColumn(db *sql.DB, table, col string) (bool, error) {
 	var n int
@@ -502,6 +522,10 @@ type Candidate struct {
 	ChannelName string
 	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
 	MaxConcurrency int
+	// MaxInputTokens 是**纳管模型级**的输入上限（估算）（口径层 v0.99）：0 = 不限。
+	// 判据是入站原始请求体字节数 ÷ 4——不解析不分词，透传与转换两条路同一把尺；
+	// 闸在 server.relay，超限 413 + 流水词 request_too_large，一个字节不打上游。
+	MaxInputTokens int
 	// SupportsCompaction 记这个渠道的上游认不认 Codex 的 compaction_trigger
 	// （口径层 v0.54）。只在 Responses 透传那条路上被问到——转换路径上 trigger 到不了
 	// 上游，与渠道能力无关。
@@ -576,7 +600,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -588,6 +612,7 @@ const (
 // 是因为它们还要喂给谓词的 Go 半边（finishCandidate），不属于 Candidate 本身。
 func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *string) error {
 	return row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
+		&c.MaxInputTokens,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
 		&c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 }

@@ -186,6 +186,11 @@ export interface ChannelModel {
    * 例外才填。路由时与渠道集取交集，没有交集这个模型就当下用不了。
    */
   protocols: Protocol[]
+  /**
+   * 输入上限（估算）（口径层 v0.99）：0 = 不限。判据是入站原始请求体字节数 ÷ 4，
+   * 界面文案必须带「估算」，不承诺精确。
+   */
+  max_input_tokens: number
   disabled: boolean
 }
 

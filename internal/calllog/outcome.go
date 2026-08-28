@@ -12,7 +12,7 @@ package calllog
 import "database/sql"
 
 // Outcome 是流水 `error` 列的那份固定词表（CONTEXT.md「outcome 词表」，口径层
-// v0.70）：**10 个词**，加一个不落库的哨兵 `ok`。
+// v0.70 定 10 词、v0.99 加 `request_too_large`）：**11 个词**，加一个不落库的哨兵 `ok`。
 //
 // 封闭类型而不是裸 string，是因为这份词表的读者（`group by error` 的人）没有第二个
 // 信源：字面量写错一个字母能编译、能上线，只在有人按词聚合时才发现，而那时错的
@@ -53,6 +53,10 @@ const (
 	// QueueAbandoned 是客户端在排队途中自己断了。归在这一半而不是失败那半：
 	// 它同样一个字节都没碰过上游，与「打过上游之后死掉」不是一类事故。
 	QueueAbandoned Outcome = "queue_abandoned"
+	// RequestTooLarge 是纳管模型的输入上限（估算）拦下的（口径层 v0.99，第 11 词，
+	// PO 2026-08-28 裁定）：入站原始 body 字节数 ÷ 4 超过该候选的 max_input_tokens，
+	// 413。判定在 Resolve 之后、并发闸之前，一个字节没到上游。
+	RequestTooLarge Outcome = "request_too_large"
 
 	// —— 失败这一半：真的向上游发起过之后出的事 ——
 
@@ -123,6 +127,7 @@ var halves = map[Outcome]half{
 	QueueFull:             halfRefusal,
 	QueueTimeout:          halfRefusal,
 	QueueAbandoned:        halfRefusal,
+	RequestTooLarge:       halfRefusal,
 
 	UpstreamError: halfFailure,
 	StreamAborted: halfFailure,

@@ -143,10 +143,14 @@ export function Dialog({
  */
 export function Confirm({
   label = '删除',
+  confirm,
   ghost,
   onConfirm,
 }: {
   label?: string
+  /** 举起后的确认文案，默认「确定{label}？」。删除会连带别的后果时用它把后果
+   *  写进按钮里（如「删除并停用渠道？」）——提示要长在人下一步必按的那个键上。 */
+  confirm?: string
   /** ghost：未举起时不画边框，悬停才显形。列表里每行都挂一个删除按钮时用它——
    *  一排同等分量的描边按钮会盖过行首的正主。举起后仍是实心红，不受影响。 */
   ghost?: boolean
@@ -180,7 +184,7 @@ export function Confirm({
         onConfirm()
       }}
     >
-      确定{label}？
+      {confirm ?? `确定${label}？`}
     </button>
   )
 }
@@ -313,48 +317,27 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
 /**
  * DetailBlock 是模型页身份条下的清单区块（「API 地址」「上游凭证」共用这一个壳）。
  *
- * v0.34 起默认收起成一行：标题 + 尖角 + 一句摘要，点标题行原地展开。日常进这页
- * 是看纳管模型，地址与凭证是「接上游时填一次」的东西，常驻会把模型列表推到一屏
- * 以下；但也不塞回「上游设置」弹框——v0.94「接一家上游要填的全部，不该藏两层」
- * 仍成立，收起只是把常驻改成一击可达。defaultOpen 给「此刻必须看见它」的场合
- * （渠道缺凭证时，警告条指着这里）。
+ * v0.35 起回到常驻展开（推翻 v0.34 的默认收起）：管理、检测、每协议的预览地址
+ * 都得一眼可见、一击可点，折一层就是多一步。v0.94「接一家上游要填的全部，
+ * 不该藏两层」照旧成立——也不塞回「上游设置」弹框。action 摆在标题旁，给
+ * 「编辑 / 完成」这类切换整块形态的文字动作。
  */
 export function DetailBlock({
   title,
-  summary,
-  defaultOpen,
+  action,
   children,
 }: {
   title: ReactNode
-  /** 收起时跟在标题后的一句摘要——收起不该把「里面有什么」一并藏掉。 */
-  summary?: ReactNode
-  defaultOpen?: boolean
+  action?: ReactNode
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(defaultOpen ?? false)
   return (
     <section className="detail-block">
-      <button
-        type="button"
-        className="detail-block-head"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
+      <div className="detail-block-head">
         <span className="detail-block-title">{title}</span>
-        <span className={'detail-block-caret' + (open ? ' is-open' : '')} aria-hidden>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path
-              d="M4.4 2.8 7.6 6l-3.2 3.2"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-        {!open && summary != null && <span className="detail-block-summary">{summary}</span>}
-      </button>
-      {open && children}
+        {action}
+      </div>
+      {children}
     </section>
   )
 }

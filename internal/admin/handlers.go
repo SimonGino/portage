@@ -561,6 +561,9 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 		// nil 不动那一列，空数组则是显式改回「继承渠道全集」。同 key_mode 那条
 		// 理由——PUT 整体覆盖时，老前端不传的字段不该被静默改掉。
 		Protocols *[]string `json:"protocols"`
+		// MaxInputTokens 是输入上限（估算）（口径层 v0.99）。指针理由同上：
+		// nil 不动，0 是显式清成「不限」，两种意图在 JSON 里不能长一样。
+		MaxInputTokens *int `json:"max_input_tokens"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
@@ -569,6 +572,11 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		if err := store.SetChannelModelDisabled(ctx, tx, id, in.Disabled); err != nil {
 			return err
+		}
+		if in.MaxInputTokens != nil {
+			if err := store.SetChannelModelMaxInputTokens(ctx, tx, id, *in.MaxInputTokens); err != nil {
+				return err
+			}
 		}
 		if in.Protocols == nil {
 			return nil

@@ -17,10 +17,10 @@ import { ModelPicker } from './picker'
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
  * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
- * 「API 地址」「上游凭证」是身份条下**默认收起的区块**（PO 2026-08-20 裁决提出井外，
+ * 「API 地址」「上游凭证」是身份条下**常驻展开的区块**（PO 2026-08-20 裁决提出井外，
  * 2026-08-24 裁决地址在上——地址定义这个渠道是谁、声明了哪些协议，凭证是从属物，
- * 接一家上游也是先填地址再贴 key；2026-08-26 裁决默认收起成一行摘要、点开原地展开
- * ——这页第一眼该是纳管模型，两块常驻会把模型列表推到一屏以下）。
+ * 接一家上游也是先填地址再贴 key；2026-08-28 裁决回到常驻展开，推翻 08-26 的默认
+ * 收起——管理、检测、每协议的预览地址都要一眼可见，折一层就是多一步）。
  * 「上游设置」（改名、并发、能力位、删除）是条内文字按钮点开的**弹框**（PO
  * 2026-08-24 裁决，推翻 v0.75 的展开井：与管理、检测、挑选同一形制，页面上不再有
  * 顶开内容的井，也不再需要「收起后未保存」那套小圆点机制）。检测在凭证行里，点开
@@ -244,6 +244,7 @@ export function ChannelDetail({
                     mutate={mutate}
                   />
                 )}
+                <ModelInputLimit model={m} mutate={mutate} />
               </div>
             ))}
           </div>
@@ -256,12 +257,15 @@ export function ChannelDetail({
 /**
  * BaseURLBlock 是 API 地址在模型页上的区块（PO 2026-08-20 裁决与凭证区块一起
  * 从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层；
- * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物；2026-08-26
- * 裁决默认收起，收起行摘要是已声明的协议——这页第一眼该是纳管模型）。
+ * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物；2026-08-28
+ * 裁决常驻展开、默认只读——每协议一行**预览地址**（网关实际会请求的完整地址）
+ * 一眼可见，输入框、删行、加行收进「编辑」原地切换：日常进这页是核对地址，
+ * 不是改地址，常驻一排输入框全是待办的样子）。
  *
- * v0.96 起**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行紧随其下；
- * 「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是再填一次地址），
- * 至少保留一行，删到最后一行的口被服务端和这里一起堵住。
+ * 编辑态仍是 v0.96 的**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行
+ * 紧随其下；「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是
+ * 再填一次地址），至少保留一行，删到最后一行的口被服务端和这里一起堵住。
+ * 「完成」只收面板不提交——每一笔都已在失焦时写掉。
  * 写走 base-url 那一笔意图写（#48 批2），别的渠道字段碰不到。
  */
 function BaseURLBlock({
@@ -272,6 +276,7 @@ function BaseURLBlock({
   mutate: (fn: () => Promise<unknown>) => Promise<boolean>
 }) {
   const [urls, setUrls] = useState<BaseURLs>({ ...ch.base_url })
+  const [editing, setEditing] = useState(false)
   // 「添加端点」刚加出来、还没填值的空行：值为空不算声明，不在 ch.base_url 里，
   // 单独记着才不会一失焦就消失。
   const [blank, setBlank] = useState<Protocol[]>([])
@@ -327,14 +332,51 @@ function BaseURLBlock({
     (p) => (ch.base_url[p] ?? '') !== '' || blank.includes(p) || (urls[p] ?? '').trim() !== '',
   )
   const addable = PROTOCOL_ORDER.filter((p) => !rows.includes(p))
-  // 收起行的摘要是已声明的协议——地址本身太长，而「声明了哪些协议」正是这块
-  // 定义渠道身份的那一半。
   const declared = PROTOCOL_ORDER.filter((p) => (ch.base_url[p] ?? '') !== '')
+
+  if (!editing) {
+    return (
+      <DetailBlock
+        title="API 地址"
+        action={
+          <button type="button" className="btn btn-link" onClick={() => setEditing(true)}>
+            编辑
+          </button>
+        }
+      >
+        {declared.map((p) => (
+          <div key={p} className="baseurl-view-row">
+            <span className="baseurl-proto" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
+              {PROTOCOL_SHORT[p] ?? p}
+            </span>
+            <code
+              className="baseurl-view-url"
+              title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径"
+            >
+              {joinURL(ch.base_url[p] ?? '', PROTOCOL_PATH[p] ?? '')}
+            </code>
+          </div>
+        ))}
+      </DetailBlock>
+    )
+  }
 
   return (
     <DetailBlock
       title="API 地址"
-      summary={declared.map((p) => PROTOCOL_SHORT[p] ?? p).join(' + ')}
+      action={
+        <button
+          type="button"
+          className="btn btn-link"
+          onClick={() => {
+            // 「完成」只收面板：每一笔都在失焦时已写掉，这里只把没填值的空行清掉。
+            setBlank([])
+            setEditing(false)
+          }}
+        >
+          完成
+        </button>
+      }
     >
       {rows.map((p) => {
         const v = urls[p] ?? ''
@@ -513,6 +555,89 @@ function ModelProtocols({
           上游列表里没有它
         </span>
       )}
+    </div>
+  )
+}
+
+/** 输入上限显示成 200k 这种紧凑形；不整千的照原样带分隔符摆。 */
+function fmtTokens(n: number): string {
+  return n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : n.toLocaleString('en-US')
+}
+
+/**
+ * ModelInputLimit 是模型行上的「输入上限（估算）」（口径层 v0.99，DESIGN v0.36）。
+ * 与协议子集同层同形：未设时整格只是一个「上限」文字动作，设了显示「上限 ~N」；
+ * 点开是行内小输入框，失焦或回车即存，空/0 = 清成不限。文案一律带「估算」——
+ * 判据是请求体字节数 ÷4，不是真分词，界面不许把它说成精确值。
+ */
+function ModelInputLimit({
+  model,
+  mutate,
+}: {
+  model: ChannelModel
+  mutate: (fn: () => Promise<unknown>) => Promise<unknown>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState('')
+  const limit = model.max_input_tokens ?? 0
+
+  function save() {
+    setEditing(false)
+    const raw = val.trim()
+    const n = raw === '' ? 0 : Math.floor(Number(raw))
+    if (!Number.isFinite(n) || n < 0) return
+    if (n === limit) return
+    void mutate(() =>
+      api.put(`/channel-models/${model.id}`, { disabled: model.disabled, max_input_tokens: n }),
+    )
+  }
+
+  if (editing) {
+    return (
+      <div className="model-protocols">
+        <span className="model-protocols-label" title="估算输入 token 超过它就按 413 拒。按请求体字节数 ÷4 估算，不精确；含图片的请求会被高估。">
+          上限
+        </span>
+        <input
+          autoFocus
+          className="model-limit-input"
+          value={val}
+          inputMode="numeric"
+          onChange={(e) => setVal(e.target.value.replace(/[^0-9]/g, ''))}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              save()
+            } else if (e.key === 'Escape') {
+              setVal(String(limit || ''))
+              setEditing(false)
+            }
+          }}
+          placeholder="如 200000"
+        />
+        <span className="muted">token（估算），空 = 不限</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="model-protocols">
+      <button
+        type="button"
+        className="btn-link model-limit-link"
+        onClick={() => {
+          setVal(limit > 0 ? String(limit) : '')
+          setEditing(true)
+        }}
+        title={
+          limit > 0
+            ? `输入上限（估算）${limit.toLocaleString('en-US')} token：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确。点击修改`
+            : '设置输入上限（估算）：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确'
+        }
+      >
+        {limit > 0 ? `上限 ~${fmtTokens(limit)}` : '上限'}
+      </button>
     </div>
   )
 }

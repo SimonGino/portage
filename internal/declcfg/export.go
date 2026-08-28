@@ -136,7 +136,7 @@ func exportCredentials(ctx context.Context, db store.Queryer, channelID int64) (
 
 func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Model, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT upstream_model, protocols, disabled FROM channel_models
+		`SELECT upstream_model, protocols, max_input_tokens, disabled FROM channel_models
 		 WHERE channel_id = ? ORDER BY upstream_model`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("读纳管模型：%w", err)
@@ -147,7 +147,7 @@ func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Mod
 		var m Model
 		var protocols string
 		var disabled int
-		if err := rows.Scan(&m.UpstreamModel, &protocols, &disabled); err != nil {
+		if err := rows.Scan(&m.UpstreamModel, &protocols, &m.MaxInputTokens, &disabled); err != nil {
 			return nil, err
 		}
 		m.Protocols = splitProtocols(protocols)

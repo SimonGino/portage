@@ -93,7 +93,10 @@ type Credential struct {
 type Model struct {
 	UpstreamModel string   `yaml:"upstream_model"`
 	Protocols     []string `yaml:"protocols"`
-	Disabled      bool     `yaml:"disabled"`
+	// MaxInputTokens 是输入上限（估算）（口径层 v0.99）：0 = 不限。裸 int 不用指针——
+	// 0 与「没写」同义（都是不限），没有 weight 那种零值陷阱。
+	MaxInputTokens int  `yaml:"max_input_tokens"`
+	Disabled       bool `yaml:"disabled"`
 }
 
 // AccessPoint 是对外模型名，内嵌它的候选。

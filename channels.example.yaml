@@ -26,6 +26,7 @@ channels:
     models:
       - upstream_model: claude-sonnet-4-20250514
         protocols: []
+        max_input_tokens: 0
         disabled: false
   - name: 自建-vllm
     base_url:
@@ -44,9 +45,11 @@ channels:
       - upstream_model: Qwen3-32B
         protocols:
           - openai
+        max_input_tokens: 0
         disabled: false
       - upstream_model: Qwen2.5-72B-旧的
         protocols: []
+        max_input_tokens: 0
         disabled: true
 access_points:
   - model: claude-sonnet-4

@@ -452,6 +452,30 @@ func TestAllowedModelsMatchesWhatAuthReads(t *testing.T) {
 //
 // 这一列的分隔符就是逗号，带逗号的名字在里面表达不出来——存进去会被切成两段谁都
 // 对不上，而闸全过、页面上也看着正常。
+// TestMaxInputTokensAppliesAndRejectsNegative：输入上限（估算）（口径层 v0.99）。
+// 正数原样落库、0/缺席都是不限；负数拒——0 已经是「不限」，负数只能是填错。
+func TestMaxInputTokensAppliesAndRejectsNegative(t *testing.T) {
+	db := openDB(t)
+	mustApply(t, db, strings.Replace(goodFile,
+		"      - upstream_model: Qwen3-27B",
+		"      - upstream_model: Qwen3-27B\n        max_input_tokens: 200000", 1))
+	var got int
+	if err := db.QueryRow(
+		`SELECT max_input_tokens FROM channel_models WHERE upstream_model = 'Qwen3-27B'`).Scan(&got); err != nil {
+		t.Fatalf("读回上限: %v", err)
+	}
+	if got != 200000 {
+		t.Errorf("max_input_tokens = %d, 期望 200000", got)
+	}
+
+	msg := applyErr(t, openDB(t), strings.Replace(goodFile,
+		"      - upstream_model: Qwen3-27B",
+		"      - upstream_model: Qwen3-27B\n        max_input_tokens: -1", 1))
+	if !strings.Contains(msg, "max_input_tokens=-1 是负数") {
+		t.Errorf("负数该被点名拒掉，实际报文：\n%s", msg)
+	}
+}
+
 func TestAllowedModelsRejectsCommaInName(t *testing.T) {
 	got := applyErr(t, openDB(t), strings.Replace(goodFile,
 		"    key: sk-ptg-real-one",

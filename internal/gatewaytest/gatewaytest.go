@@ -524,6 +524,17 @@ func SetChannelConcurrency(t *testing.T, db *sql.DB, channelID int64, limit int)
 	}
 }
 
+// SetModelMaxInputTokens 设纳管模型的输入上限（估算）（口径层 v0.99）。库里的默认
+// 是 0（不限），所以只有真要拦的用例需要调它。按上游模型名定位，够测试用。
+func SetModelMaxInputTokens(t *testing.T, db *sql.DB, upstreamModel string, limit int) {
+	t.Helper()
+	if _, err := db.Exec(
+		`UPDATE channel_models SET max_input_tokens = ? WHERE upstream_model = ?`,
+		limit, upstreamModel); err != nil {
+		t.Fatalf("设纳管模型输入上限失败: %v", err)
+	}
+}
+
 // SetChannelCompaction 设渠道的 compaction 能力位（口径层 v0.54）。库里的默认是
 // false，所以只有「上游确实认得 compaction_trigger」的用例需要调它。
 func SetChannelCompaction(t *testing.T, db *sql.DB, channelID int64, supports bool) {

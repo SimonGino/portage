@@ -7,8 +7,9 @@ import (
 	"github.com/SimonGino/portage/internal/calllog"
 )
 
-// words 是词表全集，**10 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70），
-// 哨兵 ok 不在其中。加第 11 个词要同步这里——下面几条断言就是靠它变成必答题的。
+// words 是词表全集，**11 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70 定 10 词、
+// v0.99 加 request_too_large），哨兵 ok 不在其中。加第 12 个词要同步这里——下面几条
+// 断言就是靠它变成必答题的。
 var words = []calllog.Outcome{
 	calllog.UpstreamError,
 	calllog.StreamAborted,
@@ -20,13 +21,14 @@ var words = []calllog.Outcome{
 	calllog.CompactionUnsupported,
 	calllog.ModelNotAllowed,
 	calllog.RateLimited,
+	calllog.RequestTooLarge,
 }
 
-// 词表是 10 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
-// 这份词表与 CONTEXT.md 的词条、口径层 v0.70 是同一件事，改一边就得改另一边。
-func TestOutcomeVocabularyHasTenWords(t *testing.T) {
-	if len(words) != 10 {
-		t.Fatalf("词表有 %d 个词, 期望 10", len(words))
+// 词表是 11 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
+// 这份词表与 CONTEXT.md 的词条、口径层 v0.70/v0.99 是同一件事，改一边就得改另一边。
+func TestOutcomeVocabularyHasElevenWords(t *testing.T) {
+	if len(words) != 11 {
+		t.Fatalf("词表有 %d 个词, 期望 11", len(words))
 	}
 	seen := map[calllog.Outcome]bool{}
 	for _, w := range words {
@@ -36,7 +38,7 @@ func TestOutcomeVocabularyHasTenWords(t *testing.T) {
 		seen[w] = true
 	}
 	if seen[calllog.OK] {
-		t.Error("ok 是哨兵，不是第 11 个词")
+		t.Error("ok 是哨兵，不是第 12 个词")
 	}
 }
 
@@ -55,6 +57,7 @@ func TestOutcomeStringIsTheWireWord(t *testing.T) {
 		calllog.CompactionUnsupported: "compaction_unsupported",
 		calllog.ModelNotAllowed:       "model_not_allowed",
 		calllog.RateLimited:           "rate_limited",
+		calllog.RequestTooLarge:       "request_too_large",
 	} {
 		if got := word.String(); got != want {
 			t.Errorf("String() = %q, 期望 %q", got, want)
@@ -121,6 +124,7 @@ func TestHalvesSplitOnWhetherUpstreamWasDialed(t *testing.T) {
 		calllog.Unauthorized, calllog.Rejected, calllog.ModelNotAllowed,
 		calllog.RateLimited, calllog.CompactionUnsupported,
 		calllog.QueueFull, calllog.QueueTimeout, calllog.QueueAbandoned,
+		calllog.RequestTooLarge,
 	} {
 		if !w.Refusal() {
 			t.Errorf("%q 该算回绝：这一档一个字节都没到上游", w)

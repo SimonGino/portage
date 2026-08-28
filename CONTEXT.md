@@ -31,6 +31,10 @@ _Avoid_: 供应商（不是独立实体：一个渠道就对应一家上游的�
 **纳管模型**：
 渠道声明的可用上游模型条目；候选只能引用纳管条目，不自由填字符串。
 
+**输入上限（估算）**：
+纳管模型上的可选输入 token 上限（v0.99），0/空 = 不限。估算 = 入站原始请求体字节数 ÷ 4，不解析不分词，透传/转换同一把尺；判 Resolve 选中那个候选的限，不筛候选、不触发转移，超限 413 + 流水词 `request_too_large`；`count_tokens` 豁免。含 base64 图片的请求会被高估是已知边界。
+_Avoid_: 上下文窗口（那是模型能力，这是网关愿意喂多大）、精确 token 上限（不承诺精确）、拿 `tokencount` 包实现它（v0.80 把那个包锁死在 count_tokens 端点）
+
 **凭证池**：
 渠道下 1..N 份上游凭证，每份带一个渠道内唯一的人写名字；类型 `api_key` / `service_account` 渠道级二选一。凭证值管理端可回读可复制（v0.47 推翻 v0.28 的「只写不回读」），但只由凭证池那一个接口发。渠道页上这一段叫「上游凭证」（不叫「API 密钥」，那会与导航上的 API Key 同形不同义）。
 _Avoid_: key 池（v0.17 泛化后的旧称）、API 密钥（指这一段时）
@@ -59,7 +63,7 @@ _Avoid_: 网关 key（旧称）、api key（指上游凭证时）、按凭证（
 _Avoid_: 错误摘要（那是 `error` 列的词表）
 
 **outcome 词表**：
-流水 `error` 列的那份固定词表，**10 个词**（v0.70 补记）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
+流水 `error` 列的那份固定词表，**11 个词**（v0.70 补记 10 词，v0.99 加 `request_too_large`）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`、`request_too_large`。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
 _Avoid_: 把 `ok` 当成第 11 个词（它是哨兵，不进库）、把 NULL 与空串当两态（写侧只产生 NULL，空串是接口层的形态）
 
 ### 协议与转换

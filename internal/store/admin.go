@@ -99,7 +99,10 @@ type ChannelModel struct {
 	// 全集**，绝大多数模型都该是空的；只有「渠道会说 anthropic，但这个模型不在
 	// `/v1/messages` 上」这种例外才填。路由时与渠道集取交集，见 store.pickProtocol。
 	Protocols protocol.Set `json:"protocols"`
-	Disabled  bool         `json:"disabled"`
+	// MaxInputTokens 是输入上限（估算）（口径层 v0.99）：0 = 不限。判据是入站原始
+	// 请求体字节数 ÷ 4，界面文案必须带「估算」，不承诺精确。
+	MaxInputTokens int  `json:"max_input_tokens"`
+	Disabled       bool `json:"disabled"`
 }
 
 // Channel 是管理端看到的一个渠道。没有 credential 字段，见文件头。
@@ -172,7 +175,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	// 纳管模型单独一趟再拼回去，不用 LEFT JOIN 一次拉完：JOIN 出来的行数是
 	// 渠道 × 模型，得在 Go 里做一次去重才能还原渠道本身的字段。两趟更短也更难写错。
 	mrows, err := db.QueryContext(ctx,
-		`SELECT id, channel_id, upstream_model, protocols, disabled FROM channel_models ORDER BY id`)
+		`SELECT id, channel_id, upstream_model, protocols, max_input_tokens, disabled FROM channel_models ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +184,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var m ChannelModel
 		var chID int64
 		var mProtocols string
-		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.Disabled); err != nil {
+		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.MaxInputTokens, &m.Disabled); err != nil {
 			return nil, err
 		}
 		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
@@ -612,6 +615,17 @@ func SetChannelModelProtocols(ctx context.Context, db Conn, id int64, protocols 
 	}
 	res, err := db.ExecContext(ctx,
 		`UPDATE channel_models SET protocols = ? WHERE id = ?`, raw, id)
+	return affectedOne(res, err)
+}
+
+// SetChannelModelMaxInputTokens 改一个纳管模型的输入上限（估算）（口径层 v0.99）。
+// 0 = 清成不限；负数拒——0 已经是「不限」，负数只能是填错。
+func SetChannelModelMaxInputTokens(ctx context.Context, db Conn, id int64, limit int) error {
+	if limit < 0 {
+		return InvalidInput{Reason: "输入上限不能是负数：0 表示不限，正整数才是上限"}
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE channel_models SET max_input_tokens = ? WHERE id = ?`, limit, id)
 	return affectedOne(res, err)
 }
 

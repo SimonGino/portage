@@ -226,10 +226,10 @@ func applyModels(ctx context.Context, tx *sql.Tx, channel string, channelID int6
 		name := strings.TrimSpace(m.UpstreamModel)
 		keep[name] = true
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO channel_models (channel_id, upstream_model, protocols, disabled) VALUES (?,?,?,?)
+			INSERT INTO channel_models (channel_id, upstream_model, protocols, max_input_tokens, disabled) VALUES (?,?,?,?,?)
 			ON CONFLICT(channel_id, upstream_model) DO UPDATE SET
-			  protocols = excluded.protocols, disabled = excluded.disabled`,
-			channelID, name, parseProtocols(m.Protocols), boolInt(m.Disabled)); err != nil {
+			  protocols = excluded.protocols, max_input_tokens = excluded.max_input_tokens, disabled = excluded.disabled`,
+			channelID, name, parseProtocols(m.Protocols), m.MaxInputTokens, boolInt(m.Disabled)); err != nil {
 			return nil, fmt.Errorf("写入渠道 %q 的纳管模型 %q：%w", channel, name, err)
 		}
 		var id int64

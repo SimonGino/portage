@@ -262,6 +262,21 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		rec.Routed(cand.ChannelName, cand.Protocol, cand.UpstreamModel)
 
+		// 输入上限闸（口径层 v0.99）：判**选中候选**的限，不筛候选、不触发转移。
+		// 判据是入站原始 body 字节数 ÷ 4 的估算——透传路径不解析 body 是硬约束，
+		// 字节估算是唯一让透传与转换同一把尺的算法（RewriteModel 的 splice 与转换
+		// 的 decode 都在闸后，估的都是这份入站字节）。count_tokens 豁免：判端点不判
+		// 协议（pickLimiter/conversionOpen 踩过的同一个坑），那条路不打上游生成侧，
+		// 且它正是客户端用来自行判断「要不要压缩」的工具。
+		if est := len(body) / 4; cand.MaxInputTokens > 0 && est > cand.MaxInputTokens &&
+			ep != protocol.EndpointCountTokens {
+			rec.Refused(calllog.RequestTooLarge)
+			ep.Proto.WriteError(c.Writer, http.StatusRequestEntityTooLarge,
+				"请求过大：估算输入 "+strconv.Itoa(est)+" token，超出模型 "+head.Model+
+					" 的输入上限 "+strconv.Itoa(cand.MaxInputTokens)+"（按请求体字节数估算，不精确）")
+			return
+		}
+
 		// Codex 压缩闸（口径层 v0.54）：拦在选完渠道之后、分岔之前——判据要同时
 		// 用到「渠道说哪个协议」与「它认不认 compaction_trigger」，而两条路的收场是
 		// 同一句拒绝，没有理由在分岔两侧各写一遍。见 compaction.go。
