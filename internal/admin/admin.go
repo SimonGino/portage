@@ -133,6 +133,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 	// 导出整份业务配置为 channels.yaml（口径层 §2.9 #32）。在 auth 组里，且**没有**
 	// 第二条出口（不做 CLI 导出子命令）——见 export.go。
 	auth.GET("/export", h.exportConfig)
+	// 导入一份 channels.yaml，覆盖式（#59）。在写闸组里：声明文件形态下导进去的
+	// 改动活不过下次重启 apply，与其余业务配置写接口同一句 409——见 import.go。
+	cw.POST("/import", h.importConfig)
 
 	auth.GET("/logs", h.listLogs)
 	auth.GET("/usage", h.usage)

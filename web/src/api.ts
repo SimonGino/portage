@@ -83,6 +83,33 @@ export async function download(path: string, filename: string): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * 导入声明文件（#59）：POST 原始 YAML 文本，回变更清单。今天只有导入配置走它——
+ * request() 会把 body JSON 化，而这里要发的就是文件原文。
+ */
+export async function importConfig(yaml: string): Promise<string[]> {
+  const res = await fetch(BASE + '/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/yaml' },
+    body: yaml,
+    credentials: 'same-origin',
+  })
+  const text = await res.text()
+  let payload: unknown = null
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    // 非 JSON 的错误体（比如反代吐的 502 页面）用兜底文案。
+  }
+  if (!res.ok) {
+    // 400 里装的是校验原文（一次报全，多行）——写给人看的，原样抛给弹框显示。
+    const msg = (payload as { error?: string } | null)?.error ?? `请求失败（HTTP ${res.status}）`
+    if (res.status === 401) onUnauthorized?.()
+    throw new ApiError(res.status, msg)
+  }
+  return (payload as { changes: string[] }).changes
+}
+
 export const api = {
   get: <T,>(path: string) => request<T>('GET', path),
   post: <T,>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),

@@ -1429,6 +1429,23 @@ textarea:focus {
   color: var(--warn-text);
 }
 
+/* 导入失败的 400 报文是「一次报全」的多行原文，每行一条问题——揉成一段就没法
+   逐条对着改了。只挂在需要的那个条上，别动 ErrorBar 全站的默认。 */
+.bar-pre {
+  white-space: pre-wrap;
+}
+
+/* 导入完成的变更清单：每行「新增渠道 xxx」一类的短句，普通列表即可，间距略收。 */
+.import-changes {
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+.import-changes li {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
 /* 警告条里的行内动作：跟正文同色同字号，下划线是唯一的「能点」信号——条本身
    已经是警示色，再上按钮底色就是双重强调。 */
 .bar-link {

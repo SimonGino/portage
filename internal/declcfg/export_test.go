@@ -52,7 +52,7 @@ func roundtripFixture() *declcfg.File {
 
 func applyFile(t *testing.T, db *sql.DB, f *declcfg.File) {
 	t.Helper()
-	if err := declcfg.Apply(context.Background(), db, f, discardLogger()); err != nil {
+	if _, err := declcfg.Apply(context.Background(), db, f, discardLogger()); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 }
@@ -251,7 +251,7 @@ func TestExampleFileIsGeneratedByExporter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("示范文件自己解不动：%v", err)
 	}
-	if err := declcfg.Apply(context.Background(), openDB(t), f, discardLogger()); err == nil {
+	if _, err := declcfg.Apply(context.Background(), openDB(t), f, discardLogger()); err == nil {
 		t.Error("示范文件照原样 apply 必须被占位闸拒掉")
 	}
 }

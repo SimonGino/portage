@@ -50,7 +50,7 @@ func mustApply(t *testing.T, db *sql.DB, yaml string) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if err := declcfg.Apply(context.Background(), db, f, discardLogger()); err != nil {
+	if _, err := declcfg.Apply(context.Background(), db, f, discardLogger()); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 }
@@ -61,7 +61,7 @@ func applyErr(t *testing.T, db *sql.DB, yaml string) string {
 	if err != nil {
 		return err.Error()
 	}
-	err = declcfg.Apply(context.Background(), db, f, discardLogger())
+	_, err = declcfg.Apply(context.Background(), db, f, discardLogger())
 	if err == nil {
 		t.Fatal("期望 Apply 拒绝这份文件，实际过了")
 	}
@@ -495,7 +495,7 @@ func TestApplyLogsChangesWithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := declcfg.Apply(context.Background(), db, f, textLogger(&buf)); err != nil {
+	if _, err := declcfg.Apply(context.Background(), db, f, textLogger(&buf)); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

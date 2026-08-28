@@ -13,7 +13,17 @@ import (
 	"github.com/SimonGino/portage/internal/store"
 )
 
-// Apply 把声明文件 reconcile 进库：**文件为准，库是它的物化副本**。
+// ConfigError 标记「这份声明配置本身不合法」：闸一（selfCheck）或闸二（store.Validate）
+// 打回，文本即一次报全的原文。导入接口（#59）靠它把校验失败翻成 400 并把原文回给
+// 前端，而事务开启/提交这类基建错误保持普通错误、翻 500——启动路径两类都直接拒启，
+// 不区分，所以文本一字不变。
+type ConfigError struct{ Err error }
+
+func (e ConfigError) Error() string { return e.Err.Error() }
+func (e ConfigError) Unwrap() error { return e.Err }
+
+// Apply 把声明文件 reconcile 进库：**文件为准，库是它的物化副本**。返回按实体名描述
+// 的变更清单（导入接口要把它回给前端，#59；启动路径只打日志）。
 //
 // 位置是 store.Open 之后、store.Validate 之前（口径层 §2.9 #30）。排这个顺序的理由
 // **不是**「空库会被 Validate 拒」——Validate 那六项全是「捞出违规行」式检查，空库
@@ -24,40 +34,40 @@ import (
 // selfCheck（只看文件），闸二是 store.Validate（看库里的行）；闸二在**同一个事务里**
 // 对着刚写进去的行跑，任一道有问题就整份回滚。于是「一次报全」不止覆盖文件自身的错，
 // 也覆盖那些只有把行摆进库才看得出来的错，而库里一行都不会留下。
-func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) error {
+func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) ([]string, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	if problems := selfCheck(f); len(problems) > 0 {
 		// 闸一没过就不 apply，于是闸二无从跑起——它要看的行还不存在，硬跑只会拿上一版
 		// 配置的行去回答这一版的问题。这不违背「合并报」：合并的前提是两边都算得出来。
-		return problemsErr(problems)
+		return nil, ConfigError{problemsErr(problems)}
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开启 apply 事务：%w", err)
+		return nil, fmt.Errorf("开启 apply 事务：%w", err)
 	}
 	defer tx.Rollback()
 
-	var changes []string
-	if changes, err = reconcile(ctx, tx, f); err != nil {
-		return err
+	changes, err := reconcile(ctx, tx, f)
+	if err != nil {
+		return nil, err
 	}
 	if err := store.Validate(ctx, tx); err != nil {
-		return err
+		return nil, ConfigError{err}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交 apply 事务：%w", err)
+		return nil, fmt.Errorf("提交 apply 事务：%w", err)
 	}
-	// 增删改按实体名打进启动日志（口径层 §2.9 #29）。**不含任何秘密**：这里只写
+	// 增删改按实体名打进日志（口径层 §2.9 #29）。**不含任何秘密**：这里只写
 	// 「哪个实体动了」，凭证值与 key 值一个字都不进来——纯转发形态下日志是唯一的
 	// 观测出口，正因如此它更不能变成秘密的第二个副本。
 	if len(changes) == 0 {
 		log.Info("声明文件已生效，配置无变化")
-		return nil
+		return nil, nil
 	}
 	log.Info("声明文件已生效", "变更", strings.Join(changes, "；"))
-	return nil
+	return changes, nil
 }
 
 func problemsErr(problems []string) error {

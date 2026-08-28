@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { api, download, setUnauthorizedHandler } from './api'
+import { api, download, importConfig, setUnauthorizedHandler } from './api'
 import { PortageMark } from './brand'
 import type { SessionState } from './api'
 import Login from './pages/Login'
@@ -11,7 +11,7 @@ import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
 import ChangePassword from './pages/ChangePassword'
 import { RailMidTarget, RailProvider } from './rail'
-import { Dialog, ErrorBar } from './ui'
+import { Confirm, Dialog, ErrorBar } from './ui'
 
 const NAV: { to: string; label: string; icon: ReactNode }[] = [
   {
@@ -146,6 +146,95 @@ function ExportButton() {
   )
 }
 
+/**
+ * 把一份 channels.yaml 一次性导入并**整份覆盖**当前业务配置（#59）。
+ *
+ * 与导出并排放在左栏底部，理由同款：它动的是全部业务配置，挂在任何一页下面都会
+ * 读成「只导这一页的东西」。
+ *
+ * 流程：选文件 → 覆盖警告（后果写在确认键上）→ 提交 → 变更清单。失败整份回滚、
+ * 一次报全——400 的报文是后端写给人看的多行原文，pre-wrap 原样显示，不折行揉成一段。
+ * 成功关框后整页重载：整份配置换掉了，各页面攒着的本地状态全部过期，重载比逐页
+ * 打补丁诚实。
+ */
+function ImportButton() {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [pending, setPending] = useState<{ name: string; text: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [changes, setChanges] = useState<string[] | null>(null)
+
+  return (
+    <>
+      <button type="button" title="导入一份 channels.yaml，整份覆盖当前业务配置" onClick={() => fileRef.current?.click()}>
+        导入配置
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".yaml,.yml"
+        hidden
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          // 清掉 value：不清的话「取消后再选同一个文件」不触发 onChange，按钮就哑了。
+          e.target.value = ''
+          if (!file) return
+          setError('')
+          setPending({ name: file.name, text: await file.text() })
+        }}
+      />
+      {pending && (
+        <Dialog title="导入配置" guard onClose={() => setPending(null)}>
+          <p>
+            将把 <b>{pending.name}</b> 的内容整份覆盖当前业务配置：文件里没有的渠道、接入点、API Key
+            会被<b>删除</b>。校验不过会整份回滚、一次报全，库里不会留下半截。
+          </p>
+          {error && <div className="bar bar-error bar-pre">{error}</div>}
+          <div className="form-actions">
+            <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setPending(null)}>
+              取消
+            </button>
+            <Confirm
+              label={busy ? '导入中…' : '导入并覆盖'}
+              confirm="确定覆盖当前配置？"
+              onConfirm={async () => {
+                setBusy(true)
+                setError('')
+                try {
+                  setChanges(await importConfig(pending.text))
+                  setPending(null)
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            />
+          </div>
+        </Dialog>
+      )}
+      {changes && (
+        <Dialog title="导入完成" onClose={() => window.location.reload()}>
+          {changes.length === 0 ? (
+            <p>配置无变化——文件内容与当前配置一致。</p>
+          ) : (
+            <ul className="import-changes">
+              {changes.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          )}
+          <div className="form-actions">
+            <button type="button" className="btn btn-quiet" onClick={() => window.location.reload()}>
+              完成
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
+  )
+}
+
 function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () => void }) {
   const loc = useLocation()
   const wide = loc.pathname.startsWith('/logs')
@@ -178,6 +267,7 @@ function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () 
           </div>
           <div className="acct-acts">
             <ExportButton />
+            <ImportButton />
             <button type="button" onClick={onPassword}>
               改密码
             </button>

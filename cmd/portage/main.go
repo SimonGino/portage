@@ -78,7 +78,7 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	// 拒」——那六项全是「捞出违规行」式检查、空库全过；而是反过来的：apply 若排在
 	// 后面，Validate 校的就是一个还没被文件填过的库，文件里的错整个逃出闸外。
 	if file != nil {
-		if err := declcfg.Apply(ctx, db, file, log); err != nil {
+		if _, err := declcfg.Apply(ctx, db, file, log); err != nil {
 			return err
 		}
 	}
