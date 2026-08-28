@@ -1012,23 +1012,95 @@ button, input, textarea, select {
   font-size: 12px;
 }
 
-/* 输入上限（口径层 v0.99，DESIGN v0.36）：与协议子集同层同形的一行。
-   链接压到行内小字号，负左边距抵掉 .btn-link 的内边距对齐左边界（同凭证区成例）。 */
-.model-limit-link {
-  font-size: 12px;
-  margin-left: -6px;
-  font-variant-numeric: tabular-nums;
+/* 输入上限（口径层 v0.99；v0.38 收进芯片家族）：与协议芯片同行同族。
+   未设 = 虚线空位芯片「+ 上限」（占位是空的，边框也画成空的）；设了 = 实底芯片
+   「上限 ~200k」，悬停浮出铅笔说「能改」。 */
+.chip-add {
+  padding: 3px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mute);
+  font-size: 12.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.model-limit-input {
-  width: 90px;
-  padding: 2px 6px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper);
+.chip-add:hover {
+  background: var(--chip);
+  border-color: #cbc5b0;
   color: var(--ink);
+}
+
+.model-limit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.model-limit-chip:hover {
+  background: var(--sunken);
+  color: var(--ink);
+}
+
+/* 铅笔只在悬停浮现：静止时它是个值，悬停时它说自己能改。 */
+.model-limit-chip svg {
+  opacity: 0;
+  margin-right: -2px;
+  transition: opacity 120ms ease;
+}
+
+.model-limit-chip:hover svg {
+  opacity: 0.7;
+}
+
+/* 编辑态：胶囊输入组——数字框与单位「token」装进同一个框里，外框聚焦时整体点亮。
+   等宽 tabular 数字，宽度按「200000」留位。 */
+.limit-edit {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  padding: 0 10px 0 2px;
+  transition: border-color 120ms ease;
+}
+
+.limit-edit:focus-within {
+  border-color: var(--accent);
+}
+
+.limit-edit input {
+  width: 8ch;
+  border: 0;
+  background: none;
+  padding: 0 4px 0 8px;
+  font-family: var(--mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.limit-edit input:focus {
+  outline: none;
+  box-shadow: none; /* 焦点环交给 .limit-edit 的整框描边，别在框里再套一环（全局 input:focus 有内描边） */
+}
+
+.limit-edit-unit {
+  font-size: 11.5px;
+  color: var(--faint);
 }
 
 /* 协议芯片（可点，是控件）。原先这一块写的是 --fg / --fg-muted：这两个 token
@@ -1237,22 +1309,85 @@ button, input, textarea, select {
   color: var(--ink);
 }
 
-/* 行内文字动作（上游设置 / 删行 / 显示 / 复制 / 管理 / 检测）走墨蓝——§4 白名单②
-   「这段字能点」。此前它们是灰字 ghost/quiet，静止时与「协议」「API 地址」这类
-   标签同一副长相，能点与不能点分不出来。默认无下划线，悬停才加（同 .bar-link）。 */
-.btn-link {
-  background: none;
-  color: var(--accent);
-  font-size: 13px;
-  padding: 4px 6px;
-  border-radius: 8px;
+/* ── 行内动作按钮（DESIGN v0.38，推翻 v0.34 ② 的墨蓝文字链接）──────────────
+   两级分量，回应 v0.34 当年否掉描边按钮的理由（一排同等分量的框盖过行首正主）：
+   词级 .act 只给块级动作（上游设置 / 管理 / 检测 / 编辑 / 完成），每行至多两枚，
+   且尽量上收到区块标题行；值旁的微动作（显示 / 复制 / 删行）一律 .act-icon
+   图标微按钮，词进 title。图标 1.5px 笔画 currentColor，随文字同色。
+   墨蓝退回白名单原三处——按钮不是链接，靠形状不靠色相说「能点」。 */
+.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.btn-link:hover:not(:disabled) {
-  color: var(--accent);
-  background: none;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.act:hover:not(:disabled) {
+  background: var(--sunken);
+  border-color: #cbc5b0;
+  color: var(--ink);
+}
+
+.act:active:not(:disabled) {
+  background: var(--paper);
+}
+
+.act:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.act svg {
+  flex: none;
+  opacity: 0.75;
+}
+
+.act:hover:not(:disabled) svg {
+  opacity: 1;
+}
+
+/* 图标微按钮：无框静止、悬停浮出底色——贴着值站，静止时不与值抢分量。 */
+.act-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mute);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.act-icon:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.act-icon:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* 复制成功那一下：图标换成 ✓、走成功色，1.2s 后自己回来（时序在组件里）。 */
+.act-icon.is-copied,
+.act-icon.is-copied:hover {
+  color: var(--ok-text);
+  background: transparent;
 }
 
 .btn-quiet.is-on {
@@ -2284,10 +2419,6 @@ textarea:focus {
   color: var(--muted);
 }
 
-/* 复制成功那一下给个语义色，其余时候跟别的 ghost 按钮一样安静。 */
-.secret .btn.is-copied {
-  color: var(--ok-text);
-}
 
 /* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.35 常驻展开）── */
 
@@ -2297,12 +2428,19 @@ textarea:focus {
   margin: 0 0 18px;
 }
 
-/* 标题行：标题 + 可选的「编辑 / 完成」文字动作（v0.35，API 地址用）。 */
+/* 标题行：标题 + 块级动作按钮（v0.38：编辑 / 完成 / 管理 / 检测都在这一行）。
+   居中对齐——动作换成了 26px 的按钮，baseline 会让小字标题吊在按钮脚上。 */
 .detail-block-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   margin-bottom: 8px;
+  min-height: 26px;
+}
+
+/* 两枚动作并排时靠得比「标题 ↔ 动作」近一档：它们是一组。 */
+.detail-block-head .act + .act {
+  margin-left: -6px;
 }
 
 .detail-block-title {
@@ -2514,8 +2652,7 @@ textarea:focus {
 .cred-add-alt {
   display: flex;
   gap: 6px;
-  /* -6px 抵掉 btn-link 的左内边距，让这句小字跟上面的凭证名对齐到同一条左边界。 */
-  margin: 2px 0 0 -6px;
+  margin: 6px 0 0;
 }
 
 /* ── 观测三页：概览 / 调用记录 / 排行（v0.17 由「用量页」一页拆开）─────── */
@@ -2723,7 +2860,8 @@ textarea:focus {
 /* 「详情」按钮跟着状态右对齐，压成一枚小字：一行里已经有状态、重试、错误词三行
    信息，它不该再抢一次注意力，只在人真的要看时才被找到。
    同时它是**白名单 ②**「可点的文字」（SPEC §3 点名的「详情」），默认墨蓝无
-   下划线，悬停才加下划线——v0.34 起行内文字动作统一走 .btn-link 同一套。 */
+   下划线，悬停才加下划线。它是白名单里的**链接**，不随 v0.38 改按钮——「详情」
+   是展开一段内容，不是执行一个动作。 */
 .log-detail-toggle {
   margin: 2px -6px 0 auto;
   display: block;

@@ -9,6 +9,7 @@ import type {
 } from '../../api'
 import { Confirm, CopyCode, DetailBlock, Dialog, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
+import { IconCheck, IconPencil, IconSliders, IconX } from '../../icons/acts'
 import { ChannelForm, joinURL } from './form'
 import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
@@ -125,7 +126,8 @@ export function ChannelDetail({
           <div className="ch-acts">
             {/* 检测挪去了凭证行（它验的首先是 key），凭证与地址是身份条下的区块——
                 条上只剩「上游设置」这一个弹框入口。 */}
-            <button type="button" className="btn btn-link" onClick={() => setSettingsOpen(true)}>
+            <button type="button" className="act" onClick={() => setSettingsOpen(true)}>
+              <IconSliders />
               上游设置
             </button>
           </div>
@@ -339,7 +341,8 @@ function BaseURLBlock({
       <DetailBlock
         title="API 地址"
         action={
-          <button type="button" className="btn btn-link" onClick={() => setEditing(true)}>
+          <button type="button" className="act" onClick={() => setEditing(true)}>
+            <IconPencil />
             编辑
           </button>
         }
@@ -367,13 +370,14 @@ function BaseURLBlock({
       action={
         <button
           type="button"
-          className="btn btn-link"
+          className="act"
           onClick={() => {
             // 「完成」只收面板：每一笔都在失焦时已写掉，这里只把没填值的空行清掉。
             setBlank([])
             setEditing(false)
           }}
         >
+          <IconCheck />
           完成
         </button>
       }
@@ -415,11 +419,12 @@ function BaseURLBlock({
                 {rows.length > 1 && (
                   <button
                     type="button"
-                    className="btn btn-link baseurl-del"
+                    className="act-icon baseurl-del"
+                    aria-label="删行"
                     title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
                     onClick={() => remove(p)}
                   >
-                    删行
+                    <IconX />
                   </button>
                 )}
               </div>
@@ -564,11 +569,21 @@ function fmtTokens(n: number): string {
   return n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : n.toLocaleString('en-US')
 }
 
+/** 解析上限输入：裸数字，或 `200k` / `1m` 这种紧凑写法（显示用的正是这种形，
+ *  输入也就该认它）。解析不出回 null。 */
+function parseTokens(raw: string): number | null {
+  const m = /^(\d+)([km]?)$/i.exec(raw.trim())
+  if (!m) return null
+  const n = Number(m[1]) * (m[2].toLowerCase() === 'k' ? 1000 : m[2].toLowerCase() === 'm' ? 1000000 : 1)
+  return Number.isFinite(n) ? n : null
+}
+
 /**
- * ModelInputLimit 是模型行上的「输入上限（估算）」（口径层 v0.99，DESIGN v0.36）。
- * 与协议子集同层同形：未设时整格只是一个「上限」文字动作，设了显示「上限 ~N」；
- * 点开是行内小输入框，失焦或回车即存，空/0 = 清成不限。文案一律带「估算」——
- * 判据是请求体字节数 ÷4，不是真分词，界面不许把它说成精确值。
+ * ModelInputLimit 是模型行上的「输入上限（估算）」（口径层 v0.99；DESIGN v0.38
+ * 收进芯片家族，推翻 v0.36 的文字动作）。与协议芯片同行同族：未设 = 虚线空位芯片
+ * 「+ 上限」，设了 = 实底芯片「上限 ~N」（悬停浮出铅笔说「能改」）；点开是胶囊
+ * 输入组（数字 + 单位一体），失焦或回车即存，空/0 = 清成不限，认 `200k`/`1m`
+ * 紧凑写法。文案一律带「估算」——判据是请求体字节数 ÷4，不是真分词。
  */
 function ModelInputLimit({
   model,
@@ -584,8 +599,8 @@ function ModelInputLimit({
   function save() {
     setEditing(false)
     const raw = val.trim()
-    const n = raw === '' ? 0 : Math.floor(Number(raw))
-    if (!Number.isFinite(n) || n < 0) return
+    const n = raw === '' ? 0 : parseTokens(raw)
+    if (n === null || n < 0) return
     if (n === limit) return
     void mutate(() =>
       api.put(`/channel-models/${model.id}`, { disabled: model.disabled, max_input_tokens: n }),
@@ -598,25 +613,45 @@ function ModelInputLimit({
         <span className="model-protocols-label" title="估算输入 token 超过它就按 413 拒。按请求体字节数 ÷4 估算，不精确；含图片的请求会被高估。">
           上限
         </span>
-        <input
-          autoFocus
-          className="model-limit-input"
-          value={val}
-          inputMode="numeric"
-          onChange={(e) => setVal(e.target.value.replace(/[^0-9]/g, ''))}
-          onBlur={save}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              save()
-            } else if (e.key === 'Escape') {
-              setVal(String(limit || ''))
-              setEditing(false)
-            }
+        <span className="limit-edit">
+          <input
+            autoFocus
+            value={val}
+            inputMode="numeric"
+            onChange={(e) => setVal(e.target.value.replace(/[^0-9kKmM]/g, ''))}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                save()
+              } else if (e.key === 'Escape') {
+                setVal(String(limit || ''))
+                setEditing(false)
+              }
+            }}
+            placeholder="200k"
+          />
+          <span className="limit-edit-unit">token</span>
+        </span>
+        <span className="muted">估算 · 空 = 不限</span>
+      </div>
+    )
+  }
+
+  if (limit === 0) {
+    return (
+      <div className="model-protocols">
+        <button
+          type="button"
+          className="chip-add"
+          onClick={() => {
+            setVal('')
+            setEditing(true)
           }}
-          placeholder="如 200000"
-        />
-        <span className="muted">token（估算），空 = 不限</span>
+          title="设置输入上限（估算）：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确"
+        >
+          + 上限
+        </button>
       </div>
     )
   }
@@ -625,18 +660,15 @@ function ModelInputLimit({
     <div className="model-protocols">
       <button
         type="button"
-        className="btn-link model-limit-link"
+        className="model-limit-chip"
         onClick={() => {
-          setVal(limit > 0 ? String(limit) : '')
+          setVal(String(limit))
           setEditing(true)
         }}
-        title={
-          limit > 0
-            ? `输入上限（估算）${limit.toLocaleString('en-US')} token：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确。点击修改`
-            : '设置输入上限（估算）：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确'
-        }
+        title={`输入上限（估算）${limit.toLocaleString('en-US')} token：估算输入超过它按 413 拒。按请求体字节数 ÷4 估算，不精确。点击修改`}
       >
-        {limit > 0 ? `上限 ~${fmtTokens(limit)}` : '上限'}
+        上限 ~{fmtTokens(limit)}
+        <IconPencil />
       </button>
     </div>
   )

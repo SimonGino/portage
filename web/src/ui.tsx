@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { IconCheck, IconCopy, IconEye, IconEyeOff } from './icons/acts'
 
 /**
  * useList 把「拉一张列表」这件事收成一个 hook：加载中、出错、重拉。
@@ -276,15 +277,17 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
       <code className="secret-value">{shown ? value : mask(value)}</code>
       <button
         type="button"
-        className="btn btn-link"
+        className="act-icon"
         onClick={() => setShown((v) => !v)}
+        aria-label={shown ? '隐藏' : '显示'}
         title={shown ? '藏起来' : '看明文'}
       >
-        {shown ? '隐藏' : '显示'}
+        {shown ? <IconEyeOff /> : <IconEye />}
       </button>
       <button
         type="button"
-        className={'btn btn-link' + (copied ? ' is-copied' : '')}
+        className={'act-icon' + (copied ? ' is-copied' : '')}
+        aria-label="复制"
         onClick={async () => {
           // clipboard API 在非 HTTPS 的非 localhost 页面上不可用（局域网访问就是
           // 这种情况）。失败了就把明文亮出来，让人自己选中——总比一颗没反应的按钮强。
@@ -295,8 +298,9 @@ export function SecretValue({ value, empty }: { value: string; empty?: ReactNode
             setShown(true)
           }
         }}
+        title={copied ? '已复制' : '复制全串'}
       >
-        {copied ? '已复制' : '复制'}
+        {copied ? <IconCheck /> : <IconCopy />}
       </button>
     </span>
   )

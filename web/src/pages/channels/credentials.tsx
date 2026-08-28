@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
 import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
+import { IconEye, IconEyeOff, IconKey, IconPulse, IconRows } from '../../icons/acts'
 import { Segmented } from '../../fields'
 import { ProbeDialog } from './probe'
 
@@ -49,7 +50,32 @@ export function CredentialBlock({
   }
 
   return (
-    <DetailBlock title={<>上游凭证{list.length > 0 && ` · ${list.length}`}</>}>
+    <DetailBlock
+      title={<>上游凭证{list.length > 0 && ` · ${list.length}`}</>}
+      /* 「管理」「检测」上收标题行（v0.38）：它们是**块级**动作——管的是整个池子，
+         测的是渠道，不是行里那串掩码的从属物；与「API 地址」的「编辑」同位同形，
+         值那一行只剩值和贴着它的显示 / 复制微按钮。 */
+      action={
+        list.length > 0 && (
+          <>
+            <button type="button" className="act" onClick={() => setManaging(true)}>
+              <IconKey />
+              管理
+            </button>
+            <button
+              type="button"
+              className="act"
+              onClick={() => setProbing(primary)}
+              disabled={!primary}
+              title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
+            >
+              <IconPulse />
+              检测
+            </button>
+          </>
+        )
+      }
+    >
       <ErrorBar message={error} />
       {list.length === 0 ? (
         /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
@@ -64,18 +90,6 @@ export function CredentialBlock({
           {enabled.length > 1 && (
             <span className="muted cred-inline-count">共 {enabled.length} 把在轮</span>
           )}
-          <button type="button" className="btn btn-link" onClick={() => setManaging(true)}>
-            管理
-          </button>
-          <button
-            type="button"
-            className="btn btn-link"
-            onClick={() => setProbing(primary)}
-            disabled={!primary}
-            title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
-          >
-            检测
-          </button>
         </div>
       )}
       {managing && (
@@ -262,10 +276,11 @@ function CredentialRow({
             坏不坏」除了发一次请求没有别的办法回答。 */}
         <button
           type="button"
-          className="btn btn-link"
+          className="act"
           onClick={onProbe}
           title="用这把凭证检测；只提示，不落库也不影响路由"
         >
+          <IconPulse />
           检测
         </button>
         {armedOff ? (
@@ -372,12 +387,13 @@ function AddCredentials({
           />
           <button
             type="button"
-            className="btn btn-link"
+            className="act-icon"
             onClick={() => setReveal((v) => !v)}
             disabled={credential === ''}
+            aria-label={reveal ? '隐藏' : '显示'}
             title={reveal ? '藏起来' : '看一眼刚粘进来的这串'}
           >
-            {reveal ? '隐藏' : '显示'}
+            {reveal ? <IconEyeOff /> : <IconEye />}
           </button>
           <button className="btn btn-quiet" disabled={!ready} title="只追加，不覆盖池子里已有的">
             添加
@@ -387,7 +403,8 @@ function AddCredentials({
       {/* 批量粘贴是次要入口，一句安静的小字：单条那一行才是常走的路。批量模式下
           textarea 装不下按钮，「添加 N 份」才回到这一行来。 */}
       <div className="cred-add-alt">
-        <button type="button" className="btn btn-link" onClick={() => setBatch(!batch)}>
+        <button type="button" className="act" onClick={() => setBatch(!batch)}>
+          <IconRows />
           {batch ? '改为单条' : '批量粘贴'}
         </button>
         {batch && (
