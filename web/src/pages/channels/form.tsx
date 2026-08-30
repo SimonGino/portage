@@ -144,9 +144,9 @@ export function ChannelForm({
   }
 
   return (
-    /* 新建时 form 自己就是那一段，段标题栏在它内部——创建按钮因此能坐在标题右边，
-       跟「获取模型列表」同一档位置。编辑时它在弹框里，标题归 Dialog 画，这里不再
-       画段头，保存沉到 foot（弹框主按钮右下的通行位）。 */
+    /* 新建时 form 自己就是那一段，段标题栏在它内部——创建按钮因此能坐在标题右边。
+       编辑时它在弹框里，标题归 Dialog 画，这里不再画段头，保存沉到 foot（弹框主按钮
+       右下的通行位）。 */
     <form className={channel ? 'form' : 'section form'} onSubmit={submit}>
       {!channel && (
         <header className="section-head">

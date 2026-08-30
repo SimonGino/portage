@@ -458,15 +458,16 @@ button, input, textarea, select {
   text-wrap: pretty;
 }
 
-/* 页头组合按钮：左「获取模型列表」、右「+」。一体描边，不是实心胶囊。 */
+/* 纳管模型标题旁的组合按钮：左「获取模型列表」、右「+」。一体描边，不是实心胶囊。
+   跟区块级 .act 同高（26px），不再占页头——它是这块清单的动作，不是这一页的。 */
 .split-act {
   display: inline-flex;
   align-items: stretch;
-  height: 36px;
+  height: 26px;
   flex-shrink: 0;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--canvas);
+  border-radius: 7px;
+  background: transparent;
   overflow: hidden;
 }
 
@@ -475,29 +476,32 @@ button, input, textarea, select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   margin: 0;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-2);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   line-height: 1;
   cursor: pointer;
 }
 
 .split-act-main {
-  padding: 0 12px 0 10px;
+  padding: 0 10px 0 8px;
 }
 
 .split-act-plus {
-  width: 36px;
+  width: 26px;
   border-left: 1px solid var(--line);
 }
 
 .split-act-main:hover,
 .split-act-plus:hover {
-  background: var(--hover);
+  background: var(--sunken);
+  color: var(--ink);
 }
 
 .split-act-plus.is-on {
@@ -938,17 +942,6 @@ button, input, textarea, select {
    把它们连起来——「这个开关是哪个模型的」要横扫一千多像素才能确认。压成
    auto-fill 网格之后，名字与它的控件永远相邻，且渠道挂十几个模型时不再是十几
    个空旷的长条。 */
-.models {
-  margin-top: 4px;
-}
-
-.models-title {
-  font-size: 12px;
-  color: var(--faint);
-  letter-spacing: 0.02em;
-  margin-bottom: 8px;
-}
-
 /* column-gap 留着（相邻两格要分开），row-gap 归零：行与行靠 .model 的上细线分，
    再留缝的话线就浮在半空。 */
 /* 下限给到 420：小了会在宽窗口上排出四五列，而模型名（`qwen3.7-coder-2026-05-14`
@@ -2422,7 +2415,7 @@ textarea:focus {
 
 /* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.35 常驻展开）── */
 
-/* 与「纳管模型 · N」同一套小字标题（.models-title），三段读起来才是同一层：
+/* 与「纳管模型 · N」同一套小字标题（.detail-block-title），三段读起来才是同一层：
    凭证、地址、模型都是这个渠道名下的清单项。 */
 .detail-block {
   margin: 0 0 18px;

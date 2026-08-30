@@ -26,7 +26,7 @@ import { ModelPicker } from './picker'
  * 2026-08-24 裁决，推翻 v0.75 的展开井：与管理、检测、挑选同一形制，页面上不再有
  * 顶开内容的井，也不再需要「收起后未保存」那套小圆点机制）。检测在凭证行里，点开
  * 检测弹层（口径层 v0.96 ③）：发起、勾选、结果都在弹层里，关弹层即失——页面上
- * 不再有常驻探测区块。获取模型列表与手动添加是页头组合按钮；启停在渠道名旁立刻生效。
+ * 不再有常驻探测区块。获取模型列表与手动添加落在「纳管模型」标题旁；启停在渠道名旁立刻生效。
  */
 export function ChannelDetail({
   ch,
@@ -83,26 +83,6 @@ export function ChannelDetail({
     <>
       <header className="page-head">
         <h1>模型</h1>
-        <div className="split-act">
-          <button
-            type="button"
-            className="split-act-main"
-            onClick={() => setPicking(true)}
-            title="拉上游 /v1/models 并挑选，只用来帮你填表，不落库也不影响路由"
-          >
-            <IconRefresh />
-            获取模型列表
-          </button>
-          <button
-            type="button"
-            className={'split-act-plus' + (adding ? ' is-on' : '')}
-            aria-label="手动添加模型"
-            aria-pressed={adding}
-            onClick={() => setAdding((v) => !v)}
-          >
-            <IconPlus />
-          </button>
-        </div>
       </header>
 
       <div className="ch-bar">
@@ -189,18 +169,40 @@ export function ChannelDetail({
         />
       )}
 
-      {adding && (
-        <AddModels
-          channel={ch}
-          mutate={mutate}
-          onClose={() => setAdding(false)}
-        />
-      )}
-
-      <div className="models">
-        <div className="models-title">纳管模型 · {models.length}</div>
+      <DetailBlock
+        title={`纳管模型 · ${models.length}`}
+        action={
+          <div className="split-act">
+            <button
+              type="button"
+              className="split-act-main"
+              onClick={() => setPicking(true)}
+              title="拉上游 /v1/models 并挑选，只用来帮你填表，不落库也不影响路由"
+            >
+              <IconRefresh />
+              获取模型列表
+            </button>
+            <button
+              type="button"
+              className={'split-act-plus' + (adding ? ' is-on' : '')}
+              aria-label="手动添加模型"
+              aria-pressed={adding}
+              onClick={() => setAdding((v) => !v)}
+            >
+              <IconPlus />
+            </button>
+          </div>
+        }
+      >
+        {adding && (
+          <AddModels
+            channel={ch}
+            mutate={mutate}
+            onClose={() => setAdding(false)}
+          />
+        )}
         {models.length === 0 ? (
-          <div className="muted models-empty">还没有纳管模型。填上游那边真实的模型名，比如 gpt-4o、deepseek-chat。</div>
+          <div className="muted models-empty">还没有纳管模型。点「获取模型列表」，或手填上游那边真实的模型名。</div>
         ) : (
           <div className="model-grid">
             {models.map((m) => (
@@ -251,7 +253,7 @@ export function ChannelDetail({
             ))}
           </div>
         )}
-      </div>
+      </DetailBlock>
     </>
   )
 }
@@ -676,7 +678,7 @@ function ModelInputLimit({
 
 function IconRefresh() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path
         d="M13.2 8a5.2 5.2 0 1 1-1.5-3.6"
         stroke="currentColor"
@@ -696,7 +698,7 @@ function IconRefresh() {
 
 function IconPlus() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
