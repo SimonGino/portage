@@ -5,7 +5,9 @@ go 1.26.4
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/tiktoken-go/tokenizer v0.8.1
-	golang.org/x/crypto v0.48.0
+	github.com/wneessen/go-mail v0.8.1
+	golang.org/x/crypto v0.54.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.56.0
@@ -41,9 +43,9 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

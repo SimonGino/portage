@@ -2,14 +2,22 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api, download, importConfig, setUnauthorizedHandler } from './api'
 import { PortageMark } from './brand'
-import type { SessionState } from './api'
+import type { SessionState, User } from './api'
 import Login from './pages/Login'
 import Channels from './pages/Channels'
 import AccessPoints from './pages/AccessPoints'
 import Keys from './pages/Keys'
 import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
+import Users from './pages/Users'
 import ChangePassword from './pages/ChangePassword'
+import AuthCard from './pages/auth/AuthCard'
+import Register from './pages/auth/Register'
+import Forgot from './pages/auth/Forgot'
+import Reset from './pages/auth/Reset'
+import Verify from './pages/auth/Verify'
+import VerifyGate from './pages/auth/VerifyGate'
+import OAuthComplete from './pages/auth/OAuthComplete'
 import { RailMidTarget, RailProvider } from './rail'
 import { Confirm, Dialog, ErrorBar } from './ui'
 
@@ -63,11 +71,22 @@ const NAV: { to: string; label: string; icon: ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    to: '/users',
+    label: '用户',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="12" cy="8.5" r="3.5" />
+        <path d="M5.5 19c1.2-2.8 3.6-4.2 6.5-4.2s5.3 1.4 6.5 4.2" />
+      </svg>
+    ),
+  },
 ]
 
 export default function App() {
   const [session, setSession] = useState<SessionState | null>(null)
   const [pwOpen, setPwOpen] = useState(false)
+  const loc = useLocation()
 
   const refresh = useCallback(async () => {
     try {
@@ -85,15 +104,54 @@ export default function App() {
     setUnauthorizedHandler(() => setSession({ authenticated: false, password_set: true }))
   }, [refresh])
 
+  // 门外的几页（#72）不看会话就能进：验证/重置链接是从邮件里点开的，那个浏览器
+  // 多半根本没登录；OAuth 完成注册页则是回调 302 过来的。它们必须先于登录闸渲染。
+  const outer = (
+    <Routes>
+      <Route path="/register" element={<Register onDone={refresh} />} />
+      <Route path="/forgot" element={<Forgot />} />
+      <Route path="/reset" element={<Reset />} />
+      <Route path="/verify" element={<Verify onVerified={refresh} />} />
+      <Route path="/oauth-complete" element={<OAuthComplete onDone={refresh} />} />
+    </Routes>
+  )
+  if (['/register', '/forgot', '/reset', '/verify', '/oauth-complete'].includes(loc.pathname)) {
+    return outer
+  }
+
   if (session === null) return <div className="boot">加载中…</div>
 
   if (!session.authenticated) {
     return <Login passwordSet={session.password_set} onLoggedIn={refresh} />
   }
 
+  // 未验证可登录但功能全锁（#62 决议 2）：整个壳都不给，只有去验证页。
+  if (session.user && !session.user.email_verified) {
+    return <VerifyGate email={session.user.email} onRefresh={refresh} onLogout={refresh} />
+  }
+
+  // 普通用户的面板（Key、用量、账号设置）在 #76：本票先立一块诚实的占位，
+  // 别让人落进一个每个接口都 403 的管理壳里。
+  if (session.user && session.user.role !== 'admin') {
+    return (
+      <AuthCard title="已登录">
+        <p className="login-note">
+          你好，<b>{session.user.display_name || session.user.email}</b>。用户面板还在修建中——
+          目前这个账号还没有可用的页面，API Key 相关功能随后到来。
+        </p>
+        <button
+          className="btn btn-quiet"
+          onClick={() => void api.post('/logout').then(refresh, refresh)}
+        >
+          退出登录
+        </button>
+      </AuthCard>
+    )
+  }
+
   return (
     <RailProvider>
-      <Shell onPassword={() => setPwOpen(true)} onLogout={refresh} />
+      <Shell user={session.user} onPassword={() => setPwOpen(true)} onLogout={refresh} />
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} onChanged={refresh} />}
     </RailProvider>
   )
@@ -235,7 +293,15 @@ function ImportButton() {
   )
 }
 
-function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () => void }) {
+function Shell({
+  user,
+  onPassword,
+  onLogout,
+}: {
+  user?: User
+  onPassword: () => void
+  onLogout: () => void
+}) {
   const loc = useLocation()
   const wide = loc.pathname.startsWith('/logs')
 
@@ -246,7 +312,7 @@ function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () 
           <PortageMark size={22} />
           <b>Portage</b>
         </span>
-        <nav className="nav" aria-label="五项">
+        <nav className="nav" aria-label="主导航">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to}>
               {item.icon}
@@ -258,11 +324,11 @@ function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () 
         <div className="account">
           <div className="who">
             <div className="acct-avatar" aria-hidden>
-              管
+              {(user?.display_name || user?.email || '管')[0].toUpperCase()}
             </div>
             <div>
-              <strong>管理员</strong>
-              <span>本机唯一管理员</span>
+              <strong>{user?.display_name || '管理员'}</strong>
+              <span>{user?.email ?? '本机唯一管理员'}</span>
             </div>
           </div>
           <div className="acct-acts">
@@ -294,6 +360,7 @@ function Shell({ onPassword, onLogout }: { onPassword: () => void; onLogout: () 
           <Route path="/keys" element={<Keys />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/rankings" element={<Rankings />} />
+          <Route path="/users" element={<Users />} />
           {/* 概览已从导航拿掉（口径层 v0.75）。老地址与拆页前的 /usage 都落到排行，
               不交给下面那个 `*`：开着旧标签刷新会掉到渠道页上，那不像跳转，像页面没了。 */}
           <Route path="/overview" element={<Navigate to="/rankings" replace />} />

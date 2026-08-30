@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/SimonGino/portage/internal/mail"
 	"github.com/SimonGino/portage/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -35,14 +36,20 @@ type Handler struct {
 	// declarative 是声明文件形态旗（#48）：业务配置以文件为准，写接口回 409。
 	// 只读的是**业务配置**——检测、fetch-models、导出、流水/用量、改密码照常：
 	// 前两样不写库，导出与查询本就是读，密码是运行期状态、不在文件里（§2.9 #28）。
+	//
+	// #66 起它还多管半件事：声明形态下**用户体系整体不挂载**（注册/邀请码/OAuth
+	// 等路由不注册、404 而非 409），见 Mount。
 	declarative bool
+	// mail 是发信出口（#72）。持函数不直连 mail.Send，注册/验证/重置的流程测试
+	// 才能把真 SMTP 换成记录桩。
+	mail mail.Sender
 }
 
 func New(db *sql.DB, log *slog.Logger, declarative bool) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{db: db, log: log, declarative: declarative}
+	return &Handler{db: db, log: log, declarative: declarative, mail: mail.DefaultSender}
 }
 
 // Bootstrap 用配置里的明文密码初始化管理端密码，**且只在库里还没有密码时**。
@@ -95,15 +102,57 @@ func (h *Handler) Mount(r *gin.Engine) {
 	api.POST("/logout", h.logout)
 	api.GET("/session", h.session)
 
+	// 用户体系的无会话半区（#72）：注册、邮箱验证、找回密码、OAuth。**声明形态下
+	// 整个不注册**（#66 互斥闸）：挂声明文件 ⇒ 用户体系不挂载，404 是路由级的——
+	// 与业务配置写闸的 409 刻意不同，那边是「资源在别处」，这边是「这套东西不存在」。
+	if !h.declarative {
+		api.GET("/auth-config", h.authConfig)
+		api.POST("/register", h.register)
+		api.POST("/verify-email", h.verifyEmail)
+		api.POST("/password-reset", h.requestPasswordReset)
+		api.POST("/password-reset/confirm", h.confirmPasswordReset)
+		api.GET("/oauth/pending", h.oauthPending)
+		api.POST("/oauth/complete", h.oauthComplete)
+		// OAuth 跳转两条是浏览器导航不是 fetch，不挂 /admin/api 前缀——错误也回
+		// 302 到页面，回 JSON 的话人盯着的是一屏裸字符串。
+		r.GET("/admin/oauth/:provider/start", h.oauthStart)
+		r.GET("/admin/oauth/:provider/callback", h.oauthCallback)
+	}
+
 	auth := api.Group("", h.requireSession())
 	auth.POST("/password", h.changePassword)
+	if !h.declarative {
+		// 重发验证信只要会话不要验证态——未验证的人正是它的用户。
+		auth.POST("/verify-email/resend", h.resendVerifyEmail)
+		// 账号侧的 OAuth 绑定/解绑（#62 决议 4 的「手动」半边；页面壳在 #76）。
+		auth.GET("/account/identities", h.listIdentities)
+		auth.DELETE("/account/identities/:provider", h.unlinkIdentity)
+	}
+
+	// 治理面：现有的全部业务配置与观测接口都是 admin 的地盘。#72 之前登录即 admin，
+	// 这层闸是空气；普通用户能登录之后它就是实的——user 角色的会话打这些接口一律
+	// 403，不是 401（会话是有效的，差的是角色）。
+	adm := auth.Group("", h.requireAdmin())
 
 	// 业务配置的写接口全走这个组：声明文件形态下统一 409（#48）。「业务配置」即
 	// 声明文件里那四张表——渠道（含凭证与纳管模型）、接入点、API Key；组外留下的
 	// POST（改密码、检测、fetch-models）都不写业务配置。
-	cw := auth.Group("", h.rejectWritesWhenDeclarative())
+	cw := adm.Group("", h.rejectWritesWhenDeclarative())
 
-	auth.GET("/channels", h.listChannels)
+	if !h.declarative {
+		// 用户治理（#72）：建用户逃生门、邀请码、SMTP/OAuth/站点地址配置。
+		// 同在 #66 互斥闸后——声明形态没有用户体系，这些配置面跟着消失。
+		adm.GET("/users", h.listUsers)
+		adm.POST("/users", h.createUser)
+		adm.GET("/invite-codes", h.listInviteCodes)
+		adm.POST("/invite-codes", h.createInviteCodes)
+		adm.DELETE("/invite-codes/:id", h.revokeInviteCode)
+		adm.GET("/auth-settings", h.getAuthSettings)
+		adm.PUT("/auth-settings", h.putAuthSettings)
+		adm.POST("/auth-settings/test-email", h.testEmail)
+	}
+
+	adm.GET("/channels", h.listChannels)
 	cw.POST("/channels", h.createChannel)
 	// 修改是四笔按意图的字段写（#48 批2），没有整体覆盖的 PUT /channels/:id：
 	// 那个接口逼每个调用点回传全量渠道，「回传旧 state 覆盖别处刚存的」在两个
@@ -115,38 +164,38 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.DELETE("/channels/:id", h.deleteChannel)
 	// 凭证池：逐条 CRUD + 追加式批量粘贴（口径层 v0.38 改写 v0.28 的整把替换）。
 	// 依旧**没有任何读凭证值的接口**——GET 回的是名字与状态。
-	auth.GET("/channels/:id/credentials", h.listCredentials)
+	adm.GET("/channels/:id/credentials", h.listCredentials)
 	cw.POST("/channels/:id/credentials", h.addCredentials)
 	cw.PUT("/credentials/:id", h.updateCredential)
 	cw.DELETE("/credentials/:id", h.deleteCredential)
-	auth.POST("/channels/:id/probe", h.probeChannel)
+	adm.POST("/channels/:id/probe", h.probeChannel)
 	// 拉上游模型列表给表单做预勾选（口径层 v0.40）。POST 而不是 GET：它会朝上游
 	// 发真请求、花上游的配额，不该被浏览器或中间层当成可缓存的读操作重放。
-	auth.POST("/channels/:id/fetch-models", h.fetchChannelModels)
+	adm.POST("/channels/:id/fetch-models", h.fetchChannelModels)
 	cw.POST("/channels/:id/models", h.addChannelModel)
 	cw.PUT("/channel-models/:id", h.updateChannelModel)
 	cw.DELETE("/channel-models/:id", h.deleteChannelModel)
 
-	auth.GET("/access-points", h.listAccessPoints)
+	adm.GET("/access-points", h.listAccessPoints)
 	cw.POST("/access-points", h.createAccessPoint)
 	cw.PUT("/access-points/:id", h.updateAccessPoint)
 	cw.DELETE("/access-points/:id", h.deleteAccessPoint)
 
-	auth.GET("/keys", h.listKeys)
+	adm.GET("/keys", h.listKeys)
 	cw.POST("/keys", h.createKey)
 	cw.PUT("/keys/:id", h.updateKey)
 	cw.DELETE("/keys/:id", h.deleteKey)
 
 	// 导出整份业务配置为 channels.yaml（口径层 §2.9 #32）。在 auth 组里，且**没有**
 	// 第二条出口（不做 CLI 导出子命令）——见 export.go。
-	auth.GET("/export", h.exportConfig)
+	adm.GET("/export", h.exportConfig)
 	// 导入一份 channels.yaml，覆盖式（#59）。在写闸组里：声明文件形态下导进去的
 	// 改动活不过下次重启 apply，与其余业务配置写接口同一句 409——见 import.go。
 	cw.POST("/import", h.importConfig)
 
-	auth.GET("/logs", h.listLogs)
-	auth.GET("/usage", h.usage)
-	auth.GET("/usage/buckets", h.usageBuckets)
+	adm.GET("/logs", h.listLogs)
+	adm.GET("/usage", h.usage)
+	adm.GET("/usage/buckets", h.usageBuckets)
 
 	h.mountUI(r)
 }
@@ -161,7 +210,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 // 失效（口径层 §2.10：停用即对系统一切访问冻结），这正是内存版做不到的那半。
 func (h *Handler) requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ok, err := h.validSession(c)
+		su, ok, err := h.validSession(c)
 		if err != nil {
 			h.log.Error("校验会话失败", "err", err)
 			fail(c, http.StatusInternalServerError, "会话校验失败")
@@ -171,8 +220,36 @@ func (h *Handler) requireSession() gin.HandlerFunc {
 			fail(c, http.StatusUnauthorized, "未登录或会话已过期")
 			return
 		}
+		c.Set(ctxUserKey, su)
 		c.Next()
 	}
+}
+
+// requireAdmin 是治理面的角色闸，挂在 requireSession 之后。403 而不是 401：
+// 会话是有效的，差的是角色——回 401 会让前端把一个登着的普通用户不停踢回登录页。
+func (h *Handler) requireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if sessionUser(c).Role != store.RoleAdmin {
+			fail(c, http.StatusForbidden, "需要管理员权限")
+		}
+	}
+}
+
+// requireVerified 把「未验证可登录但功能全锁」（#62 决议 2）落在接口侧：未验证的
+// 会话只剩去验证页那几件事（看会话、登出、重发验证信），其余自助动作一律 403。
+// admin 恒已验证（造号即豁免），这道闸实际只拦普通用户。
+func (h *Handler) requireVerified(c *gin.Context) bool {
+	u, err := store.GetUser(c.Request.Context(), h.db, sessionUser(c).ID)
+	if err != nil {
+		h.log.Error("读用户失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return false
+	}
+	if !u.EmailVerified {
+		fail(c, http.StatusForbidden, "邮箱未验证：先完成邮箱验证")
+		return false
+	}
+	return true
 }
 
 // fail 回一个统一形状的错误并中断。

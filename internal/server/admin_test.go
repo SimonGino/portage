@@ -93,7 +93,7 @@ func TestAdminLoginRejectsWrongPassword(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.Admin(t)
 
-	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login", `{"password":"nope"}`); status != http.StatusUnauthorized {
+	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"nope"}`); status != http.StatusUnauthorized {
 		t.Errorf("密码错应 401，得到 %d", status)
 	}
 	if status, _ := a.Do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusUnauthorized {
@@ -112,8 +112,9 @@ func TestAdminLogoutEndsSession(t *testing.T) {
 	}
 }
 
-// 改密码要把**所有**会话作废，包括发起修改的那一个——改密码的常见动机就是
-// 「怕别人还拿着 cookie」，只挡住未登录的人等于没改。
+// 改密码要把**本人全部**会话作废，包括发起修改的那一个——改密码的常见动机就是
+// 「怕别人还拿着 cookie」，只挡住未登录的人等于没改。（#72 起只吊销本人的：
+// 多用户下全局吊销会把无辜的人一起踢下线。这里两个会话同属第一个 admin。）
 func TestPasswordChangeRevokesEverySession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	first, second := g.LoggedIn(t), g.LoggedIn(t)
@@ -128,11 +129,11 @@ func TestPasswordChangeRevokesEverySession(t *testing.T) {
 	}
 
 	fresh := g.Admin(t)
-	if status, body := fresh.Do(t, http.MethodPost, "/admin/api/login", `{"password":"a-brand-new-one"}`); status != http.StatusOK {
+	if status, body := fresh.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"a-brand-new-one"}`); status != http.StatusOK {
 		t.Errorf("新密码登不进去：%d %s", status, body)
 	}
 	if status, _ := fresh.Do(t, http.MethodPost, "/admin/api/login",
-		`{"password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
+		`{"email":"`+gatewaytest.AdminEmail+`","password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
 		t.Errorf("旧密码还能用，得到 %d", status)
 	}
 }
@@ -149,10 +150,10 @@ func TestConfigPasswordDoesNotOverrideChangedOne(t *testing.T) {
 	restarted := gatewaytest.Start(t, db)
 	a := restarted.Admin(t)
 	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login",
-		`{"password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
+		`{"email":"`+gatewaytest.AdminEmail+`","password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
 		t.Errorf("重启把配置里的旧密码又灌回去了，得到 %d", status)
 	}
-	if status, body := a.Do(t, http.MethodPost, "/admin/api/login", `{"password":"changed-by-admin"}`); status != http.StatusOK {
+	if status, body := a.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"changed-by-admin"}`); status != http.StatusOK {
 		t.Errorf("重启之后改过的密码不认了：%d %s", status, body)
 	}
 }
@@ -684,4 +685,30 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 			t.Fatalf("普通形态建渠道应 200，得到 %d：%s", status, body)
 		}
 	})
+}
+
+// 声明形态下**用户体系整体不挂载**（#66 互斥闸，#72）：404 是路由级的，与业务
+// 写闸的 409 刻意不同。细粒度的端点清单在 internal/admin 的包内测试里，这里钉的
+// 是闸真的穿过 server.New 接到了 Handler 上。
+func TestDeclarativeModeHidesUserSystem(t *testing.T) {
+	g := gatewaytest.StartWith(t, gatewaytest.NewDB(t), gatewaytest.Options{Declarative: true})
+	a := g.LoggedIn(t)
+
+	probes := []struct{ method, path string }{
+		{http.MethodGet, "/admin/api/auth-config"},
+		{http.MethodPost, "/admin/api/register"},
+		{http.MethodPost, "/admin/api/password-reset"},
+		{http.MethodGet, "/admin/api/users"},
+		{http.MethodGet, "/admin/api/invite-codes"},
+		{http.MethodGet, "/admin/api/auth-settings"},
+	}
+	for _, p := range probes {
+		if status, body := a.Do(t, p.method, p.path, "{}"); status != http.StatusNotFound {
+			t.Errorf("声明形态 %s %s 应路由级 404，得到 %d：%s", p.method, p.path, status, body)
+		}
+	}
+	// 登录与会话是形态闸管的，不归 #66：声明形态下照常。
+	if status, _ := a.Do(t, http.MethodGet, "/admin/api/session", ""); status != http.StatusOK {
+		t.Errorf("声明形态 session 探测应 200，得到 %d", status)
+	}
 }

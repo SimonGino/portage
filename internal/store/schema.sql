@@ -137,10 +137,57 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 管理端自己的状态，目前只有一行 admin_password_hash。
+-- 邀请码（口径层 §2.10，#62 决议 1）：一次性注册凭证，admin 生成、可选有效期、
+-- 未使用可撤销（撤销即删行）、一码一人、用后作废并记录使用者。OAuth 首登同样要码。
+CREATE TABLE IF NOT EXISTS invite_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  -- 可选有效期，unix 秒；NULL = 不过期。unix 而不是 DATETIME 的理由同 sessions。
+  expires_at INTEGER,
+  -- 用后作废靠这两列：used_by 非空即已用。不删已用的行——「这个码是谁用掉的」
+  -- 正是要记录的东西。
+  used_by INTEGER REFERENCES users(id),
+  used_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- OAuth 身份（#62 决议 4）：provider + provider_user_id → user。身份主键用上游的
+-- 不可变 id（GitHub 数字 id / Google sub），不用邮箱——邮箱在上游是可换绑的。
+CREATE TABLE IF NOT EXISTS oauth_identities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- 一个上游账号只能挂一个用户；一个用户对每家 provider 也只挂一个上游账号——
+  -- 「绑定/解绑」是按 provider 说的，允许一人多绑会让解绑说不清解的是哪一个。
+  UNIQUE(provider, provider_user_id),
+  UNIQUE(user_id, provider)
+);
+
+-- 一次性动作 token（#62 决议 2/5/6）：邮箱验证（24h）、重置密码（30min）、OAuth
+-- 完成注册（回调与填邀请码之间的接力棒）。都是「发出去、用一次、过期作废」的同一
+-- 形状，收在一张表里；用途靠 purpose 分开，消费时必须带上它——拿验证 token 去重置
+-- 密码必须不成立。
+CREATE TABLE IF NOT EXISTS auth_tokens (
+  -- token 即主键，32 字节 crypto/rand 的 hex，同 sessions：猜不出来就不需要另一层 id。
+  token TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  -- 可空：OAuth 完成注册那一档发生在用户存在之前，挂不到任何人名下。
+  user_id INTEGER REFERENCES users(id),
+  -- 用途自带的负载（OAuth 完成注册存 provider/上游 id/邮箱的 JSON），其余用途空串。
+  payload TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 管理端自己的状态：admin_password_hash，以及 #72 起的 SMTP / OAuth client /
+-- 站点外部 URL（键名清单见 store/settings.go）。
 --
 -- 单独一张 kv 表而不是往 config.yaml 里回写：口径层 §2.7 要求密码「登录后可改，
 -- 改后配置项失效」，改到哪儿就得存到哪儿，而配置文件在容器里是只读挂载的。
+-- #62 决议 7 把 SMTP 与 OAuth 配置也钉在这里（config.yaml 不加新键、改完即生效），
+-- 是同一条理由的延伸。
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

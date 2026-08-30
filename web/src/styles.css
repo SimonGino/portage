@@ -1853,6 +1853,100 @@ textarea:focus {
   letter-spacing: -0.03em;
 }
 
+/* 卡片副题（注册/找回/验证那几页）：h1 底下一行居中的小字，说明这一页是哪扇门。 */
+.login-sub {
+  margin: -8px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* 门外页里的表单体：与 .login 卡片同一套竖排节奏。 */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* OAuth 按钮一列排：与密码登录之间自然分段，不画分隔线——按钮形态已是分界。 */
+.login-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-oauth .btn {
+  text-align: center;
+  text-decoration: none;
+}
+
+/* 卡片脚注链接（注册 / 忘记密码 / 回登录页）：小字、居中、并排。 */
+.login-links {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  font-size: 13px;
+}
+
+.login-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.login-links a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.login-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 成功态提示条：bar-error/bar-warn 的绿色兄弟（重发已发出、密码已重置那类回执）。 */
+.bar-ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--ok-text);
+}
+
+/* ── 用户页表单 ────────────────────────────────────────────────────── */
+
+/* 长表单里的小节标题（SMTP / GitHub / Google）：衬线、上方留出一段呼吸。 */
+.form-section {
+  margin: 14px 0 0;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+/* 两列并排的字段（服务器+端口、用户名+密码）。窄屏塌回单列。 */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* secret 输入框 + 「清除」并排：输入框占满剩余宽度。 */
+.secret-row {
+  display: flex;
+  gap: 8px;
+}
+
+.secret-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── 供应商图标 ────────────────────────────────────────────────────── */
 
 /* 图标本身是 120×120 带底色的品牌方块（少数是 24×24 透明描摹），统一裁成圆角方块。

@@ -16,6 +16,10 @@ import (
 // AdminPassword 是 StartWith 自动设的管理端密码。
 const AdminPassword = "admin-test-password"
 
+// AdminEmail 是第一个 admin 的占位邮箱（store.FirstAdminEmail）。#72 起登录按
+// 邮箱 + 密码验 users 表，测试登录也得带上它。
+const AdminEmail = "admin@localhost"
+
 // AdminClient 是一个带 cookie 罐的客户端。管理端认的是 cookie，用普通 http.Client
 // 会每次请求都丢掉会话，表现成「登录成功但下一句就 401」。
 type AdminClient struct {
@@ -38,7 +42,7 @@ func (g *Gateway) LoggedIn(t *testing.T) *AdminClient {
 	t.Helper()
 	a := g.Admin(t)
 	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login",
-		`{"password":"`+AdminPassword+`"}`); status != http.StatusOK {
+		`{"email":"`+AdminEmail+`","password":"`+AdminPassword+`"}`); status != http.StatusOK {
 		t.Fatalf("管理端登录失败，status=%d", status)
 	}
 	return a
