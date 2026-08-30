@@ -101,8 +101,18 @@ type ChannelModel struct {
 	Protocols protocol.Set `json:"protocols"`
 	// MaxInputTokens 是输入上限（估算）（口径层 v0.99）：0 = 不限。判据是入站原始
 	// 请求体字节数 ÷ 4，界面文案必须带「估算」，不承诺精确。
-	MaxInputTokens int  `json:"max_input_tokens"`
-	Disabled       bool `json:"disabled"`
+	MaxInputTokens int `json:"max_input_tokens"`
+	// 四价（口径层 §2.10，#65/#74），USD/百万 token。指针：null = 未定价，0 = 真免费，
+	// 两态在 JSON 上也必须分得开——前端的「未定价提醒」判据就长在 null 上。
+	PriceInput      *float64 `json:"price_input"`
+	PriceOutput     *float64 `json:"price_output"`
+	PriceCacheRead  *float64 `json:"price_cache_read"`
+	PriceCacheWrite *float64 `json:"price_cache_write"`
+	// HasUsage：流水里有没有这条条目报过 usage 的行（channel_name × model_upstream
+	// 快照匹配，input_tokens 非 NULL）。它只服务未定价提醒的判据「四价全 NULL 且
+	// 有用量」（口径层 §2.10——提醒挂条目不挂流水行），不是路由状态。
+	HasUsage bool `json:"has_usage"`
+	Disabled bool `json:"disabled"`
 }
 
 // Channel 是管理端看到的一个渠道。没有 credential 字段，见文件头。
@@ -123,7 +133,10 @@ type Channel struct {
 	// SupportsStatefulResponses 记上游认不认 Responses 的有状态语义
 	// previous_response_id（口径层 v0.88）。默认取是。
 	SupportsStatefulResponses bool `json:"supports_stateful_responses"`
-	Disabled                  bool `json:"disabled"`
+	// Provider 是 models.dev 的 provider id 标注（口径层 §2.10，#74）：只服务填价
+	// 建议与图标分组，不参与路由。空串 = 未标注。
+	Provider string `json:"provider"`
+	Disabled bool   `json:"disabled"`
 	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
 	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
 	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
@@ -139,7 +152,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
 		       ch.key_mode, ch.max_concurrency,
-		       ch.supports_compaction, ch.supports_stateful_responses, ch.disabled,
+		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
 		FROM channels ch ORDER BY ch.id`)
@@ -154,7 +167,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var c Channel
 		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
 			&c.KeyMode, &c.MaxConcurrency,
-			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Disabled,
+			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
 		}
@@ -172,10 +185,36 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		return nil, err
 	}
 
+	// 未定价提醒的「有用量」半边（口径层 §2.10，#74）：流水里哪些 (渠道, 上游模型)
+	// 组合报过 usage。一趟 DISTINCT 扫描而不是逐条目 EXISTS——call_logs 上没有这组
+	// 列的索引，N 个条目 N 次探查是 N 次全表扫。快照文本匹配认的是**当下的名字**：
+	// 渠道改名后老流水对不上号，提醒会先消失、来了新用量再亮，可接受——提醒服务的
+	// 是「别漏记新账」，不是历史考据。
+	used := map[string]bool{}
+	urows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT channel_name, model_upstream FROM call_logs
+		WHERE input_tokens IS NOT NULL AND channel_name <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer urows.Close()
+	for urows.Next() {
+		var ch, model string
+		if err := urows.Scan(&ch, &model); err != nil {
+			return nil, err
+		}
+		used[QualifiedName(ch, model)] = true
+	}
+	if err := urows.Err(); err != nil {
+		return nil, err
+	}
+
 	// 纳管模型单独一趟再拼回去，不用 LEFT JOIN 一次拉完：JOIN 出来的行数是
 	// 渠道 × 模型，得在 Go 里做一次去重才能还原渠道本身的字段。两趟更短也更难写错。
 	mrows, err := db.QueryContext(ctx,
-		`SELECT id, channel_id, upstream_model, protocols, max_input_tokens, disabled FROM channel_models ORDER BY id`)
+		`SELECT id, channel_id, upstream_model, protocols, max_input_tokens,
+		        price_input, price_output, price_cache_read, price_cache_write, disabled
+		 FROM channel_models ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +223,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var m ChannelModel
 		var chID int64
 		var mProtocols string
-		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.MaxInputTokens, &m.Disabled); err != nil {
+		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.MaxInputTokens,
+			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite, &m.Disabled); err != nil {
 			return nil, err
 		}
 		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
@@ -196,6 +236,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 			m.Protocols = protocol.Set{}
 		}
 		if i, ok := byID[chID]; ok {
+			m.HasUsage = used[QualifiedName(channels[i].Name, m.UpstreamModel)]
 			channels[i].Models = append(channels[i].Models, m)
 		}
 	}
@@ -230,7 +271,11 @@ type ChannelInput struct {
 	// **默认是 true**，所以借零值当哨兵比上面那位更错不起：false 恰好是有意义的取值，
 	// 而拿它当「没提」会让每次保存都把一个本来放行的渠道悄悄关掉。
 	SupportsStatefulResponses *bool `json:"supports_stateful_responses"`
-	Disabled                  bool  `json:"disabled"`
+	// Provider 是 models.dev 标注（口径层 §2.10，#74）。指针同 MaxConcurrency：
+	// nil = 没提，建渠道时落空串（未标注）、改渠道时不动；空串是显式「清掉标注」。
+	// 取值不校验——快照随发版才更新，拿会过期的世面数据拦保存不值当。
+	Provider *string `json:"provider"`
+	Disabled bool    `json:"disabled"`
 }
 
 // normalized 校验并归一化每协议地址：去空格，一个协议都没填直接拒——「删掉最后
@@ -323,13 +368,17 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if credType == "" {
 		credType = "api_key"
 	}
+	provider := ""
+	if in.Provider != nil {
+		provider = strings.TrimSpace(*in.Provider)
+	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
 		                      credential_type, key_mode, max_concurrency,
-		                      supports_compaction, supports_stateful_responses, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      supports_compaction, supports_stateful_responses, provider, disabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, conc,
-		boolInt(compaction), boolInt(stateful), boolInt(in.Disabled))
+		boolInt(compaction), boolInt(stateful), provider, boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
 	}
@@ -368,6 +417,11 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if maxConc != nil {
 		sets += `, max_concurrency = ?`
 		args = append(args, *maxConc)
+	}
+	// provider 标注同款哨兵（#74）：nil = 没提不动。declcfg 那条路总量覆盖，显式给。
+	if in.Provider != nil {
+		sets += `, provider = ?`
+		args = append(args, strings.TrimSpace(*in.Provider))
 	}
 	if set.Has(protocol.OpenAIResponses) {
 		if in.SupportsCompaction != nil {
@@ -436,13 +490,17 @@ func SetChannelDisabled(ctx context.Context, db Conn, id int64, disabled bool) e
 	return affectedOne(res, err)
 }
 
-// ChannelSettings 是「上游设置」弹框那一笔：改名、并发、能力位。位字段的 nil =
-// 「弹框没渲染这个控件」（协议不含 Responses 时它们不在屏幕上），那一列不动。
+// ChannelSettings 是「上游设置」弹框那一笔：改名、并发、能力位、provider 标注。
+// 位字段的 nil = 「弹框没渲染这个控件」（协议不含 Responses 时它们不在屏幕上），
+// 那一列不动。
 type ChannelSettings struct {
 	Name                      string `json:"name"`
 	MaxConcurrency            *int   `json:"max_concurrency"`
 	SupportsCompaction        *bool  `json:"supports_compaction"`
 	SupportsStatefulResponses *bool  `json:"supports_stateful_responses"`
+	// Provider 是 models.dev 标注（#74）。nil = 没提不动；空串是显式清掉。
+	// 不校验取值，理由见 ChannelInput.Provider。
+	Provider *string `json:"provider"`
 }
 
 // UpdateChannelSettings 写「上游设置」那一笔。这一笔不碰地址，协议集从库里现值读：
@@ -469,6 +527,10 @@ func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSett
 	if s.MaxConcurrency != nil {
 		sets += `, max_concurrency = ?`
 		args = append(args, *s.MaxConcurrency)
+	}
+	if s.Provider != nil {
+		sets += `, provider = ?`
+		args = append(args, strings.TrimSpace(*s.Provider))
 	}
 	if strings.TrimSpace(respURL) != "" {
 		if s.SupportsCompaction != nil {
@@ -626,6 +688,32 @@ func SetChannelModelMaxInputTokens(ctx context.Context, db Conn, id int64, limit
 	}
 	res, err := db.ExecContext(ctx,
 		`UPDATE channel_models SET max_input_tokens = ? WHERE id = ?`, limit, id)
+	return affectedOne(res, err)
+}
+
+// ChannelModelPrices 是填价那一笔的入参（口径层 §2.10，#74）：四价整组覆盖。
+// 指针的 nil = 写回 NULL（未定价），0 = 真免费——两种意图在 JSON 上分别是 null
+// 与 0，长得开。**整组**而不是逐项哨兵：填价 UI 一次编辑的就是这四个数，为「只改
+// 一项」再造一层「没提这个字段」的形态，换来的只是四种 nil 各有两个意思。
+type ChannelModelPrices struct {
+	Input      *float64 `json:"input"`
+	Output     *float64 `json:"output"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+}
+
+// SetChannelModelPrices 改一条纳管条目的四价。负数拒——0 已经是「真免费」，负价
+// 只能是填错；NULL（清回未定价）走 nil 不走负数暗号。
+func SetChannelModelPrices(ctx context.Context, db Conn, id int64, p ChannelModelPrices) error {
+	for _, v := range []*float64{p.Input, p.Output, p.CacheRead, p.CacheWrite} {
+		if v != nil && *v < 0 {
+			return InvalidInput{Reason: "单价不能是负数：0 表示真免费，留空（null）表示未定价"}
+		}
+	}
+	res, err := db.ExecContext(ctx, `
+		UPDATE channel_models SET price_input = ?, price_output = ?,
+		       price_cache_read = ?, price_cache_write = ? WHERE id = ?`,
+		p.Input, p.Output, p.CacheRead, p.CacheWrite, id)
 	return affectedOne(res, err)
 }
 
@@ -877,6 +965,10 @@ type CallLogRow struct {
 	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的明细而非另一笔。
 	// null 是「上游不报这个数」，0 是「这次没思考」——前端据此决定露不露这一格。
 	ReasoningTokens *int64 `json:"reasoning_tokens"`
+	// Cost 是这一次的成本（口径层 §2.10，#65/#74），USD，落库时点算死、改价不追溯。
+	// 指针：null = 没有用量可计（没到上游、加列前的老行），0 = 有用量但未定价（或
+	// 真免费）——前端据此决定露不露「费用」那一格，明细展示四位小数。
+	Cost *float64 `json:"cost"`
 	// Error 是网关自己的固定词表（`calllog.Outcome`）。string 而不是指针：库里
 	// NULL 即「这行没有错误词」，对外统一给空串（口径层 v0.67 ⑤，同
 	// UpstreamRequestID 的成例）。可空性规则的唯一定义处是 `calllog.Outcome.Column`
@@ -981,7 +1073,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		SELECT id, created_at, api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, queue_wait_ms, input_tokens, output_tokens,
-		       cache_read_tokens, cache_write_tokens, reasoning_tokens,
+		       cache_read_tokens, cache_write_tokens, reasoning_tokens, cost,
 		       error, error_detail, upstream_request_id
 		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -998,7 +1090,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &reasoning,
-			&errWord, &detail, &r.UpstreamRequestID); err != nil {
+			&r.Cost, &errWord, &detail, &r.UpstreamRequestID); err != nil {
 			return nil, err
 		}
 		// NULL → 空串在 Go 侧抹，不在 SQL 里 COALESCE：这一列的可空性规则只该有

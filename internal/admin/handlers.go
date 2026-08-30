@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/pricing"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
@@ -200,9 +201,12 @@ type channelInput struct {
 	// SupportsStatefulResponses 是有状态续链能力位（口径层 v0.88）：上游认不认
 	// previous_response_id。指针的 nil 同上——缺省不动那一列；这一位默认是 true，
 	// 借零值当哨兵会让每次保存都把渠道悄悄关掉。
-	SupportsStatefulResponses *bool  `json:"supports_stateful_responses"`
-	Disabled                  bool   `json:"disabled"`
-	Credential                string `json:"credential"`
+	SupportsStatefulResponses *bool `json:"supports_stateful_responses"`
+	// Provider 是 models.dev 标注（口径层 §2.10，#74）：只服务建议价与图标分组，
+	// 不参与路由。指针的 nil 同上——缺省时建成「未标注」。
+	Provider   *string `json:"provider"`
+	Disabled   bool    `json:"disabled"`
+	Credential string  `json:"credential"`
 }
 
 // parseBaseURLs 把请求体里的「协议名 → 地址」映射落到 store.BaseURLs。收 map 的
@@ -232,6 +236,7 @@ func (in channelInput) toStore() (store.ChannelInput, error) {
 		MaxConcurrency:            in.MaxConcurrency,
 		SupportsCompaction:        in.SupportsCompaction,
 		SupportsStatefulResponses: in.SupportsStatefulResponses,
+		Provider:                  in.Provider,
 		Disabled:                  in.Disabled,
 	}, nil
 }
@@ -578,6 +583,9 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 		// MaxInputTokens 是输入上限（估算）（口径层 v0.99）。指针理由同上：
 		// nil 不动，0 是显式清成「不限」，两种意图在 JSON 里不能长一样。
 		MaxInputTokens *int `json:"max_input_tokens"`
+		// Prices 是四价（口径层 §2.10，#74）。外层指针 nil = 没提不动；提了就是
+		// 整组覆盖，组内的 null = 清回未定价、0 = 真免费（见 store.ChannelModelPrices）。
+		Prices *store.ChannelModelPrices `json:"prices"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
@@ -592,11 +600,53 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 				return err
 			}
 		}
+		if in.Prices != nil {
+			if err := store.SetChannelModelPrices(ctx, tx, id, *in.Prices); err != nil {
+				return err
+			}
+		}
 		if in.Protocols == nil {
 			return nil
 		}
 		return store.SetChannelModelProtocols(ctx, tx, id, toProtocolSet(*in.Protocols))
 	})
+}
+
+// ── models.dev 快照（口径层 §2.10 计价，#68/#74）─────────────────────────
+//
+// 两个只读端点，读的都是 go:embed 的裁剪快照，不碰库也不打上游。**只做建议**：
+// provider 列表灌「上游设置」的标注下拉，四价给填价 UI 摆参考——采不采纳都是人在
+// 条目上点过才落库。快照坏了（生成/提交环节的错）回 500 点名，别静默回空列表——
+// 那会把「发版资产坏了」显示成「models.dev 没这个 provider」。
+
+func (h *Handler) pricingProviders(c *gin.Context) {
+	providers, err := pricing.Providers()
+	if err != nil {
+		h.log.Error("读 models.dev 快照失败", "err", err)
+		fail(c, http.StatusInternalServerError, "内置 models.dev 快照读不出来，这是发版资产的问题")
+		return
+	}
+	c.JSON(http.StatusOK, providers)
+}
+
+func (h *Handler) pricingModels(c *gin.Context) {
+	provider := strings.TrimSpace(c.Query("provider"))
+	if provider == "" {
+		fail(c, http.StatusBadRequest, "缺 provider 参数：models.dev 的 provider id")
+		return
+	}
+	prices, err := pricing.ModelPrices(provider)
+	if err != nil {
+		h.log.Error("读 models.dev 快照失败", "err", err)
+		fail(c, http.StatusInternalServerError, "内置 models.dev 快照读不出来，这是发版资产的问题")
+		return
+	}
+	// 查无此家回空对象不报错：标注是自由文本、快照随发版才更新，「没有建议」是
+	// 正常答案。map 为 nil 时显式给个空的，别让前端拿到 null 还得判一层。
+	if prices == nil {
+		prices = map[string]pricing.ModelPrice{}
+	}
+	c.JSON(http.StatusOK, gin.H{"provider": provider, "models": prices})
 }
 
 func (h *Handler) deleteChannelModel(c *gin.Context) {

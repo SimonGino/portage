@@ -271,7 +271,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		rec.Routed(cand.ChannelName, cand.Protocol, cand.UpstreamModel)
+		rec.Routed(cand.ChannelName, cand.Protocol, cand.UpstreamModel, cand.Prices)
 
 		// 输入上限闸（口径层 v0.99）：判**选中候选**的限，不筛候选、不触发转移。
 		// 判据是入站原始 body 字节数 ÷ 4 的估算——透传路径不解析 body 是硬约束，

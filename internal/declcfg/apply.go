@@ -148,6 +148,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 		conc := ch.MaxConcurrency
 		compaction := ch.SupportsCompaction
 		stateful := ch.SupportsStatefulResponses == nil || *ch.SupportsStatefulResponses
+		provider := strings.TrimSpace(ch.Provider)
 		in := store.ChannelInput{
 			Name: name,
 			BaseURLs: store.BaseURLs{
@@ -160,6 +161,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 			MaxConcurrency:            &conc,
 			SupportsCompaction:        &compaction,
 			SupportsStatefulResponses: &stateful,
+			Provider:                  &provider,
 			Disabled:                  ch.Disabled,
 		}
 		var id int64
@@ -235,11 +237,19 @@ func applyModels(ctx context.Context, tx *sql.Tx, channel string, channelID int6
 	for _, m := range list {
 		name := strings.TrimSpace(m.UpstreamModel)
 		keep[name] = true
+		// 四价照指针写（#74）：文件里没写的键落 NULL（未定价），显式 0 落 0（真免费）
+		// ——文件是总量，这里没有「不动那一列」的形态。
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO channel_models (channel_id, upstream_model, protocols, max_input_tokens, disabled) VALUES (?,?,?,?,?)
+			INSERT INTO channel_models (channel_id, upstream_model, protocols, max_input_tokens,
+			                            price_input, price_output, price_cache_read, price_cache_write, disabled)
+			VALUES (?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(channel_id, upstream_model) DO UPDATE SET
-			  protocols = excluded.protocols, max_input_tokens = excluded.max_input_tokens, disabled = excluded.disabled`,
-			channelID, name, parseProtocols(m.Protocols), m.MaxInputTokens, boolInt(m.Disabled)); err != nil {
+			  protocols = excluded.protocols, max_input_tokens = excluded.max_input_tokens,
+			  price_input = excluded.price_input, price_output = excluded.price_output,
+			  price_cache_read = excluded.price_cache_read, price_cache_write = excluded.price_cache_write,
+			  disabled = excluded.disabled`,
+			channelID, name, parseProtocols(m.Protocols), m.MaxInputTokens,
+			m.PriceInput, m.PriceOutput, m.PriceCacheRead, m.PriceCacheWrite, boolInt(m.Disabled)); err != nil {
 			return nil, fmt.Errorf("写入渠道 %q 的纳管模型 %q：%w", channel, name, err)
 		}
 		var id int64

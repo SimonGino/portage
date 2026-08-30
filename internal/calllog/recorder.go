@@ -66,8 +66,11 @@ type Recorder struct {
 	channelKey    string
 	channelProto  protocol.Protocol
 	upstreamModel string
-	stream        bool
-	status        int
+	// prices 是选中纳管条目的四价（口径层 §2.10，#74），Routed 的同批货：cost 在
+	// 落库时点按它算死，改价不追溯。零值（四项全 nil）= 未定价，有用量照记 0。
+	prices Prices
+	stream bool
+	status int
 	// outcome 区分「同样是 200」的几种收场，尤其是首字节之后断流那种——
 	// 状态码已经发出去了，只有这里能看出它其实没说完。
 	//
@@ -176,10 +179,11 @@ func (r *Recorder) RecordRequestBody(body []byte) {
 	_, _ = r.requestBody.Write(body)
 }
 
-// Routed 记下这次落到了哪条渠道、走哪个上游协议、翻成了哪个纳管模型名。
-// 只记渠道**名**：base_url 与凭证一概不进这条流水。
-func (r *Recorder) Routed(channel string, proto protocol.Protocol, upstreamModel string) {
-	r.channel, r.channelProto, r.upstreamModel = channel, proto, upstreamModel
+// Routed 记下这次落到了哪条渠道、走哪个上游协议、翻成了哪个纳管模型名，以及那条
+// 纳管条目的四价（#74）——单价是候选的属性，跟渠道名同一刻知道，分两个动词只会让
+// 某个调用点漏掉一半。只记渠道**名**：base_url 与凭证一概不进这条流水。
+func (r *Recorder) Routed(channel string, proto protocol.Protocol, upstreamModel string, prices Prices) {
+	r.channel, r.channelProto, r.upstreamModel, r.prices = channel, proto, upstreamModel, prices
 }
 
 // Dialing 记下这次**打到上游**的那条路径，在发请求之前的那一刻调（#20）。
@@ -538,6 +542,13 @@ func (r *Recorder) Row() Row {
 		if r.summary.HasReasoningTokens {
 			row.ReasoningTokens = nullInt(r.summary.ReasoningTokens)
 		}
+		// cost 与 token 五列同一个判据（口径层 §2.10，#65）：有 summary 才有账，
+		// 没有就留 NULL——「没有用量可计」与「算出来是 0」不是一回事。算术
+		// （净 input、未定价按 0）全在 Prices.CostUSD，这里只把毛值口径的四个数
+		// 递过去。落库时点计价：这一行写死之后，改价不追溯。
+		row.Cost = r.prices.CostUSD(
+			int(row.InputTokens.Int64), r.summary.OutputTokens,
+			r.summary.CacheReadTokens, r.summary.CacheWriteTokens)
 	}
 	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表，不是上游原文——上游错误

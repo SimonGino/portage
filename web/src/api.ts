@@ -218,6 +218,19 @@ export interface ChannelModel {
    * 界面文案必须带「估算」，不承诺精确。
    */
   max_input_tokens: number
+  /**
+   * 四价（口径层 §2.10，#74），USD/百万 token。**null = 未定价，0 = 真免费**，
+   * 两态不能抹成一个：未定价且有用量要提醒，真免费什么都不用提。
+   */
+  price_input: number | null
+  price_output: number | null
+  price_cache_read: number | null
+  price_cache_write: number | null
+  /**
+   * 这条条目名下有没有报过 usage 的流水（渠道名 × 上游模型名）。未定价提醒的判据
+   * 是「四价全 null 且它为 true」——没人用过的条目不催着定价。
+   */
+  has_usage: boolean
   disabled: boolean
 }
 
@@ -264,6 +277,11 @@ export interface Channel {
    * not_found；配错成否，会打断一条本来正常工作的续链，而那种打断在页面上看不出来。
    */
   supports_stateful_responses: boolean
+  /**
+   * models.dev 的 provider id 标注（口径层 §2.10，#74）：只服务填价建议与图标分组，
+   * 不参与路由，取值不校验。空串 = 未标注。
+   */
+  provider: string
   disabled: boolean
   /**
    * 可用/停用凭证计数（口径层 v0.38）。这里只有计数，没有凭证值——值由凭证池那一个
@@ -381,6 +399,13 @@ export interface CallLog {
    * 0 = 上游报了、这次没思考；正数 = 这次思考花了这么多。null 与 0 不能抹成一个。
    */
   reasoning_tokens: number | null
+  /**
+   * 这一次的成本（口径层 §2.10，#65/#74），USD，落库时点算死、改价不追溯。
+   *
+   * 三态：null = 无用量可计（没走到上游 / 上游没报 usage / #74 之前的老流水）；
+   * 0 = 有用量但未定价或真免费；正数 = 算出来的钱。null 与 0 不能抹成一个。
+   */
+  cost: number | null
   /** 网关自己的固定词表（upstream_error / queue_full / stream_aborted…），可枚举。 */
   error: string
   /**
@@ -432,6 +457,29 @@ export interface BucketUsage {
   output_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+}
+
+/** models.dev 的一家 provider（`GET /pricing/providers`，#74），按名字排好序发来。 */
+export interface PricingProvider {
+  id: string
+  name: string
+}
+
+/**
+ * models.dev 快照里一个模型的四价（USD/百万 token）。字段缺席 = 快照里没这一价，
+ * 建议时按「没有建议」处理，别补 0。
+ */
+export interface PricingModelPrice {
+  input?: number
+  output?: number
+  cache_read?: number
+  cache_write?: number
+}
+
+/** `GET /pricing/models?provider=` 的回包。查无此家 models 是空对象，不报错。 */
+export interface PricingModels {
+  provider: string
+  models: Record<string, PricingModelPrice>
 }
 
 export interface SessionState {

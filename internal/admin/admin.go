@@ -126,6 +126,11 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.POST("/channels/:id/models", h.addChannelModel)
 	cw.PUT("/channel-models/:id", h.updateChannelModel)
 	cw.DELETE("/channel-models/:id", h.deleteChannelModel)
+	// models.dev 快照的两个只读端点（口径层 §2.10 计价，#68/#74）：provider 标注
+	// 取值域 + 按 provider 的建议价。读的是 go:embed 资产不碰库，声明形态下照常可用
+	// ——那形态下页面只读，但看建议价不是写业务配置。
+	auth.GET("/pricing/providers", h.pricingProviders)
+	auth.GET("/pricing/models", h.pricingModels)
 
 	auth.GET("/access-points", h.listAccessPoints)
 	cw.POST("/access-points", h.createAccessPoint)

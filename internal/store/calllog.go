@@ -33,14 +33,14 @@ func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-			reasoning_tokens, error, error_detail,
+			reasoning_tokens, cost, error, error_detail,
 			upstream_request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.APIKeyName, l.Endpoint, l.UpstreamEndpoint, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens,
-		l.ReasoningTokens, l.Error, l.ErrorDetail,
+		l.ReasoningTokens, l.Cost, l.Error, l.ErrorDetail,
 		l.UpstreamRequestID)
 	return err
 }

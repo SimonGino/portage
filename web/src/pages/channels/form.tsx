@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON, declaredProtocols, firstBaseURL } from '../../api'
-import type { BaseURLs, Channel, Protocol } from '../../api'
+import type { BaseURLs, Channel, PricingProvider, Protocol } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
-import { Segmented } from '../../fields'
+import { Picker, Segmented } from '../../fields'
+import type { Option } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 
 /**
@@ -65,8 +66,28 @@ export function ChannelForm({
   // 凭证只在**新建**时出现在这张表单里。编辑走凭证池，这样「改个名字」不可能顺手把
   // 凭证清空——后端的修改接口本来就不看这个字段。
   const [credential, setCredential] = useState('')
+  // provider 标注（口径层 §2.10，#74）：models.dev 的 id，只服务填价建议与图标分组，
+  // 不参与路由。空串 = 未标注，是合法常态（中转站多半对不上任何一家）。
+  const [provider, setProvider] = useState(channel?.provider ?? '')
+  const [providers, setProviders] = useState<PricingProvider[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
+    api.get<PricingProvider[]>('/pricing/providers').then(setProviders).catch(() => {})
+  }, [])
+
+  const providerOptions = useMemo<Option<string>[]>(() => {
+    const opts: Option<string>[] = [{ value: '', label: '未标注' }]
+    // 库里存的标注可能不在快照名单里（自由文本，快照随发版才更新）：补一项回去并注明，
+    // 不补的话触发器显示「未标注」，而库里明明有值。
+    if (provider && !providers.some((p) => p.id === provider)) {
+      opts.push({ value: provider, label: provider, hint: '快照名单外' })
+    }
+    for (const p of providers) opts.push({ value: p.id, label: p.name, hint: p.id })
+    return opts
+  }, [providers, provider])
 
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
   const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
@@ -84,6 +105,7 @@ export function ChannelForm({
     channel !== null &&
     (name !== channel.name ||
       maxConcValue !== channel.max_concurrency ||
+      provider !== channel.provider ||
       (showCompaction && compaction !== channel.supports_compaction) ||
       (showStateful && stateful !== channel.supports_stateful_responses))
 
@@ -106,6 +128,7 @@ export function ChannelForm({
         await api.put(`/channels/${channel.id}/settings`, {
           name,
           max_concurrency: maxConcValue,
+          provider,
           ...(showCompaction ? { supports_compaction: compaction } : {}),
           ...(showStateful ? { supports_stateful_responses: stateful } : {}),
         })
@@ -115,6 +138,7 @@ export function ChannelForm({
           name,
           base_url: urls,
           max_concurrency: maxConcValue,
+          provider,
           ...(showCompaction ? { supports_compaction: compaction } : {}),
           ...(showStateful ? { supports_stateful_responses: stateful } : {}),
           credential,
@@ -196,6 +220,15 @@ export function ChannelForm({
           />
         </Field>
       </div>
+
+      {/* 厂商标注（口径层 §2.10，#74）：选了才有模型页的 models.dev 建议价。
+          不参与路由、不校验取值——中转站对不上任何一家时就留「未标注」。 */}
+      <Field
+        label="厂商标注"
+        hint="这个上游对应 models.dev 的哪一家，只用来给模型页出建议价与图标分组，不影响转发；中转站对不上就留「未标注」"
+      >
+        <Picker value={provider} options={providerOptions} onChange={setProvider} placeholder="未标注" />
+      </Field>
 
       {/* 端点设置（口径层 v0.96 ②，DESIGN.md v0.32 ③）：每协议一行地址，**填了即声明
           该协议**，没有勾选框。地址存的是「协议子路径之前」的前缀，子路径由网关自己接

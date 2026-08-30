@@ -15,6 +15,7 @@ channels:
     credential_type: api_key
     key_mode: polling
     max_concurrency: 0
+    provider: anthropic
     supports_compaction: false
     supports_stateful_responses: false
     disabled: false
@@ -27,6 +28,10 @@ channels:
       - upstream_model: claude-sonnet-4-20250514
         protocols: []
         max_input_tokens: 0
+        price_input: 3
+        price_output: 15
+        price_cache_read: 0.3
+        price_cache_write: 3.75
         disabled: false
   - name: 自建-vllm
     base_url:

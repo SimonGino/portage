@@ -62,6 +62,11 @@ type Row struct {
 	// （整个 details 容器都不发——老式兼容上游、中转裁剪、CC 挂非推理模型），0 是
 	// 「上游报了，这次没思考」——抹成一个，那些调用的思考成本就显示为确凿的零。
 	ReasoningTokens sql.NullInt64
+	// Cost 是这一次调用的成本（口径层 §2.10 计价，#65/#74），USD，落库时点按选中
+	// 纳管条目的四价算死，之后改价不追溯。可空：NULL = 没有用量可计（与 token
+	// 五列同一个判据——没有 summary 就没有账），0 = 有用量但当时未定价（或真免费）。
+	// 算术只在 Prices.CostUSD 一处。
+	Cost sql.NullFloat64
 	// Error 是网关固定词表落库后的形态。可空性规则见 Outcome.Column（写向）与
 	// ErrorWord（读向）。
 	Error sql.NullString
