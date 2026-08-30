@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.19
+> 状态：草案 v1.19（vNEXT 待定号）
+
+> vNEXT 变更（口径层 §2.10 多用户体系设计定稿落地，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)，2026-08-30）：**设计定稿，实施另开里程碑**——本条只落数据模型、迁移步骤与测试方案（§7.10 新节），口径与裁决全文见口径层 vNEXT 与地图各票。①新表 users / sessions / oauth_identities / invite_codes 与 settings 新键；②`api_keys` 加可空 owner + `UNIQUE(user_id, name)` 重建表迁移，无主认领规则；③`channel_models` 四价列、`channels.provider` 标注、`call_logs` 加 `user_id` / `cost`；④配额闸位置（令牌桶后、Resolve 前）、月度 SUM 不建计数器、outcome 词表第 12 词 `quota_exceeded`；⑤声明形态互斥闸（用户路由不注册、多用户库导出/导入拒绝）；⑥migration 五步幂等序列，无 admin 库全空转（横向约束：纯转发零负担）。修改人 jinpenga。
 
 > v1.19 变更（口径层 v1.00 落地：管理端一次性导入 channels.yaml，[#59](https://github.com/SimonGino/portage/issues/59)，2026-08-28）：口径与裁决见口径层 v1.00，这里只记实现层落点。①**`declcfg.Apply` 改签名返回变更清单** `([]string, error)`：清单本就在 reconcile 里攒着（v1.01 起），此前只打日志，现在返回给调用方——启动路径（`main.go`）丢弃返回值、日志行为一字不变；导入路径把它装进 200 响应 `{"changes": [...]}`（无变化回空数组不回 null，前端只判长度）。②**同批立 `declcfg.ConfigError`**：包一层标记「这份配置本身不合法」——闸一（selfCheck）与闸二（store.Validate）都算，`Error()` 透传原文所以启动路径的报文逐字不变；导入的 HTTP adapter 靠 `errors.AsType` 把它翻 400 原样回显，事务开启/提交这类基建错误保持普通错误翻 500。③**`internal/admin/import.go`**：`POST /admin/api/import` 注册在 `rejectWritesWhenDeclarative` 写闸组里（声明形态 409 与其余写接口同一句、同一张测试清单钉着），请求体即 yaml 原文（`http.MaxBytesReader` 兜 4MB），`declcfg.Parse` → `declcfg.Apply`，**不走 `writeResult`**——Apply 自带事务与 Validate，套第二层事务反而会在连接池 1 上自锁。④**前端**：`api.importConfig` 发原始文本（`request()` 会把 body JSON 化所以另起一条），左栏底部导出旁加「导入配置」——选文件 → 覆盖警告（后果写在 `Confirm` 确认键上）→ 变更清单，成功关框后整页重载（整份配置换掉，各页本地状态全部过期）；400 的一次报全原文以 pre-wrap 原样显示（新增 `.bar-pre`，不动 `ErrorBar` 全站默认）。⑤**用例分工**：`internal/server/import_test.go` 五条——覆盖式删文件外实体 + 变更清单 + 导入后管理端照常可写、同文件二导回空数组、四类失败（解析/未知字段/自校验一次报全/库校验）全回滚、未登录 401、导出↔导入往返 noop；声明形态 409 并进 `TestDeclarativeModeMakesBusinessConfigReadOnly` 的写闸清单。修改人 jinpenga。
 
@@ -990,6 +992,41 @@ api_keys:
 **三处过期注释已随 [#37](https://github.com/SimonGino/portage/issues/37) 改掉**（v1.01）：仓库根 `config.yaml`（gitignore 覆盖，本机那份）与 `deploy/config.docker.yaml` 头部原写着「业务配置……全部落 DB，不写这里」，现在两处都写全了「落哪儿要看有没有挂声明文件」；`cmd/portage/main.go` 空 `api_keys` 那条警告的注释原本只写了「为什么刻意不拒启」这一半立论，现在两侧都在。
 
 **实现时撞出来的两条既有闸交互**（口径层从没讨论过，逐条见 v1.01 ③④）：单凭证渠道的唯一凭证被停用后**重启即拒启**（v1.01 记档时的触发源是 401 自动摘除，口径层 v0.95 拆掉它之后只剩人工停用这一条路，交互本身仍在）；`weight=0` 在 M4 之前对**未停用**接入点表达不出来。两条都不是本票引入的缺陷，是既有闸与新形态相遇的结果。
+
+### 7.10 多用户体系数据模型与迁移（口径层 §2.10 落地，vNEXT，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)）
+
+**新表**（migration 只加表，无 admin 用户时全部空转——横向约束）：
+
+- `users`：`id`、`email TEXT NOT NULL UNIQUE`（登录标识）、`display_name`（可选）、`password_hash`（可空，OAuth-only 为空）、`role TEXT`（`admin`/`user`）、`disabled`、`email_verified`、`monthly_quota_usd REAL`（**NULL = 不限额（默认）、0 = 封停**，#65）、`created_at`。
+- `sessions`：session 落库替换内存实现，单 cookie；TTL 两档 user 30d / admin 12h 滑动（#61）。校验联查 `users.disabled`——停用即踢下线（#63 Q7）。
+- `oauth_identities`：`provider` + `provider_user_id` → `user_id`，仅认上游 verified 邮箱自动关联；手动绑定/解绑（#62）。
+- `invite_codes`：一次性码，admin 生成、可选有效期、可撤销、用后作废并记录使用者（#62）。
+- settings 表新键：SMTP（host/port/加密三态/用户名/密码/发件地址）、GitHub/Google client_id/secret、站点外部 URL（#62；secret 不回显）。邮箱验证 token 24h / 重置 token 30min 一次性。
+
+**既有表改造**：
+
+- `api_keys`：加 `user_id INTEGER REFERENCES users(id)` **可空**（#63 拍 NOT NULL，#66 翻案：NULL = 无主，声明形态/无 admin 库的合法形态）；`name` 从全局 UNIQUE 改 `UNIQUE(user_id, name)`——SQLite 改不了约束，**迁移重建表**。
+- `channel_models`：加 `price_input` / `price_output` / `price_cache_read` / `price_cache_write`，REAL，USD/百万 token，**NULL = 未定价、0 = 真免费**（#65）；未定价提醒判据 =「价字段 NULL 且有用量」，挂条目不挂流水行。
+- `channels`：加可选 `provider` 标注（models.dev provider id，只服务建议价与图标分组，不参与路由）。
+- `call_logs`：加 `user_id INTEGER` 可空（NULL = 未鉴权或无主 key，靠 `api_key_name` 非空分辨，#64）与 `cost REAL` 可空（四项 token × 各自单价 ÷ 1e6 求和，`reasoning_tokens` 是 output 明细不另计；NULL = 无用量可计，有用量未定价记 0，#65）。
+
+**迁移顺序**（沿 `migrate()` 探列式幂等成例）：① 建新表；② 若 settings 有 `admin_password_hash` 且无 admin 用户 → 造第一个 admin（搬 hash、占位邮箱 `admin@localhost`、`email_verified` 视为真，#61）；③ `api_keys` 重建表加 owner 列与复合唯一；④ **无主认领**：存在第一个 admin 时把全部 `user_id IS NULL` 的 key 幂等归其名下（#66，覆盖 #63「存量迁 PO」原意）；⑤ `call_logs` 老行按 `api_key_name <> ''` 回填第一个 admin（#64）。②④⑤ 在无 admin 的库上全部空转。
+
+**执行点与热路径**：鉴权 SELECT 改 **LEFT JOIN users**（取 `user_id`、判 `users.disabled`；无主 key 照常通过）；配额闸在**全局令牌桶之后、Resolve 之前**（判据只需 user_id），月度累计 = 流水 `SUM(cost)` 按 (user_id, UTC 当月) 现算 + 覆盖索引，**不建计数器表**；≥ 限额拒 429 + outcome 词表**第 12 词 `quota_exceeded`**（回绝半区），不预扣，`count_tokens` 豁免（#65）。聚合 `UsageBy`：key 维度改 `GROUP BY user_id, api_key_name`，加 user 第四维度与流水按用户筛选（#64）。用户侧接口强制限定本人，裁 `channel_key_name` 与 `upstream_request_id` 两列。
+
+**声明形态互斥闸**（#66）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；export 与 `POST /admin/api/import` 在存在非第一个 admin 名下 key 的库上拒绝；apply 对 `api_keys` 的覆盖删除语义不变。
+
+**models.dev 快照**（#68）：MIT，`api.json` 裁剪后 gzip 约 164 KB `go:embed`，四价字段单位与渠道口径一致，随发版一条命令更新；缺价条目（434/7483）容忍手填。
+
+### 7.10.1 测试方案增补（§9 同批）
+
+- migration 幂等三态：空库 / 只有 admin_password_hash 的旧库（造 admin + 认领 + 回填）/ 无 admin 的声明形态库（②④⑤ 空转，行为与现状逐字一致）。
+- `api_keys` 重建表迁移前后：同名跨用户共存、`key_hash` 唯一不变、明文回读不丢。
+- 配额闸：月界（UTC 自然月首尾）、恰好 = 限额拒、NULL 不限、0 封停、`count_tokens` 豁免、调低到已用之下即封、`quota_exceeded` 落词与半区谓词（outcome_test 全覆盖断言会逼着分半区）。
+- cost 计算：四项求和、未定价记 0、无用量 NULL、落库时点（改价后旧行不动）。
+- 停用用户：key 立即 401 路径外的拒绝语义 + session 当场失效（LEFT JOIN 两处）。
+- 声明形态互斥：挂文件时用户路由 404、多用户库导出/导入拒绝、apply 删用户 key。
+- 往返闸（§7.9）在含无主 key 的库上仍字节相等；含多用户 key 的库导出直接失败并点名。
 
 ## 8. 最小管理接口
 

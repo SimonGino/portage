@@ -274,9 +274,14 @@ in the [deployment guide](docs/deploy.md#configuration-files).
 
 ## Deliberately not doing
 
-Multi-tenancy, billing, top-up codes, redemption, notifications, evals, Elasticsearch
-logging, anything training-related. No "user tier × channel group" matrix — weighted
-routing is routing, not commerce. No image generation or audio endpoints in v1.
+Billing, top-up codes, redemption, notifications, evals, Elasticsearch logging, anything
+training-related. No "user tier × channel group" matrix — weighted routing is routing,
+not commerce. No image generation or audio endpoints in v1.
+
+Multi-user *is* now designed (small-circle, invite-only: per-user API keys, per-model
+pricing, monthly USD quotas — see the design docs), but it stays a quota system, not a
+commerce system: no balances, no payments, no public sign-up. A forwarding-only
+deployment is entirely unaffected — the whole user system hides behind the admin gate.
 
 **No stateful Responses.** A request carrying `previous_response_id` gets an explicit
 `400` rather than having the field quietly dropped — silently dropping it means the client
