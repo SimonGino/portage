@@ -146,6 +146,7 @@ export function Confirm({
   label = '删除',
   confirm,
   ghost,
+  danger,
   onConfirm,
 }: {
   label?: string
@@ -155,6 +156,10 @@ export function Confirm({
   /** ghost：未举起时不画边框，悬停才显形。列表里每行都挂一个删除按钮时用它——
    *  一排同等分量的描边按钮会盖过行首的正主。举起后仍是实心红，不受影响。 */
   ghost?: boolean
+  /** danger：未举起就画实心红。留给「按下即重排整份配置」的弹框主操作——全量
+   *  覆盖这种动作第一眼就该危险，而不是等到举起那一下才变红。与 ghost 互斥：
+   *  同时传时 ghost 优先（两个都是「未举起态」的形状，不叠）。 */
+  danger?: boolean
   onConfirm: () => void
 }) {
   const [armed, setArmed] = useState(false)
@@ -171,7 +176,11 @@ export function Confirm({
   // 会让「点一下删除」顺手把表单交出去。
   if (!armed) {
     return (
-      <button type="button" className={'btn ' + (ghost ? 'btn-ghost' : 'btn-quiet')} onClick={() => setArmed(true)}>
+      <button
+        type="button"
+        className={'btn ' + (ghost ? 'btn-ghost' : danger ? 'btn-danger' : 'btn-quiet')}
+        onClick={() => setArmed(true)}
+      >
         {label}
       </button>
     )
@@ -237,6 +246,42 @@ export function CopyCode({
       <span className="copycode-mark" aria-hidden>
         {copied ? '已复制' : '复制'}
       </span>
+    </button>
+  )
+}
+
+/**
+ * CopyIconButton 是值旁的复制微钮（.act-icon，DESIGN v0.38 ② 的「值旁动作」档）：
+ * 点了把 value 抄进剪贴板，成功原地变 ✓ 绿一拍。复制凭证的 SecretValue、复制
+ * 限定名的 CopyCode 各有各的形状，这个只服务「一行值 + 贴身微钮」的行——baseurl
+ * 预览地址这类。clipboard API 在非 HTTPS 的非 localhost 页面上不可用（局域网访问
+ * 就是这种情况）：失败不报错，值本身就在页面上，选中抄走总比一颗报错钮强。
+ */
+export function CopyIconButton({ value, title = '复制' }: { value: string; title?: string }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1200)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  return (
+    <button
+      type="button"
+      className={'act-icon' + (copied ? ' is-copied' : '')}
+      aria-label="复制"
+      title={copied ? '已复制' : title}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value)
+          setCopied(true)
+        } catch {
+          // clipboard 不可用的环境：不报错。传进来的 value 本来就显示在页面上。
+        }
+      }}
+    >
+      {copied ? <IconCheck /> : <IconCopy />}
     </button>
   )
 }
@@ -339,7 +384,9 @@ export function DetailBlock({
     <section className="detail-block">
       <div className="detail-block-head">
         <span className="detail-block-title">{title}</span>
-        {action}
+        {/* 动作整组右置（DESIGN v0.45）：包装层让 margin-left:auto 只落一次，成对
+            动作（管理/检测）的贴近规则也随之挂在容器上，不再依赖头部层的选择器。 */}
+        <div className="detail-block-acts">{action}</div>
       </div>
       {children}
     </section>

@@ -9,7 +9,7 @@ import type {
   PricingModels,
   Protocol,
 } from '../../api'
-import { Confirm, CopyCode, DetailBlock, Dialog, Toggle } from '../../ui'
+import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
 import { IconCheck, IconPencil, IconSliders, IconX } from '../../icons/acts'
 import { ChannelForm, joinURL } from './form'
@@ -268,12 +268,17 @@ export function ChannelDetail({
                     mutate={mutate}
                   />
                 )}
-                <ModelInputLimit model={m} mutate={mutate} />
-                <ModelPrices
-                  model={m}
-                  suggest={suggested?.[m.upstream_model] ?? null}
-                  mutate={mutate}
-                />
+                {/* 上限与定价并排一行（PO 2026-08-30：「合并成一行不好吗，减少高度」）：
+                    两颗收起态都是芯片，各占一整行白耗一倍高度。各自仍是独立组件
+                    （编辑态原地展开），容器只负责排成一行，放不下时折行。 */}
+                <div className="model-meta">
+                  <ModelInputLimit model={m} mutate={mutate} />
+                  <ModelPrices
+                    model={m}
+                    suggest={suggested?.[m.upstream_model] ?? null}
+                    mutate={mutate}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -374,19 +379,25 @@ function BaseURLBlock({
           </button>
         }
       >
-        {declared.map((p) => (
-          <div key={p} className="baseurl-view-row">
-            <span className="baseurl-proto" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
-              {PROTOCOL_SHORT[p] ?? p}
-            </span>
-            <code
-              className="baseurl-view-url"
-              title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径"
-            >
-              {joinURL(ch.base_url[p] ?? '', PROTOCOL_PATH[p] ?? '')}
-            </code>
-          </div>
-        ))}
+        {declared.map((p) => {
+          const url = joinURL(ch.base_url[p] ?? '', PROTOCOL_PATH[p] ?? '')
+          return (
+            <div key={p} className="baseurl-view-row">
+              <span className="baseurl-proto" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
+                {PROTOCOL_SHORT[p] ?? p}
+              </span>
+              <code
+                className="baseurl-view-url"
+                title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径"
+              >
+                {url}
+              </code>
+              {/* 值旁微钮（DESIGN v0.38 ② 成例，凭证行同款）：这串地址正是要抄进
+                  客户端配置的东西，手抄一个长域名必错，复制是它的常用动作。 */}
+              <CopyIconButton value={url} title="复制完整地址" />
+            </div>
+          )
+        })}
       </DetailBlock>
     )
   }

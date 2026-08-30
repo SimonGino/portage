@@ -214,6 +214,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 	// 导入一份 channels.yaml，覆盖式（#59）。在写闸组里：声明文件形态下导进去的
 	// 改动活不过下次重启 apply，与其余业务配置写接口同一句 409——见 import.go。
 	cw.POST("/import", h.importConfig)
+	// 导入试算（口径层 v1.03）：同一串闸、不提交事务，回「真导入会产生哪些变更」。
+	// 与 /import 同组——声明形态下「试算成功」与「导入成功」同款假象，同一句 409。
+	cw.POST("/import/preview", h.previewImport)
 
 	adm.GET("/logs", h.listLogs)
 	adm.GET("/usage", h.usage)

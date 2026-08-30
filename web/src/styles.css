@@ -1005,6 +1005,24 @@ button, input, textarea, select {
   font-size: 12px;
 }
 
+/* 「+ 上限」「+ 定价」并排一行（DESIGN v0.44，PO 2026-08-30 裁定「合并成一行，
+   减少高度」，推翻此前各自占一整行）：容器接住两个组件各自的 .model-protocols
+   整行占位与上边距；编辑态的四价输入组很长，放不下时折行。 */
+.model-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 4px;
+}
+
+.model-meta .model-protocols {
+  grid-column: auto;
+  margin-top: 0;
+  padding-bottom: 0;
+}
+
 /* 输入上限（口径层 v0.99；v0.38 收进芯片家族）：与协议芯片同行同族。
    未设 = 虚线空位芯片「+ 上限」（占位是空的，边框也画成空的）；设了 = 实底芯片
    「上限 ~200k」，悬停浮出铅笔说「能改」。 */
@@ -2552,8 +2570,18 @@ textarea:focus {
   min-height: 26px;
 }
 
-/* 两枚动作并排时靠得比「标题 ↔ 动作」近一档：它们是一组。 */
-.detail-block-head .act + .act {
+/* 动作右置（DESIGN v0.45，PO 2026-08-30 裁定「统一放在所在行的右侧」，推翻 v0.38
+   以来「跟在标题后」的左聚簇）：名词留左、动词靠右，与渠道身份条上的「上游设置」
+   同一条行节奏——每行的动作都在行尾等手，不必逐行找标题旁边多了什么。 */
+.detail-block-acts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* 成对动作（管理 / 检测）贴成一组：容器 gap 12px 是「组与组」的距离，组内收紧一档。 */
+.detail-block-acts .act + .act {
   margin-left: -6px;
 }
 
@@ -2650,6 +2678,13 @@ textarea:focus {
   font-family: var(--mono);
   font-size: 13px;
   word-break: break-all;
+}
+
+/* 复制微钮贴在地址尾后（DESIGN v0.44）：不随长地址压缩，也不参与 baseline 对齐
+   ——定高图标钮跟文字 baseline 走会沉到第二行地址的下面去。 */
+.baseurl-view-row .act-icon {
+  flex-shrink: 0;
+  align-self: flex-start;
 }
 
 /* 「添加端点」chips 与输入列同缘起排（跳过协议名列），一眼读出「加的是同一列东西」。 */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { api, download, importConfig, setUnauthorizedHandler } from './api'
+import { api, download, importConfig, previewImport, setUnauthorizedHandler } from './api'
 import { PortageMark } from './brand'
 import type { SessionState, User } from './api'
 import Login from './pages/Login'
@@ -207,20 +207,48 @@ function ExportButton() {
 /**
  * 把一份 channels.yaml 一次性导入并**整份覆盖**当前业务配置（#59）。
  *
- * 与导出并排放在左栏底部，理由同款：它动的是全部业务配置，挂在任何一页下面都会
+ * 与导出并排放在左栏底部，理由同款：它动的是**全部**业务配置，挂在任何一页下面都会
  * 读成「只导这一页的东西」。
  *
- * 流程：选文件 → 覆盖警告（后果写在确认键上）→ 提交 → 变更清单。失败整份回滚、
- * 一次报全——400 的报文是后端写给人看的多行原文，pre-wrap 原样显示，不折行揉成一段。
- * 成功关框后整页重载：整份配置换掉了，各页面攒着的本地状态全部过期，重载比逐页
- * 打补丁诚实。
+ * 流程（口径层 v1.03，推翻 v0.37 的「先警告后清单」时序）：选文件 → 立即试算 →
+ * 确认框直接摆试算结果（对账单：汇总 + 逐行清单）→ 导入。试算与真导入同一条链路，
+ * 所以 400 的原文在确认阶段就看全——试算被闸打回时真导入也会被同一道闸打回，确认键
+ * 随之整个收起（摆着它就是邀请人去撞闸）。覆盖语义只剩常驻一句；「整份回滚、一次
+ * 报全」是后端事务的保证，真导入失败时 400 原文自会说话，不再写进确认框说教。
+ * 确认键用 danger 形态：全量覆盖是弹框里唯一主操作，第一眼就该危险，两段式确认的
+ * 防误触语义不变。成功弹框缩成一句——清单在确认阶段已经看过，重复摆第二遍是同一份
+ * 数据说两遍。成功关框后整页重载：整份配置换掉了，各页面攒着的本地状态全部过期，
+ * 重载比逐页打补丁诚实。
  */
+type ImportPreview =
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ok'; changes: string[] }
+
+// 汇总行的新增/删除计数按清单动词前缀数。清单格式（「新增渠道 X」「删除 API Key Y」）
+// 是后端 reconcile 的输出、前后端同仓：后端改动词这里会悄悄归零，别只改一边。
+const adds = (changes: string[]) => changes.filter((c) => c.startsWith('新增')).length
+const dels = (changes: string[]) => changes.filter((c) => c.startsWith('删除')).length
+
 function ImportButton() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ name: string; text: string } | null>(null)
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [changes, setChanges] = useState<string[] | null>(null)
+  const [done, setDone] = useState<string[] | null>(null)
+
+  // 试算是异步的，而选文件可以连着来（试算途中取消、再选另一份）：迟到的响应必须
+  // 认得出自己已经过期，否则确认框会摆着 B 的文件名、A 的清单，而按下去导的是 B——
+  // 人照着另一份文件的账批准了全量覆盖。每次选文件递一个号，回来对不上就丢掉。
+  const previewSeq = useRef(0)
+
+  const close = () => {
+    previewSeq.current++
+    setPending(null)
+    setPreview(null)
+    setError('')
+  }
 
   return (
     <>
@@ -237,51 +265,83 @@ function ImportButton() {
           // 清掉 value：不清的话「取消后再选同一个文件」不触发 onChange，按钮就哑了。
           e.target.value = ''
           if (!file) return
+          // 选完立即试算：确认框里摆的必须是「这份文件对这个库会干什么」的事实，
+          // 不是覆盖语义的说教。试算没回来之前确认键不渲染——没算过的账不能签。
           setError('')
-          setPending({ name: file.name, text: await file.text() })
+          const seq = ++previewSeq.current
+          const text = await file.text()
+          if (seq !== previewSeq.current) return
+          setPending({ name: file.name, text })
+          setPreview({ state: 'loading' })
+          try {
+            const changes = await previewImport(text)
+            if (seq === previewSeq.current) setPreview({ state: 'ok', changes })
+          } catch (err) {
+            if (seq === previewSeq.current) {
+              setPreview({ state: 'error', message: err instanceof Error ? err.message : String(err) })
+            }
+          }
         }}
       />
       {pending && (
-        <Dialog title="导入配置" guard onClose={() => setPending(null)}>
-          <p>
-            将把 <b>{pending.name}</b> 的内容整份覆盖当前业务配置：文件里没有的渠道、接入点、API Key
-            会被<b>删除</b>。校验不过会整份回滚、一次报全，库里不会留下半截。
-          </p>
+        <Dialog title="导入配置" guard onClose={close}>
+          {preview?.state === 'loading' && <p>正在试算 {pending.name} 会带来的变更…</p>}
+          {preview?.state === 'error' && (
+            <>
+              <p>
+                试算 <b>{pending.name}</b> 没过，导入不会执行——同一份文件真导入也会被同一道闸打回：
+              </p>
+              <div className="bar bar-error bar-pre">{preview.message}</div>
+            </>
+          )}
+          {preview?.state === 'ok' && (
+            <>
+              <p>
+                试算 <b>{pending.name}</b>：
+                {preview.changes.length === 0
+                  ? '配置无变化——文件内容与当前配置一致。'
+                  : `将新增 ${adds(preview.changes)} 项、删除 ${dels(preview.changes)} 项。`}
+              </p>
+              {preview.changes.length > 0 && (
+                <ul className="import-changes">
+                  {preview.changes.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          <p className="muted">文件里没有的一律删除，有的一律按文件覆盖。</p>
           {error && <div className="bar bar-error bar-pre">{error}</div>}
           <div className="form-actions">
-            <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setPending(null)}>
+            <button type="button" className="btn btn-quiet" disabled={busy} onClick={close}>
               取消
             </button>
-            <Confirm
-              label={busy ? '导入中…' : '导入并覆盖'}
-              confirm="确定覆盖当前配置？"
-              onConfirm={async () => {
-                setBusy(true)
-                setError('')
-                try {
-                  setChanges(await importConfig(pending.text))
-                  setPending(null)
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err))
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            />
+            {preview?.state === 'ok' && (
+              <Confirm
+                danger
+                label={busy ? '导入中…' : '导入并覆盖'}
+                confirm="确定覆盖当前配置？"
+                onConfirm={async () => {
+                  setBusy(true)
+                  setError('')
+                  try {
+                    setDone(await importConfig(pending.text))
+                    close()
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              />
+            )}
           </div>
         </Dialog>
       )}
-      {changes && (
+      {done && (
         <Dialog title="导入完成" onClose={() => window.location.reload()}>
-          {changes.length === 0 ? (
-            <p>配置无变化——文件内容与当前配置一致。</p>
-          ) : (
-            <ul className="import-changes">
-              {changes.map((c) => (
-                <li key={c}>{c}</li>
-              ))}
-            </ul>
-          )}
+          <p>{done.length === 0 ? '配置无变化——文件内容与当前配置一致。' : '配置已按文件覆盖。'}</p>
           <div className="form-actions">
             <button type="button" className="btn btn-quiet" onClick={() => window.location.reload()}>
               完成

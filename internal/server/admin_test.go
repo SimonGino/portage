@@ -650,8 +650,10 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 		{http.MethodPut, "/admin/api/keys/1"},
 		{http.MethodDelete, "/admin/api/keys/1"},
 		// 导入也是业务配置写（#59）：声明文件形态下导进去的改动活不过下次重启
-		// apply，「导入成功」是假象，与其余写接口同一句 409。
+		// apply，「导入成功」是假象，与其余写接口同一句 409。导入试算（口径层
+		// v1.03）同句：它预演的改动同样活不过重启，「试算成功」是同款假象。
 		{http.MethodPost, "/admin/api/import"},
+		{http.MethodPost, "/admin/api/import/preview"},
 	}
 	for _, w := range writes {
 		if status, body := a.Do(t, w.method, w.path, "{}"); status != http.StatusConflict {
