@@ -108,7 +108,24 @@ func migrate(db *sql.DB) error {
 	if err := addUpstreamEndpoint(db); err != nil {
 		return err
 	}
-	return expandBaseURLs(db)
+	if err := expandBaseURLs(db); err != nil {
+		return err
+	}
+	return seedFirstAdmin(db)
+}
+
+// seedFirstAdmin 是多用户迁移序列的第 ② 步（展开层 §7.10，#61/#71）：settings 有
+// admin_password_hash 且库中无 admin 用户 → 造第一个 admin。判断与写入都在
+// EnsureFirstAdmin 里——admin.Bootstrap 在「配置密码初次落库」那条路上也要造同一个
+// 号（migrate 跑在 Bootstrap 之前，新库那时还没有 hash 可搬），一份定义两处调。
+//
+// 横向约束（#61 特别要求）：无 admin 的库上它是纯空转，纯转发/声明形态的行为与
+// 现状逐字一致——这一条由 formgate 与迁移三态测试钉住。
+func seedFirstAdmin(db *sql.DB) error {
+	if _, err := EnsureFirstAdmin(context.Background(), db); err != nil {
+		return fmt.Errorf("迁移第一个 admin 用户: %w", err)
+	}
+	return nil
 }
 
 // expandBaseURLs 把 v0.96 之前的单一 base_url × protocols 展开成每协议一列地址：

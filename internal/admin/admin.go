@@ -27,11 +27,11 @@ import (
 // ——cookie 是按域名共享的，端口不隔离。
 const cookieName = "portage_admin"
 
-// Handler 是管理端的全部状态：一个库连接、一张会话表。
+// Handler 是管理端的全部状态：一个库连接。会话自 #71 起也在库里（sessions 表），
+// 这里不再持有会话表。
 type Handler struct {
-	db       *sql.DB
-	log      *slog.Logger
-	sessions *sessionStore
+	db  *sql.DB
+	log *slog.Logger
 	// declarative 是声明文件形态旗（#48）：业务配置以文件为准，写接口回 409。
 	// 只读的是**业务配置**——检测、fetch-models、导出、流水/用量、改密码照常：
 	// 前两样不写库，导出与查询本就是读，密码是运行期状态、不在文件里（§2.9 #28）。
@@ -42,7 +42,7 @@ func New(db *sql.DB, log *slog.Logger, declarative bool) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{db: db, log: log, sessions: newSessionStore(), declarative: declarative}
+	return &Handler{db: db, log: log, declarative: declarative}
 }
 
 // Bootstrap 用配置里的明文密码初始化管理端密码，**且只在库里还没有密码时**。
@@ -52,23 +52,30 @@ func New(db *sql.DB, log *slog.Logger, declarative bool) *Handler {
 // 若不这样，重启会把管理员改过的密码悄悄改回配置里的旧值——而配置文件常年躺在
 // 仓库或 compose 里，等于密码根本改不掉。
 //
+// #71 起多补一手：有了密码哈希就确保第一个 admin **用户**存在（口径层 §2.10 #61，
+// admin_password 的完整语义从此是「仅在无 admin 用户时初始化造号」）。migrate 里
+// 那一步只够老库——新库跑 migrate 时 settings 还是空的，hash 是这里刚写进去的，
+// 造号只能跟在后面。EnsureFirstAdmin 幂等，两处调用不冲突。
+//
 // 返回 false 表示这次启动之后仍然没有密码：管理端会拒绝一切登录。
 func Bootstrap(ctx context.Context, db *sql.DB, plaintext string) (bool, error) {
 	existing, err := store.GetSetting(ctx, db, store.SettingAdminPasswordHash)
 	if err != nil {
 		return false, err
 	}
-	if existing != "" {
-		return true, nil
+	if existing == "" {
+		if plaintext == "" {
+			return false, nil
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.DefaultCost)
+		if err != nil {
+			return false, err
+		}
+		if err := store.SetSetting(ctx, db, store.SettingAdminPasswordHash, string(hash)); err != nil {
+			return false, err
+		}
 	}
-	if plaintext == "" {
-		return false, nil
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.DefaultCost)
-	if err != nil {
-		return false, err
-	}
-	if err := store.SetSetting(ctx, db, store.SettingAdminPasswordHash, string(hash)); err != nil {
+	if _, err := store.EnsureFirstAdmin(ctx, db); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -149,10 +156,18 @@ func (h *Handler) Mount(r *gin.Engine) {
 // 只认 cookie。刻意**不**接受 `Authorization: Bearer <会话 token>`：那会让一个
 // 转发端的 key 和一个管理端的 token 长在同一个头上，迟早有人把两者混起来用，
 // 「彻底分离」就名存实亡了。
+//
+// 会话自 #71 起落库，校验联查 users.disabled——用户被停用时已发出的 cookie 当场
+// 失效（口径层 §2.10：停用即对系统一切访问冻结），这正是内存版做不到的那半。
 func (h *Handler) requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, _ := c.Cookie(cookieName)
-		if !h.sessions.valid(token) {
+		ok, err := h.validSession(c)
+		if err != nil {
+			h.log.Error("校验会话失败", "err", err)
+			fail(c, http.StatusInternalServerError, "会话校验失败")
+			return
+		}
+		if !ok {
 			fail(c, http.StatusUnauthorized, "未登录或会话已过期")
 			return
 		}

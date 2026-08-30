@@ -110,20 +110,31 @@ func (s *Server) Engine() *gin.Engine {
 	// 管理面自己挂自己的路由与鉴权（cookie 会话），与上面这套 key 鉴权互不相干。
 	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
 	//
-	// **形态闸（口径层 §2.9 #27）：没有管理密码就没有管理面。** 整个 Mount 不调，于是
-	// /admin 页面、/admin/api/* 与登录会话全部**不注册**——404 是路由级的，不是鉴权级。
+	// **形态闸（口径层 §2.9 #27，§2.10 #61 演化）：库里存在 admin 用户 或 配了管理
+	// 密码 → 挂管理面。** 两个判据都不中时整个 Mount 不调，于是 /admin 页面、
+	// /admin/api/* 与登录会话全部**不注册**——404 是路由级的，不是鉴权级。将来的
+	// 用户面板（#75）与管理端同一个闸，不拆「只挂面板」形态。
 	//
-	// 口径一句话：**值只用于初始化，存在性用于形态**。这是给 v0.28「密码只用来初始化」
-	// 加一半，不推翻它。
+	// 「闸只看 cfg 不看库」的旧口径被 #61 **正式推翻**：用户是库里的实体，「有没有
+	// 用户体系」这个形态只有库答得上来。旧立论担心的「观测实例往共享库写密码打开
+	// 纯转发机的管理面」随之易主——多用户之后，库里有 admin 的实例**就该**有管理面。
+	// 真正不变的那半仍然成立：无 admin 用户且未配密码时，行为与纯转发现状逐字一致。
 	//
-	// 闸只看 cfg（配置文件或 PORTAGE_ADMIN_PASSWORD），**不看库**：形态是进程属性，
-	// 而库是共享资源——看库的话，一台带 UI 的观测实例往 settings 里写的密码，会把生产
-	// 那台纯转发机的管理面一起打开。
+	// 查库失败按「无 admin」处理而不是 panic：这一步在 Open/Validate 都过了之后，
+	// 真失败是极端态，宁可少挂管理面也别把转发面一起拖死——纯转发是底线形态。
 	//
 	// 顺带一提 webui 那个 build tag 管的是**另一件事**：它只决定前端资产 embed 不 embed，
 	// 路由本来是无条件挂的，凭证回读接口照常活着。「编译期去掉 UI」从来不等于「有了
 	// 无 UI 的部署形态」，这道运行期的闸才是。
-	if strings.TrimSpace(s.cfg.AdminPassword) != "" {
+	mountAdmin := strings.TrimSpace(s.cfg.AdminPassword) != ""
+	if !mountAdmin {
+		has, err := store.HasAdminUser(context.Background(), s.db)
+		if err != nil {
+			s.log.Error("查 admin 用户失败，管理面按未挂载处理", "err", err)
+		}
+		mountAdmin = has
+	}
+	if mountAdmin {
 		admin.New(s.db, s.log, s.cfg.Declarative).Mount(r)
 	}
 	return r

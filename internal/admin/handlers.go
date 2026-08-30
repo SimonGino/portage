@@ -57,19 +57,32 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 
-	token, err := h.sessions.create()
+	// 会话落库后必须挂在一个用户名下。#71 阶段这条登录路还是验 settings 里的管理
+	// 密码（邮箱登录是 #72），验过即视为第一个 admin 本人——settings 有哈希时
+	// migration / Bootstrap 保证了这个号存在，找不到只能是手写 SQL 改坏的库。
+	adminID, err := store.FirstAdminID(c.Request.Context(), h.db)
+	if err != nil {
+		h.log.Error("找第一个 admin 用户失败", "err", err)
+		fail(c, http.StatusInternalServerError, "登录失败")
+		return
+	}
+	token, ttl, err := store.CreateSession(c.Request.Context(), h.db, adminID)
 	if err != nil {
 		h.log.Error("生成会话失败", "err", err)
 		fail(c, http.StatusInternalServerError, "登录失败")
 		return
 	}
-	h.setSessionCookie(c, token, int(sessionTTL.Seconds()))
+	h.setSessionCookie(c, token, int(ttl.Seconds()))
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) logout(c *gin.Context) {
 	if token, _ := c.Cookie(cookieName); token != "" {
-		h.sessions.drop(token)
+		if err := store.DeleteSession(c.Request.Context(), h.db, token); err != nil {
+			// 只记不拦：登出的可见效果（清 cookie）照常发生，库里那行最晚在
+			// 过期 sweep 时也会走。
+			h.log.Error("删除会话失败", "err", err)
+		}
 	}
 	h.setSessionCookie(c, "", -1)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -77,7 +90,12 @@ func (h *Handler) logout(c *gin.Context) {
 
 // session 让前端在加载时问一句「我还登着吗」，免得每个页面各自靠 401 去发现。
 func (h *Handler) session(c *gin.Context) {
-	token, _ := c.Cookie(cookieName)
+	authed, err := h.validSession(c)
+	if err != nil {
+		h.log.Error("校验会话失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取状态失败")
+		return
+	}
 	hash, err := store.GetSetting(c.Request.Context(), h.db, store.SettingAdminPasswordHash)
 	if err != nil {
 		h.log.Error("读管理端密码失败", "err", err)
@@ -85,27 +103,8 @@ func (h *Handler) session(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"authenticated": h.sessions.valid(token),
+		"authenticated": authed,
 		"password_set":  hash != "",
-	})
-}
-
-// setSessionCookie 统一设置会话 cookie。
-//
-// HttpOnly：JS 读不到，XSS 也偷不走会话。
-// SameSite=Strict：跨站过来的请求一律不带这个 cookie，CSRF 因此不成立——管理端的
-// 写接口全是同源 fetch，不受影响。这也是这里不再另做 CSRF token 的原因。
-// Secure 跟着实际协议走：局域网里是明文 HTTP，硬写 Secure 会让 cookie 根本存不下，
-// 表现成「登录成功但立刻又变成未登录」。
-func (h *Handler) setSessionCookie(c *gin.Context, token string, maxAge int) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     cookieName,
-		Value:    token,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   c.Request.TLS != nil,
-		SameSite: http.SameSiteStrictMode,
 	})
 }
 
@@ -146,8 +145,23 @@ func (h *Handler) changePassword(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "修改失败")
 		return
 	}
+	// 第一个 admin 用户的 password_hash 是 settings 那份的复制（#71 迁移搬过去的），
+	// 两份必须一起改：只改 settings 的话，#72 的邮箱登录会拿着旧密码继续放行——
+	// 而那正是改密码要赶走的人。找不到号不拦（settings 没哈希的库改不到这一步，
+	// 真缺号只能是手写 SQL，密码本体已改成、目的已达）。
+	if adminID, err := store.FirstAdminID(ctx, h.db); err == nil {
+		if err := store.SetUserPasswordHash(ctx, h.db, adminID, string(newHash)); err != nil {
+			h.log.Error("同步 admin 用户密码失败", "err", err)
+		}
+	} else {
+		h.log.Error("找第一个 admin 用户失败，密码只改了 settings", "err", err)
+	}
 	// 全部会话作废，包括发起这次修改的这一个——改完要重登。
-	h.sessions.dropAll()
+	if err := store.DeleteAllSessions(ctx, h.db); err != nil {
+		h.log.Error("吊销全部会话失败", "err", err)
+		fail(c, http.StatusInternalServerError, "修改失败")
+		return
+	}
 	h.setSessionCookie(c, "", -1)
 	h.log.Info("管理端密码已修改，全部会话已吊销")
 	c.JSON(http.StatusOK, gin.H{"ok": true, "relogin": true})

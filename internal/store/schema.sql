@@ -100,6 +100,43 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 用户（口径层 §2.10，#61）：网关的登录主体，邮箱即标识。多用户体系对无 webui /
+-- 纯转发形态零负担——这张表在无 admin 的库上就是空表，转发链路一个字都不读它。
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  -- 可空而不是默认空串：OAuth-only 账号**没有**密码，与「密码是空串」必须分得开——
+  -- bcrypt 对空串也能算出合法哈希，抹成空串会让「无密码」变成一个可登录的密码。
+  password_hash TEXT,
+  -- 两档 admin / user（#61），单列可任免、多 admin 允许。
+  role TEXT NOT NULL DEFAULT 'user',
+  -- 停用即对系统一切访问冻结：key 与 session 走热路径联查这一列，当场失效。
+  -- 用户删除 v1 不做，停用是唯一的「请出去」。
+  disabled INTEGER NOT NULL DEFAULT 0,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  -- 月度 USD 限额（#65）：**NULL = 不限额（默认）、0 = 封停**，两个语义都要，
+  -- 所以这一列必须可空——默认 0 会把每个新用户都封停。配额闸在 #74 落地。
+  monthly_quota_usd REAL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 登录会话（#61）：落库替换内存实现，单 cookie 一套体系。
+--
+-- 落库推翻了旧内存版「重启即全吊销是特性」的立论（口径层 §2.7 时代）：多用户下
+-- 重启踢掉所有人代价不再是「一个人重登一次」。密码泄露的补救从「重启」改成
+-- 「改密码吊销全部会话」（DeleteAllSessions），语义没丢，只是换了扳机。
+CREATE TABLE IF NOT EXISTS sessions (
+  -- token 即主键：32 字节 crypto/rand 的 hex，猜不出来所以不需要另一层 id。
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  -- unix 秒而不是 DATETIME：过期判断要在 Go 里比大小，DATETIME 文本比较依赖
+  -- 驱动的解析与格式一致性（ListExposedModels 为此绕过一回），整数没这个问题。
+  -- TTL 两档滑动——user 30 天 / admin 12 小时（#61），每次有效校验都往后推。
+  expires_at INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 管理端自己的状态，目前只有一行 admin_password_hash。
 --
 -- 单独一张 kv 表而不是往 config.yaml 里回写：口径层 §2.7 要求密码「登录后可改，
