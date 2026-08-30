@@ -139,6 +139,17 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
               <dd className="tnum">{fmtMs(log.queue_wait_ms)}</dd>
             </>
           )}
+          {/* 成本（口径层 §2.10，#74）：落库时点算死、改价不追溯。判据是非 null——
+              null 是「无用量可计」（没走到上游 / 上游没报 usage / 老流水），摆出来只能
+              写「$0.0000」，而那对没打上游的行是撒谎。0 照摆：它是「有用量但未定价或
+              真免费」，与 null 不同档。明细给四位（DESIGN §12）：单次调用常在一分钱
+              以下，两位小数会把绝大多数行抹成 $0.00。 */}
+          {log.cost !== null && (
+            <>
+              <dt>成本</dt>
+              <dd className="tnum">${log.cost.toFixed(4)}</dd>
+            </>
+          )}
           {/* 上游 request-id（口径层 v0.56，露出见 #81）：走 CopyCode 而不是裸 code——
               它的唯一用途是粘给上游查这一次调用，`req_018Ee…` 这种串手抄必错。
               空串不摆空壳：三种情况（没走到上游、上游没回这个头、v0.56 之前的老流水）
@@ -520,8 +531,13 @@ export default function Logs() {
                           这个框本来就是「这一行的额外细节」，上游原文只是它此前唯一
                           的内容。
                           排队耗时这一半同理（#7）：真排过队（> 0）的行多一段可看，
-                          成功与否无关——挤过闸的成功行正是看拥塞时要找的那种。 */}
-                      {(l.status >= 400 || l.upstream_request_id !== '' || l.queue_wait_ms > 0) && (
+                          成功与否无关——挤过闸的成功行正是看拥塞时要找的那种。
+                          成本这一半（#74）判非 null：算出钱的行详情里多一格四位小数，
+                          null（无用量可计）的行没有这段可看。 */}
+                      {(l.status >= 400 ||
+                        l.upstream_request_id !== '' ||
+                        l.queue_wait_ms > 0 ||
+                        l.cost !== null) && (
                         <button
                           type="button"
                           className="btn btn-ghost log-detail-toggle"

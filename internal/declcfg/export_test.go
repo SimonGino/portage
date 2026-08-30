@@ -25,6 +25,9 @@ const exampleFile = "../../channels.example.yaml"
 //   - 停用接入点挂**两个**候选、其中一个 `weight: 0`——`checkSingleCandidate` 只扫
 //     未停用接入点，于是这是今天唯一能表达多候选与零权重的地方（口径层 §2.9 #29）。
 //   - 候选**故意逆序写**，钉住导出按限定名排而不是按插入序/id。
+//   - 纳管模型带**部分定价且含显式 0**（#74）——示范里只有「四价全给」的正常形状；
+//     只有「写 0」与「没写」在往返两侧都保持两态（0 照写、nil 不写），改价字段成
+//     裸 float64 或丢 omitempty 都会在这里翻车。
 func roundtripFixture() *declcfg.File {
 	f := declcfg.Example()
 	// 示范里那把是出厂占位 key，直接 apply 会被 #28 的闸拒掉。往返要的是**结构**
@@ -32,12 +35,22 @@ func roundtripFixture() *declcfg.File {
 	f.APIKeys[0].Key = "sk-ptg-roundtrip-用的真值"
 
 	zero, hundred := 0, 100
+	// 部分定价且含显式 0：input 真免费、output 有价、两个缓存价没写（NULL）。
+	// 挂在自建渠道上——示范里它的模型全未定价，正好补出三态并存的一个渠道。
+	free, out := 0.0, 2.5
+	f.Channels[1].Models = append(f.Channels[1].Models, declcfg.Model{
+		UpstreamModel: "Qwen-部分定价", Protocols: []string{"openai"},
+		PriceInput: &free, PriceOutput: &out,
+	})
 	f.Channels = append(f.Channels, declcfg.Channel{
 		Name:           "停用的旧渠道",
 		BaseURL:        store.BaseURLs{OpenAI: "https://old.example.internal"},
 		CredentialType: "api_key",
 		KeyMode:        "polling",
-		Disabled:       true,
+		// provider 标注也要能往返；示范里 anthropic 渠道已带一份，这里钉一个
+		// 「标注与渠道名毫无关系」的值——它本就不校验、不参与路由。
+		Provider: "openrouter",
+		Disabled: true,
 	})
 	f.AccessPoints = append(f.AccessPoints, declcfg.AccessPoint{
 		Model:    "停用的接入点",

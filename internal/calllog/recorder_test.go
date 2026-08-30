@@ -3,6 +3,7 @@ package calllog_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
 	"strings"
 	"testing"
@@ -405,7 +406,7 @@ func TestDetachedRecorderSwallowsEverything(t *testing.T) {
 	rec.Authenticated("k")
 	rec.RequestParsed("claude-sonnet-4", true)
 	rec.RecordRequestBody([]byte("{}"))
-	rec.Routed("ch", protocol.OpenAI, "gpt-4o")
+	rec.Routed("ch", protocol.OpenAI, "gpt-4o", calllog.Prices{})
 	rec.Dialing("/v1/chat/completions")
 	rec.Attempted(2, "cred", 30*time.Millisecond)
 	rec.RequestIDs("a", "b")
@@ -447,7 +448,7 @@ func TestRowCarriesNamesNeverSecrets(t *testing.T) {
 	h := newHarness()
 	h.rec.Authenticated("gateway-key-名")
 	h.rec.RequestParsed("claude-sonnet-4", true)
-	h.rec.Routed("渠道甲", protocol.OpenAI, "gpt-4o")
+	h.rec.Routed("渠道甲", protocol.OpenAI, "gpt-4o", calllog.Prices{})
 	h.rec.Dialing("/v1/chat/completions")
 	h.rec.Attempted(2, "凭证乙", 0)
 	h.rec.Summarized(protocol.Summary{InputTokens: 11, OutputTokens: 22, Model: "gpt-4o-2024-11-20"})
@@ -467,6 +468,9 @@ func TestRowCarriesNamesNeverSecrets(t *testing.T) {
 		ChannelKeyName:   "凭证乙",
 		Status:           200,
 		RetryCount:       2,
+		// 有 summary 就有账：未定价（Routed 给的是零值 Prices）记 0 不留 NULL
+		// （口径层 §2.10，#65「有用量但未定价记 0」）。
+		Cost: sql.NullFloat64{Valid: true},
 	}
 	got := row
 	// 三个带时间的格子不参与逐字比对（它们每次都不一样），单独看落没落。

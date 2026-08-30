@@ -60,6 +60,11 @@ type Channel struct {
 	KeyMode        string         `yaml:"key_mode"`
 	MaxConcurrency int            `yaml:"max_concurrency"`
 
+	// Provider 是 models.dev 的 provider id 标注（口径层 §2.10，#74）：只服务管理端
+	// 的建议价与图标分组，不参与路由。omitempty——没标注的渠道不背一行空串，往返闸
+	// 两边（导出不写空值、apply 落空串）对得上。
+	Provider string `yaml:"provider,omitempty"`
+
 	SupportsCompaction bool `yaml:"supports_compaction"`
 	// SupportsStatefulResponses 是指针，因为它的 DDL 默认值是 **1**，与 Go 的 bool
 	// 零值相反（口径层 v0.88 定它默认取「是」，理由是代价不对称的方向与 compaction
@@ -95,8 +100,15 @@ type Model struct {
 	Protocols     []string `yaml:"protocols"`
 	// MaxInputTokens 是输入上限（估算）（口径层 v0.99）：0 = 不限。裸 int 不用指针——
 	// 0 与「没写」同义（都是不限），没有 weight 那种零值陷阱。
-	MaxInputTokens int  `yaml:"max_input_tokens"`
-	Disabled       bool `yaml:"disabled"`
+	MaxInputTokens int `yaml:"max_input_tokens"`
+	// 四价（口径层 §2.10，#65/#74），USD/百万 token。**指针必须**：0 是真免费、
+	// 「没写」是未定价（落 NULL），两态在裸 float64 上长一样——正是 weight 那类
+	// 零值陷阱。omitempty 只略过 nil，显式 0 照写，往返闸两边对得上。
+	PriceInput      *float64 `yaml:"price_input,omitempty"`
+	PriceOutput     *float64 `yaml:"price_output,omitempty"`
+	PriceCacheRead  *float64 `yaml:"price_cache_read,omitempty"`
+	PriceCacheWrite *float64 `yaml:"price_cache_write,omitempty"`
+	Disabled        bool     `yaml:"disabled"`
 }
 
 // AccessPoint 是对外模型名，内嵌它的候选。

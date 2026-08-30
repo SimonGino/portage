@@ -73,7 +73,7 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, name, base_url_openai, base_url_openai_responses, base_url_anthropic,
 		       credential_type, key_mode,
-		       max_concurrency, supports_compaction, supports_stateful_responses, disabled
+		       max_concurrency, supports_compaction, supports_stateful_responses, provider, disabled
 		FROM channels ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("读渠道：%w", err)
@@ -87,7 +87,7 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 		var compaction, stateful, disabled int
 		if err := rows.Scan(&id, &ch.Name, &ch.BaseURL.OpenAI, &ch.BaseURL.OpenAIResponses,
 			&ch.BaseURL.Anthropic, &ch.CredentialType,
-			&ch.KeyMode, &ch.MaxConcurrency, &compaction, &stateful, &disabled); err != nil {
+			&ch.KeyMode, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled); err != nil {
 			return nil, err
 		}
 		ch.SupportsCompaction = compaction != 0
@@ -135,9 +135,12 @@ func exportCredentials(ctx context.Context, db store.Queryer, channelID int64) (
 }
 
 func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Model, error) {
+	// 四价直接扫进 *float64：NULL → nil → omitempty 不写这一行，未定价的条目在
+	// 文件里就是「没有这几个键」——与 apply 侧「没写落 NULL」互为逆运算，往返闸靠它。
 	rows, err := db.QueryContext(ctx,
-		`SELECT upstream_model, protocols, max_input_tokens, disabled FROM channel_models
-		 WHERE channel_id = ? ORDER BY upstream_model`, channelID)
+		`SELECT upstream_model, protocols, max_input_tokens,
+		        price_input, price_output, price_cache_read, price_cache_write, disabled
+		 FROM channel_models WHERE channel_id = ? ORDER BY upstream_model`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("读纳管模型：%w", err)
 	}
@@ -147,7 +150,8 @@ func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Mod
 		var m Model
 		var protocols string
 		var disabled int
-		if err := rows.Scan(&m.UpstreamModel, &protocols, &m.MaxInputTokens, &disabled); err != nil {
+		if err := rows.Scan(&m.UpstreamModel, &protocols, &m.MaxInputTokens,
+			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite, &disabled); err != nil {
 			return nil, err
 		}
 		m.Protocols = splitProtocols(protocols)

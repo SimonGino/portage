@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 
 	_ "modernc.org/sqlite"
@@ -106,6 +107,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addUpstreamEndpoint(db); err != nil {
+		return err
+	}
+	if err := addPricingColumns(db); err != nil {
 		return err
 	}
 	return expandBaseURLs(db)
@@ -422,6 +426,36 @@ func addModelMaxInputTokens(db *sql.DB) error {
 	return nil
 }
 
+// addPricingColumns 补计价批（口径层 §2.10，#74）的六列：channel_models 的四价、
+// channels.provider 标注、call_logs.cost。
+//
+// 四价与 cost **可空、不给默认值**：这几列上 NULL 各有各的意思（未定价 / 没有用量
+// 可计），补 0 会把「没定过价」说成「真免费」、把「没打上游」说成「免费打了一次」
+// ——与 reasoning_tokens 那条同款。provider 默认空串即「未标注」，恰是老库的语义，
+// 存量行不回填、迁移前后行为一字不变。
+func addPricingColumns(db *sql.DB) error {
+	for _, m := range []struct{ table, col, ddl string }{
+		{"channel_models", "price_input", `ALTER TABLE channel_models ADD COLUMN price_input REAL`},
+		{"channel_models", "price_output", `ALTER TABLE channel_models ADD COLUMN price_output REAL`},
+		{"channel_models", "price_cache_read", `ALTER TABLE channel_models ADD COLUMN price_cache_read REAL`},
+		{"channel_models", "price_cache_write", `ALTER TABLE channel_models ADD COLUMN price_cache_write REAL`},
+		{"channels", "provider", `ALTER TABLE channels ADD COLUMN provider TEXT NOT NULL DEFAULT ''`},
+		{"call_logs", "cost", `ALTER TABLE call_logs ADD COLUMN cost REAL`},
+	} {
+		has, err := hasColumn(db, m.table, m.col)
+		if err != nil {
+			return fmt.Errorf("检查 %s.%s: %w", m.table, m.col, err)
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(m.ddl); err != nil {
+			return fmt.Errorf("迁移 %s.%s: %w", m.table, m.col, err)
+		}
+	}
+	return nil
+}
+
 // hasColumn 问库里某张表有没有这一列。迁移是否已跑过全靠它判断。
 func hasColumn(db *sql.DB, table, col string) (bool, error) {
 	var n int
@@ -526,6 +560,10 @@ type Candidate struct {
 	// 判据是入站原始请求体字节数 ÷ 4——不解析不分词，透传与转换两条路同一把尺；
 	// 闸在 server.relay，超限 413 + 流水词 request_too_large，一个字节不打上游。
 	MaxInputTokens int
+	// Prices 是这条纳管条目的四价（口径层 §2.10，#74），交给 Recorder 在落库时点
+	// 算 cost。类型住在 calllog（依赖方向所迫，与 CallLog 别名同一条理由）。
+	// 零值 = 未定价，有用量照记 0，不拦请求——计价不是闸。
+	Prices calllog.Prices
 	// SupportsCompaction 记这个渠道的上游认不认 Codex 的 compaction_trigger
 	// （口径层 v0.54）。只在 Responses 透传那条路上被问到——转换路径上 trigger 到不了
 	// 上游，与渠道能力无关。
@@ -600,7 +638,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -610,9 +648,13 @@ const (
 
 // scanCandidate 按 candidateCols 的列序扫一行。urls 与 modelProtocols 单拿出来，
 // 是因为它们还要喂给谓词的 Go 半边（finishCandidate），不属于 Candidate 本身。
+//
+// 四价直接扫进 *float64（driver 对 REAL 的 NULL 会置 nil）——calllog.Prices 的
+// 指针语义与列的可空性正好是同一件事，不必过一手 sql.NullFloat64 再翻。
 func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *string) error {
 	return row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
 		&c.MaxInputTokens,
+		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
 		&c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 }

@@ -5,7 +5,7 @@
 
 UI_DIST := internal/webui/dist
 
-.PHONY: build build-ui clean-ui dev-ui
+.PHONY: build build-ui clean-ui dev-ui update-models-snapshot
 
 # build 出来的二进制自带管理端。不带 -tags webui 的话 `go build ./cmd/portage`
 # 也能过，只是访问 /admin 会看到一页「前端未构建」的说明——CI 与没装 Node 的
@@ -22,3 +22,8 @@ dev-ui:
 
 clean-ui:
 	rm -rf $(UI_DIST) web/node_modules
+
+# 随发版更新 models.dev 快照（#68/#74）：重拉 api.json、裁剪、gzip、覆写
+# internal/pricing/snapshot.json.gz。改完记得跑测试并连快照一起提交。
+update-models-snapshot:
+	go generate ./internal/pricing

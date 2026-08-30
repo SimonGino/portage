@@ -109,6 +109,20 @@ func checkModels(channel string, models []Model) []string {
 			p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 max_input_tokens=%d 是负数：0 表示不限，正整数才是上限",
 				channel, name, m.MaxInputTokens))
 		}
+		// 四价拒负（#74）：0 是真免费、不写是未定价（落 NULL），负数只能是填错。
+		// apply 写的是 raw SQL，管理端那条 SetChannelModelPrices 的校验守不到这里。
+		for _, pr := range []struct {
+			key string
+			v   *float64
+		}{
+			{"price_input", m.PriceInput}, {"price_output", m.PriceOutput},
+			{"price_cache_read", m.PriceCacheRead}, {"price_cache_write", m.PriceCacheWrite},
+		} {
+			if pr.v != nil && *pr.v < 0 {
+				p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 %s=%v 是负数：0 表示真免费，不写表示未定价",
+					channel, name, pr.key, *pr.v))
+			}
+		}
 	}
 	return p
 }

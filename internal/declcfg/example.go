@@ -13,13 +13,17 @@ import "github.com/SimonGino/portage/internal/store"
 func Example() *File {
 	yes, no := true, false
 	w := func(n int) *int { return &n }
+	usd := func(v float64) *float64 { return &v }
 	return &File{
 		Channels: []Channel{
 			{
 				Name: "anthropic",
 				// 每协议一份出站根地址（口径层 v0.96）：给哪个协议填了地址就是声明
 				// 了哪个协议，不再单写 protocols。
-				BaseURL:                   store.BaseURLs{Anthropic: "https://api.anthropic.com"},
+				BaseURL: store.BaseURLs{Anthropic: "https://api.anthropic.com"},
+				// provider 是 models.dev 的 id 标注（口径层 §2.10）：只服务管理端的
+				// 建议价与图标分组，不参与路由；不写就是未标注。
+				Provider:                  "anthropic",
 				CredentialType:            "api_key",
 				KeyMode:                   "polling",
 				MaxConcurrency:            0,
@@ -34,7 +38,13 @@ func Example() *File {
 				},
 				Models: []Model{
 					// protocols 留空表示继承渠道全集，这是最常见的正常值。
-					{UpstreamModel: "claude-sonnet-4-20250514", Protocols: []string{}, Disabled: false},
+					// 四价单位 USD/百万 token（口径层 §2.10）：不写 = 未定价（有用量
+					// 会记 0 并在管理端提醒），写 0 = 真免费。
+					{
+						UpstreamModel: "claude-sonnet-4-20250514", Protocols: []string{}, Disabled: false,
+						PriceInput: usd(3), PriceOutput: usd(15),
+						PriceCacheRead: usd(0.3), PriceCacheWrite: usd(3.75),
+					},
 				},
 			},
 			{

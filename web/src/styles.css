@@ -1096,6 +1096,33 @@ button, input, textarea, select {
   color: var(--faint);
 }
 
+/* 定价编辑（#74）：四个胶囊输入 + 一个共用单位，同一副 .limit-edit 身形。
+   单价最多五六个字符（0.075），框比上限那颗窄。 */
+.price-edit-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.price-edit {
+  padding-left: 8px;
+}
+
+.price-edit input {
+  width: 6ch;
+  padding-left: 4px;
+}
+
+.price-edit-label {
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.price-edit-unit {
+  padding-left: 2px;
+}
+
 /* 协议芯片（可点，是控件）。原先这一块写的是 --fg / --fg-muted：这两个 token
    本项目根本没定义过，实际一直在静默继承父级颜色，只是碰巧看不出错。
    选中态不再是蓝底蓝字——「选中」不是四个语义色里的任何一个（§1.4），改成

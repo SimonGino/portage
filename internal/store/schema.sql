@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS channels (
   -- 配错成是的代价是 Codex 静默 Fatal，两者不对称的方向正相反。
   -- 转换路径（R→A / R→CC）与这一列无关：那条路上有状态语义物理不成立，一律拒。
   supports_stateful_responses INTEGER NOT NULL DEFAULT 1,
+  -- models.dev 的 provider id 标注（口径层 §2.10 计价，#74）：只服务填价时的建议价
+  -- 与图标分组，**不参与路由**。可选，空串 = 未标注；取值不校验——快照随发版才更新，
+  -- 拿它当闸等于让一份会过期的世面数据拦人保存配置。
+  provider TEXT NOT NULL DEFAULT '',
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -70,6 +74,14 @@ CREATE TABLE IF NOT EXISTS channel_models (
   -- ÷ 4，不解析不分词——透传路径不解析 body 是硬约束，字节估算是唯一统一两条路的
   -- 算法。超限 413 + 流水词 request_too_large；闸在 server.relay，Resolve 之后。
   max_input_tokens INTEGER NOT NULL DEFAULT 0,
+  -- 四价（口径层 §2.10 计价，#65/#74）：单价挂**纳管条目**不挂全局模型名——同名模型
+  -- 在不同渠道的进价本来就不同。单位 USD/百万 token。**NULL = 未定价、0 = 真免费**，
+  -- 两态必须分开：未定价条目有用量时管理端要提醒补价（判据 = 四价全 NULL 且有用量，
+  -- 提醒挂条目不挂流水行），真免费则什么都不欠。改价不追溯——流水在落库时点计价。
+  price_input REAL,
+  price_output REAL,
+  price_cache_read REAL,
+  price_cache_write REAL,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)
@@ -178,7 +190,15 @@ CREATE TABLE IF NOT EXISTS call_logs (
   -- 不可空、默认空串：这一列上「没走到上游」与「上游没回这个头」都读作「没有可用
   -- 的 id」，分开没有排障价值——前者看 status 就知道。它同时也回传给客户端（响应头
   -- 原样透传，见 upstream.CopyResponseHeaders），这里只是留一份可查询的副本。
-  upstream_request_id TEXT NOT NULL DEFAULT ''
+  upstream_request_id TEXT NOT NULL DEFAULT '',
+  -- 这一次调用的成本（口径层 §2.10 计价，#65/#74），USD。落库时点按选中渠道纳管
+  -- 条目的四价算死：净 input（毛值减缓存两项）、output、cache_read、cache_write
+  -- 各乘各的单价 ÷ 1e6 求和；reasoning_tokens 是 output 的明细不另计。之后改价
+  -- **不追溯**，这一列就是当时的账。
+  --
+  -- 可空且必须可空：NULL = 没有用量可计（未鉴权、没到上游、加列前的老行），
+  -- 0 = 有用量但当时未定价（或真免费）。抹成 0 会把「没打上游」说成「免费打了一次」。
+  cost REAL
 );
 
 -- 用量查询与保留期清理（口径层 v0.93 的 DELETE）共用这一个索引。
