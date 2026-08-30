@@ -68,6 +68,7 @@ export default function Keys() {
             <thead>
               <tr>
                 <th>名称</th>
+                <th>归属</th>
                 <th>API Key</th>
                 <th>可访问模型</th>
                 <th>创建时间</th>
@@ -79,10 +80,18 @@ export default function Keys() {
               {list.map((k) => (
                 <tr key={k.id} className={k.disabled ? 'is-off' : ''}>
                   <td>{k.name}</td>
-                  {/* 明文（v0.47）。空串是加 key_plain 之前建的那些——哈希不可逆，
-                      原值谁也拿不回来，所以这里说的是「重建」而不是掩码一串假的。 */}
+                  {/* 归属列（#73）。无主 = 声明文件所建、还没被启动认领的 key，
+                      不是坏数据，如实写。 */}
+                  <td>{k.owner || <span className="muted">无主</span>}</td>
+                  {/* 明文（v0.47）。空串有两个意思，靠 mine 分辨（#73）：他人的 key
+                      后端根本不下发明文（仅主人可见），不是「原值丢了」；mine 且空
+                      才是加 key_plain 之前建的那些——哈希不可逆，只能删了重建。 */}
                   <td>
-                    <SecretValue value={k.key} empty="原值没存过，只能删了重建" />
+                    {k.mine ? (
+                      <SecretValue value={k.key} empty="原值没存过，只能删了重建" />
+                    ) : (
+                      <span className="muted">仅 key 主人可见</span>
+                    )}
                   </td>
                   <td>
                     {k.allowed_models === '*' ? (
@@ -115,9 +124,14 @@ export default function Keys() {
                       表格的列模型，渲染出来会跑到卡片外面去。 */}
                   <td className="col-actions">
                     <div className="row-actions">
-                      <button className="btn btn-quiet" onClick={() => setEditing(k)}>
-                        编辑
-                      </button>
+                      {/* 他人的 key 只做元数据治理（#63）：停用（上面的开关）与删除。
+                          编辑动的是名字与白名单，那是 key 主人的自我管理面，按钮
+                          整个不出——出一个必然 403 的按钮是在骗人点。 */}
+                      {k.mine && (
+                        <button className="btn btn-quiet" onClick={() => setEditing(k)}>
+                          编辑
+                        </button>
+                      )}
                       <Confirm ghost onConfirm={() => void mutate(() => api.del(`/keys/${k.id}`))} />
                     </div>
                   </td>

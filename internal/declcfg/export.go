@@ -3,6 +3,7 @@ package declcfg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -50,10 +51,62 @@ func Export(ctx context.Context, db store.Queryer) ([]byte, error) {
 	return Marshal(f)
 }
 
+// CheckSingleUser 是声明形态互斥闸的库侧判据（#66 ④⑤）：库里存在**第一个 admin
+// 之外的用户**名下的 key 时报错并逐把点名。第一个 admin 与无主的 key 不算——
+// 单管理员库正是这套形态的主场。
+//
+// 导出与导入（POST /admin/api/import）共用这一份：声明文件表达不了归属，导出会把
+// 用户 key 撞名压平、owner 静默丢失，那是一份回不去的文件（#66 ④）；导入则会把
+// 用户 key 静默清光（#66 ⑤）。两边都拒绝比消歧诚实。**启动 apply 不走这道闸**：
+// 挂声明文件是显式切事实源的动作，照删文件外的 key、含用户 key（#66 ③）。
+//
+// 无 admin 却有用户名下 key 的库（只有手写 SQL 造得出）按全违规算：那不是这套
+// 形态认识的任何形状。
+func CheckSingleUser(ctx context.Context, db store.Queryer) error {
+	adminID, err := store.FirstAdminID(ctx, db)
+	if errors.Is(err, store.ErrNotFound) {
+		adminID = 0 // AUTOINCREMENT 从 1 起，0 匹配不上任何用户 = 全部归属都违规
+	} else if err != nil {
+		return fmt.Errorf("找第一个 admin：%w", err)
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT k.name, COALESCE(u.email, '') FROM api_keys k
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE k.user_id IS NOT NULL AND k.user_id <> ?
+		ORDER BY k.name`, adminID)
+	if err != nil {
+		return fmt.Errorf("读 API Key 归属：%w", err)
+	}
+	defer rows.Close()
+	var owned []string
+	for rows.Next() {
+		var name, email string
+		if err := rows.Scan(&name, &email); err != nil {
+			return err
+		}
+		owned = append(owned, fmt.Sprintf("%q（%s）", name, email))
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(owned) > 0 {
+		return fmt.Errorf("声明形态不支持多用户：这几把 API Key 归属在第一个 admin 之外的用户名下：%s。"+
+			"声明文件表达不了归属，硬来会把它们压平成无主、覆盖时清掉用户的 key——"+
+			"要用声明文件，先删掉这些 key（或让用户自行删除）", strings.Join(owned, "、"))
+	}
+	return nil
+}
+
 // Snapshot 把库里的业务配置读成一个 File，不做序列化。
 //
 // 拆出来是为了让往返闸能在结构层面比对，也让导出的取数与排版各自可测。
+//
+// 进门先过多用户闸（#66 ④）：含其他用户 key 的库直接拒绝导出并点名，见
+// CheckSingleUser。
 func Snapshot(ctx context.Context, db store.Queryer) (*File, error) {
+	if err := CheckSingleUser(ctx, db); err != nil {
+		return nil, err
+	}
 	channels, err := exportChannels(ctx, db)
 	if err != nil {
 		return nil, err

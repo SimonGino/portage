@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/SimonGino/portage/internal/store"
 )
 
 // AdminPassword 是 StartWith 自动设的管理端密码。
@@ -84,6 +86,36 @@ func (a *AdminClient) JSONInto(t *testing.T, method, path, body string, out any)
 	if err := json.Unmarshal([]byte(raw), out); err != nil {
 		t.Fatalf("%s %s 的响应不是合法 JSON（%v）：%s", method, path, err, raw)
 	}
+}
+
+// UserSession 造一个 user 角色的用户和它的库会话，返回带这枚 cookie 的客户端与
+// 用户 id。#72（注册/邮箱登录）之前 user 角色没有任何 HTTP 登录路，会话只能直接
+// 落库造——这不是绕过：TouchSession 联查 users 的那半照走，绕开的只有发 cookie。
+//
+// cookie 名在这里写死成 portage_admin：单 cookie 一套体系（#61）是线上契约，
+// 测试硬编码它正是把契约钉住——改名会让这批用例一起红，提醒你那是破坏性变更。
+func (g *Gateway) UserSession(t *testing.T, email string) (*AdminClient, int64) {
+	t.Helper()
+	res, err := g.DB.Exec(
+		`INSERT INTO users (email, role, email_verified) VALUES (?, 'user', 1)`, email)
+	if err != nil {
+		t.Fatalf("种用户失败: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("读用户 id 失败: %v", err)
+	}
+	token, _, err := store.CreateSession(t.Context(), g.DB, id)
+	if err != nil {
+		t.Fatalf("造用户会话失败: %v", err)
+	}
+	a := g.Admin(t)
+	u, err := url.Parse(g.URL)
+	if err != nil {
+		t.Fatalf("解析网关地址失败: %v", err)
+	}
+	a.hc.Jar.SetCookies(u, []*http.Cookie{{Name: "portage_admin", Value: token}})
+	return a, id
 }
 
 // Cookies 返回当前罐子里属于网关的 cookie，供「登出之后 cookie 真的没了」这类断言。
