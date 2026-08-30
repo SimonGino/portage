@@ -43,6 +43,14 @@ func (h *Handler) importConfig(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 多用户闸（#66 ⑤）：库里有第一个 admin 之外的用户名下的 key 时拒绝导入——
+	// 覆盖语义会把那些 key 静默清光，那是事故不是纪律。409 与写闸同款：不是参数错
+	// （400 会引人改文件），是「库的状态与这套形态冲突」。启动 apply 不走这道闸，
+	// 挂文件是显式切事实源（#66 ③），所以闸在这儿不在 declcfg.Apply 里。
+	if err := declcfg.CheckSingleUser(c.Request.Context(), h.db); err != nil {
+		fail(c, http.StatusConflict, err.Error())
+		return
+	}
 	changes, err := declcfg.Apply(c.Request.Context(), h.db, f, h.log)
 	if err != nil {
 		if ce, ok := errors.AsType[declcfg.ConfigError](err); ok {

@@ -30,6 +30,10 @@ type Key struct {
 	// AllowedModels 是模型白名单，逗号分隔，`*` 表示不限。M1 时这一列只建不校验，
 	// M3 管理端能配了之后同期启用校验（PO 于 M3 裁定，兑现 v0.27 的「能配了再启用」）。
 	AllowedModels string
+	// UserID 是这把 key 的归属用户（口径层 §2.10，#63/#66）。nil = 无主 key——
+	// 声明文件所建、或从未有 admin 的库，合法形态不是残缺；流水的用户维度（#75）
+	// 与配额闸（#74）都从这里取，无主即不入用户账、不受配额。
+	UserID *int64
 }
 
 // Allows 判断这把 key 能不能用某个模型名。
@@ -93,14 +97,23 @@ func cutBearer(v string) (string, bool) {
 
 // Resolve 认出请求出示的 key。任何一把认得且未停用即通过；都不认返回 ErrUnauthorized。
 //
+// LEFT JOIN users 判归属用户的 disabled（#63 Q5：停用即对系统一切访问冻结，其全部
+// key 立即失效）。LEFT 而不是 INNER：无主 key（user_id NULL）没有可联的行，必须
+// 照常通过——它是声明形态的合法形态，INNER 会把那一形态的每把 key 全部打成 401。
+// 停用用户的 key 与停用的 key、不存在的 key 走同一个 ErrUnauthorized，刻意不分家，
+// 理由同上面那条：调用方唯一该做的事（回 401、不说为什么）三种情况完全一样。
+//
 // 返回的 error 除 ErrUnauthorized 外只可能是库错误——调用方要把两者分开：前者 401，
 // 后者 500。把库故障当成 401 会让一次 SQLite 抖动看起来像「你的 key 不对了」。
 func Resolve(ctx context.Context, db *sql.DB, h http.Header) (Key, error) {
 	for _, plain := range Presented(h) {
 		var k Key
-		err := db.QueryRowContext(ctx,
-			`SELECT name, allowed_models FROM api_keys WHERE key_hash = ? AND disabled = 0`,
-			Hash(plain)).Scan(&k.Name, &k.AllowedModels)
+		err := db.QueryRowContext(ctx, `
+			SELECT k.name, k.allowed_models, k.user_id
+			FROM api_keys k LEFT JOIN users u ON u.id = k.user_id
+			WHERE k.key_hash = ? AND k.disabled = 0
+			  AND (u.id IS NULL OR u.disabled = 0)`,
+			Hash(plain)).Scan(&k.Name, &k.AllowedModels, &k.UserID)
 		switch {
 		case err == nil:
 			return k, nil

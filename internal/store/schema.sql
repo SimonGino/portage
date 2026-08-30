@@ -83,22 +83,8 @@ CREATE TABLE IF NOT EXISTS candidates (
   UNIQUE(access_point_id, channel_model_id)
 );
 
-CREATE TABLE IF NOT EXISTS api_keys (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  key_hash TEXT NOT NULL UNIQUE,
-  -- 明文（口径层 v0.47：管理端要能回读并复制）。**存量行永远是空串**——加这一列
-  -- 之前建的 key 只留下哈希，哈希不可逆，那些 key 的原值谁也拿不回来，界面上如实
-  -- 说明并让人删了重建。
-  --
-  -- key_hash 保留且仍是唯一的校验依据：转发热路径按哈希查，跟这一列无关。它用裸
-  -- SHA-256 的原始理由（「明文只在创建那一个响应里存在过」）从这一版起不成立了，
-  -- 但也不再有意义——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。
-  key_plain TEXT NOT NULL DEFAULT '',
-  allowed_models TEXT NOT NULL DEFAULT '*',
-  disabled INTEGER NOT NULL DEFAULT 0,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+-- api_keys 的 DDL 挪到 users 表之后（#73 加了指向 users 的外键）；老库的重建迁移
+-- 见 store.rebuildAPIKeysOwner，两条路必须长出同一个形状。
 
 -- 用户（口径层 §2.10，#61）：网关的登录主体，邮箱即标识。多用户体系对无 webui /
 -- 纯转发形态零负担——这张表在无 admin 的库上就是空表，转发链路一个字都不读它。
@@ -119,6 +105,32 @@ CREATE TABLE IF NOT EXISTS users (
   -- 所以这一列必须可空——默认 0 会把每个新用户都封停。配额闸在 #74 落地。
   monthly_quota_usd REAL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  -- 明文（口径层 v0.47：管理端要能回读并复制）。**存量行永远是空串**——加这一列
+  -- 之前建的 key 只留下哈希，哈希不可逆，那些 key 的原值谁也拿不回来，界面上如实
+  -- 说明并让人删了重建。
+  --
+  -- key_hash 保留且仍是唯一的校验依据：转发热路径按哈希查，跟这一列无关。它用裸
+  -- SHA-256 的原始理由（「明文只在创建那一个响应里存在过」）从这一版起不成立了，
+  -- 但也不再有意义——明文就在同一张表的隔壁列，加盐慢哈希保护不了任何东西。
+  key_plain TEXT NOT NULL DEFAULT '',
+  allowed_models TEXT NOT NULL DEFAULT '*',
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- 归属用户（口径层 §2.10，#63/#66 修订）。**可空**：NULL = 无主 key，是无用户
+  -- 体系形态（声明文件所建、从未有 admin 的库）的合法形态，不是残缺数据——出现
+  -- 第一个 admin 后由启动认领（store.claimOrphanKeys）幂等归其名下。
+  user_id INTEGER REFERENCES users(id),
+  -- 名字从全局唯一改按用户唯一（#63）：两个人各有一把「笔记本」是多用户的常态。
+  -- SQLite 的 UNIQUE 对 NULL 逐行视为不同，无主 key 的名字唯一性因此靠不上这条，
+  -- 由 idx_api_keys_unowned_name 补上（建在 migrate 里，理由同 idx_channel_keys_name：
+  -- schema 跑在 migrate 之前，老库那时还没有 user_id 这一列）。
+  UNIQUE(user_id, name)
 );
 
 -- 登录会话（#61）：落库替换内存实现，单 cookie 一套体系。

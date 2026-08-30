@@ -90,7 +90,7 @@ func (h *Handler) logout(c *gin.Context) {
 
 // session 让前端在加载时问一句「我还登着吗」，免得每个页面各自靠 401 去发现。
 func (h *Handler) session(c *gin.Context) {
-	authed, err := h.validSession(c)
+	_, authed, err := h.validSession(c)
 	if err != nil {
 		h.log.Error("校验会话失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取状态失败")
@@ -694,6 +694,29 @@ func (h *Handler) deleteAccessPoint(c *gin.Context) {
 
 // ── 网关 key ────────────────────────────────────────────────────────────
 
+// keyMine 判「这把 key 的明文与编辑对这个登录者开不开放」（#63：明文仅 key 主人
+// 可见，admin 对他人的 key 只做元数据治理）。无主 key 对 admin 按「我的」对待：
+// 它没有主人可言，而认领规则（#66）本来就把它归给第一个 admin，只差一次重启——
+// 声明形态首启的那批 key 也因此在管理端照旧可见可复制，不倒退 v0.47。
+func keyMine(k store.APIKey, su store.SessionUser) bool {
+	if k.UserID != nil {
+		return *k.UserID == su.ID
+	}
+	return su.Role == store.RoleAdmin
+}
+
+// maskKeys 回填 Mine 并抹掉他人 key 的明文。抹在出口这一处而不是 store：store
+// 不知道谁在看，而「谁在看」正是这条规则的全部内容。
+func maskKeys(list []store.APIKey, su store.SessionUser) []store.APIKey {
+	for i := range list {
+		list[i].Mine = keyMine(list[i], su)
+		if !list[i].Mine {
+			list[i].Key = ""
+		}
+	}
+	return list
+}
+
 func (h *Handler) listKeys(c *gin.Context) {
 	list, err := store.ListAPIKeys(c.Request.Context(), h.db)
 	if err != nil {
@@ -701,13 +724,17 @@ func (h *Handler) listKeys(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
-	c.JSON(http.StatusOK, list)
+	c.JSON(http.StatusOK, maskKeys(list, sessionUserFrom(c)))
 }
 
 // createKey 生成明文，哈希与明文各存一列（口径层 v0.47）。
 //
 // 明文照旧在这个响应里回一次，但它不再是唯一的一次：列表接口也带明文，页面上随时
 // 能看能复制。加列之前建的 key 拿不回来——哈希不可逆，那些只能删了重建。
+//
+// 归属落在**登录者本人**名下（#63）：admin 不代建（手动建号的逃生门已够，建号后
+// 用户自己建 key），于是这个 handler 管理端与「我的 Key」两条路由共用——两边建的
+// 都只能是自己的 key，差别只在挂不挂 admin 闸与写闸。
 func (h *Handler) createKey(c *gin.Context) {
 	var in struct {
 		Name          string `json:"name"`
@@ -728,8 +755,10 @@ func (h *Handler) createKey(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "生成失败")
 		return
 	}
+	owner := sessionUserFrom(c).ID
 	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
-		id, err := store.CreateAPIKey(ctx, tx, name, auth.Hash(plain), plain, normalizeAllowed(in.AllowedModels))
+		id, err := store.CreateAPIKey(ctx, tx, name, auth.Hash(plain), plain,
+			normalizeAllowed(in.AllowedModels), &owner)
 		if err != nil {
 			return nil, err
 		}
@@ -756,8 +785,22 @@ func (h *Handler) updateKey(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "key 名不能为空")
 		return
 	}
+	allowed := normalizeAllowed(in.AllowedModels)
+	// 他人的 key 只许元数据治理（#63）：可停用/启用，不许改名与白名单——那两样是
+	// key 主人的自我管理面。判在事务外用 h.db 读即可：与写之间隔着的那一瞬不构成
+	// 可利用的竞态（归属只会被启动认领改动，请求期间不变）。
+	cur, err := store.GetAPIKey(c.Request.Context(), h.db, id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if !keyMine(cur, sessionUserFrom(c)) &&
+		(name != cur.Name || allowed != normalizeAllowed(cur.AllowedModels)) {
+		fail(c, http.StatusForbidden, "他人的 API Key 只能停用或删除，名字与可访问模型归 key 主人自己管")
+		return
+	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.UpdateAPIKey(ctx, tx, id, name, normalizeAllowed(in.AllowedModels), in.Disabled)
+		return store.UpdateAPIKey(ctx, tx, id, name, allowed, in.Disabled)
 	})
 }
 
@@ -768,6 +811,58 @@ func (h *Handler) deleteKey(c *gin.Context) {
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		return store.DeleteAPIKey(ctx, tx, id)
+	})
+}
+
+// ── 我的 Key（用户侧，#73；页面形态归 #76）─────────────────────────────
+//
+// 与治理面共用 createKey（建的本来就只能是自己的），列表与改删则把归属焊死在
+// store 的 WHERE 里——别人的 id 与不存在的 id 同一个 404，不区分。
+
+func (h *Handler) listMyKeys(c *gin.Context) {
+	su := sessionUserFrom(c)
+	list, err := store.ListUserAPIKeys(c.Request.Context(), h.db, su.ID)
+	if err != nil {
+		h.log.Error("列我的 key 失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	c.JSON(http.StatusOK, maskKeys(list, su))
+}
+
+func (h *Handler) updateMyKey(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Name          string `json:"name"`
+		AllowedModels string `json:"allowed_models"`
+		Disabled      bool   `json:"disabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		fail(c, http.StatusBadRequest, "key 名不能为空")
+		return
+	}
+	su := sessionUserFrom(c)
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.UpdateUserAPIKey(ctx, tx, su.ID, id, name, normalizeAllowed(in.AllowedModels), in.Disabled)
+	})
+}
+
+func (h *Handler) deleteMyKey(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	su := sessionUserFrom(c)
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.DeleteUserAPIKey(ctx, tx, su.ID, id)
 	})
 }
 

@@ -95,7 +95,27 @@ func (h *Handler) Mount(r *gin.Engine) {
 	api.POST("/logout", h.logout)
 	api.GET("/session", h.session)
 
-	auth := api.Group("", h.requireSession())
+	sess := api.Group("", h.requireSession())
+
+	// 用户体系路由（#73 起）：任意角色可用，但**挂声明文件时整组不注册**（#66 ①）。
+	// 404 而不是 409——写闸的 409 说的是「管理面在、事实源在文件」，而用户体系在
+	// 声明形态下整个不存在，装作在只是锁着，会引人去找解锁的路。
+	// 目前只有「我的 Key」CRUD（面板页面形态归 #76），allowed_models 用户可自设
+	// （#63：自我约束工具不是权限边界）。
+	if !h.declarative {
+		my := sess.Group("/my")
+		my.GET("/keys", h.listMyKeys)
+		// 建 key 与治理面共用一个 handler：两条路建的都只能是登录者自己的 key
+		// （#63 不代建），差别只在这条不挂 admin 闸与写闸（不注册即 404，见上）。
+		my.POST("/keys", h.createKey)
+		my.PUT("/keys/:id", h.updateMyKey)
+		my.DELETE("/keys/:id", h.deleteMyKey)
+	}
+
+	// 其余全是治理面，加一道 admin 角色闸（#63：admin = 治理面，user = 自用面）。
+	// #71 阶段人人经密码登录、人人是第一个 admin，这道闸不改任何现状；它防的是
+	// 「我的 Key」给 user 角色开门之后，同一套 cookie 顺着走进渠道与凭证。
+	auth := sess.Group("", requireAdmin())
 	auth.POST("/password", h.changePassword)
 
 	// 业务配置的写接口全走这个组：声明文件形态下统一 409（#48）。「业务配置」即
@@ -159,9 +179,12 @@ func (h *Handler) Mount(r *gin.Engine) {
 //
 // 会话自 #71 起落库，校验联查 users.disabled——用户被停用时已发出的 cookie 当场
 // 失效（口径层 §2.10：停用即对系统一切访问冻结），这正是内存版做不到的那半。
+//
+// 过闸的人放进上下文（sessionUserFrom 取）：#73 起 key 的明文可见性、归属治理与
+// 「我的 Key」都要按「谁在看」判，后面的 handler 不该各自再查一趟会话。
 func (h *Handler) requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ok, err := h.validSession(c)
+		su, ok, err := h.validSession(c)
 		if err != nil {
 			h.log.Error("校验会话失败", "err", err)
 			fail(c, http.StatusInternalServerError, "会话校验失败")
@@ -171,7 +194,35 @@ func (h *Handler) requireSession() gin.HandlerFunc {
 			fail(c, http.StatusUnauthorized, "未登录或会话已过期")
 			return
 		}
+		c.Set(ctxSessionUser, su)
 		c.Next()
+	}
+}
+
+// ctxSessionUser 是本次请求背后的登录者在 gin 上下文里的键。
+const ctxSessionUser = "portage.session_user"
+
+// sessionUserFrom 取出 requireSession 放进来的登录者。取不到只能是路由挂错了
+// （handler 没套 requireSession），返回零值让归属判定全部落空——所有「是我的吗」
+// 都判否，宁可少见到明文也别把别人的明文放出去。
+func sessionUserFrom(c *gin.Context) store.SessionUser {
+	if v, ok := c.Get(ctxSessionUser); ok {
+		if su, ok := v.(store.SessionUser); ok {
+			return su
+		}
+	}
+	return store.SessionUser{}
+}
+
+// requireAdmin 把治理面动作限定在 admin 角色上（#63：admin = 治理面）。#71 阶段
+// 唯一的登录路就是管理密码、人人都是第一个 admin，这道闸眼下不拦任何真实请求；
+// 但「我的 Key」（#73）给 user 角色的会话开了同一套 cookie 的门，治理面从此必须
+// 显式验角色，不能再靠「能登录的都是 admin」这个即将过期的巧合。
+func requireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if sessionUserFrom(c).Role != store.RoleAdmin {
+			fail(c, http.StatusForbidden, "这个操作需要 admin 角色")
+		}
 	}
 }
 

@@ -321,12 +321,20 @@ export interface AccessPoint {
 export interface ApiKey {
   id: number
   name: string
-  /** 明文（v0.47）。**空串 = 原值没存过**——这把是加 key_plain 那一列之前建的，
-   *  库里只剩哈希，还原不了，只能删了重建。不是「key 是空的」。 */
+  /** 明文（v0.47）。空串有两个意思，靠 `mine` 分辨（#73）：mine 为真时 =
+   *  **原值没存过**——这把是加 key_plain 那一列之前建的，库里只剩哈希，还原不了，
+   *  只能删了重建；mine 为假时 = **他人的 key**，明文仅 key 主人可见，后端不下发。 */
   key: string
   allowed_models: string
   disabled: boolean
   created_at: string
+  /** 归属用户 id（#63/#66）。null = 无主 key（声明文件所建、认领前的存量）。 */
+  user_id: number | null
+  /** 归属用户的邮箱，归属列直接显示它；无主为空串。 */
+  owner: string
+  /** 这把 key 的明文与编辑对当前登录者开不开放：自己的 key，或（admin 视角的）
+   *  无主 key。为假时只剩元数据治理——停用与删除。 */
+  mine: boolean
 }
 
 export interface CallLog {

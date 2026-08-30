@@ -111,7 +111,123 @@ func migrate(db *sql.DB) error {
 	if err := expandBaseURLs(db); err != nil {
 		return err
 	}
-	return seedFirstAdmin(db)
+	// 多用户迁移序列（展开层 §7.10）：② 造第一个 admin → ③ api_keys 重建表加 owner
+	// → ④ 无主认领。②④ 在无 admin 的库上全部空转——横向约束，纯转发/声明形态的
+	// 行为与现状逐字一致。
+	if err := seedFirstAdmin(db); err != nil {
+		return err
+	}
+	if err := rebuildAPIKeysOwner(db); err != nil {
+		return err
+	}
+	return claimOrphanKeys(db)
+}
+
+// rebuildAPIKeysOwner 是多用户迁移序列的第 ③ 步（展开层 §7.10，#63/#66/#73）：
+// api_keys 加可空 user_id、name 从全局 UNIQUE 改 UNIQUE(user_id, name)。
+//
+// **重建表而不是 ALTER**：SQLite 改不了既有约束，去掉 name 上的全局 UNIQUE 只有
+// 「建新表 → 搬行 → 换名」一条路。搬行显式列到列，id 与既有行的每个字节都原样保留
+// ——call_logs.api_key_name 靠名字快照归因不受影响，key_hash 的全局唯一照旧。
+// DDL 必须与 schema.sql 里那份逐字同形：新库走 schema、老库走这里，长出同一个形状。
+//
+// 无主名字唯一索引对新老库都在这里建（partial index，WHERE user_id IS NULL）：
+// UNIQUE(user_id, name) 对 NULL 逐行视为不同，兜不住无主 key 撞名；而名字既是
+// call_logs 的归因键又是声明文件里的自然键，两把无主 key 同名会把两处一起废掉。
+// 不能建在 schema.sql 里，理由同 idx_channel_keys_name：schema 跑在 migrate 之前，
+// 老库那时还没有 user_id 这一列，CREATE INDEX 当场失败。
+func rebuildAPIKeysOwner(db *sql.DB) error {
+	has, err := hasColumn(db, "api_keys", "user_id")
+	if err != nil {
+		return fmt.Errorf("检查 api_keys.user_id: %w", err)
+	}
+	if !has {
+		// 四步一个事务：中途断电不能留下「旧表没了、新表还叫 api_keys_new」的库。
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("开启 api_keys 重建事务: %w", err)
+		}
+		defer tx.Rollback() //nolint:errcheck // 提交成功后这里是 no-op
+		for _, stmt := range []string{
+			`CREATE TABLE api_keys_new (
+			  id INTEGER PRIMARY KEY AUTOINCREMENT,
+			  name TEXT NOT NULL,
+			  key_hash TEXT NOT NULL UNIQUE,
+			  key_plain TEXT NOT NULL DEFAULT '',
+			  allowed_models TEXT NOT NULL DEFAULT '*',
+			  disabled INTEGER NOT NULL DEFAULT 0,
+			  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			  user_id INTEGER REFERENCES users(id),
+			  UNIQUE(user_id, name)
+			)`,
+			`INSERT INTO api_keys_new (id, name, key_hash, key_plain, allowed_models, disabled, created_at)
+			 SELECT id, name, key_hash, key_plain, allowed_models, disabled, created_at FROM api_keys`,
+			`DROP TABLE api_keys`,
+			`ALTER TABLE api_keys_new RENAME TO api_keys`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("重建 api_keys: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("提交 api_keys 重建: %w", err)
+		}
+	}
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_unowned_name
+		ON api_keys(name) WHERE user_id IS NULL`); err != nil {
+		return fmt.Errorf("建无主 key 名唯一索引: %w", err)
+	}
+	return nil
+}
+
+// claimOrphanKeys 是多用户迁移序列的第 ④ 步（#66，落在 #73）：存在第一个 admin 时
+// 把全部无主 key 幂等归到其名下。覆盖 #63 的原意（单管理员库迁移后 key 归 PO），
+// 同时让无 admin 的库（纯转发、声明形态）合法悬空——那一支整步空转，一行不写。
+//
+// 幂等靠语义本身：认领过的行 user_id 非 NULL，第二次跑就是零行命中。
+//
+// 撞名先查后判：admin 名下已有同名 key 时，认领会撞 UNIQUE(user_id, name)，而约束
+// 错误那句话里只有索引名没有实体名。这个形状只有手写 SQL 造得出来（正常路径下有
+// admin 的库不会再长出无主 key），按 v0.21 通则启动即拒、点名让人去改。
+func claimOrphanKeys(db *sql.DB) error {
+	ctx := context.Background()
+	adminID, err := FirstAdminID(ctx, db)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("找第一个 admin: %w", err)
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT k.name FROM api_keys k
+		WHERE k.user_id IS NULL AND EXISTS (
+			SELECT 1 FROM api_keys o WHERE o.user_id = ? AND o.name = k.name)
+		ORDER BY k.name`, adminID)
+	if err != nil {
+		return fmt.Errorf("检查无主 key 撞名: %w", err)
+	}
+	defer rows.Close()
+	var clash []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("检查无主 key 撞名: %w", err)
+		}
+		clash = append(clash, fmt.Sprintf("%q", name))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("检查无主 key 撞名: %w", err)
+	}
+	if len(clash) > 0 {
+		return fmt.Errorf("无主 API Key 认领不了：第一个 admin 名下已有同名的 key：%s。"+
+			"改掉或删掉其中一把再启动", strings.Join(clash, "、"))
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE api_keys SET user_id = ? WHERE user_id IS NULL`, adminID); err != nil {
+		return fmt.Errorf("认领无主 key: %w", err)
+	}
+	return nil
 }
 
 // seedFirstAdmin 是多用户迁移序列的第 ② 步（展开层 §7.10，#61/#71）：settings 有

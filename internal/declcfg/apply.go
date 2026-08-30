@@ -313,37 +313,81 @@ func applyAccessPoints(ctx context.Context, tx *sql.Tx, list []AccessPoint, mode
 	return changes, nil
 }
 
+// applyAPIKeys 对齐 api_keys。#73 之后 name 不再全局唯一（UNIQUE(user_id, name)），
+// 老写法的 ON CONFLICT(name) 没有对应的约束可撞，对齐改成显式「按名找行 → 改或建」：
+//
+//   - 同名行优先对齐**无主**的那条（声明文件建出来的就是无主行），没有无主的才对
+//     齐用户名下的——那种行来自启动认领（#66：无主 key 幂等归第一个 admin），归属
+//     是运行期状态不进文件，对齐时**保留不动**，与凭证的停用现场同一条纪律。删了
+//     重建会让 id 重排、归属清零，每次重启 apply 都白改一轮。
+//   - 新建的行 user_id 落 NULL（#66：声明文件表达不了归属）。
+//   - 文件里没有的行**全删，含用户名下的 key**（#66 ③：挂载是显式切事实源动作，
+//     文件即事实源纪律不为用户 key 开豁免；导入接口另有一道多用户闸先拦，见
+//     CheckSingleUser——能走到这儿的多用户库只剩启动挂文件那条显式路径）。
 func applyAPIKeys(ctx context.Context, tx *sql.Tx, list []APIKey) ([]string, error) {
-	before, err := namesOf(ctx, tx, `SELECT name FROM api_keys`)
+	rows, err := tx.QueryContext(ctx,
+		// 无主优先、其次 id 小者先——首见入表，选择才是确定的。
+		`SELECT id, name FROM api_keys ORDER BY (user_id IS NULL) DESC, id`)
 	if err != nil {
 		return nil, err
 	}
+	type row struct {
+		id   int64
+		name string
+	}
+	var existing []row
+	match := map[string]int64{}
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		existing = append(existing, r)
+		if _, ok := match[r.name]; !ok {
+			match[r.name] = r.id
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	var changes []string
-	keep := map[string]bool{}
+	kept := map[int64]bool{}
 	for _, k := range list {
 		name := strings.TrimSpace(k.Name)
-		keep[name] = true
 		plain := strings.TrimSpace(k.Key)
 		// 哈希与明文各存一列（口径层 v0.47）：鉴权走 key_hash 的唯一索引，key_plain
 		// 是给人看的那一份。声明文件这条路上明文本来就在手上，两列都填得出来。
+		if id, ok := match[name]; ok {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE api_keys SET key_hash = ?, key_plain = ?, allowed_models = ?, disabled = ?
+				WHERE id = ?`,
+				auth.Hash(plain), plain, allowedModels(k.AllowedModels), boolInt(k.Disabled), id); err != nil {
+				return nil, fmt.Errorf("写入 API Key %q：%w", name, err)
+			}
+			kept[id] = true
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO api_keys (name, key_hash, key_plain, allowed_models, disabled) VALUES (?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
-			  key_hash = excluded.key_hash,
-			  key_plain = excluded.key_plain,
-			  allowed_models = excluded.allowed_models,
-			  disabled = excluded.disabled`,
+			INSERT INTO api_keys (name, key_hash, key_plain, allowed_models, disabled) VALUES (?,?,?,?,?)`,
 			name, auth.Hash(plain), plain, allowedModels(k.AllowedModels), boolInt(k.Disabled)); err != nil {
 			return nil, fmt.Errorf("写入 API Key %q：%w", name, err)
 		}
-		if !before[name] {
-			changes = append(changes, "新增 API Key "+name)
+		changes = append(changes, "新增 API Key "+name)
+	}
+
+	var gone []string
+	for _, r := range existing {
+		if !kept[r.id] {
+			gone = append(gone, r.name)
+			if _, err := tx.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ?`, r.id); err != nil {
+				return nil, fmt.Errorf("删除 API Key：%w", err)
+			}
 		}
 	}
-	gone, err := deleteMissing(ctx, tx, `DELETE FROM api_keys WHERE name = ?`, before, keep)
-	if err != nil {
-		return nil, fmt.Errorf("删除 API Key：%w", err)
-	}
+	slices.Sort(gone)
 	for _, n := range gone {
 		changes = append(changes, "删除 API Key "+n)
 	}

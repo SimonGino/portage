@@ -781,26 +781,35 @@ func DeleteAccessPoint(ctx context.Context, db Conn, id int64) error {
 type APIKey struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	// Key 是明文。空串 = 原值没存过（存量 key），不是「这把 key 是空的」。
+	// Key 是明文。空串 = 原值没存过（存量 key），不是「这把 key 是空的」——但注意
+	// 管理端把**他人的 key** 也回成空串（#63：明文仅 key 主人可见），前端靠 Mine
+	// 分辨这两个空串（见 admin.listKeys）。
 	Key           string `json:"key"`
 	AllowedModels string `json:"allowed_models"`
 	Disabled      bool   `json:"disabled"`
 	CreatedAt     string `json:"created_at"`
+	// UserID 是归属用户（#63/#66）。nil = 无主 key——声明文件所建、或从未有 admin
+	// 的库的合法形态。
+	UserID *int64 `json:"user_id"`
+	// Owner 是归属用户的邮箱，给归属列看的；无主为空串。快照 join 出来而不是让前端
+	// 拿 user_id 再查一趟——用户列表接口眼下根本不存在（#76）。
+	Owner string `json:"owner"`
+	// Mine 是「明文与编辑对当前登录者开放」的判定结果，由 handler 按会话算出后回填，
+	// 不是库里的列。放在这儿是因为前端拿到的就是这份 JSON。
+	Mine bool `json:"mine"`
 }
 
-// ListAPIKeys 返回全部网关 key。
-func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, name, COALESCE(key_plain, ''), allowed_models, disabled, created_at
-		 FROM api_keys ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
+// apiKeyCols 是 key 列表的公共投影：LEFT JOIN users 把归属邮箱一并带出。
+const apiKeyCols = `k.id, k.name, COALESCE(k.key_plain, ''), k.allowed_models,
+	k.disabled, k.created_at, k.user_id, COALESCE(u.email, '')`
+
+func scanAPIKeys(rows *sql.Rows) ([]APIKey, error) {
 	defer rows.Close()
 	keys := []APIKey{}
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.Key, &k.AllowedModels, &k.Disabled, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Key, &k.AllowedModels, &k.Disabled,
+			&k.CreatedAt, &k.UserID, &k.Owner); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -808,12 +817,55 @@ func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
 	return keys, rows.Err()
 }
 
+// ListAPIKeys 返回全部网关 key（治理面：admin 看全体，#63）。明文照带——按会话
+// 掩不掩是 handler 的事，store 不知道谁在看。
+func ListAPIKeys(ctx context.Context, db Queryer) ([]APIKey, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT `+apiKeyCols+`
+		FROM api_keys k LEFT JOIN users u ON u.id = k.user_id ORDER BY k.id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanAPIKeys(rows)
+}
+
+// ListUserAPIKeys 返回一个用户名下的全部 key（「我的 Key」，#73）。限定在 SQL 里，
+// 不是取全量再过滤——用户侧接口强制限定本人是口径，不该靠调用方自觉。
+func ListUserAPIKeys(ctx context.Context, db Queryer, userID int64) ([]APIKey, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT `+apiKeyCols+`
+		FROM api_keys k LEFT JOIN users u ON u.id = k.user_id
+		WHERE k.user_id = ? ORDER BY k.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return scanAPIKeys(rows)
+}
+
+// GetAPIKey 读一把 key（含归属）。管理端改他人 key 前要先看清那把是谁的、现值是
+// 什么——元数据治理只许动 disabled（#63），判据要有对照物。
+func GetAPIKey(ctx context.Context, db Queryer, id int64) (APIKey, error) {
+	var k APIKey
+	err := db.QueryRowContext(ctx, `
+		SELECT `+apiKeyCols+`
+		FROM api_keys k LEFT JOIN users u ON u.id = k.user_id
+		WHERE k.id = ?`, id).Scan(&k.ID, &k.Name, &k.Key, &k.AllowedModels, &k.Disabled,
+		&k.CreatedAt, &k.UserID, &k.Owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return APIKey{}, ErrNotFound
+	}
+	return k, err
+}
+
 // CreateAPIKey 存一把新 key：哈希给转发热路径查，明文给管理端回读（v0.47）。
 // 明文仍由调用方生成——这里只负责落库，不决定 key 长什么样。
-func CreateAPIKey(ctx context.Context, db Conn, name, keyHash, keyPlain, allowedModels string) (int64, error) {
+//
+// userID 是归属（#63）：管理端与用户面板都只建**自己的** key（admin 不代建），
+// nil 只该出现在声明文件那条路上（declcfg 自己写 SQL，不走这里）。
+func CreateAPIKey(ctx context.Context, db Conn, name, keyHash, keyPlain, allowedModels string, userID *int64) (int64, error) {
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO api_keys (name, key_hash, key_plain, allowed_models) VALUES (?, ?, ?, ?)`,
-		name, keyHash, keyPlain, allowedModels)
+		`INSERT INTO api_keys (name, key_hash, key_plain, allowed_models, user_id) VALUES (?, ?, ?, ?, ?)`,
+		name, keyHash, keyPlain, allowedModels, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -834,6 +886,22 @@ func UpdateAPIKey(ctx context.Context, db Conn, id int64, name, allowedModels st
 // 名字快照，不是外键，删 key 不该让历史用量凭空消失。
 func DeleteAPIKey(ctx context.Context, db Conn, id int64) error {
 	res, err := db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ?`, id)
+	return affectedOne(res, err)
+}
+
+// UpdateUserAPIKey 与 DeleteUserAPIKey 是「我的 Key」的写侧（#73）：归属限定长在
+// WHERE 里，动不到别人的行——别人的 key 与不存在的 key 同一个 ErrNotFound，接口上
+// 不区分，免得成了探测「这个 id 存不存在」的路子。
+
+func UpdateUserAPIKey(ctx context.Context, db Conn, userID, id int64, name, allowedModels string, disabled bool) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE api_keys SET name = ?, allowed_models = ?, disabled = ? WHERE id = ? AND user_id = ?`,
+		name, allowedModels, boolInt(disabled), id, userID)
+	return affectedOne(res, err)
+}
+
+func DeleteUserAPIKey(ctx context.Context, db Conn, userID, id int64) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ? AND user_id = ?`, id, userID)
 	return affectedOne(res, err)
 }
 

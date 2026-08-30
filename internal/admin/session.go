@@ -16,14 +16,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// validSession 判 cookie 里的 token 是否有效，顺带滑动续期。
+// validSession 判 cookie 里的 token 是否有效，顺带滑动续期，并带回背后的人——
+// #73 起 key 的明文可见性与「我的 Key」都按登录者判，鉴权层必须知道是谁。
 //
 // 库错误与「无效」分开报：无效是正常业务（401，去登录），库错误是这次没判成
 // （500）——把后者说成前者会让一次磁盘抖动表现成「莫名其妙被登出」。
-func (h *Handler) validSession(c *gin.Context) (bool, error) {
+func (h *Handler) validSession(c *gin.Context) (store.SessionUser, bool, error) {
 	token, _ := c.Cookie(cookieName)
-	_, ok, err := store.TouchSession(c.Request.Context(), h.db, token)
-	return ok, err
+	return store.TouchSession(c.Request.Context(), h.db, token)
 }
 
 // setSessionCookie 统一设置会话 cookie。
