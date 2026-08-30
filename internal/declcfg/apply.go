@@ -30,32 +30,20 @@ func (e ConfigError) Unwrap() error { return e.Err }
 // 全过；真正的理由是反过来的：apply 若排在 Validate 后面，Validate 校的就是一个还没
 // 被文件填过的库，声明文件里的错误整个逃出闸外。
 //
-// 整份 apply 一个事务（#29）。两道闸不合并，但 problems 合并报（#31）——闸一是
-// selfCheck（只看文件），闸二是 store.Validate（看库里的行）；闸二在**同一个事务里**
-// 对着刚写进去的行跑，任一道有问题就整份回滚。于是「一次报全」不止覆盖文件自身的错，
-// 也覆盖那些只有把行摆进库才看得出来的错，而库里一行都不会留下。
+// 整份 apply 一个事务（#29）。两道闸不合并，但 problems 合并报（#31）——两道闸的
+// 编排收在 eval 一处，Apply 与 Preview 两条路共用，想分叉都分不了。
 func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) ([]string, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	if problems := selfCheck(f); len(problems) > 0 {
-		// 闸一没过就不 apply，于是闸二无从跑起——它要看的行还不存在，硬跑只会拿上一版
-		// 配置的行去回答这一版的问题。这不违背「合并报」：合并的前提是两边都算得出来。
-		return nil, ConfigError{problemsErr(problems)}
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("开启 apply 事务：%w", err)
-	}
-	defer tx.Rollback()
-
-	changes, err := reconcile(ctx, tx, f)
+	tx, changes, err := eval(ctx, db, f)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Validate(ctx, tx); err != nil {
-		return nil, ConfigError{err}
-	}
+	// 收场兜底：提交后再 rollback 只回 ErrTxDone，什么都不做；提交前有任何非常规
+	// 退出（panic 被上层 recovery 接住）时它是唯一会松手的地方——本库单写连接
+	// （SetMaxOpenConns(1)），事务不收场就是整台网关的连接被永久占住。
+	defer tx.Rollback()
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("提交 apply 事务：%w", err)
 	}
@@ -68,6 +56,62 @@ func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) ([]string
 	}
 	log.Info("声明文件已生效", "变更", strings.Join(changes, "；"))
 	return changes, nil
+}
+
+// Preview 把「导入这份文件会发生什么」试算给人看（口径层 v1.03，管理端导入确认框的
+// dry-run）：走 Apply 同一条链路（eval：闸一 → 事务内 reconcile → 闸二），事务只开
+// 不提交、库里一行不留。返回的清单与同一份文件真导入将产生的完全一致——预览的价值
+// 全在这个「一致」上，所以共用 eval 而不是另写一套试算：两套对「会改什么」的理解必然
+// 漂移，与 v1.00 ① 拒绝两套导入器是同一条理由。
+//
+// 错误分类与 Apply 一致：ConfigError（闸一/闸二打回）由调用方翻 400 原文回显。试算
+// 被闸打回 = 真导入也会被同一道闸打回，调用方（管理端）据此把确认键整个收起来。
+func Preview(ctx context.Context, db *sql.DB, f *File) ([]string, error) {
+	tx, changes, err := eval(ctx, db, f)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() // 同 Apply：非常规退出时唯一会松开那条单写连接的地方。
+	if err := tx.Rollback(); err != nil {
+		return nil, fmt.Errorf("回滚试算事务：%w", err)
+	}
+	return changes, nil
+}
+
+// eval 是 Apply 与 Preview 共用的前半程。整份 apply 一个事务（#29），两道闸不合并，
+// 但 problems 合并报（#31）：闸一是 selfCheck（只看文件），闸二是 store.Validate
+// （看库里的行）；闸二在**同一个事务里**对着刚写进去的行跑，任一道有问题就整份
+// 回滚。于是「一次报全」不止覆盖文件自身的错，也覆盖那些只有把行摆进库才看得出来
+// 的错，而库里一行都不会留下。事务原样交还调用方定收场：Apply 提交、Preview 回滚；
+// 中途任何一步失败都在这里回滚干净再返回。
+func eval(ctx context.Context, db *sql.DB, f *File) (*sql.Tx, []string, error) {
+	if problems := selfCheck(f); len(problems) > 0 {
+		// 闸一没过就不开事务，于是闸二无从跑起——它要看的行还不存在，硬跑只会拿上一版
+		// 配置的行去回答这一版的问题。这不违背「合并报」：合并的前提是两边都算得出来。
+		return nil, nil, ConfigError{problemsErr(problems)}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("开启 apply 事务：%w", err)
+	}
+	// 事务活着的这一段里 panic 也得把连接还回去：HTTP 那侧的 recovery 会把 panic 接住
+	// 继续服务，而本库是单写连接，事务不收场就轮不到下一个请求——收场后原样再抛。
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+	changes, err := reconcile(ctx, tx, f)
+	if err != nil {
+		tx.Rollback()
+		return nil, nil, err
+	}
+	if err := store.Validate(ctx, tx); err != nil {
+		tx.Rollback()
+		return nil, nil, ConfigError{err}
+	}
+	return tx, changes, nil
 }
 
 func problemsErr(problems []string) error {

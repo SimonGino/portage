@@ -144,12 +144,15 @@ func TestImportInvalidFileRollsBackAndReportsAll(t *testing.T) {
 	}
 }
 
-// TestImportRequiresSession 钉导入在 auth 组里：它的响应体能改整份业务配置，
-// 未登录连门都不该进。
+// TestImportRequiresSession 钉导入与试算都在 auth 组里：它们的响应体能改（或预演
+// 改）整份业务配置，未登录连门都不该进。
 func TestImportRequiresSession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	if status, body := g.Admin(t).Do(t, http.MethodPost, "/admin/api/import", importFile); status != http.StatusUnauthorized {
 		t.Errorf("未登录导入应 401，得到 %d：%s", status, body)
+	}
+	if status, body := g.Admin(t).Do(t, http.MethodPost, "/admin/api/import/preview", importFile); status != http.StatusUnauthorized {
+		t.Errorf("未登录试算应 401，得到 %d：%s", status, body)
 	}
 }
 
@@ -170,5 +173,79 @@ func TestExportImportRoundtripIsNoop(t *testing.T) {
 	a.JSONInto(t, http.MethodPost, "/admin/api/import", exported, &out)
 	if len(out.Changes) != 0 {
 		t.Errorf("导出再导入应无变化，实际：%v", out.Changes)
+	}
+}
+
+// TestImportPreviewMatchesRealImportWithoutWriting 钉试算（口径层 v1.03）的三个面：
+// ①清单与同一份文件真导入将产生的**逐字一致**——预览的价值全在这个一致上；
+// ②库一行不动（事务回滚收场，种子还在、文件里的东西一个没进来）；③试算之后真导入
+// 照常能走（试算不留下任何会挡住导入的东西），导完再试算同一份文件回空数组。
+func TestImportPreviewMatchesRealImportWithoutWriting(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "old-ap", "anthropic", "https://old.internal", "old-model", "sk-old")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	var preview struct {
+		Changes []string `json:"changes"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/import/preview", importFile, &preview)
+	if len(preview.Changes) == 0 {
+		t.Fatal("试算没报任何变更，清单不该是空的")
+	}
+
+	var seeded, imported int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM channels WHERE name='test-anthropic'`).Scan(&seeded); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM channels WHERE name='qwen'`).Scan(&imported); err != nil {
+		t.Fatal(err)
+	}
+	if seeded != 1 || imported != 0 {
+		t.Errorf("试算动了库：种子渠道剩 %d 个，文件渠道进来 %d 个", seeded, imported)
+	}
+
+	// 同一份文件真导入，清单与试算逐字对得上：覆盖语义不受试算影响。
+	var applied struct {
+		Changes []string `json:"changes"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/import", importFile, &applied)
+	if strings.Join(applied.Changes, "；") != strings.Join(preview.Changes, "；") {
+		t.Errorf("真导入清单与试算不一致：\n试算 %v\n导入 %v", preview.Changes, applied.Changes)
+	}
+
+	// 导完之后再试算同一份文件：无变化（空数组不回 null，前端只判长度）。
+	var again struct {
+		Changes []string `json:"changes"`
+	}
+	a.JSONInto(t, http.MethodPost, "/admin/api/import/preview", importFile, &again)
+	if len(again.Changes) != 0 {
+		t.Errorf("导完再试算同一份文件应无变化，实际：%v", again.Changes)
+	}
+}
+
+// TestImportPreviewRejectsInvalidFile 钉试算的失败面：400 装的是校验原文（与真导入
+// 同文，前端原样回显），库一行不动——试算不过 = 真导入也过不了。
+func TestImportPreviewRejectsInvalidFile(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "old-ap", "anthropic", "https://old.internal", "old-model", "sk-old")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+
+	bad := strings.Replace(importFile, "target: qwen/Qwen3-27B", "target: qwen/不存在", 1)
+	status, body := a.Do(t, http.MethodPost, "/admin/api/import/preview", bad)
+	if status != http.StatusBadRequest {
+		t.Fatalf("试算自校验错应 400，得到 %d：%s", status, body)
+	}
+	if !strings.Contains(body, "找不到对应的渠道纳管模型") {
+		t.Errorf("试算 400 应带校验原文：%s", body)
+	}
+
+	var seeded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM channels WHERE name='test-anthropic'`).Scan(&seeded); err != nil {
+		t.Fatal(err)
+	}
+	if seeded != 1 {
+		t.Errorf("失败的试算动了库：种子渠道剩 %d 个", seeded)
 	}
 }

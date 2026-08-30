@@ -84,11 +84,12 @@ export async function download(path: string, filename: string): Promise<void> {
 }
 
 /**
- * 导入声明文件（#59）：POST 原始 YAML 文本，回变更清单。今天只有导入配置走它——
- * request() 会把 body JSON 化，而这里要发的就是文件原文。
+ * POST 一份 YAML 原文、回变更清单：导入（/import）与导入试算（/import/preview，
+ * 口径层 v1.03）回包同形、错误同形，共用这一条。request() 会把 body JSON 化，而
+ * 这里要发的就是文件原文，所以另起一条。
  */
-export async function importConfig(yaml: string): Promise<string[]> {
-  const res = await fetch(BASE + '/import', {
+async function postYamlChanges(path: string, yaml: string): Promise<string[]> {
+  const res = await fetch(BASE + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/yaml' },
     body: yaml,
@@ -108,6 +109,20 @@ export async function importConfig(yaml: string): Promise<string[]> {
     throw new ApiError(res.status, msg)
   }
   return (payload as { changes: string[] }).changes
+}
+
+/**
+ * 导入试算（口径层 v1.03）：与导入同一串闸、但不提交事务，库里一行不留。回的清单
+ * 与同一份文件真导入将产生的完全一致；400 = 校验原文——试算被闸打回时真导入也会
+ * 被同一道闸打回，调用方据此把确认键收起来。
+ */
+export function previewImport(yaml: string): Promise<string[]> {
+  return postYamlChanges('/import/preview', yaml)
+}
+
+/** 导入声明文件（#59）：POST 原始 YAML 文本，回变更清单。 */
+export function importConfig(yaml: string): Promise<string[]> {
+  return postYamlChanges('/import', yaml)
 }
 
 export const api = {
