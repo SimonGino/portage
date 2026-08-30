@@ -10,6 +10,7 @@ import Keys from './pages/Keys'
 import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
 import ChangePassword from './pages/ChangePassword'
+import PanelPrototype from './pages/PanelPrototype'
 import { RailMidTarget, RailProvider } from './rail'
 import { Confirm, Dialog, ErrorBar } from './ui'
 
@@ -66,6 +67,15 @@ const NAV: { to: string; label: string; icon: ReactNode }[] = [
 ]
 
 export default function App() {
+  // PROTOTYPE（wayfinder #67）：DEV-only 原型路由，绕开登录与壳，评完即删。
+  // 早退在一切 hooks 之前，不违反 Rules of Hooks。
+  if (import.meta.env.DEV && window.location.pathname.startsWith('/admin/prototype/panel')) {
+    return <PanelPrototype />
+  }
+  return <RealApp />
+}
+
+function RealApp() {
   const [session, setSession] = useState<SessionState | null>(null)
   const [pwOpen, setPwOpen] = useState(false)
 
