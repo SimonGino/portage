@@ -64,7 +64,15 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 	}{
 		{http.MethodGet, "/admin", ""},
 		{http.MethodGet, "/admin/api/channels", ""},
-		{http.MethodPost, "/admin/api/login", `{"password":"admin-test-password"}`},
+		{http.MethodPost, "/admin/api/login", `{"email":"admin@localhost","password":"admin-test-password"}`},
+		// #72 的用户体系端点也在同一道形态闸后：纯转发形态下它们必须一并消失——
+		// 注册/找回是不要会话的门，鉴权级的闸拦不住，只有路由级的能。
+		{http.MethodGet, "/admin/api/auth-config", ""},
+		{http.MethodPost, "/admin/api/register", `{"invite_code":"x","email":"a@b.c","password":"password1"}`},
+		{http.MethodPost, "/admin/api/password-reset", `{"email":"a@b.c"}`},
+		{http.MethodGet, "/admin/oauth/github/start", ""},
+		{http.MethodGet, "/admin/api/users", ""},
+		{http.MethodGet, "/admin/api/invite-codes", ""},
 	}
 
 	t.Run("有密码则管理面在", func(t *testing.T) {
@@ -101,7 +109,7 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 			}
 		}
 		if got := status(t, base, http.MethodPost, "/admin/api/login",
-			`{"password":"`+gatewaytest.AdminPassword+`"}`); got != http.StatusOK {
+			`{"email":"admin@localhost","password":"`+gatewaytest.AdminPassword+`"}`); got != http.StatusOK {
 			t.Errorf("库里的密码登录回了 %d，期望 200", got)
 		}
 	})
@@ -116,7 +124,7 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 		}
 		first := startGatewayWith(t, db, "")
 		resp, err := http.Post(first.URL+"/admin/api/login", "application/json",
-			strings.NewReader(`{"password":"`+gatewaytest.AdminPassword+`"}`))
+			strings.NewReader(`{"email":"admin@localhost","password":"`+gatewaytest.AdminPassword+`"}`))
 		if err != nil {
 			t.Fatalf("登录: %v", err)
 		}

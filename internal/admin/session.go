@@ -26,6 +26,16 @@ func (h *Handler) validSession(c *gin.Context) (store.SessionUser, bool, error) 
 	return store.TouchSession(c.Request.Context(), h.db, token)
 }
 
+// ctxUserKey 是 requireSession 把会话用户塞进 gin.Context 的键。
+const ctxUserKey = "portage.session_user"
+
+// sessionUser 取本次请求背后的人。只在 requireSession 之后的 handler 里可用——
+// 中间件已经把 401 挡在门外，这里取不到只能是把 handler 挂错了组，宁可 panic
+// 也别把一个零值 ID 当成真用户往下传。
+func sessionUser(c *gin.Context) store.SessionUser {
+	return c.MustGet(ctxUserKey).(store.SessionUser)
+}
+
 // setSessionCookie 统一设置会话 cookie。
 //
 // HttpOnly：JS 读不到，XSS 也偷不走会话。

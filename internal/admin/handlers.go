@@ -32,42 +32,44 @@ const loginFailDelay = 500 * time.Millisecond
 
 func (h *Handler) login(c *gin.Context) {
 	var in struct {
+		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	if in.Email == "" {
+		fail(c, http.StatusBadRequest, "缺少邮箱")
+		return
+	}
 
-	hash, err := store.GetSetting(c.Request.Context(), h.db, store.SettingAdminPasswordHash)
-	if err != nil {
-		h.log.Error("读管理端密码失败", "err", err)
+	// #72 起邮箱密码登录验的是 users.password_hash——#71「搬 hash 复制不删源」在
+	// 本票转正，settings 那份只剩初始化与回滚兜底的职责，登录不再读它。
+	ctx := c.Request.Context()
+	u, err := store.GetUserAuthByEmail(ctx, h.db, in.Email)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.log.Error("读用户失败", "err", err)
 		fail(c, http.StatusInternalServerError, "登录失败")
 		return
 	}
-	if hash == "" {
-		// 说清楚是「还没设」而不是「密码错」：这两种情况的补救动作完全不同，
-		// 含糊其辞会让人对着配置文件里明明写着的密码反复重试。
-		fail(c, http.StatusServiceUnavailable, "尚未设置管理密码：在 config.yaml 里填 admin_password 后重启")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) != nil {
+	// 「没有这个邮箱」与「密码错」折成同一句话、走同一个延时：分开说等于给爆破
+	// 脚本一个免费的邮箱存在性预言机。OAuth-only 账号（无密码）也落在这一句里——
+	// 页面上「忘记密码」那条路兼作它的设密码入口（#62 决议 6）。
+	if errors.Is(err, store.ErrNotFound) || u.PasswordHash == nil ||
+		bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte(in.Password)) != nil {
 		time.Sleep(loginFailDelay)
 		h.log.Warn("管理端登录失败", "remote", c.ClientIP())
-		fail(c, http.StatusUnauthorized, "密码不对")
+		fail(c, http.StatusUnauthorized, "邮箱或密码不对")
 		return
 	}
-
-	// 会话落库后必须挂在一个用户名下。#71 阶段这条登录路还是验 settings 里的管理
-	// 密码（邮箱登录是 #72），验过即视为第一个 admin 本人——settings 有哈希时
-	// migration / Bootstrap 保证了这个号存在，找不到只能是手写 SQL 改坏的库。
-	adminID, err := store.FirstAdminID(c.Request.Context(), h.db)
-	if err != nil {
-		h.log.Error("找第一个 admin 用户失败", "err", err)
-		fail(c, http.StatusInternalServerError, "登录失败")
+	// 停用即对系统一切访问冻结（#61）。放在密码验过之后：验过说明是本人，这句
+	// 状态告知不算泄露；验之前就说「已停用」反而白送邮箱存在性。
+	if u.Disabled {
+		fail(c, http.StatusForbidden, "账号已停用")
 		return
 	}
-	token, ttl, err := store.CreateSession(c.Request.Context(), h.db, adminID)
+	token, ttl, err := store.CreateSession(ctx, h.db, u.ID)
 	if err != nil {
 		h.log.Error("生成会话失败", "err", err)
 		fail(c, http.StatusInternalServerError, "登录失败")
@@ -90,8 +92,10 @@ func (h *Handler) logout(c *gin.Context) {
 }
 
 // session 让前端在加载时问一句「我还登着吗」，免得每个页面各自靠 401 去发现。
+// #72 起登着时还带出「我是谁」：前端要按角色分壳、按验证态锁功能，逐页各查一遍
+// 不如这里一次说全。
 func (h *Handler) session(c *gin.Context) {
-	_, authed, err := h.validSession(c)
+	su, authed, err := h.validSession(c)
 	if err != nil {
 		h.log.Error("校验会话失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取状态失败")
@@ -103,10 +107,20 @@ func (h *Handler) session(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "读取状态失败")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	out := gin.H{
 		"authenticated": authed,
 		"password_set":  hash != "",
-	})
+	}
+	if authed {
+		u, err := store.GetUser(c.Request.Context(), h.db, su.ID)
+		if err != nil {
+			h.log.Error("读用户失败", "err", err)
+			fail(c, http.StatusInternalServerError, "读取状态失败")
+			return
+		}
+		out["user"] = u
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) changePassword(c *gin.Context) {
@@ -122,15 +136,28 @@ func (h *Handler) changePassword(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "新密码至少 8 位")
 		return
 	}
+	// 未验证功能全锁（#62 决议 2）：去验证页之外的自助动作一概不给，改密码也在
+	// 锁单里。admin 与逃生门建的号造出来就是已验证，这道闸实际只拦注册流的新号。
+	if !h.requireVerified(c) {
+		return
+	}
 	ctx := c.Request.Context()
-	hash, err := store.GetSetting(ctx, h.db, store.SettingAdminPasswordHash)
+	// #72 起改的是**自己**的密码：验的是本人 users 里那份哈希，不再读 settings——
+	// 多用户之后「管理密码」不是一个全局物件，它就是第一个 admin 的密码。
+	u, err := store.GetUserAuthByID(ctx, h.db, sessionUser(c).ID)
 	if err != nil {
-		h.log.Error("读管理端密码失败", "err", err)
+		h.log.Error("读用户失败", "err", err)
 		fail(c, http.StatusInternalServerError, "修改失败")
 		return
 	}
+	if u.PasswordHash == nil {
+		// OAuth-only 账号没有旧密码可验，设密码走「忘记密码」那条邮件链路
+		// （#62 决议 6）——那条路验证的是邮箱所有权，比「登着就能设」硬。
+		fail(c, http.StatusBadRequest, "该账号未设置过密码：走「忘记密码」用邮件链接设置")
+		return
+	}
 	// 已经登录了还要验旧密码：cookie 可能是别人在这台机器上留下的。
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Old)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte(in.Old)) != nil {
 		time.Sleep(loginFailDelay)
 		fail(c, http.StatusUnauthorized, "原密码不对")
 		return
@@ -141,31 +168,36 @@ func (h *Handler) changePassword(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "修改失败")
 		return
 	}
-	if err := store.SetSetting(ctx, h.db, store.SettingAdminPasswordHash, string(newHash)); err != nil {
-		h.log.Error("写管理端密码失败", "err", err)
+	if err := h.setPassword(ctx, u.ID, string(newHash)); err != nil {
+		h.log.Error("写密码失败", "err", err)
 		fail(c, http.StatusInternalServerError, "修改失败")
 		return
 	}
-	// 第一个 admin 用户的 password_hash 是 settings 那份的复制（#71 迁移搬过去的），
-	// 两份必须一起改：只改 settings 的话，#72 的邮箱登录会拿着旧密码继续放行——
-	// 而那正是改密码要赶走的人。找不到号不拦（settings 没哈希的库改不到这一步，
-	// 真缺号只能是手写 SQL，密码本体已改成、目的已达）。
-	if adminID, err := store.FirstAdminID(ctx, h.db); err == nil {
-		if err := store.SetUserPasswordHash(ctx, h.db, adminID, string(newHash)); err != nil {
-			h.log.Error("同步 admin 用户密码失败", "err", err)
-		}
-	} else {
-		h.log.Error("找第一个 admin 用户失败，密码只改了 settings", "err", err)
-	}
-	// 全部会话作废，包括发起这次修改的这一个——改完要重登。
-	if err := store.DeleteAllSessions(ctx, h.db); err != nil {
-		h.log.Error("吊销全部会话失败", "err", err)
+	// 本人的会话全部作废，包括发起这次修改的这一个——改完要重登。只吊销自己的：
+	// 多用户之后 DeleteAllSessions 会把无辜的人一起踢下线。
+	if err := store.DeleteUserSessions(ctx, h.db, u.ID); err != nil {
+		h.log.Error("吊销会话失败", "err", err)
 		fail(c, http.StatusInternalServerError, "修改失败")
 		return
 	}
 	h.setSessionCookie(c, "", -1)
-	h.log.Info("管理端密码已修改，全部会话已吊销")
+	h.log.Info("用户密码已修改，本人会话已吊销", "user", u.ID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "relogin": true})
+}
+
+// setPassword 写一个用户的密码哈希，并在他是第一个 admin 时同步 settings 里那份
+// 复制——两份不一起动的话，回滚到 #71 之前的二进制会拿着旧密码放行（见
+// EnsureFirstAdmin 的注释）。改密码与重置密码两条路共用这一处。
+func (h *Handler) setPassword(ctx context.Context, userID int64, hash string) error {
+	if err := store.SetUserPasswordHash(ctx, h.db, userID, hash); err != nil {
+		return err
+	}
+	if adminID, err := store.FirstAdminID(ctx, h.db); err == nil && adminID == userID {
+		if err := store.SetSetting(ctx, h.db, store.SettingAdminPasswordHash, hash); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── 渠道 ────────────────────────────────────────────────────────────────

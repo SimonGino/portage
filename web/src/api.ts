@@ -490,7 +490,65 @@ export interface PricingModels {
   models: Record<string, PricingModelPrice>
 }
 
+/** 一个用户（internal/store/user.go 的 User）。永不带密码哈希。 */
+export interface User {
+  id: number
+  email: string
+  display_name: string
+  role: 'admin' | 'user'
+  disabled: boolean
+  email_verified: boolean
+  /** false = OAuth-only 账号：设密码走「忘记密码」的邮件链路。 */
+  has_password: boolean
+  created_at: string
+}
+
 export interface SessionState {
   authenticated: boolean
   password_set: boolean
+  /** #72 起登着时带出「我是谁」：按角色分壳、按验证态锁功能都靠它。 */
+  user?: User
+}
+
+/** 登录页「有哪些门」：注册开不开、OAuth 有哪几家（GET /auth-config，不鉴权）。 */
+export interface AuthConfig {
+  registration_open: boolean
+  oauth: string[]
+  registration_closed_reason?: string
+}
+
+export interface InviteCode {
+  id: number
+  code: string
+  /** unix 秒；null = 不过期。 */
+  expires_at: number | null
+  /** 空串 = 还没人用。 */
+  used_by_email: string
+  used_at: string
+  created_at: string
+}
+
+/** 账号绑定的一个上游身份。不带上游 id——那串数字对人没有意义。 */
+export interface OAuthIdentity {
+  provider: string
+  created_at: string
+}
+
+/**
+ * 登录与邮件配置（GET /auth-settings）。secret 三样（SMTP 密码、两家 client_secret）
+ * **只回「设没设」，永不回值**——同「上游 key 只存服务端」口径。
+ */
+export interface AuthSettings {
+  site_url: string
+  smtp: {
+    host: string
+    port: string
+    encryption: string
+    username: string
+    from: string
+    password_set: boolean
+  }
+  github: { client_id: string; secret_set: boolean }
+  google: { client_id: string; secret_set: boolean }
+  callback_urls: { github: string; google: string }
 }
