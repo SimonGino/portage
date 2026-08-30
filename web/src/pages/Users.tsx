@@ -13,6 +13,19 @@ export default function Users() {
   const invites = useList(() => api.get<InviteCode[] | null>('/invite-codes'))
   const [creating, setCreating] = useState(false)
 
+  // 任免/停用共用的提交壳：护栏（最后一个启用的 admin 不许降/停）长在服务端，
+  // 这里只负责把那句 400 原文摆出来。
+  async function mutate(fn: () => Promise<unknown>) {
+    try {
+      await fn()
+      users.setError('')
+    } catch (e) {
+      users.setError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    await users.reload()
+  }
+
   return (
     <>
       <ErrorBar message={users.error} />
@@ -38,6 +51,7 @@ export default function Users() {
                 <th>登录方式</th>
                 <th>状态</th>
                 <th>创建时间</th>
+                <th className="col-actions" />
               </tr>
             </thead>
             <tbody>
@@ -57,6 +71,44 @@ export default function Users() {
                     )}
                   </td>
                   <td className="muted">{fmtTime(u.created_at)}</td>
+                  {/* 任免 + 停用（#61：admin 可任免，多 admin 允许）。两个动作都过
+                      Confirm——降级/停用即时生效（角色与冻结都是每请求联查），没有
+                      「保存前反悔」的缓冲。最后一个启用的 admin 的护栏在服务端，
+                      被拦时那句 400 会出现在页顶的 ErrorBar 里。 */}
+                  <td className="col-actions">
+                    <div className="row-actions">
+                      {u.role === 'admin' ? (
+                        <Confirm
+                          ghost
+                          label="降为用户"
+                          confirm="确定收回管理员权限？"
+                          onConfirm={() => void mutate(() => api.put(`/users/${u.id}/role`, { role: 'user' }))}
+                        />
+                      ) : (
+                        <Confirm
+                          ghost
+                          label="设为管理员"
+                          confirm="确定给予全部管理权限？"
+                          onConfirm={() => void mutate(() => api.put(`/users/${u.id}/role`, { role: 'admin' }))}
+                        />
+                      )}
+                      {u.disabled ? (
+                        <button
+                          className="btn btn-ghost"
+                          onClick={() => void mutate(() => api.put(`/users/${u.id}/disabled`, { disabled: false }))}
+                        >
+                          启用
+                        </button>
+                      ) : (
+                        <Confirm
+                          ghost
+                          label="停用"
+                          confirm="确定停用？其会话与访问立即冻结"
+                          onConfirm={() => void mutate(() => api.put(`/users/${u.id}/disabled`, { disabled: true }))}
+                        />
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

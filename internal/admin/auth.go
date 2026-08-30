@@ -203,6 +203,10 @@ func (h *Handler) verifyEmail(c *gin.Context) {
 
 // resendVerifyEmail 重发验证信，60s 冷却（#62 决议 2）。要会话不要验证态——
 // 未验证的人正是它的用户，这是「功能全锁」清单外的那几个动作之一。
+//
+// 发信失败这里**照实回 502**，与 requestPasswordReset 的匿名 200 刻意不同：那边
+// 不鉴权、按邮箱分叉的状态码是存在性预言机；这边有会话、收件人就是本人的邮箱，
+// 「发没发出去」是他该知道的事——瞒着他只会让人对着收件箱空等 60 秒再点一次。
 func (h *Handler) resendVerifyEmail(c *gin.Context) {
 	ctx := c.Request.Context()
 	me := sessionUser(c)
@@ -243,9 +247,11 @@ func (h *Handler) resendVerifyEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// requestPasswordReset 发重置密码邮件（#62 决议 6）。找不到邮箱也回 200——
-// 分开说等于给公网上的脚本一个免费的邮箱存在性预言机；发信真失败才 502，那时
-// 已经确认过是本人邮箱在库里，可用性比那一点点泄露要紧。
+// requestPasswordReset 发重置密码邮件（#62 决议 6）。**除「JSON 坏了」与「SMTP
+// 根本没配」（全局状态，与邮箱无关）外，一律回同一个匿名 200**——找不到、已停用、
+// 连发信失败都是：这个接口不鉴权，任何按邮箱分叉的状态码都是免费的邮箱存在性
+// 预言机（发信失败若回 502，「502 = 这个邮箱在库里」）。发信失败只落服务端日志，
+// 排障看日志不看响应。
 func (h *Handler) requestPasswordReset(c *gin.Context) {
 	var in struct {
 		Email string `json:"email"`
@@ -299,9 +305,8 @@ func (h *Handler) requestPasswordReset(c *gin.Context) {
 
 如果这不是你发起的，忽略这封邮件即可，密码不会被改动。`, action, site, token)
 	if err := h.mail(ctx, h.db, u.Email, "Portage "+action, body); err != nil {
+		// 只记日志，不改响应：见函数头——按邮箱分叉的状态码就是存在性预言机。
 		h.log.Error("发重置邮件失败", "user", u.ID, "err", err)
-		fail(c, http.StatusBadGateway, "发信失败："+err.Error())
-		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

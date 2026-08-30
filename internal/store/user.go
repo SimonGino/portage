@@ -214,3 +214,66 @@ func DeleteUserSessions(ctx context.Context, db Conn, userID int64) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	return err
 }
+
+// lastAdminGuard 是任免/停用共用的守门条件：目标是**最后一个启用的 admin** 时不放行。
+// 写成 UPDATE 的 WHERE 而不是先查后改——判定与写入同一条语句，两个并发降级不会
+// 各自查到「还有俩」然后一起成功（连接池是 1，但正确性不该依赖那个配置，同
+// ConsumeInviteCode）。
+const lastAdminGuard = `NOT (
+	role = 'admin' AND disabled = 0
+	AND (SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0) = 1
+)`
+
+// SetUserRole 任免角色（#61：admin 可在管理端任免，多 admin 允许）。
+//
+// 降级最后一个启用的 admin 被守门条件拦下：治理面只有 admin 进得来，最后一个
+// 降掉等于把整套用户治理锁死——没有人再能生成邀请码、建号、改配置。升级不受限。
+func SetUserRole(ctx context.Context, db Conn, id int64, role string) error {
+	if role != RoleAdmin && role != RoleUser {
+		return InvalidInput{"角色只有 admin / user 两档"}
+	}
+	guard := ``
+	if role == RoleUser {
+		guard = ` AND ` + lastAdminGuard
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE users SET role = ? WHERE id = ?`+guard, role, id)
+	return explainGuarded(ctx, db, res, err, id, "不能降级最后一个启用的管理员——先把别人升上来")
+}
+
+// SetUserDisabled 停用/启用（#61：停用即对系统一切访问冻结）。
+//
+// 只改标志不删会话：TouchSession 联查 users.disabled，已发出的 cookie 当场失效；
+// 冻结可逆，重新启用后老会话照旧能用（同 #71 的裁定）。停用最后一个启用的 admin
+// 与降级同罪，被同一个守门条件拦下。
+func SetUserDisabled(ctx context.Context, db Conn, id int64, disabled bool) error {
+	guard := ``
+	if disabled {
+		guard = ` AND ` + lastAdminGuard
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE users SET disabled = ? WHERE id = ?`+guard, disabled, id)
+	return explainGuarded(ctx, db, res, err, id, "不能停用最后一个启用的管理员——先把别人升上来")
+}
+
+// explainGuarded 把「带守门条件的 UPDATE 改了 0 行」翻成能给人看的错：行不存在是
+// ErrNotFound，行在但被守门条件拦了是 InvalidInput（同 RevokeInviteCode 的拆法）。
+func explainGuarded(ctx context.Context, db Conn, res sql.Result, err error, id int64, blocked string) error {
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 1 {
+		return nil
+	}
+	var one int
+	err = db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return InvalidInput{blocked}
+}

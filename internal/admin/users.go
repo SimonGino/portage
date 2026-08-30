@@ -75,6 +75,59 @@ func (h *Handler) createUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"id": uid})
 }
 
+// setUserRole 任免角色（#61：admin 可任免，多 admin 允许）。自己降自己也走同一条
+// 路——守门条件只认「最后一个启用的 admin」，不认「是不是本人」：还有别的 admin 在，
+// 自降是合法的交接；只剩自己时，降级被拦下的理由与降别人完全一样。角色是每次请求
+// 联查出来的（TouchSession），降级即时生效，不用吊销会话。
+func (h *Handler) setUserRole(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "id 不是数字")
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.userWrite(c, store.SetUserRole(c.Request.Context(), h.db, id, in.Role))
+}
+
+// setUserDisabled 停用/启用。停用即冻结（#61）：已发出的会话在下一次请求就失效
+// （TouchSession 联查 disabled），会话行留着——启用后老会话照旧能用，沿 #71 的裁定。
+func (h *Handler) setUserDisabled(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "id 不是数字")
+		return
+	}
+	var in struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.userWrite(c, store.SetUserDisabled(c.Request.Context(), h.db, id, in.Disabled))
+}
+
+// userWrite 是两个用户治理写接口共用的收尾：ErrNotFound→404、守门条件→400。
+func (h *Handler) userWrite(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(c, http.StatusNotFound, "用户不存在")
+	case errors.Is(err, store.ErrInvalidInput):
+		fail(c, http.StatusBadRequest, err.Error())
+	case err != nil:
+		h.log.Error("写用户失败", "err", err)
+		fail(c, http.StatusInternalServerError, "保存失败")
+	default:
+		c.Status(http.StatusNoContent)
+	}
+}
+
 // ── 邀请码 ──────────────────────────────────────────────────────────────
 
 func (h *Handler) listInviteCodes(c *gin.Context) {

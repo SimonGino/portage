@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,17 +29,27 @@ import (
 
 const testAdminPassword = "admin-test-password"
 
-// mailRec 是发信桩：记下每封信，不碰网络。
+// mailRec 是发信桩：记下每封信，不碰网络。fail 非空时装一台坏掉的 SMTP。
 type mailRec struct {
 	mu   sync.Mutex
 	sent []struct{ To, Subject, Body string }
+	fail error
 }
 
 func (m *mailRec) send(_ context.Context, _ *sql.DB, to, subject, body string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail != nil {
+		return m.fail
+	}
 	m.sent = append(m.sent, struct{ To, Subject, Body string }{to, subject, body})
 	return nil
+}
+
+func (m *mailRec) setFail(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fail = err
 }
 
 func (m *mailRec) count() int {
@@ -389,6 +400,84 @@ func TestLoginAndRoleGate(t *testing.T) {
 	}
 }
 
+// 任免与停用（#61：admin 可任免角色，多 admin 允许；停用即冻结）。角色是每次请求
+// 联查出来的，升降都即时生效；停用/启用走 #71 的会话冻结语义——会话行不删，
+// 启用后老会话复活。
+func TestUserGovernance(t *testing.T) {
+	srv, db, _ := newAuthServer(t, false)
+	admin := newClient(t, srv)
+	admin.login(t, store.FirstAdminEmail, testAdminPassword)
+	uid := seedVerifiedUser(t, db, "u@example.com", "user-pass-1")
+	user := newClient(t, srv)
+	user.login(t, "u@example.com", "user-pass-1")
+
+	// 只剩一个启用的 admin：降级/停用都被护栏拦下（自己也算）。
+	adminID, err := store.FirstAdminID(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []struct{ path, body string }{
+		{fmt.Sprintf("/admin/api/users/%d/role", adminID), `{"role":"user"}`},
+		{fmt.Sprintf("/admin/api/users/%d/disabled", adminID), `{"disabled":true}`},
+	} {
+		if status, body, _ := admin.do(t, http.MethodPut, probe.path, probe.body); status != http.StatusBadRequest {
+			t.Fatalf("最后一个 admin %s = %d %s，期望 400", probe.path, status, body)
+		}
+	}
+
+	// 升普通用户为 admin：老会话立刻拿到治理面（角色每请求联查，不用重登）。
+	if status, body, _ := admin.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/role", uid), `{"role":"admin"}`); status != http.StatusNoContent {
+		t.Fatalf("升级 = %d %s", status, body)
+	}
+	if status, _, _ := user.do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusOK {
+		t.Fatalf("升级后老会话打治理面 = %d，期望 200", status)
+	}
+
+	// 有替补后原 admin 自降合法（交接），降完立刻 403。
+	if status, body, _ := admin.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/role", adminID), `{"role":"user"}`); status != http.StatusNoContent {
+		t.Fatalf("自降 = %d %s", status, body)
+	}
+	if status, _, _ := admin.do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusForbidden {
+		t.Fatalf("自降后打治理面 = %d，期望 403", status)
+	}
+	// 把两个号都复位：原 admin 升回来，替补降回 user，剩下的用例按初始格局跑。
+	if status, _, _ := user.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/role", adminID), `{"role":"admin"}`); status != http.StatusNoContent {
+		t.Fatalf("升回原 admin 失败：%d", status)
+	}
+	if status, _, _ := admin.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/role", uid), `{"role":"user"}`); status != http.StatusNoContent {
+		t.Fatalf("降回 user 失败：%d", status)
+	}
+
+	// 停用即冻结：老会话下一次请求就失效；启用后同一个 cookie 复活（#71 冻结不删行）。
+	if status, _, _ := admin.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/disabled", uid), `{"disabled":true}`); status != http.StatusNoContent {
+		t.Fatalf("停用失败")
+	}
+	if _, body, _ := user.do(t, http.MethodGet, "/admin/api/session", ""); !strings.Contains(body, `"authenticated":false`) {
+		t.Fatalf("停用后老会话 = %s，期望已冻结", body)
+	}
+	if status, _, _ := admin.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/disabled", uid), `{"disabled":false}`); status != http.StatusNoContent {
+		t.Fatalf("启用失败")
+	}
+	if _, body, _ := user.do(t, http.MethodGet, "/admin/api/session", ""); !strings.Contains(body, `"authenticated":true`) {
+		t.Fatalf("启用后老会话 = %s，期望复活", body)
+	}
+
+	// 普通用户没有任免权：角色闸在前。
+	if status, _, _ := user.do(t, http.MethodPut,
+		fmt.Sprintf("/admin/api/users/%d/role", uid), `{"role":"admin"}`); status != http.StatusForbidden {
+		t.Fatalf("user 调任免 = %d，期望 403", status)
+	}
+	if status, _, _ := admin.do(t, http.MethodPut, "/admin/api/users/9999/role", `{"role":"user"}`); status != http.StatusNotFound {
+		t.Fatalf("不存在的用户 = %d，期望 404", status)
+	}
+}
+
 // ── 找回密码 ────────────────────────────────────────────────────────────
 
 func TestPasswordResetFlow(t *testing.T) {
@@ -438,6 +527,22 @@ func TestPasswordResetFlow(t *testing.T) {
 		t.Fatalf("旧密码登录 = %d，期望 401", status)
 	}
 	newClient(t, srv).login(t, "u@example.com", "new-pass-99")
+}
+
+// 发信失败的重置请求必须与成功**同形**：这个接口不鉴权，按邮箱分叉的任何状态码
+// 都是免费的邮箱存在性预言机——「502 = 这个邮箱在库里」。失败只落服务端日志。
+func TestPasswordResetMailFailureIsAnonymous(t *testing.T) {
+	srv, db, rec := newAuthServer(t, false)
+	configureMail(t, db)
+	seedVerifiedUser(t, db, "u@example.com", "user-pass-1")
+	cl := newClient(t, srv)
+
+	ghostStatus, ghostBody, _ := cl.do(t, http.MethodPost, "/admin/api/password-reset", `{"email":"ghost@example.com"}`)
+	rec.setFail(errors.New("smtp: 550 rejected"))
+	realStatus, realBody, _ := cl.do(t, http.MethodPost, "/admin/api/password-reset", `{"email":"u@example.com"}`)
+	if realStatus != http.StatusOK || realStatus != ghostStatus || realBody != ghostBody {
+		t.Fatalf("发信失败 = %d %s，未知邮箱 = %d %s——两者必须同形", realStatus, realBody, ghostStatus, ghostBody)
+	}
 }
 
 // 第一个 admin 走重置：settings 里那份复制要跟着动——不同步的话回滚到 #71 前的
@@ -573,6 +678,8 @@ func TestDeclarativeHidesUserSystem(t *testing.T) {
 		{http.MethodGet, "/admin/api/account/identities"},
 		{http.MethodGet, "/admin/api/users"},
 		{http.MethodPost, "/admin/api/users"},
+		{http.MethodPut, "/admin/api/users/1/role"},
+		{http.MethodPut, "/admin/api/users/1/disabled"},
 		{http.MethodGet, "/admin/api/invite-codes"},
 		{http.MethodPost, "/admin/api/invite-codes"},
 		{http.MethodGet, "/admin/api/auth-settings"},

@@ -144,6 +144,8 @@ func (h *Handler) Mount(r *gin.Engine) {
 		// 同在 #66 互斥闸后——声明形态没有用户体系，这些配置面跟着消失。
 		adm.GET("/users", h.listUsers)
 		adm.POST("/users", h.createUser)
+		adm.PUT("/users/:id/role", h.setUserRole)
+		adm.PUT("/users/:id/disabled", h.setUserDisabled)
 		adm.GET("/invite-codes", h.listInviteCodes)
 		adm.POST("/invite-codes", h.createInviteCodes)
 		adm.DELETE("/invite-codes/:id", h.revokeInviteCode)
