@@ -1,89 +1,46 @@
 package admin
 
+// 会话自 #71 起落库（sessions 表，口径层 §2.10 #61），本文件只剩管理端这一侧的
+// 薄封装：SQL 与 TTL 语义都在 store（session.go），这里管的是 HTTP 那半——cookie
+// 怎么设、无效时回什么。
+//
+// 旧内存版「重启即全部失效是特性」的立论（口径层 §2.7 时代）被 #61 正式推翻：
+// 多用户下重启踢掉所有人不再是零代价，密码泄露的补救改走「改密码吊销全部会话」
+// （store.DeleteAllSessions），扳机换了、语义没丢。
+
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"sync"
-	"time"
+	"net/http"
+
+	"github.com/SimonGino/portage/internal/store"
+
+	"github.com/gin-gonic/gin"
 )
 
-// sessionTTL 是一次登录的有效期。每次带着有效 cookie 的请求都会把它往后推，
-// 所以「一直在用就不会掉线，合上电脑过夜就要重登」。
-const sessionTTL = 12 * time.Hour
-
-// sessionStore 是内存里的会话表。
+// validSession 判 cookie 里的 token 是否有效，顺带滑动续期。
 //
-// 内存而不是落库（口径层 §2.7）：重启即全部失效，这对单管理员的自用网关是**特性**
-// 不是缺陷——密码万一泄露，重启一次就把所有已发出的会话一起吊销了。代价是重启后要
-// 重登一次，一个人用无所谓。
-type sessionStore struct {
-	mu sync.Mutex
-	m  map[string]time.Time
+// 库错误与「无效」分开报：无效是正常业务（401，去登录），库错误是这次没判成
+// （500）——把后者说成前者会让一次磁盘抖动表现成「莫名其妙被登出」。
+func (h *Handler) validSession(c *gin.Context) (bool, error) {
+	token, _ := c.Cookie(cookieName)
+	_, ok, err := store.TouchSession(c.Request.Context(), h.db, token)
+	return ok, err
 }
 
-func newSessionStore() *sessionStore {
-	return &sessionStore{m: map[string]time.Time{}}
-}
-
-// create 发一个新会话，返回它的 token。
+// setSessionCookie 统一设置会话 cookie。
 //
-// 32 字节 crypto/rand：token 是唯一的凭据，必须猜不出来。rand.Read 在现代 Go 上
-// 不会失败，真失败了也只能是熵源坏了——那时宁可让登录报错，也不能退化成弱随机。
-func (s *sessionStore) create() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(buf)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sweepLocked()
-	s.m[token] = time.Now().Add(sessionTTL)
-	return token, nil
-}
-
-// valid 判断 token 是否有效，顺带续期。
-func (s *sessionStore) valid(token string) bool {
-	if token == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.m[token]
-	if !ok {
-		return false
-	}
-	if time.Now().After(exp) {
-		delete(s.m, token)
-		return false
-	}
-	s.m[token] = time.Now().Add(sessionTTL)
-	return true
-}
-
-func (s *sessionStore) drop(token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.m, token)
-}
-
-// dropAll 吊销全部会话。改密码之后调它：不然改密码只挡住了「还没登录的人」，
-// 已经拿着 cookie 的那个浏览器照旧能用——而改密码的常见动机恰恰是「怕别人还在用」。
-func (s *sessionStore) dropAll() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m = map[string]time.Time{}
-}
-
-// sweepLocked 清掉过期条目。挂在 create 上而不是起一个定时器：会话表最多几条，
-// 为它常驻一个 goroutine 不值当；而只在 valid 里删的话，登录后再没访问过的死条目
-// 会一直留着。
-func (s *sessionStore) sweepLocked() {
-	now := time.Now()
-	for token, exp := range s.m {
-		if now.After(exp) {
-			delete(s.m, token)
-		}
-	}
+// HttpOnly：JS 读不到，XSS 也偷不走会话。
+// SameSite=Strict：跨站过来的请求一律不带这个 cookie，CSRF 因此不成立——管理端的
+// 写接口全是同源 fetch，不受影响。这也是这里不再另做 CSRF token 的原因。
+// Secure 跟着实际协议走：局域网里是明文 HTTP，硬写 Secure 会让 cookie 根本存不下，
+// 表现成「登录成功但立刻又变成未登录」。
+func (h *Handler) setSessionCookie(c *gin.Context, token string, maxAge int) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     cookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   c.Request.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+	})
 }

@@ -113,11 +113,19 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	// 没设密码不再只是「管理端登不进去」，而是**纯转发形态**（口径层 §2.9 #27）：
 	// server.Engine 那边整个 admin.Mount 不调，/admin 与 /admin/api/* 一律 404。
 	// 日志措辞跟着改——报「登不进去」会让人以为是密码错了，跑去查会话或 cookie。
+	//
+	// #61 起挂载闸多了半个判据（库里存在 admin 用户也挂），警告跟着闸走：库里有
+	// admin 的进程不是纯转发，报「纯转发」就是在撒谎。#71 阶段这半判据其实空转
+	// （admin 用户只由密码哈希造出来，没密码就没号），但警告与闸各查各的迟早漂。
 	if ok, err := admin.Bootstrap(ctx, db, cfg.AdminPassword); err != nil {
 		return err
 	} else if !ok {
-		log.Warn("未设置管理密码，本进程是纯转发形态：/admin 与 /admin/api/* 整个不注册（404），只提供 /v1 转发面；" +
-			"要管理面就填 config.yaml 的 admin_password 或设 PORTAGE_ADMIN_PASSWORD 后重启")
+		if has, err := store.HasAdminUser(ctx, db); err != nil {
+			return err
+		} else if !has {
+			log.Warn("未设置管理密码，本进程是纯转发形态：/admin 与 /admin/api/* 整个不注册（404），只提供 /v1 转发面；" +
+				"要管理面就填 config.yaml 的 admin_password 或设 PORTAGE_ADMIN_PASSWORD 后重启")
+		}
 	}
 
 	// 流水保留期（口径层 v0.93，#35）：启动清一次 + 之后每 24h 一次，ctx 取消即退。
