@@ -1,8 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.19（vNEXT 待定号）
+> 状态：草案 v1.20
 
-> vNEXT 变更（口径层 §2.10 多用户体系设计定稿落地，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)，2026-08-30）：**设计定稿，实施另开里程碑**——本条只落数据模型、迁移步骤与测试方案（§7.10 新节），口径与裁决全文见口径层 vNEXT 与地图各票。①新表 users / sessions / oauth_identities / invite_codes 与 settings 新键；②`api_keys` 加可空 owner + `UNIQUE(user_id, name)` 重建表迁移，无主认领规则；③`channel_models` 四价列、`channels.provider` 标注、`call_logs` 加 `user_id` / `cost`；④配额闸位置（令牌桶后、Resolve 前）、月度 SUM 不建计数器、outcome 词表第 12 词 `quota_exceeded`；⑤声明形态互斥闸（用户路由不注册、多用户库导出/导入拒绝）；⑥migration 五步幂等序列，无 admin 库全空转（横向约束：纯转发零负担）。修改人 jinpenga。
+> v1.20 变更（口径层 §2.10 多用户体系设计定稿落地，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)，2026-08-30）：**设计定稿，实施另开里程碑**——本条只落数据模型、迁移步骤与测试方案（§7.10 新节），口径与裁决全文见口径层 v1.02 与地图各票。①新表 users / sessions / oauth_identities / invite_codes 与 settings 新键；②`api_keys` 加可空 owner + `UNIQUE(user_id, name)` 重建表迁移，无主认领规则；③`channel_models` 四价列、`channels.provider` 标注、`call_logs` 加 `user_id` / `cost`；④配额闸位置（令牌桶后、Resolve 前）、月度 SUM 不建计数器、outcome 词表第 12 词 `quota_exceeded`；⑤声明形态互斥闸（用户路由不注册、多用户库导出/导入拒绝）；⑥migration 五步幂等序列，无 admin 库全空转（横向约束：纯转发零负担）。修改人 jinpenga。
 
 > v1.19 变更（口径层 v1.00 落地：管理端一次性导入 channels.yaml，[#59](https://github.com/SimonGino/portage/issues/59)，2026-08-28）：口径与裁决见口径层 v1.00，这里只记实现层落点。①**`declcfg.Apply` 改签名返回变更清单** `([]string, error)`：清单本就在 reconcile 里攒着（v1.01 起），此前只打日志，现在返回给调用方——启动路径（`main.go`）丢弃返回值、日志行为一字不变；导入路径把它装进 200 响应 `{"changes": [...]}`（无变化回空数组不回 null，前端只判长度）。②**同批立 `declcfg.ConfigError`**：包一层标记「这份配置本身不合法」——闸一（selfCheck）与闸二（store.Validate）都算，`Error()` 透传原文所以启动路径的报文逐字不变；导入的 HTTP adapter 靠 `errors.AsType` 把它翻 400 原样回显，事务开启/提交这类基建错误保持普通错误翻 500。③**`internal/admin/import.go`**：`POST /admin/api/import` 注册在 `rejectWritesWhenDeclarative` 写闸组里（声明形态 409 与其余写接口同一句、同一张测试清单钉着），请求体即 yaml 原文（`http.MaxBytesReader` 兜 4MB），`declcfg.Parse` → `declcfg.Apply`，**不走 `writeResult`**——Apply 自带事务与 Validate，套第二层事务反而会在连接池 1 上自锁。④**前端**：`api.importConfig` 发原始文本（`request()` 会把 body JSON 化所以另起一条），左栏底部导出旁加「导入配置」——选文件 → 覆盖警告（后果写在 `Confirm` 确认键上）→ 变更清单，成功关框后整页重载（整份配置换掉，各页本地状态全部过期）；400 的一次报全原文以 pre-wrap 原样显示（新增 `.bar-pre`，不动 `ErrorBar` 全站默认）。⑤**用例分工**：`internal/server/import_test.go` 五条——覆盖式删文件外实体 + 变更清单 + 导入后管理端照常可写、同文件二导回空数组、四类失败（解析/未知字段/自校验一次报全/库校验）全回滚、未登录 401、导出↔导入往返 noop；声明形态 409 并进 `TestDeclarativeModeMakesBusinessConfigReadOnly` 的写闸清单。修改人 jinpenga。
 
@@ -993,7 +993,7 @@ api_keys:
 
 **实现时撞出来的两条既有闸交互**（口径层从没讨论过，逐条见 v1.01 ③④）：单凭证渠道的唯一凭证被停用后**重启即拒启**（v1.01 记档时的触发源是 401 自动摘除，口径层 v0.95 拆掉它之后只剩人工停用这一条路，交互本身仍在）；`weight=0` 在 M4 之前对**未停用**接入点表达不出来。两条都不是本票引入的缺陷，是既有闸与新形态相遇的结果。
 
-### 7.10 多用户体系数据模型与迁移（口径层 §2.10 落地，vNEXT，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)）
+### 7.10 多用户体系数据模型与迁移（口径层 §2.10 落地，v1.20，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)）
 
 **新表**（migration 只加表，无 admin 用户时全部空转——横向约束）：
 

@@ -23,7 +23,7 @@ _Avoid_: 裸 modelId 寻址（v0.22 封的是那条路，不是限定名）
 
 **渠道**：
 上游连接 = **每协议出站根地址**（协议 → Base URL，填了即声明该协议，v0.96 推翻单一 base_url）+ **支持协议集** + 模型纳管 + 凭证池；只管连通性，不承担路由职责。一个上游账号只建一个渠道（v0.33；v0.96 起各协议地址可不同，更没有拆的理由）。
-_Avoid_: 供应商（不是独立实体：一个渠道就对应一家上游的一次接入；vNEXT 起渠道可挂 **provider 标注**，但标注是属性不是实体，见「用户与计价」节）、upstream（指渠道时）
+_Avoid_: 供应商（不是独立实体：一个渠道就对应一家上游的一次接入；v1.02 起渠道可挂 **provider 标注**，但标注是属性不是实体，见「用户与计价」节）、upstream（指渠道时）
 
 **支持协议集**：
 渠道声明它能说的上游协议，如 `{openai, openai_responses}` 或 `{anthropic}`。取代 v0.33 之前的单值 `protocol` 列；v0.96 起由「哪些协议填了出站根地址」推导，不再是独立勾选字段。协议不出现在对外模型名里。
@@ -55,7 +55,7 @@ _Avoid_: 渠道限流（笼统，易与 RPM/配额混）、QPS（并发是存量
 _Avoid_: 压缩开关（听着像网关能压缩，网关侧那件事叫本地合成）、Responses 透传总开关（它只管压缩 turn，普通 turn 不受影响）
 
 **API Key**：
-网关下发给客户端的鉴权 key（前缀 `sk-ptg-`），与上游凭证严格两回事。vNEXT 起归用户所有（名字按用户唯一；无主形态见「无主 key」）。界面上叫「API Key」（PO 于 2026-08-12 裁定改名，原称「网关 key」）；散文里指代上游那份时必须写全「上游凭证」，不能简称 api key。用量维度同理写全称——「按 API Key」与「按上游凭证」是两个维度，只写「按凭证」两边都像（v0.53 就是这么被看混的）。
+网关下发给客户端的鉴权 key（前缀 `sk-ptg-`），与上游凭证严格两回事。v1.02 起归用户所有（名字按用户唯一；无主形态见「无主 key」）。界面上叫「API Key」（PO 于 2026-08-12 裁定改名，原称「网关 key」）；散文里指代上游那份时必须写全「上游凭证」，不能简称 api key。用量维度同理写全称——「按 API Key」与「按上游凭证」是两个维度，只写「按凭证」两边都像（v0.53 就是这么被看混的）。
 _Avoid_: 网关 key（旧称）、api key（指上游凭证时）、按凭证（作为用量维度时）
 
 **错误详情**：
@@ -63,7 +63,7 @@ _Avoid_: 网关 key（旧称）、api key（指上游凭证时）、按凭证（
 _Avoid_: 错误摘要（那是 `error` 列的词表）
 
 **outcome 词表**：
-流水 `error` 列的那份固定词表，**12 个词**（v0.70 补记 10 词，v0.99 加 `request_too_large`，vNEXT 加 `quota_exceeded`）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`、`request_too_large`、`quota_exceeded`。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
+流水 `error` 列的那份固定词表，**12 个词**（v0.70 补记 10 词，v0.99 加 `request_too_large`，v1.02 加 `quota_exceeded`）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`、`request_too_large`、`quota_exceeded`。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
 _Avoid_: 把 `ok` 当成词表的一员（它是哨兵，不进库）、把 NULL 与空串当两态（写侧只产生 NULL，空串是接口层的形态）
 
 ### 协议与转换
@@ -96,7 +96,7 @@ _Avoid_: 远程压缩（那是 Codex 侧的叫法，指的是「让服务端压�
 **临时闸**：
 某项实现落地前的配置校验限制，非 v1 边界。两半各自独立放开：凭证那半已于 v0.38（M3）放开，单候选那半仍在（M4 放开）。
 
-### 用户与计价（vNEXT，[#60](https://github.com/SimonGino/portage/issues/60) 设计定稿）
+### 用户与计价（v1.02，[#60](https://github.com/SimonGino/portage/issues/60) 设计定稿）
 
 **用户**：
 网关的登录主体，邮箱即标识；API Key、流水、配额都归到用户名下。熟人小圈子定位，邀请码注册。
