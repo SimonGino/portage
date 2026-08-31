@@ -211,6 +211,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 	adm.POST("/channels/:id/fetch-models", h.fetchChannelModels)
 	cw.POST("/channels/:id/models", h.addChannelModel)
 	cw.PUT("/channel-models/:id", h.updateChannelModel)
+	cw.POST("/channels/:id/models/bulk-price", h.bulkPriceChannelModels)
 	cw.DELETE("/channel-models/:id", h.deleteChannelModel)
 	// models.dev 快照的两个只读端点（口径层 §2.10 计价，#68/#74）：provider 标注
 	// 取值域 + 按 provider 的建议价。读的是 go:embed 资产不碰库，声明形态下照常可用

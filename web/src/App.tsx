@@ -8,6 +8,7 @@ import AccessPoints from './pages/AccessPoints'
 import Keys from './pages/Keys'
 import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
+import Pricing from './pages/Pricing'
 import Users from './pages/Users'
 import ChangePassword from './pages/ChangePassword'
 import Register from './pages/auth/Register'
@@ -28,6 +29,7 @@ const NAV: { to: string; label: string }[] = [
   { to: '/logs', label: '调用记录' },
   { to: '/access-points', label: '接入点' },
   { to: '/rankings', label: '排行' },
+  { to: '/pricing', label: '定价' },
   { to: '/users', label: '用户' },
 ]
 
@@ -396,6 +398,7 @@ function Shell({
         <Route path="/keys" element={<Keys />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/rankings" element={<Rankings />} />
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="/users" element={<Users />} />
         {/* 概览已从导航拿掉（口径层 v0.75）。老地址与拆页前的 /usage 都落到排行，
             不交给下面那个 `*`：开着旧标签刷新会掉到渠道页上，那不像跳转，像页面没了。 */}

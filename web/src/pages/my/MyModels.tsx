@@ -2,6 +2,29 @@ import { api } from '../../api'
 import type { MyModel } from '../../api'
 import { Card, CopyIconButton, Empty, ErrorBar, useList } from '../../ui'
 import { ModelIcon } from '../../icons'
+import { PRICE_FIELDS, fmtPrice } from '../../prices'
+
+/** 单价格（口径层 v1.10）：定价惯用形 $入/$出，四价全文进 title；四价全 null 显
+ *  「未定价」——那不是 $0，用量页照这价记的账，别把「没记价」读成「免费」。 */
+function PriceCell({ m }: { m: MyModel }) {
+  const four = {
+    input: m.price_input,
+    output: m.price_output,
+    cache_read: m.price_cache_read,
+    cache_write: m.price_cache_write,
+  }
+  if (four.input === null && four.output === null && four.cache_read === null && four.cache_write === null) {
+    return <span className="muted">未定价</span>
+  }
+  return (
+    <span
+      className="mono"
+      title={PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(four[k])}`).join('，') + '。USD/百万 token'}
+    >
+      {fmtPrice(four.input)}/{fmtPrice(four.output)}
+    </span>
+  )
+}
 
 /**
  * 「模型」页（DESIGN §12）：全量开放的可用模型清单，只读。与 /v1/models 背后是
@@ -29,6 +52,7 @@ export default function MyModels() {
             <tr>
               <th>模型</th>
               <th>类型</th>
+              <th>单价（USD/百万 token）</th>
               <th className="col-actions" />
             </tr>
           </thead>
@@ -42,6 +66,9 @@ export default function MyModels() {
                   </span>
                 </td>
                 <td className="muted">{m.direct ? '直连（渠道/模型）' : '接入点'}</td>
+                <td>
+                  <PriceCell m={m} />
+                </td>
                 <td className="col-actions">
                   <CopyIconButton value={m.id} title="复制模型名" />
                 </td>

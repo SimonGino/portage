@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -681,6 +682,69 @@ func (h *Handler) pricingModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"provider": provider, "models": prices})
 }
 
+// bulkPriceChannelModels 是批量填价（口径层 v1.10，#81）：建议价 × 系数一次性落成
+// 普通四价。系数乘算在这儿做完，store 只管落库与分档计数——已定价默认跳过（overwrite
+// 才整组覆盖）、无建议价跳过。系数不落库：持久折扣字段会在「落库时点计价」旁边长出
+// 「改系数追不追溯」的第二套口径，口径层 v1.10 明确否掉。
+func (h *Handler) bulkPriceChannelModels(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Factor    float64 `json:"factor"`
+		Overwrite bool    `json:"overwrite"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	// > 0 同时排掉 NaN（NaN 的一切比较都是 false）；再拦 +Inf。>1 合法——加价中转存在。
+	if !(in.Factor > 0) || math.IsInf(in.Factor, 1) {
+		fail(c, http.StatusBadRequest, "系数要是大于 0 的数（可以大于 1）")
+		return
+	}
+	provider, err := store.ChannelProvider(c.Request.Context(), h.db, id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if provider == "" {
+		fail(c, http.StatusBadRequest, "这个渠道没有厂商标注，没有建议价可乘——先在「上游设置」里标注")
+		return
+	}
+	sugg, err := pricing.ModelPrices(provider)
+	if err != nil {
+		h.log.Error("读 models.dev 快照失败", "err", err)
+		fail(c, http.StatusInternalServerError, "内置 models.dev 快照读不出来，这是发版资产的问题")
+		return
+	}
+	// 建议 × 系数：nil 原样穿过（快照缺哪价就落 NULL 不补 0），结果收敛到 1e-6——
+	// 二进制浮点的尾巴（0.075×0.8 = 0.06000…01）不该出现在价目上。
+	scale := func(v *float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		s := math.Round(*v*in.Factor*1e6) / 1e6
+		return &s
+	}
+	fill := make(map[string]store.ChannelModelPrices, len(sugg))
+	for name, p := range sugg {
+		sp := store.ChannelModelPrices{
+			Input: scale(p.Input), Output: scale(p.Output),
+			CacheRead: scale(p.CacheRead), CacheWrite: scale(p.CacheWrite),
+		}
+		// 四价全缺的条目等于没有建议，进「无建议价跳过」那一档，别拿全 NULL 去清价。
+		if sp.Input == nil && sp.Output == nil && sp.CacheRead == nil && sp.CacheWrite == nil {
+			continue
+		}
+		fill[name] = sp
+	}
+	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
+		return store.BulkPriceChannelModels(ctx, tx, id, in.Overwrite, fill)
+	})
+}
+
 func (h *Handler) deleteChannelModel(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -1032,9 +1096,22 @@ func (h *Handler) myModels(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
+	// 单价列（口径层 v1.10，#81）：只读展示，四价 null = 未定价（≠ $0）。接入点按
+	// 唯一候选取价，见 store.ListExposedModelPrices 的注释。
+	prices, err := store.ListExposedModelPrices(c.Request.Context(), h.db)
+	if err != nil {
+		h.log.Error("读模型单价失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
 	out := make([]gin.H, 0, len(models))
 	for _, m := range models {
-		out = append(out, gin.H{"id": m.ID, "direct": m.Direct})
+		p := prices[m.ID]
+		out = append(out, gin.H{
+			"id": m.ID, "direct": m.Direct,
+			"price_input": p.Input, "price_output": p.Output,
+			"price_cache_read": p.CacheRead, "price_cache_write": p.CacheWrite,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{"models": out})
 }

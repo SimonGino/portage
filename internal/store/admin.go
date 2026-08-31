@@ -717,6 +717,76 @@ func SetChannelModelPrices(ctx context.Context, db Conn, id int64, p ChannelMode
 	return affectedOne(res, err)
 }
 
+// ChannelProvider 读一个渠道的 models.dev provider 标注。空串 = 未标注（正常答案），
+// 渠道不存在才是 ErrNotFound——批量填价的 404 与 400 要分得开。
+func ChannelProvider(ctx context.Context, db Queryer, id int64) (string, error) {
+	var p string
+	err := db.QueryRowContext(ctx, `SELECT provider FROM channels WHERE id = ?`, id).Scan(&p)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return p, err
+}
+
+// BulkPriceResult 是批量填价的回执（口径层 v1.10，#81）：三档计数，前端照着拼
+// 「已填 N · 跳过 M（无建议价）」那句话。
+type BulkPriceResult struct {
+	Filled              int `json:"filled"`
+	SkippedPriced       int `json:"skipped_priced"`
+	SkippedNoSuggestion int `json:"skipped_no_suggestion"`
+}
+
+// BulkPriceChannelModels 给一个渠道的纳管模型整批落价（口径层 v1.10，#81）。
+// fill 是「模型名 → 要落的四价」，系数乘算在调用方做完——这里只管落库与分档计数：
+// 已有任一价的条目默认跳过（overwrite 才动，动了就是整组覆盖），fill 里没有的
+// 记「无建议价跳过」。一次性动作，落成的就是普通四价，不存系数。停用条目照填：
+// 价与启停正交，重新启用那一刻价就该在。
+func BulkPriceChannelModels(ctx context.Context, db Conn, channelID int64, overwrite bool, fill map[string]ChannelModelPrices) (BulkPriceResult, error) {
+	var out BulkPriceResult
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, upstream_model,
+		       price_input IS NOT NULL OR price_output IS NOT NULL
+		       OR price_cache_read IS NOT NULL OR price_cache_write IS NOT NULL
+		FROM channel_models WHERE channel_id = ? ORDER BY id`, channelID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	// 先收完再写：单连接池上边扫边 UPDATE 会把游标下面的行踩乱。
+	type entry struct {
+		id     int64
+		model  string
+		priced bool
+	}
+	var models []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.id, &e.model, &e.priced); err != nil {
+			return out, err
+		}
+		models = append(models, e)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	for _, e := range models {
+		p, ok := fill[e.model]
+		if !ok {
+			out.SkippedNoSuggestion++
+			continue
+		}
+		if e.priced && !overwrite {
+			out.SkippedPriced++
+			continue
+		}
+		if err := SetChannelModelPrices(ctx, db, e.id, p); err != nil {
+			return out, err
+		}
+		out.Filled++
+	}
+	return out, nil
+}
+
 // normalizeModelProtocols 校验并归一化模型协议子集，空集合归一成空串。
 //
 // 空串在读侧就是「继承渠道全集」，所以空是正常值不是错误——这正是它不能直接套渠道那

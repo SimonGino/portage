@@ -1070,6 +1070,46 @@ type ExposedModel struct {
 // 的必须调得通」在这半边只能靠运行期过滤。口径层 v0.32 ③ 当初把过滤限定在直连半边，
 // 给的理由正是「启动闸兜不住它」——同一条理由现在覆盖两边。
 //
+// ListExposedModelPrices 给 /my/models 的单价列（口径层 v1.10，#81）：对外名字 →
+// 背后纳管条目的四价。接入点按其**唯一候选**取价——单候选临时闸下这就是全部；闸
+// 放开后这里取的是最早的候选，多候选的展示口径届时另裁（口径层待澄清 12）。
+// 只是展示映射，不参与路由与计价：真正记账的价永远在 Resolve 选中的那条候选上。
+// 同名撞车时接入点优先，与 ListExposedModels 的先到先得同一条秩序（ORDER BY +
+// 首见即定）。
+func ListExposedModelPrices(ctx context.Context, db Queryer) (map[string]ChannelModelPrices, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT ap.model, 0 AS direct,
+		       cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write
+		FROM access_points ap
+		JOIN candidates ca ON ca.access_point_id = ap.id
+		JOIN channel_models cm ON cm.id = ca.channel_model_id
+		WHERE ap.disabled = 0
+		  AND ca.id = (SELECT MIN(c2.id) FROM candidates c2 WHERE c2.access_point_id = ap.id)
+		UNION ALL
+		SELECT ch.name || '/' || cm.upstream_model, 1,
+		       cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write
+		FROM channel_models cm
+		JOIN channels ch ON ch.id = cm.channel_id
+		ORDER BY direct`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]ChannelModelPrices{}
+	for rows.Next() {
+		var name string
+		var direct int
+		var p ChannelModelPrices
+		if err := rows.Scan(&name, &direct, &p.Input, &p.Output, &p.CacheRead, &p.CacheWrite); err != nil {
+			return nil, err
+		}
+		if _, seen := out[name]; !seen {
+			out[name] = p
+		}
+	}
+	return out, rows.Err()
+}
+
 // created_at 在 SQL 里就换算成 unix 秒，免得依赖驱动对 DATETIME 文本的解析。手写
 // SQL 塞进来的 created_at 未必是 strftime 认得的格式，那时它返回 NULL——COALESCE
 // 兜住，免得一行脏数据把整个 /v1/models 打成 500。

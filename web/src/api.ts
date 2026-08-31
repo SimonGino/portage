@@ -577,6 +577,12 @@ export interface MyModel {
   id: string
   /** true = 纳管模型限定名（渠道名/模型名，直连），false = 接入点。 */
   direct: boolean
+  /** 只读单价（口径层 v1.10，USD/百万 token）：四价全 null = 未定价，≠ $0。
+   *  接入点按唯一候选的条目价（单候选临时闸；多候选展示口径见口径层待澄清 12）。 */
+  price_input: number | null
+  price_output: number | null
+  price_cache_read: number | null
+  price_cache_write: number | null
 }
 
 export interface SessionState {

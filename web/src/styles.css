@@ -3921,6 +3921,34 @@ button.cal-day,
   }
 }
 
+/* ── 定价页：平铺只读总表（口径层 v1.10，DESIGN §5.4）───────────────────── */
+
+/* 工具条搜索框：形制随 .master-search（sunken 底、无边框），宽度收成一格——
+   它与 Segmented 同排坐 Card 头，吃满宽会把「只看未定价」挤出屏。 */
+.pricing-search {
+  width: 200px;
+  background: var(--sunken);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+/* 整行即链接（这一页没有编辑面，点行去渠道详情页改价）：hover 给个底才知道能点。
+   停用行照 §7 降灰不隐藏，tr.is-off 既有档直接管。 */
+.pricing-row {
+  cursor: pointer;
+}
+
+.pricing-row:hover td {
+  background: var(--hover);
+}
+
+/* 缓存两价是随行小字：主读数是 $入/$出，缓存价看一眼有没有就够，要全文去 title。 */
+.pricing-cache {
+  font-size: 11px;
+}
+
 /* ── 「我的」空间（DESIGN §12，#76）────────────────────────────────────────
    壳与管理空间共用（v0.54，见文件前部「壳」一节）：tab 换成本人五页，右侧
    多一枚配额微条，主区走 narrow 档（760px 单列文档流）。沿用同一套排版与

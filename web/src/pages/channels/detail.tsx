@@ -19,9 +19,10 @@ import type {
   PricingProvider,
   Protocol,
 } from '../../api'
-import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Toggle } from '../../ui'
+import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Field, Toggle } from '../../ui'
+import { PRICE_FIELDS, fmtPrice } from '../../prices'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
-import { IconCheck, IconPencil, IconSliders } from '../../icons/acts'
+import { IconCheck, IconPencil, IconRows, IconSliders } from '../../icons/acts'
 import { ChannelForm, joinURL } from './form'
 import { BaseURLFields } from './baseurl'
 import { CredentialBlock } from './credentials'
@@ -77,6 +78,7 @@ export function ChannelDetail({
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   // models.dev 的建议价（口径层 §2.10，#74）：渠道标注了 provider 才拉，一渠道一发。
   // 只做填表助手——建议不落库、不参与计价，人点「采纳」写进去的才算数。拉失败就当
   // 没有建议（快照是发版内置资产，失败多半是版本不齐），不为它挂错误条。
@@ -232,6 +234,20 @@ export function ChannelDetail({
       <DetailBlock
         title={`纳管模型 · ${models.length}`}
         action={
+          <>
+            {/* 批量填价（口径层 v1.10，#81）：标注了 provider 才摆——没有建议价就
+                没有可乘的数。一次性动作，落成普通四价，系数不落库。 */}
+            {ch.provider && models.length > 0 && (
+              <button
+                type="button"
+                className="act"
+                onClick={() => setBulkOpen(true)}
+                title="按 models.dev 建议价 × 系数给整渠道落价，已定价的默认跳过"
+              >
+                <IconRows />
+                批量填价
+              </button>
+            )}
           <div className="split-act">
             <button
               type="button"
@@ -252,8 +268,12 @@ export function ChannelDetail({
               <IconPlus />
             </button>
           </div>
+          </>
         }
       >
+        {bulkOpen && (
+          <BulkPriceDialog channel={ch} mutate={mutate} onClose={() => setBulkOpen(false)} />
+        )}
         {adding && (
           <AddModels
             channel={ch}
@@ -658,20 +678,94 @@ function ModelInputLimit({
   )
 }
 
-/** 单价显示：USD/百万 token 的定价惯用形（$3、$0.3、$3.75），不是金额展示的
- *  `$X.XX`——那条管的是算出来的钱，单价抹成两位会把 $0.075 写成 $0.08。 */
-function fmtPrice(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  return '$' + String(n)
-}
+/**
+ * BulkPriceDialog 是批量填价的弹框（口径层 v1.10，#81；DESIGN v0.61）：系数 ×
+ * models.dev 建议价一次性落成普通四价。已定价条目默认跳过，勾「覆盖」才动；无建议
+ * 价的跳过并计数。系数不落库——没有持久折扣字段，落完这就是普通的四价。
+ * 完成态就地回报计数，别闪一下就关框：人要看见「跳过了几条、为什么」。
+ */
+function BulkPriceDialog({
+  channel,
+  mutate,
+  onClose,
+}: {
+  channel: Channel
+  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
+  onClose: () => void
+}) {
+  const [factor, setFactor] = useState('1')
+  const [overwrite, setOverwrite] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{
+    filled: number
+    skipped_priced: number
+    skipped_no_suggestion: number
+  } | null>(null)
+  const parsed = Number(factor)
+  const invalid = factor.trim() === '' || !Number.isFinite(parsed) || parsed <= 0
 
-/** 四价各自的短标签，编辑胶囊与 title 共用一份，别两处各抄一遍。 */
-const PRICE_FIELDS = [
-  ['input', '入'],
-  ['output', '出'],
-  ['cache_read', '缓读'],
-  ['cache_write', '缓写'],
-] as const
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (invalid) return
+    setBusy(true)
+    // 回执要拿计数，mutate 只回成败——从闭包里带出来，成了再摆完成态。
+    let r: typeof result = null
+    const ok = await mutate(async () => {
+      r = await api.post(`/channels/${channel.id}/models/bulk-price`, {
+        factor: parsed,
+        overwrite,
+      })
+    })
+    setBusy(false)
+    if (ok) setResult(r)
+  }
+
+  return (
+    <Dialog title="批量填价" onClose={onClose}>
+      {result ? (
+        <div className="dialog-note">
+          <p>
+            已填 {result.filled} · 跳过 {result.skipped_no_suggestion}（无建议价）
+            {result.skipped_priced > 0 && <>（另有 {result.skipped_priced} 条已定价未动，勾「覆盖已有价」才会改）</>}
+          </p>
+          <div className="form-actions">
+            <button type="button" className="btn btn-primary" onClick={onClose}>
+              完成
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="form" onSubmit={submit}>
+          <Field
+            label="系数"
+            hint={
+              invalid
+                ? '要是大于 0 的数'
+                : '每个模型的建议价四项 × 系数后写进条目。1 = 照官方建议价；0.5 = 五折中转；大于 1 也合法'
+            }
+          >
+            <input autoFocus inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} />
+          </Field>
+          <label className="check">
+            <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+            覆盖已有价（不勾则已定价的条目跳过）
+          </label>
+          <p className="muted">
+            一次性动作：落成的就是普通四价，系数不保存；models.dev 缺哪项价就留未定价，不补 0。改价只影响之后的流水，不追溯。
+          </p>
+          <div className="form-actions">
+            <button type="button" className="btn btn-quiet" onClick={onClose}>
+              取消
+            </button>
+            <button className="btn btn-primary" disabled={busy || invalid}>
+              {busy ? '填价中…' : '按建议价 × 系数填价'}
+            </button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  )
+}
 
 /**
  * ModelPrices 是模型行上的「定价」（口径层 §2.10，#74；DESIGN v0.41 收进 v0.38
