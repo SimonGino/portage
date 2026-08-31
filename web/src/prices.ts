@@ -17,3 +17,17 @@ export const PRICE_FIELDS = [
   ['cache_read', '缓读'],
   ['cache_write', '缓写'],
 ] as const
+
+/** 四价的统一形状：纳管条目（price_input…）与建议价（input…）字段名不同，
+ *  消费端先收成这个再进下面两个判定，三处页面不各拼各的。 */
+export type FourPrices = Partial<Record<(typeof PRICE_FIELDS)[number][0], number | null>>
+
+/** 未定价判据的「四价全空」半边：null 与 undefined 都算空（建议价用可选字段）。 */
+export function isUnpriced(p: FourPrices): boolean {
+  return PRICE_FIELDS.every(([k]) => p[k] === null || p[k] === undefined)
+}
+
+/** 四价全文，进 title 用：「入 $3，出 $15，缓读 —，缓写 —。USD/百万 token」。 */
+export function fmtFourTitle(p: FourPrices): string {
+  return PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(p[k])}`).join('，') + '。USD/百万 token'
+}

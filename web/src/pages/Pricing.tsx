@@ -5,7 +5,8 @@ import type { Channel, ChannelModel, PricingModelPrice, PricingModels } from '..
 import { Card, Empty, ErrorBar, useList } from '../ui'
 import { Segmented } from '../fields'
 import { ChannelIcon, ModelIcon } from '../icons'
-import { PRICE_FIELDS, fmtPrice } from '../prices'
+import { fmtFourTitle, fmtPrice, isUnpriced } from '../prices'
+import type { FourPrices } from '../prices'
 
 /**
  * 定价页（口径层 v1.10，#81；DESIGN §5.4）：全渠道纳管模型 × 四价的**平铺只读
@@ -32,19 +33,18 @@ interface Row {
   alert: boolean
 }
 
+/** 单价面走 sans + tabular-nums，不套等宽——DESIGN §3 的 mono 白名单只有标识符，
+ *  §5.1 既有的定价芯片也是这一副字形，别在总表上分叉。 */
 function priceCell(m: ChannelModel) {
-  const four: Record<(typeof PRICE_FIELDS)[number][0], number | null> = {
+  const four: FourPrices = {
     input: m.price_input,
     output: m.price_output,
     cache_read: m.price_cache_read,
     cache_write: m.price_cache_write,
   }
-  const title = PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(four[k])}`).join('，')
   return (
-    <span title={title + '。USD/百万 token'}>
-      <span className="mono">
-        {fmtPrice(m.price_input)}/{fmtPrice(m.price_output)}
-      </span>
+    <span title={fmtFourTitle(four)}>
+      {fmtPrice(m.price_input)}/{fmtPrice(m.price_output)}
       {(m.price_cache_read !== null || m.price_cache_write !== null) && (
         <span className="muted pricing-cache">
           {' '}
@@ -87,11 +87,12 @@ export default function Pricing() {
     const out: Row[] = []
     for (const ch of channels.data ?? []) {
       for (const m of ch.models ?? []) {
-        const unpriced =
-          m.price_input === null &&
-          m.price_output === null &&
-          m.price_cache_read === null &&
-          m.price_cache_write === null
+        const unpriced = isUnpriced({
+          input: m.price_input,
+          output: m.price_output,
+          cache_read: m.price_cache_read,
+          cache_write: m.price_cache_write,
+        })
         out.push({ ch, m, unpriced, alert: unpriced && m.has_usage })
       }
     }
@@ -183,10 +184,7 @@ export default function Pricing() {
                     </td>
                     <td className="muted">
                       {sugg ? (
-                        <span
-                          className="mono"
-                          title={PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(sugg[k])}`).join('，') + '。只是对照，采纳去渠道详情页'}
-                        >
+                        <span title={fmtFourTitle(sugg) + '。只是对照，采纳去渠道详情页'}>
                           {fmtPrice(sugg.input)}/{fmtPrice(sugg.output)}
                         </span>
                       ) : (

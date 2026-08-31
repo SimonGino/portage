@@ -248,26 +248,26 @@ export function ChannelDetail({
                 批量填价
               </button>
             )}
-          <div className="split-act">
-            <button
-              type="button"
-              className="split-act-main"
-              onClick={() => setPicking(true)}
-              title="拉上游 /v1/models 并挑选，只用来帮你填表，不落库也不影响路由"
-            >
-              <IconRefresh />
-              获取模型列表
-            </button>
-            <button
-              type="button"
-              className={'split-act-plus' + (adding ? ' is-on' : '')}
-              aria-label="手动添加模型"
-              aria-pressed={adding}
-              onClick={() => setAdding((v) => !v)}
-            >
-              <IconPlus />
-            </button>
-          </div>
+            <div className="split-act">
+              <button
+                type="button"
+                className="split-act-main"
+                onClick={() => setPicking(true)}
+                title="拉上游 /v1/models 并挑选，只用来帮你填表，不落库也不影响路由"
+              >
+                <IconRefresh />
+                获取模型列表
+              </button>
+              <button
+                type="button"
+                className={'split-act-plus' + (adding ? ' is-on' : '')}
+                aria-label="手动添加模型"
+                aria-pressed={adding}
+                onClick={() => setAdding((v) => !v)}
+              >
+                <IconPlus />
+              </button>
+            </div>
           </>
         }
       >

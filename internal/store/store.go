@@ -1075,7 +1075,9 @@ type ExposedModel struct {
 // 放开后这里取的是最早的候选，多候选的展示口径届时另裁（口径层待澄清 12）。
 // 只是展示映射，不参与路由与计价：真正记账的价永远在 Resolve 选中的那条候选上。
 // 同名撞车时接入点优先，与 ListExposedModels 的先到先得同一条秩序（ORDER BY +
-// 首见即定）。
+// 首见即定）。**刻意不复刻它的可用性过滤**（candidateUsable / deadAccessPoints）：
+// 清单里列哪些名字由 ListExposedModels 一个人说了算，这边只是按名查价的映射——
+// 多出来的键没人来查，无害；把过滤抄一遍才是两处漂移的开端。
 func ListExposedModelPrices(ctx context.Context, db Queryer) (map[string]ChannelModelPrices, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ap.model, 0 AS direct,

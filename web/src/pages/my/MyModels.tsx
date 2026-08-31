@@ -2,10 +2,11 @@ import { api } from '../../api'
 import type { MyModel } from '../../api'
 import { Card, CopyIconButton, Empty, ErrorBar, useList } from '../../ui'
 import { ModelIcon } from '../../icons'
-import { PRICE_FIELDS, fmtPrice } from '../../prices'
+import { fmtFourTitle, fmtPrice, isUnpriced } from '../../prices'
 
-/** 单价格（口径层 v1.10）：定价惯用形 $入/$出，四价全文进 title；四价全 null 显
- *  「未定价」——那不是 $0，用量页照这价记的账，别把「没记价」读成「免费」。 */
+/** 单价格（口径层 v1.10）：定价惯用形 $入/$出（sans，同 §5.1 定价芯片的字形），
+ *  四价全文进 title；四价全 null 显「未定价」——那不是 $0，用量页照这价记的账，
+ *  别把「没记价」读成「免费」。 */
 function PriceCell({ m }: { m: MyModel }) {
   const four = {
     input: m.price_input,
@@ -13,14 +14,11 @@ function PriceCell({ m }: { m: MyModel }) {
     cache_read: m.price_cache_read,
     cache_write: m.price_cache_write,
   }
-  if (four.input === null && four.output === null && four.cache_read === null && four.cache_write === null) {
+  if (isUnpriced(four)) {
     return <span className="muted">未定价</span>
   }
   return (
-    <span
-      className="mono"
-      title={PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(four[k])}`).join('，') + '。USD/百万 token'}
-    >
+    <span title={fmtFourTitle(four)}>
       {fmtPrice(four.input)}/{fmtPrice(four.output)}
     </span>
   )
