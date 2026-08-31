@@ -62,6 +62,12 @@ COPY --from=build --chown=65532:65532 /out/data /data
 # 的 nonroot 惯例。
 USER 65532:65532
 
+# scratch 里没有 /tmp、/var/tmp，工作目录 / 对 65532 也不可写，而 SQLite 建索引
+# 要落临时文件（迁移在存量大表上建索引必踩）——症状是启动报
+# `disk I/O error (6410)`（SQLITE_IOERR_GETTEMPPATH），看着像盘坏了，其实是没地方
+# 放临时文件。指到 /data：唯一保证可写的路径，临时文件与库同盘还省一次跨盘拷贝。
+ENV SQLITE_TMPDIR=/data
+
 # DB 落在 /data，容器删了数据还在。没有这一句的话 gateway.db 写进容器可写层，
 # docker rm 一执行，渠道、key、全部流水一起没。
 VOLUME ["/data"]

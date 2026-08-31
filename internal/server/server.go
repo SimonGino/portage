@@ -274,13 +274,12 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		rec.Routed(cand.ChannelName, cand.Protocol, cand.UpstreamModel, cand.Prices)
 
-		// 输入上限闸（口径层 v0.99）：判**选中候选**的限，不筛候选、不触发转移。
-		// 判据是入站原始 body 字节数 ÷ 4 的估算——透传路径不解析 body 是硬约束，
-		// 字节估算是唯一让透传与转换同一把尺的算法（RewriteModel 的 splice 与转换
-		// 的 decode 都在闸后，估的都是这份入站字节）。count_tokens 豁免：判端点不判
-		// 协议（pickLimiter/conversionOpen 踩过的同一个坑），那条路不打上游生成侧，
-		// 且它正是客户端用来自行判断「要不要压缩」的工具。
-		if est := len(body) / 4; cand.MaxInputTokens > 0 && est > cand.MaxInputTokens &&
+		// 输入上限闸（口径层 v0.99，估算细则见 inputestimate.go）：判**选中候选**
+		// 的限，不筛候选、不触发转移。估的是入站原始 body 字节（RewriteModel 的
+		// splice 与转换的 decode 都在闸后，透传与转换同一把尺）。count_tokens 豁免：
+		// 判端点不判协议（pickLimiter/conversionOpen 踩过的同一个坑），那条路不打
+		// 上游生成侧，且它正是客户端用来自行判断「要不要压缩」的工具。
+		if est := estimateInputTokens(body); cand.MaxInputTokens > 0 && est > cand.MaxInputTokens &&
 			ep != protocol.EndpointCountTokens {
 			rec.Refused(calllog.RequestTooLarge)
 			ep.Proto.WriteError(c.Writer, http.StatusRequestEntityTooLarge,

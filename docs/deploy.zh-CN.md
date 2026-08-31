@@ -107,6 +107,12 @@ compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密
 
 ## 升级注记
 
+**老镜像升级迁移可能报 `disk I/O error (6410)`**。scratch 镜像里没有 /tmp，SQLite 在存量
+大表上建索引要落临时文件，找不到可写目录就报这个错（6410 = GETTEMPPATH），症状是启动即
+败、容器重启循环——看着像盘坏了，其实是没地方放临时文件。新镜像已内置
+`ENV SQLITE_TMPDIR=/data`；跑在旧镜像上撞到的话，在 compose 的 `environment:` 里加一行
+`SQLITE_TMPDIR: /data` 再 `up -d` 即可，升级到带修复的镜像后这行删不删都行。
+
 **面板前缀从 `/admin` 换成了 `/panel`**（#76）。旧前缀的 GET 会 302 到新前缀的同一路径，
 收藏夹和存量邮件里的验证 / 重置链接都不用管。**唯一救不回来的是 OAuth 回调**：GitHub /
 Google 只回调后台里登记过的那个地址，302 帮不上忙。配过 OAuth 登录的话，升级后去两家后台把

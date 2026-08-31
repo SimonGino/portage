@@ -13,8 +13,8 @@ import { ModelIcon } from '../../icons'
  * 「管理」弹框每行的检测预选那一把（含已停用——恢复是纯人工的，「这把还坏不坏」
  * 除了发一次请求没有别的办法回答）。
  *
- * 协议勾选默认只勾 openai（不为用不上的协议侧多花 token），声明集里没有 openai 时
- * 按回退序取命中的第一个——与出站协议选择同一条秩序，不另发明。勾选不落库。
+ * 协议勾选默认全勾已声明协议（口径层 v1.06，推翻 v0.96 的「只勾 openai 省 token」
+ * ——检测本来就是看全貌，少勾一侧的矩阵答不了「这个模型哪侧通」）。勾选不落库。
  */
 export function ProbeDialog({
   channel,
@@ -31,12 +31,11 @@ export function ProbeDialog({
   const declared = (channel.protocols ?? []) as Protocol[]
   const models = (channel.models ?? []).filter((m) => !m.disabled)
   const fallback = PROTOCOL_ORDER.filter((p) => declared.includes(p))
-  const defaultProto = fallback.includes('openai') ? 'openai' : fallback[0]
 
   const [credID, setCredID] = useState(initial.id)
   // 空串 = 全部纳管模型；非空 = 单选那一个（新加一个模型不用整个矩阵重跑）。
   const [model, setModel] = useState('')
-  const [picked, setPicked] = useState<Protocol[]>(defaultProto ? [defaultProto] : [])
+  const [picked, setPicked] = useState<Protocol[]>(fallback)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<ChannelProbe | null>(null)
   const [error, setError] = useState('')

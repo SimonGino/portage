@@ -9,7 +9,8 @@ import (
 )
 
 // 本文件测纳管模型的输入上限（估算）闸（口径层 v0.99）：判据是入站原始 body 字节数
-// ÷ 4，透传与转换两条路同一把尺，超限 413 + 流水词 request_too_large，一个字节不打
+// ÷ 4（base64 大段按 v1.07 换算，纯函数细则在 inputestimate_internal_test.go），
+// 透传与转换两条路同一把尺，超限 413 + 流水词 request_too_large，一个字节不打
 // 上游；count_tokens 豁免。
 
 // oversizedMessagesBody 造一个估算必然超过 limit=100（即 400 字节）的 Anthropic 形状
@@ -95,6 +96,36 @@ func TestInputLimitAppliesOnConvertPath(t *testing.T) {
 	}
 	if row := gw.LastCallRow(t); row.Error.String != "request_too_large" {
 		t.Errorf("流水 error = %q, 期望 request_too_large", row.Error.String)
+	}
+}
+
+// TestInputLimitBase64RunNotOverestimated：含大段 base64 的请求按换算计不按 ÷4
+// （口径层 v1.07 的起因场景）：一张图的 base64 若按 ÷4 早就超限，换算后整包在限内
+// ——闸放行。文本部分刻意压小，让「放行」只能归因于换算而不是限太松。
+func TestInputLimitBase64RunNotOverestimated(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "anthropic", up.URL, upstreamModel, anthropicCredential)
+	// 1MB 的假图 base64：÷4 估 26 万超限；换算 = 1<<20×3/2048 = 1536，加文本远在
+	// 5000 之下。
+	payload := strings.Repeat("Qk3+", 1<<18)
+	body := `{"model":"` + accessPointModel + `","messages":[{"role":"user","content":` +
+		`[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` +
+		payload + `"}}]}]}`
+	gatewaytest.SetModelMaxInputTokens(t, db, upstreamModel, 5000)
+	gw := gatewaytest.Start(t, db)
+	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"},
+		`{"id":"msg_1","model":"`+upstreamModel+`","type":"message","role":"assistant",`+
+			`"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",`+
+			`"usage":{"input_tokens":1,"output_tokens":1}}`)
+
+	resp := gw.Post(t, "/v1/messages", body, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200（base64 大段按换算计）；body=%s",
+			resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	if up.Count() != 1 {
+		t.Errorf("上游收到 %d 个请求, 期望 1", up.Count())
 	}
 }
 

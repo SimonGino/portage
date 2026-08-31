@@ -136,6 +136,14 @@ at boot.
 
 ## Upgrade notes
 
+**Migrations on older images may fail with `disk I/O error (6410)`**. The scratch image
+has no /tmp, and SQLite needs a temp file to build an index over an existing large table;
+with no writable temp directory it fails with this error (6410 = GETTEMPPATH) — the
+container restart-loops at startup, looking like a broken disk when it's really a missing
+temp dir. Newer images ship `ENV SQLITE_TMPDIR=/data`; if you hit this on an older image,
+add `SQLITE_TMPDIR: /data` under `environment:` in your compose file and `up -d`. The line
+is harmless to keep after upgrading to a fixed image.
+
 **The panel prefix moved from `/admin` to `/panel`** (#76). GETs on the old prefix 302
 to the same path under the new one, so bookmarks and verification / reset links in old
 emails keep working. **The one thing the redirect cannot save is the OAuth callback**:

@@ -38,7 +38,11 @@ export default function Channels() {
   }
 
   if (loading && data === null) return <div className="boot">加载中…</div>
-  const channels = data ?? []
+  // 停用的沉底，其余按 id（即接入先后）排：左栏是天天扫的清单，停用项混在中间
+  // 每次都要跳读。组内都按 id，稳定不随改名跳位。
+  const channels = [...(data ?? [])].sort(
+    (a, b) => Number(a.disabled) - Number(b.disabled) || a.id - b.id,
+  )
   const creating = id === 'new'
   const current = creating ? null : channels.find((c) => String(c.id) === id) ?? channels[0] ?? null
   const q = query.trim().toLowerCase()
