@@ -68,6 +68,12 @@ server {
         access_log off;
     }
 
+    # 站点级法务页（v0.4.5 起）：Google OAuth 应用切正式版硬要求公开可访问的
+    # 隐私权政策网址。走多用户 + OAuth 形态（/panel 对公网开放）就把这两条放出来；
+    # 纯转发实例用不上，删掉即可。
+    location = /privacy { proxy_pass http://127.0.0.1:8317; }
+    location = /terms   { proxy_pass http://127.0.0.1:8317; }
+
     # 其余一律不给。写在最后兜底，免得以后加 location 时漏掉。
     location / {
         return 404;
