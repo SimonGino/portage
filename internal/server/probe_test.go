@@ -88,7 +88,7 @@ func TestProbeReportsThreeStates(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(cred, "", "openai"), &got)
 
 	if got.Credential != "主力" {
@@ -126,7 +126,7 @@ func TestProbeUsesTheChosenCredential(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(second, "", "openai"), &got)
 
 	if got.Credential != "第二把" {
@@ -155,7 +155,7 @@ func TestProbeAllowsDisabledCredential(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(dead, "", "openai"), &got)
 
 	if got.Credential != "被停的" {
@@ -183,7 +183,7 @@ func TestProbeProtocolsFilterMatrixColumns(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(cred, "", "openai"), &got)
 
 	for _, row := range got.Models {
@@ -211,7 +211,7 @@ func TestProbeSingleModelAcrossProtocols(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	var got probeResponse
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(cred, "good", "openai", "openai_responses"), &got)
 
 	if len(got.Models) != 1 || got.Models[0].Model != "good" {
@@ -241,7 +241,7 @@ func TestProbeRejectsUndeclaredProtocol(t *testing.T) {
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
-	status, body := a.Do(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(cred, "", "anthropic"))
 	if status != http.StatusBadRequest {
 		t.Errorf("越出声明集期望 400，得到 %d：%s", status, body)
@@ -268,7 +268,7 @@ func TestProbeRejectsBadInput(t *testing.T) {
 	}
 	for name, body := range cases {
 		if status, resp := a.Do(t, http.MethodPost,
-			"/admin/api/channels/"+itoa(ch)+"/probe", body); status != http.StatusBadRequest {
+			"/panel/api/channels/"+itoa(ch)+"/probe", body); status != http.StatusBadRequest {
 			t.Errorf("%s 期望 400，得到 %d：%s", name, status, resp)
 		}
 	}
@@ -289,11 +289,11 @@ func TestSavingChannelSendsNothingUpstream(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels",
 		fmt.Sprintf(`{"name":"quiet","base_url":{"openai":%q},"credential":"sk-upstream"}`, url), &created)
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings",
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/settings",
 		`{"name":"quiet-2"}`, nil)
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/base-url",
 		fmt.Sprintf(`{"base_url":{"openai":%q}}`, url), nil)
 
 	if len(seen) != 0 {
@@ -313,7 +313,7 @@ func TestProbeNeverEchoesTheUpstreamAddress(t *testing.T) {
 	g := gatewaytest.Start(t, db)
 	a := g.LoggedIn(t)
 
-	_, body := a.Do(t, http.MethodPost, "/admin/api/channels/"+itoa(ch)+"/probe",
+	_, body := a.Do(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/probe",
 		probeBody(cred, "", "openai"))
 	if strings.Contains(body, "tenant7-secret-path") || strings.Contains(body, "sk-upstream-secret") {
 		t.Errorf("检测响应泄露了上游地址或凭证：%s", body)

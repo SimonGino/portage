@@ -9,7 +9,7 @@ package admin
 //
 // **设计允许只配 GitHub 或完全不配 OAuth**（Google 硬限 HTTPS/禁裸 IP/公共后缀，
 // 内网部署注册不了）：每家 provider 各自看 settings 里配没配，没配就不出现在
-// auth-config 里、start 直接拒。回调 URL 固定 /admin/oauth/<provider>/callback，
+// auth-config 里、start 直接拒。回调 URL 固定 /panel/oauth/<provider>/callback，
 // 管理端配置页把完整地址摆出来供复制去上游注册——共享应用没有官方旁路（#69）。
 
 import (
@@ -40,7 +40,7 @@ import (
 var oauthProviders = []string{"github", "google"}
 
 // oauthCookie 是 start → callback 之间的接力 cookie：state（防 CSRF）、PKCE
-// verifier、这一趟是登录还是绑定。HttpOnly + 10 分钟 + 限定在 /admin/oauth 路径下。
+// verifier、这一趟是登录还是绑定。HttpOnly + 10 分钟 + 限定在 /panel/oauth 路径下。
 const oauthCookie = "portage_oauth"
 
 // oauthFlow 是那只 cookie 里装的东西。不签名：它本来就只对「同一个浏览器」有意义
@@ -92,7 +92,7 @@ func (h *Handler) oauthConfig(ctx context.Context, provider string) (*oauth2.Con
 		ClientSecret: secret,
 		Endpoint:     endpoint,
 		Scopes:       scopes,
-		RedirectURL:  site + "/admin/oauth/" + provider + "/callback",
+		RedirectURL:  site + "/panel/oauth/" + provider + "/callback",
 	}, nil
 }
 
@@ -146,7 +146,7 @@ func (h *Handler) oauthStart(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     oauthCookie,
 		Value:    base64.RawURLEncoding.EncodeToString(raw),
-		Path:     "/admin/oauth",
+		Path:     "/panel/oauth",
 		MaxAge:   600,
 		HttpOnly: true,
 		Secure:   c.Request.TLS != nil,
@@ -190,7 +190,7 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 	}
 	raw, err := c.Cookie(oauthCookie)
 	// 一次性：不管成败，先把接力 cookie 清掉。
-	http.SetCookie(c.Writer, &http.Cookie{Name: oauthCookie, Path: "/admin/oauth", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(c.Writer, &http.Cookie{Name: oauthCookie, Path: "/panel/oauth", MaxAge: -1, HttpOnly: true})
 	if err != nil {
 		oops("登录流程已过期，请重试")
 		return

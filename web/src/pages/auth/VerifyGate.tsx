@@ -56,7 +56,7 @@ export default function VerifyGate({
       </button>
       <div className="login-links">
         <a
-          href="/admin/"
+          href="/panel/"
           onClick={(e) => {
             e.preventDefault()
             onRefresh()
@@ -65,7 +65,7 @@ export default function VerifyGate({
           我已验证，刷新
         </a>
         <a
-          href="/admin/"
+          href="/panel/"
           onClick={(e) => {
             e.preventDefault()
             void api.post('/logout').then(onLogout, onLogout)

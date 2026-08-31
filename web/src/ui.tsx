@@ -440,6 +440,21 @@ export function fmtCompact(n: number) {
 }
 
 /**
+ * fmtMoney 是金额的标准档（DESIGN §12）：一律 `$X.XX` 两位小数，不足一分显
+ * `<$0.01`——两位小数抹成 `$0.00` 会把「花了一点」说成「没花」。0 就是 $0.00：
+ * 真没花与真免费在合计上是同一个数。明细展开处用 fmtMoneyDetail 的四位。
+ */
+export function fmtMoney(n: number) {
+  if (n > 0 && n < 0.01) return '<$0.01'
+  return '$' + n.toFixed(2)
+}
+
+/** fmtMoneyDetail 是明细档：四位小数，流水详情与单笔账目用。 */
+export function fmtMoneyDetail(n: number) {
+  return '$' + n.toFixed(4)
+}
+
+/**
  * fmtTime 把后端的 SQLite 时间戳（UTC，形如 `2026-08-07 03:12:44`）显示成本地时间。
  *
  * 不用 `toLocaleString()` 的默认形态：它在中文环境下吐出 `2026/8/9 13:50:30`、

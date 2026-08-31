@@ -713,10 +713,10 @@ button, input, textarea, select {
    LOG_PAGE 也是 10）。**必须量准**：差 9px 的旧值（716）表现是十行全成功的页面底下
    永远挂着一条被切掉小半截的行，看着像渲染坏了，而不是「还有得滚」。
    `border-box` 下这 1px 边框算在 height 里，所以要连边框一起给。
-   失败行在「状态」格里多挂重试、错误词和详情按钮，量到 107，比成功行高出一半——
-   一页里失败行的条数一变，整块表就换一个高度，底下的翻页按钮跟着上下跑，手要追着
-   按钮走。定高之后按钮钉死，多出来的部分在视口内部竖着滚：动的是视口里面，页面
-   本身不动。
+   失败行在「状态」格里多挂重试与错误词，比成功行高出一截——一页里失败行的条数一变，
+   整块表就换一个高度，底下的翻页按钮跟着上下跑，手要追着按钮走。定高之后按钮钉死，
+   多出来的部分在视口内部竖着滚：动的是视口里面，页面本身不动。
+   （详情按钮已搬去独立的操作列，不再计进行高；727 仍按成功行 68.5 那次量法成立。）
    矮窗口上让位给屏幕（min）：一屏装不下 727 时硬撑的结果是页面和视口两条纵向滚动
    条并排。190 是这块表上下的固定开销，按 A-v2 的壳重量的（旧值 260 还带着顶栏时代
    的 53px 导航，多扣一百像素，表现是高窗口上视口被压到 727 以下，白挨一刀）：
@@ -739,22 +739,56 @@ button, input, textarea, select {
 }
 
 /* 横向滚动的下限**逐表给**，不给一个全局值：它是「窄到这个份上就该滚了」的地板，
-   跟内容区上限（.main 那条）是两件事。1020px 是 10 列时代定的（v0.30 那次
-   「恢复横向滚动」），压到九列之后调下来的。 */
+   跟内容区上限（.main 那条）是两件事。1100px：九列时代是 900，详情独立成操作列
+   （第十列）后加回去；fixed 布局下弹性列只剩模型、端点两个，八个钉死列按 15px
+   正文实量已吃掉约 790，再给弹性列留 300 以上，窄窗口才不至于两头全靠省略号。
+   fixed 布局（PO 2026-08-30「把列固定住」）：列宽全由 <colgroup> 钉死，翻页只换
+   内容不换列宽——auto 布局下每页内容不同就重排列宽，切一页列就抖一遍，那是要消
+   的抖动本身。 */
 .log-viewport .table-logs {
-  min-width: 900px;
+  table-layout: fixed;
+  min-width: 1100px;
 }
 
-/* 最后一列（in / out）从贴边改成缩进一条滚动条的宽度。
-   全局那条 `padding-right: 0`（首末两列跟区段标题对齐）在这个视口里不成立：
-   macOS 的浮层滚动条不占布局——上面第 83 行那段已经写明 `scrollbar-gutter`
-   在那儿是空操作——滚起来时那条半透明的杠直接压在右对齐的数字和「缓存 读 x / 写 y」
-   上。让位只能由内容自己来。16px 是量着浮层滚动条拖动时的胖态给的（约 14px）。
-   代价是不滚的时候这列也内缩 16px，跟上面那排控件的右缘对不齐；两害相权，
-   数字被盖住是真的看不见，差 16px 只是不齐。 */
+/* fixed 布局的代价：超宽内容不再把列撑宽，而是顶破列框——逐处截断兜底。
+   td 级的 ellipsis 管直接文本（key 名、凭证名这类，入口都有 title）；
+   .sub 副行（首字、缓存、思考、重试、错误）钉 nowrap 截断，
+   不然窄列里折行会让行高随内容变——又回到翻页抖行高的老病。 */
+.table-logs td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-logs td .sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 操作列（最右）钉在视口右边（PO 2026-08-30「详情固定住」）：横向滚动时它是
+   唯一不动的一列，详情入口始终在手边；竖向滚动时表头的 sticky top 照旧，
+   两向 sticky 在表头那格叠加成角落钉住。钉住的格子必须自己刷不透明的画布色，
+   否则行内容会从它底下透出来；行悬停底色要单独补——本块优先级高于 tr:hover，
+   不补的话悬停时这一格是唯一不变色的。表头那格原有的底线 shadow 在这里
+   重申一遍，否则被本块的 box-shadow 盖掉。左缘一条细线把它与数据列分开。 */
 .log-viewport .table-logs th:last-child,
 .log-viewport .table-logs td:last-child {
+  position: sticky;
+  right: 0;
   padding-right: 16px;
+  background: var(--canvas);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+.log-viewport .table-logs th:last-child {
+  z-index: 2;
+  box-shadow:
+    0 1px 0 var(--line),
+    -1px 0 0 var(--line);
+}
+
+.log-viewport .table-logs tbody tr:hover td:last-child {
+  background: var(--hover);
 }
 
 /* 表头钉在视口顶上：视口里滚起来之后，滚掉的第一样东西不该是列名。
@@ -1660,6 +1694,19 @@ textarea:focus {
 }
 
 /* 装列表的框才放宽。表单不跟着变宽：一行输入框拉到 900px，标签和光标离得老远。 */
+/* 弹框壳的降档（PO 2026-08-30 贴「发测试邮件」截图裁定「每次这种弹框都是这样子」，
+   DESIGN v0.47）：标题、头部、主按钮全收在弹框规格里，页面级的档不进框。
+   标题与头部用下方 .dialog-head / .dialog-head h3 的基础规则
+   （14px sans 粗体 + 14/18 内边距 + 1px 底线），
+   此前那份 22px 衬线大标题、22px 头厚、无底线的覆盖已整块拆除。
+   只有主按钮需要显式收档：.btn-primary 的页面档（15px 字 + 10/18 内边距）在框里
+   跟 13px 的次按钮并排差一整档；实心墨不变，只收回 .btn 同档。门外页与页头 CTA
+   的页面档不在 .dialog 作用域内，照旧。 */
+.dialog .btn-primary {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
 .dialog-wide {
   max-width: 720px;
 }
@@ -2697,6 +2744,11 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* BaseURLFields 的预览行紧跟在 chips 行后面，拉开一段距离分两组。 */
+.baseurl-chips + .baseurl-view-row {
+  margin-top: 12px;
+}
+
 .baseurl-input {
   flex: 1;
   min-width: 0;
@@ -2707,6 +2759,49 @@ textarea:focus {
 .baseurl-state {
   flex: none;
   font-size: 12px;
+}
+
+/* BaseURLFields（DESIGN v0.46）：共用前缀一行、协议 chips 一行、已声明协议各一行
+   预览。chips 行的「声明协议」标签与预览行的协议名列同宽同缘起，读起来是同一列
+   东西；不可选的路线图协议（Gemini）照 chip 形制但灰掉，回答「为什么没有它」。 */
+.baseurl-chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.baseurl-chips > .muted {
+  flex: none;
+  width: 6.5em;
+}
+
+.baseurl-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chip-toggle:disabled:hover {
+  background: var(--chip);
+  color: var(--ink-2);
+}
+
+/* 预览行尾的值级动作（单独填 / 恢复共用）：不随长地址压缩，推到行尾。 */
+.baseurl-line-acts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  align-self: flex-start;
 }
 
 /* 常驻区块里的添加行不吃 .form 的 18px 内边距（那是给弹框表单的）。 */
@@ -3006,14 +3101,11 @@ textarea:focus {
   font-size: 12px;
 }
 
-/* 「详情」按钮跟着状态右对齐，压成一枚小字：一行里已经有状态、重试、错误词三行
-   信息，它不该再抢一次注意力，只在人真的要看时才被找到。
-   同时它是**白名单 ②**「可点的文字」（SPEC §3 点名的「详情」），默认墨蓝无
-   下划线，悬停才加下划线。它是白名单里的**链接**，不随 v0.38 改按钮——「详情」
-   是展开一段内容，不是执行一个动作。 */
+/* 「详情」按钮住在自己的操作列里，右对齐，压成一枚小字：它不该抢注意力，
+   只在人真的要看时才被找到。同时它是**白名单 ②**「可点的文字」（SPEC §3
+   点名的「详情」），默认墨蓝无下划线，悬停才加下划线。它是白名单里的**链接**，
+   不随 v0.38 改按钮——「详情」是展开一段内容，不是执行一个动作。 */
 .log-detail-toggle {
-  margin: 2px -6px 0 auto;
-  display: block;
   font-size: 12px;
   padding: 0 6px;
   color: var(--accent);
@@ -3163,18 +3255,6 @@ textarea:focus {
 
 .tnum {
   font-variant-numeric: tabular-nums;
-}
-
-.dialog-head {
-  border-bottom: 0;
-  padding: 22px 22px 8px;
-}
-
-.dialog-head h3 {
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 22px;
-  letter-spacing: -0.03em;
 }
 
 .mpick-search {
@@ -3749,5 +3829,146 @@ button.cal-day,
   *, *::before, *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* ── 「我的」空间（DESIGN §12，#76）────────────────────────────────────────
+   无左栏的轻面板：顶栏 = 品牌 + 四个 tab + 配额微条与头像，主区单列文档流
+   （约 760px 居中）。沿用管理空间的排版与色彩纪律：羊皮纸底、墨蓝只落在
+   焦点环与链接、区块靠间距分隔不包卡片。 */
+
+.myspace {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+.mytop {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mytop .brand {
+  padding: 0;
+}
+
+.mytabs {
+  display: flex;
+  gap: 2px;
+}
+
+.mytabs a {
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.mytabs a:hover {
+  background: var(--hover);
+}
+
+.mytabs a.active {
+  background: var(--sunken);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.mytop-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 顶栏配额微条：等宽数字，超限换错误色。 */
+.quota-chip {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--mute);
+  padding: 4px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.quota-chip.is-over {
+  color: var(--err-text);
+  border-color: var(--err-line);
+  background: var(--err-bg);
+}
+
+.mymain {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 18px 48px;
+  background: var(--canvas);
+  border-radius: var(--r) var(--r) 0 0;
+}
+
+/* 配额卡：置顶的一段，不包边框——数字的字号就是它的分量。 */
+.quota-card {
+  margin-bottom: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quota-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.quota-num {
+  font-family: var(--serif);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+
+.quota-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ink);
+  min-width: 2px;
+}
+
+.quota-fill.is-over {
+  background: var(--err-text);
+}
+
+/* 左栏顶部的「管理 | 我的」空间切换：品牌与主导航之间，占满栏宽。 */
+.rail-space {
+  margin: 0 12px 14px;
+  display: flex;
+}
+
+.rail-space .segment {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .mytop {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .mymain {
+    border-radius: 0;
+    padding: 22px 14px 40px;
   }
 }

@@ -24,7 +24,7 @@ type logRow struct {
 	QueueWaitMs *int64 `json:"queue_wait_ms"`
 }
 
-// logPage 是 /admin/api/logs 的回包形状（口径层 v0.61 起带 total——页码要跳，
+// logPage 是 /panel/api/logs 的回包形状（口径层 v0.61 起带 total——页码要跳，
 // 得先知道有几页）。Total 按同一组筛选、同一个 before 数出来。
 type logPage struct {
 	Rows  []logRow `json:"rows"`
@@ -65,7 +65,7 @@ func TestLogsFilterByModelAndFailure(t *testing.T) {
 
 	t.Run("按模型", func(t *testing.T) {
 		var page logPage
-		a.JSONInto(t, http.MethodGet, "/admin/api/logs?model=model-a", "", &page)
+		a.JSONInto(t, http.MethodGet, "/panel/api/logs?model=model-a", "", &page)
 		if len(page.Rows) != 1 || page.Rows[0].ModelRequested != "model-a" {
 			t.Fatalf("按模型筛出来的是 %+v", page.Rows)
 		}
@@ -73,7 +73,7 @@ func TestLogsFilterByModelAndFailure(t *testing.T) {
 
 	t.Run("只看失败", func(t *testing.T) {
 		var page logPage
-		a.JSONInto(t, http.MethodGet, "/admin/api/logs?only=bad", "", &page)
+		a.JSONInto(t, http.MethodGet, "/panel/api/logs?only=bad", "", &page)
 		if len(page.Rows) != 1 || page.Rows[0].ModelRequested != "model-b" {
 			t.Fatalf("只看失败筛出来的是 %+v", page.Rows)
 		}
@@ -86,7 +86,7 @@ func TestLogsFilterByModelAndFailure(t *testing.T) {
 
 	t.Run("两个条件叠加", func(t *testing.T) {
 		var page logPage
-		a.JSONInto(t, http.MethodGet, "/admin/api/logs?only=bad&model=model-a", "", &page)
+		a.JSONInto(t, http.MethodGet, "/panel/api/logs?only=bad&model=model-a", "", &page)
 		if len(page.Rows) != 0 {
 			t.Fatalf("model-a 没失败过，却筛出了 %+v", page.Rows)
 		}
@@ -96,8 +96,8 @@ func TestLogsFilterByModelAndFailure(t *testing.T) {
 	// 「只看失败」下会按全部流水算出一堆翻过去是空的页。
 	t.Run("总数按同一组筛选算", func(t *testing.T) {
 		var all, bad logPage
-		a.JSONInto(t, http.MethodGet, "/admin/api/logs", "", &all)
-		a.JSONInto(t, http.MethodGet, "/admin/api/logs?only=bad", "", &bad)
+		a.JSONInto(t, http.MethodGet, "/panel/api/logs", "", &all)
+		a.JSONInto(t, http.MethodGet, "/panel/api/logs?only=bad", "", &bad)
 		if all.Total != 2 || bad.Total != 1 {
 			t.Fatalf("total: 全部 = %d（期望 2），只看失败 = %d（期望 1）", all.Total, bad.Total)
 		}
@@ -120,7 +120,7 @@ func TestLogsFilterByEndpoint(t *testing.T) {
 	t.Run("只留这个端点的行", func(t *testing.T) {
 		var page logPage
 		a.JSONInto(t, http.MethodGet,
-			"/admin/api/logs?endpoint="+url.QueryEscape("/v1/messages/count_tokens"), "", &page)
+			"/panel/api/logs?endpoint="+url.QueryEscape("/v1/messages/count_tokens"), "", &page)
 		if len(page.Rows) != 2 {
 			t.Fatalf("筛出 %d 行，期望 2；rows=%+v", len(page.Rows), page.Rows)
 		}
@@ -140,7 +140,7 @@ func TestLogsFilterByEndpoint(t *testing.T) {
 	t.Run("同协议的另一个端点不混进来", func(t *testing.T) {
 		var page logPage
 		a.JSONInto(t, http.MethodGet,
-			"/admin/api/logs?endpoint="+url.QueryEscape("/v1/messages"), "", &page)
+			"/panel/api/logs?endpoint="+url.QueryEscape("/v1/messages"), "", &page)
 		if len(page.Rows) != 1 || page.Rows[0].Endpoint != "/v1/messages" {
 			t.Fatalf("筛出来的是 %+v，期望只剩那一条 /v1/messages", page.Rows)
 		}
@@ -161,7 +161,7 @@ func TestLogsPageJumpWithinAnchoredWindow(t *testing.T) {
 
 	a := gw.LoggedIn(t)
 	var first logPage
-	a.JSONInto(t, http.MethodGet, "/admin/api/logs?limit=2", "", &first)
+	a.JSONInto(t, http.MethodGet, "/panel/api/logs?limit=2", "", &first)
 	if len(first.Rows) != 2 || first.Total != 5 {
 		t.Fatalf("第一页 = %d 行 / total %d, 期望 2 行 / 5", len(first.Rows), first.Total)
 	}
@@ -178,7 +178,7 @@ func TestLogsPageJumpWithinAnchoredWindow(t *testing.T) {
 
 	// 直接跳到第 3 页（offset = 2 页 × 2 行），不必先把前两页翻一遍。
 	var third logPage
-	a.JSONInto(t, http.MethodGet, "/admin/api/logs?limit=2&offset=4&before="+anchor, "", &third)
+	a.JSONInto(t, http.MethodGet, "/panel/api/logs?limit=2&offset=4&before="+anchor, "", &third)
 	if len(third.Rows) != 1 {
 		t.Fatalf("第 3 页 = %d 行, 期望剩下的 1 行", len(third.Rows))
 	}
@@ -188,7 +188,7 @@ func TestLogsPageJumpWithinAnchoredWindow(t *testing.T) {
 
 	// 第二页装的仍是原来那五行里的第 3、4 条，新行一个都没挤进来。
 	var second logPage
-	a.JSONInto(t, http.MethodGet, "/admin/api/logs?limit=2&offset=2&before="+anchor, "", &second)
+	a.JSONInto(t, http.MethodGet, "/panel/api/logs?limit=2&offset=2&before="+anchor, "", &second)
 	if len(second.Rows) != 2 {
 		t.Fatalf("第 2 页 = %d 行, 期望 2", len(second.Rows))
 	}
@@ -220,7 +220,7 @@ func TestUsageUnknownModelLabelled(t *testing.T) {
 			Calls int64  `json:"calls"`
 		} `json:"rows"`
 	}
-	a.JSONInto(t, http.MethodGet, "/admin/api/usage?by=model", "", &usage)
+	a.JSONInto(t, http.MethodGet, "/panel/api/usage?by=model", "", &usage)
 	var unknown int64
 	for _, r := range usage.Rows {
 		if r.Label == "" {
@@ -237,7 +237,7 @@ func TestUsageUnknownModelLabelled(t *testing.T) {
 	// 下拉里的每一项都是拿这些 label 填的，筛不动就是个点了没反应的死选项。
 	var page logPage
 	a.JSONInto(t, http.MethodGet,
-		"/admin/api/logs?model="+url.QueryEscape(store.UnknownModelLabel), "", &page)
+		"/panel/api/logs?model="+url.QueryEscape(store.UnknownModelLabel), "", &page)
 	if len(page.Rows) != 1 || page.Rows[0].ModelRequested != "" {
 		t.Fatalf("按 %q 筛出来的是 %+v", store.UnknownModelLabel, page.Rows)
 	}
@@ -257,7 +257,7 @@ func TestUsageByGatewayKey(t *testing.T) {
 			Calls int64  `json:"calls"`
 		} `json:"rows"`
 	}
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage?by=key", "", &usage)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/panel/api/usage?by=key", "", &usage)
 	if usage.By != "key" {
 		t.Fatalf("by = %q, 期望 key", usage.By)
 	}
@@ -287,7 +287,7 @@ func TestUsageBucketsByDay(t *testing.T) {
 			OutputTokens int64  `json:"output_tokens"`
 		} `json:"rows"`
 	}
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=7&unit=day", "", &daily)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/panel/api/usage/buckets?days=7&unit=day", "", &daily)
 	if daily.Unit != "day" {
 		t.Fatalf("unit = %q, 期望 day", daily.Unit)
 	}
@@ -325,7 +325,7 @@ func TestUsageBucketsUnit(t *testing.T) {
 	a := gw.LoggedIn(t)
 	// 前后各取一次时刻：整点恰好在这一发请求中间翻过去时两者差一，那不是缺陷。
 	before := time.Now()
-	a.JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=1&unit=hour", "", &got)
+	a.JSONInto(t, http.MethodGet, "/panel/api/usage/buckets?days=1&unit=hour", "", &got)
 	after := time.Now()
 	if got.Unit != "hour" {
 		t.Fatalf("unit = %q, 期望 hour", got.Unit)
@@ -339,7 +339,7 @@ func TestUsageBucketsUnit(t *testing.T) {
 		t.Errorf("最后一格是 %q, 期望此刻所在的整点", last)
 	}
 
-	a.JSONInto(t, http.MethodGet, "/admin/api/usage/buckets?days=7&unit=fortnight", "", &got)
+	a.JSONInto(t, http.MethodGet, "/panel/api/usage/buckets?days=7&unit=fortnight", "", &got)
 	if got.Unit != "day" || len(got.Rows) != 7 {
 		t.Errorf("认不得的 unit 回了 unit=%q / %d 行, 期望当成 day 的 7 行", got.Unit, len(got.Rows))
 	}
@@ -366,9 +366,9 @@ func TestUsageFromTo(t *testing.T) {
 
 	a := gw.LoggedIn(t)
 	var byDays, byRange usageResp
-	a.JSONInto(t, http.MethodGet, "/admin/api/usage?days=1", "", &byDays)
+	a.JSONInto(t, http.MethodGet, "/panel/api/usage?days=1", "", &byDays)
 	a.JSONInto(t, http.MethodGet,
-		"/admin/api/usage?days=7&from="+strconv.FormatInt(from, 10)+"&to="+strconv.FormatInt(to, 10),
+		"/panel/api/usage?days=7&from="+strconv.FormatInt(from, 10)+"&to="+strconv.FormatInt(to, 10),
 		"", &byRange)
 
 	if len(byDays.Rows) != 1 || len(byRange.Rows) != 1 || byDays.Rows[0] != byRange.Rows[0] {
@@ -398,7 +398,7 @@ func TestUsageFromToRejectsGarbage(t *testing.T) {
 		"from=200&to=200", // to == from，空区间
 		"from=300&to=200", // to < from
 	} {
-		status, body := a.Do(t, http.MethodGet, "/admin/api/usage?"+q, "")
+		status, body := a.Do(t, http.MethodGet, "/panel/api/usage?"+q, "")
 		if status != http.StatusBadRequest {
 			t.Errorf("%s 回了 %d, 期望 400", q, status)
 		}
@@ -422,7 +422,7 @@ func TestUsageLoneBoundIgnored(t *testing.T) {
 	}
 	// 一个远在将来的 from，单给不该把结果清空。
 	future := strconv.FormatInt(time.Now().AddDate(1, 0, 0).Unix(), 10)
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/usage?days=1&from="+future, "", &got)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/panel/api/usage?days=1&from="+future, "", &got)
 	if got.Days != 1 || len(got.Rows) != 1 || got.Rows[0].Calls != 1 {
 		t.Errorf("单给 from 回了 days=%d / %+v, 期望照 days=1 走出一行一次", got.Days, got.Rows)
 	}

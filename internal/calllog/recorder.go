@@ -56,7 +56,9 @@ type Recorder struct {
 	upstreamEndpoint string
 	// apiKeyName 是网关 key 的**名字**，不是 key 本身，也不是它的 hash：
 	// 日志是最容易被复制粘贴出去的东西，凭证材料一概不进。
-	apiKeyName     string
+	apiKeyName string
+	// userID 是 key 的归属用户（#75）。nil = 未鉴权或无主 key，流水那一列落 NULL。
+	userID         *int64
 	inboundProto   protocol.Protocol
 	requestedModel string
 	channel        string
@@ -156,9 +158,12 @@ func Detached() *Recorder {
 	return &Recorder{start: time.Now(), outcome: Rejected}
 }
 
-// Authenticated 记下认出来的网关 key 名。名字不是 key 本身也不是它的 hash——
-// 上下文里的东西迟早会被顺手打进日志。
-func (r *Recorder) Authenticated(keyName string) { r.apiKeyName = keyName }
+// Authenticated 记下认出来的网关 key 名与它的归属用户（#75）。名字不是 key 本身
+// 也不是它的 hash——上下文里的东西迟早会被顺手打进日志。userID nil = 无主 key
+// （声明形态的合法形态），那一行的用户维度落 NULL。
+func (r *Recorder) Authenticated(keyName string, userID *int64) {
+	r.apiKeyName, r.userID = keyName, userID
+}
 
 // RequestParsed 记下从请求体头部解出来的两格。这两格是同源的：走到这里就说明
 // 请求体读得动、是合法 JSON、且带了 model，三者缺一都在这之前返回了。
@@ -514,6 +519,11 @@ func (r *Recorder) Row() Row {
 		UpstreamRequestID: r.upstreamRequestID,
 		TotalMs:           time.Since(r.start).Milliseconds(),
 		QueueWaitMs:       r.queueWait.Milliseconds(),
+	}
+	// 用户维度（#75）：有归属才落值，未鉴权与无主 key 落 NULL——「不知道是谁」与
+	// 「id 恰好是 0」不能抹成一个。
+	if r.userID != nil {
+		row.UserID = sql.NullInt64{Int64: *r.userID, Valid: true}
 	}
 	// stream 是解析请求体那一步才知道的，没走到那一步的行（鉴权失败、限流、body
 	// 不是合法 JSON、缺 model）留 NULL——落一个 false 会把「不知道」说成「同步」。

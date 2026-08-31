@@ -21,7 +21,7 @@ import (
 // 未配密码时，行为与纯转发现状**逐字一致**。
 //
 // 要钉的是 **404 是路由级不是鉴权级**：两个判据都不中时整个 admin.Mount 都不调，
-// 于是 /admin/api/login 这种本来就不需要会话的端点也一并消失。两者的区别在攻击面上
+// 于是 /panel/api/login 这种本来就不需要会话的端点也一并消失。两者的区别在攻击面上
 // 是实的——鉴权级 404 意味着那段代码还在跑，只是拒绝你。
 func startGateway(t *testing.T, adminPassword string) *httptest.Server {
 	t.Helper()
@@ -63,16 +63,16 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 		method, path, body string
 	}{
 		{http.MethodGet, "/admin", ""},
-		{http.MethodGet, "/admin/api/channels", ""},
-		{http.MethodPost, "/admin/api/login", `{"email":"admin@localhost","password":"admin-test-password"}`},
+		{http.MethodGet, "/panel/api/channels", ""},
+		{http.MethodPost, "/panel/api/login", `{"email":"admin@localhost","password":"admin-test-password"}`},
 		// #72 的用户体系端点也在同一道形态闸后：纯转发形态下它们必须一并消失——
 		// 注册/找回是不要会话的门，鉴权级的闸拦不住，只有路由级的能。
-		{http.MethodGet, "/admin/api/auth-config", ""},
-		{http.MethodPost, "/admin/api/register", `{"invite_code":"x","email":"a@b.c","password":"password1"}`},
-		{http.MethodPost, "/admin/api/password-reset", `{"email":"a@b.c"}`},
-		{http.MethodGet, "/admin/oauth/github/start", ""},
-		{http.MethodGet, "/admin/api/users", ""},
-		{http.MethodGet, "/admin/api/invite-codes", ""},
+		{http.MethodGet, "/panel/api/auth-config", ""},
+		{http.MethodPost, "/panel/api/register", `{"invite_code":"x","email":"a@b.c","password":"password1"}`},
+		{http.MethodPost, "/panel/api/password-reset", `{"email":"a@b.c"}`},
+		{http.MethodGet, "/panel/oauth/github/start", ""},
+		{http.MethodGet, "/panel/api/users", ""},
+		{http.MethodGet, "/panel/api/invite-codes", ""},
 	}
 
 	t.Run("有密码则管理面在", func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 				t.Errorf("%s %s 回了 404，库里有 admin 用户时管理面应当挂载", p.method, p.path)
 			}
 		}
-		if got := status(t, base, http.MethodPost, "/admin/api/login",
+		if got := status(t, base, http.MethodPost, "/panel/api/login",
 			`{"email":"admin@localhost","password":"`+gatewaytest.AdminPassword+`"}`); got != http.StatusOK {
 			t.Errorf("库里的密码登录回了 %d，期望 200", got)
 		}
@@ -123,7 +123,7 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 			t.Fatalf("Bootstrap = (%v, %v)", ok, err)
 		}
 		first := startGatewayWith(t, db, "")
-		resp, err := http.Post(first.URL+"/admin/api/login", "application/json",
+		resp, err := http.Post(first.URL+"/panel/api/login", "application/json",
 			strings.NewReader(`{"email":"admin@localhost","password":"`+gatewaytest.AdminPassword+`"}`))
 		if err != nil {
 			t.Fatalf("登录: %v", err)
@@ -135,7 +135,7 @@ func TestAdminSurfaceExistsOnlyWithAdminPassword(t *testing.T) {
 		}
 
 		second := startGatewayWith(t, db, "")
-		req, err := http.NewRequest(http.MethodGet, second.URL+"/admin/api/channels", nil)
+		req, err := http.NewRequest(http.MethodGet, second.URL+"/panel/api/channels", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

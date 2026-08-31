@@ -23,10 +23,10 @@ server {
     # 请求根本到不了网关——所以网关日志里查不到任何痕迹，最容易误判成客户端问题。
     client_max_body_size 64m;
 
-    # 只放行转发面。管理面（/admin 页面 + /admin/api/*）不在这里开口子：
+    # 只放行转发面。管理面（/panel 页面 + /panel/api/*）不在这里开口子：
     # 它认的是 cookie 会话，公网上多一个可爆破的登录页没有必要。
     # 要用就走内网直连 8317，或者 SSH 端口转发：
-    #   ssh -N -L 8317:127.0.0.1:8317 user@host   然后开 http://127.0.0.1:8317/admin
+    #   ssh -N -L 8317:127.0.0.1:8317 user@host   然后开 http://127.0.0.1:8317/panel
     location /v1/ {
         proxy_pass http://127.0.0.1:8317;
 

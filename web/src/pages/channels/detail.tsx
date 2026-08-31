@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_ORDER, PROTOCOL_PATH, PROTOCOL_SHORT } from '../../api'
+import {
+  api,
+  PROTOCOL_LABEL,
+  PROTOCOL_ORDER,
+  PROTOCOL_PATH,
+  PROTOCOL_SHORT,
+  joinBaseURLs,
+  splitBaseURLs,
+} from '../../api'
 import type {
+  BaseURLDraft,
   BaseURLs,
   Channel,
   ChannelModel,
@@ -11,8 +20,9 @@ import type {
 } from '../../api'
 import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Toggle } from '../../ui'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
-import { IconCheck, IconPencil, IconSliders, IconX } from '../../icons/acts'
+import { IconCheck, IconPencil, IconSliders } from '../../icons/acts'
 import { ChannelForm, joinURL } from './form'
+import { BaseURLFields } from './baseurl'
 import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
 
@@ -293,14 +303,14 @@ export function ChannelDetail({
  * 从「上游设置」井里提出来——它们是接一家上游要填的全部，不该藏两层；
  * 2026-08-24 裁决它排在凭证前面：地址定义渠道是谁，凭证是从属物；2026-08-28
  * 裁决常驻展开、默认只读——每协议一行**预览地址**（网关实际会请求的完整地址）
- * 一眼可见，输入框、删行、加行收进「编辑」原地切换：日常进这页是核对地址，
+ * 一眼可见，改地址收进「编辑」原地切换：日常进这页是核对地址，
  * 不是改地址，常驻一排输入框全是待办的样子）。
  *
- * 编辑态仍是 v0.96 的**每协议一行**：协议名 + 地址，失焦或回车即存，预览逐行
- * 紧随其下；「添加端点」加行，**删行 = 取消声明该协议**（不加确认——恢复就是
- * 再填一次地址），至少保留一行，删到最后一行的口被服务端和这里一起堵住。
- * 「完成」只收面板不提交——每一笔都已在失焦时写掉。
- * 写走 base-url 那一笔意图写（#48 批2），别的渠道字段碰不到。
+ * 编辑态是 v1.04 的**共用前缀 + 协议勾选**（DESIGN v0.46，推翻 v0.96 时代的
+ * 每协议一行）：渲染 BaseURLFields，打字只改草稿，勾协议、恢复共用、覆盖地址
+ * 失焦与文本框失焦在 onCommit 里落库——沿用 v0.35「失焦即存」，「完成」只收
+ * 面板不提交。落库走 base-url 那一笔意图写（#48 批2），整张 map 一次写掉，
+ * 别的渠道字段碰不到。
  */
 function BaseURLBlock({
   ch,
@@ -309,11 +319,11 @@ function BaseURLBlock({
   ch: Channel
   mutate: (fn: () => Promise<unknown>) => Promise<boolean>
 }) {
-  const [urls, setUrls] = useState<BaseURLs>({ ...ch.base_url })
+  // 库里那份 map 拆成共用前缀 + 覆盖当草稿（splitBaseURLs），落库时 join 回
+  // 整张 map 一次写。声明语义不变：哪些协议填了地址，协议集就是哪些——勾选
+  // 只是写 map 的手势，不是独立字段。
+  const [draft, setDraft] = useState<BaseURLDraft>(() => splitBaseURLs(ch.base_url))
   const [editing, setEditing] = useState(false)
-  // 「添加端点」刚加出来、还没填值的空行：值为空不算声明，不在 ch.base_url 里，
-  // 单独记着才不会一失焦就消失。
-  const [blank, setBlank] = useState<Protocol[]>([])
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -326,46 +336,19 @@ function BaseURLBlock({
     return mutate(() => api.put(`/channels/${ch.id}/base-url`, { base_url: next }))
   }
 
-  function save(p: Protocol) {
-    const next = (urls[p] ?? '').trim()
-    const prev = ch.base_url[p] ?? ''
-    if (next === prev) return
-    // 清空后失焦不当「取消声明」提交：取消声明只走「删行」那一个口（口径层 v0.96 ②），
-    // 清空多半是要重填。已声明的行清空就退回库里的值，别把一次犹豫变成一次删除。
-    if (next === '' && prev !== '') {
-      setUrls((u) => ({ ...u, [p]: prev }))
-      return
-    }
-    if (next === '') return
-    void put({ ...urls, [p]: next }).then((ok) => {
+  /** onCommit 落库：草稿合回 map，与库里逐协议比对（两侧都 trim，输入框里
+      的尾随空格不该触发多余的 PUT），没变就不打网络。 */
+  function persist(next: BaseURLDraft) {
+    const urls = joinBaseURLs(next)
+    const same = PROTOCOL_ORDER.every(
+      (p) => (urls[p] ?? '').trim() === (ch.base_url[p] ?? '').trim(),
+    )
+    if (same) return
+    void put(urls).then((ok) => {
       if (ok) setSaved(true)
     })
   }
 
-  function remove(p: Protocol) {
-    if (blank.includes(p)) {
-      setBlank((prev) => prev.filter((x) => x !== p))
-      setUrls((prev) => {
-        const map = { ...prev }
-        delete map[p]
-        return map
-      })
-      return
-    }
-    const map = { ...urls }
-    delete map[p]
-    void put(map).then((ok) => {
-      if (!ok) return
-      setUrls(map)
-      setSaved(true)
-    })
-  }
-
-  // 行 = 已声明的协议 + 刚加出来的空行，按固定回退序排，别跟着敲键盘的顺序跳。
-  const rows = PROTOCOL_ORDER.filter(
-    (p) => (ch.base_url[p] ?? '') !== '' || blank.includes(p) || (urls[p] ?? '').trim() !== '',
-  )
-  const addable = PROTOCOL_ORDER.filter((p) => !rows.includes(p))
   const declared = PROTOCOL_ORDER.filter((p) => (ch.base_url[p] ?? '') !== '')
 
   if (!editing) {
@@ -406,93 +389,26 @@ function BaseURLBlock({
     <DetailBlock
       title="API 地址"
       action={
-        <button
-          type="button"
-          className="act"
-          onClick={() => {
-            // 「完成」只收面板：每一笔都在失焦时已写掉，这里只把没填值的空行清掉。
-            setBlank([])
-            setEditing(false)
-          }}
-        >
-          <IconCheck />
-          完成
-        </button>
+        <>
+          {/* 落库回执挂在「完成」旁：失焦即存没有按钮可按，回执只能是一句字。 */}
+          {saved && <span className="muted baseurl-state">已保存</span>}
+          <button
+            type="button"
+            className="act"
+            onClick={() => {
+              // 「完成」只收面板：每一笔都已在失焦/勾选时写掉。
+              setEditing(false)
+            }}
+          >
+            <IconCheck />
+            完成
+          </button>
+        </>
       }
     >
-      {rows.map((p) => {
-        const v = urls[p] ?? ''
-        const dirty = v.trim() !== (ch.base_url[p] ?? '')
-        return (
-          /* 定宽协议名列 + 输入列：OpenAI 与 Anthropic 词长不同，不定宽的话
-             两行输入框左边参差。预览是输入列下的一行小字，不再套底色盒——
-             盒装预览是表单井里「一段汇总」的形制，逐行紧随时它比输入框还高。 */
-          <div key={p} className="baseurl-proto-row">
-            <span className="baseurl-proto" title={PROTOCOL_LABEL[p] + ' · ' + PROTOCOL_PATH[p]}>
-              {PROTOCOL_SHORT[p] ?? p}
-            </span>
-            <div className="baseurl-main">
-              <div className="baseurl-row">
-                <input
-                  className="baseurl-input"
-                  value={v}
-                  onChange={(e) => setUrls((prev) => ({ ...prev, [p]: e.target.value }))}
-                  onBlur={() => save(p)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      save(p)
-                    }
-                  }}
-                  placeholder="https://…（协议子路径之前的前缀，网关自己接子路径）"
-                />
-                {/* 失焦即存没有按钮可按，回执只能是一句字：改着（还没存）与刚存上各说各的。 */}
-                {dirty ? (
-                  <span className="muted baseurl-state">回车保存</span>
-                ) : saved ? (
-                  <span className="muted baseurl-state">已保存</span>
-                ) : null}
-                {/* 删行 = 取消声明这个协议，不加确认（口径层 v0.96 ②：恢复就是再填一次）。
-                    只剩一行时不给口——渠道至少要声明一个协议，服务端也会拒。 */}
-                {rows.length > 1 && (
-                  <button
-                    type="button"
-                    className="act-icon baseurl-del"
-                    aria-label="删行"
-                    title={`删除这一行 = 这个渠道不再声明 ${PROTOCOL_LABEL[p]}`}
-                    onClick={() => remove(p)}
-                  >
-                    <IconX />
-                  </button>
-                )}
-              </div>
-              {v.trim() !== '' && (
-                <div
-                  className="baseurl-preview"
-                  title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径"
-                >
-                  → <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      })}
-      {addable.length > 0 && (
-        <div className="baseurl-add">
-          {addable.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className="chip-toggle"
-              title={`给 ${PROTOCOL_LABEL[p]} 加一行地址，填了即声明该协议`}
-              onClick={() => setBlank((prev) => [...prev, p])}
-            >
-              + {PROTOCOL_SHORT[p] ?? p}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* 编辑态整块交给 BaseURLFields：共用前缀 + 协议勾选 + 预览行上的「单独填」，
+          落库节奏由 onCommit 接住（沿用失焦即存）。 */}
+      <BaseURLFields draft={draft} onChange={setDraft} onCommit={persist} />
     </DetailBlock>
   )
 }

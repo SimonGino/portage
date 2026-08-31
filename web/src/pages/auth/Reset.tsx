@@ -5,7 +5,7 @@ import { ErrorBar } from '../../ui'
 import AuthCard from './AuthCard'
 
 /**
- * 重置密码落地页：邮件链接指到 /admin/reset?token=...。成功后后端吊销该用户
+ * 重置密码落地页：邮件链接指到 /panel/reset?token=...。成功后后端吊销该用户
  * **全部**会话（#62 决议 6），所以这里的出口只有「去登录」。
  */
 export default function Reset() {

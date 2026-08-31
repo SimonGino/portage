@@ -263,12 +263,12 @@ func TestGateQueueTimeoutReturns429(t *testing.T) {
 		t.Errorf("queue_wait_ms = %d, 期望 ≈ 300", row.QueueWaitMs)
 	}
 
-	// DB→接口：同一个数得从 /admin/api/logs 拿得到（#7 之前只写不读，白存）。
+	// DB→接口：同一个数得从 /panel/api/logs 拿得到（#7 之前只写不读，白存）。
 	// 与库里那行精确同值——这一格没有任何加工的理由。
 	var page logPage
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/logs", "", &page)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/panel/api/logs", "", &page)
 	if len(page.Rows) != 1 {
-		t.Fatalf("/admin/api/logs 回了 %d 行，期望 1", len(page.Rows))
+		t.Fatalf("/panel/api/logs 回了 %d 行，期望 1", len(page.Rows))
 	}
 	if got := page.Rows[0].QueueWaitMs; got == nil {
 		t.Errorf("回包里没有 queue_wait_ms 这一列——列不可空，0 也要照原样给")

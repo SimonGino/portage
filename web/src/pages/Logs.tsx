@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import type { CallLog, UsageRow } from '../api'
+import type { CallLog, UsageRow, User } from '../api'
 import { Card, CopyCode, Dialog, Empty, ErrorBar, fmtInt, fmtTime, useList } from '../ui'
 import { Picker, Segmented } from '../fields'
 import type { Option } from '../fields'
@@ -201,7 +201,7 @@ function LogDetail({ log, onClose }: { log: CallLog; onClose: () => void }) {
  * 筛选下推后端而不是在前端过滤：筛选和分页搅在一起时，本页里过滤只会筛出
  * 「这一页里的失败」，而人问的是「这段时间的失败」。
  */
-function useLogFeed(only: string, model: string, endpoint: string) {
+function useLogFeed(only: string, model: string, endpoint: string, user: string) {
   const [rows, setRows] = useState<CallLog[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -219,6 +219,7 @@ function useLogFeed(only: string, model: string, endpoint: string) {
       if (only === 'bad') q.set('only', 'bad')
       if (model) q.set('model', model)
       if (endpoint) q.set('endpoint', endpoint)
+      if (user) q.set('user', user)
       if (anchor.current) q.set('before', String(anchor.current + 1))
       setLoading(true)
       try {
@@ -236,7 +237,7 @@ function useLogFeed(only: string, model: string, endpoint: string) {
         setLoading(false)
       }
     },
-    [only, model, endpoint],
+    [only, model, endpoint, user],
   )
 
   // 翻页只有这一个入口：页码与请求必须同时改。分开写的话，某条路径漏改页码就会
@@ -309,6 +310,9 @@ export default function Logs() {
   // 按端点筛（#17）：`/v1/messages` 与 `/v1/messages/count_tokens` 的入站协议同为
   // anthropic，不给这个筛子，一批 count_tokens 的 501 与真正的转发失败在表里长得一样。
   const [endpoint, setEndpoint] = useState('')
+  // 按用户筛（#75）：值是用户 id 的字符串形。无主行（未鉴权、无主 key）没有 id，
+  // 筛不到它们——本筛子答的是「这个人烧了什么」，无主行不属于任何人。
+  const [user, setUser] = useState('')
   // 正在弹框里看的那一条（上游原文 v0.53、上游 request-id #81）。存整行而不是 id：翻页和刷新
   // 会把 rows 整块换掉，存 id 的话框还开着、内容却已经查无此行。
   const [detail, setDetail] = useState<CallLog | null>(null)
@@ -318,7 +322,10 @@ export default function Logs() {
     () => api.get<{ rows: UsageRow[] | null }>(`/usage?days=${MODEL_OPTION_DAYS}&by=model`),
     [],
   )
-  const logs = useLogFeed(filter, model, endpoint)
+  // 用户下拉的选项从用户列表来，不从流水聚合：人是配置不是流水，没烧过的用户也
+  // 该筛得到（筛出来是空表，这本身就是答案）。
+  const users = useList(() => api.get<User[] | null>('/users'))
+  const logs = useLogFeed(filter, model, endpoint, user)
 
   const shown = logs.rows
 
@@ -345,6 +352,14 @@ export default function Logs() {
     return opts
   }, [models.data, model])
 
+  const userOptions = useMemo<Option<string>[]>(() => {
+    const opts: Option<string>[] = [{ value: '', label: '全部用户' }]
+    for (const u of users.data ?? []) {
+      opts.push({ value: String(u.id), label: u.email, hint: u.display_name || undefined })
+    }
+    return opts
+  }, [users.data])
+
   return (
     <>
       <ErrorBar message={logs.error} />
@@ -365,6 +380,18 @@ export default function Logs() {
                 placeholder="全部模型"
               />
             </div>
+            {/* 用户筛选（#75）只在库里有第二个人之后出现：单人库里它恒只有一个可选
+                项，摆着只占宽度。 */}
+            {(users.data?.length ?? 0) > 1 && (
+              <div className="picker-inline" title="按归属用户筛选">
+                <Picker
+                  value={user}
+                  options={userOptions}
+                  onChange={setUser}
+                  placeholder="全部用户"
+                />
+              </div>
+            )}
             {/* 端点筛选另起一个 Picker，不并进 Segmented：连上「全部」一共 5 段，
                 横排铺开比模型下拉还宽，而这一排右边还有「只看失败」和「刷新」。 */}
             <div className="picker-inline" title="按转发端点筛选">
@@ -400,6 +427,22 @@ export default function Logs() {
             </Empty>
           ) : (
             <table className="table table-plain table-logs">
+              {/* fixed 布局的列宽全钉在这排 <col> 上（PO 2026-08-30「把列固定住」）：
+                  每页内容不同不再牵动列宽，翻页时表是同一个形状。没给宽度的两列
+                  （模型、端点）平分剩余宽度，随窗口伸缩；其余列钉死，超宽的内容
+                  在格内截断（见 styles.css 的截断兜底）。 */}
+              <colgroup>
+                <col style={{ width: 130 }} />
+                <col style={{ width: 96 }} />
+                <col />
+                <col />
+                <col style={{ width: 56 }} />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 116 }} />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 144 }} />
+                <col style={{ width: 56 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>时间</th>
@@ -413,15 +456,20 @@ export default function Logs() {
                   <th className="num">状态</th>
                   <th className="num">耗时</th>
                   <th className="num">in / out</th>
+                  <th className="num">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {shown.map((l) => (
                   <tr key={l.id}>
                     <td className="nowrap">{fmtTime(l.created_at)}</td>
-                    {/* 哪把网关 key 打的（v0.53 以前压在时间下面，独立成列后筛查更顺眼） */}
-                    <td className="nowrap">
+                    {/* 哪把网关 key 打的（v0.53 以前压在时间下面，独立成列后筛查更顺眼）。
+                        归属用户（#75）压在 key 名下面不另占列：多用户放开后同名 key
+                        可能分属两个人，这一行是分辨它们的唯一线索；无归属（未鉴权、
+                        无主 key、老流水）不摆空壳。 */}
+                    <td className="nowrap" title={l.api_key_name || undefined}>
                       {l.api_key_name || <span className="muted">—</span>}
+                      {l.user && <div className="sub">{l.user}</div>}
                     </td>
                     {/* 只摆请求的模型一行（PO 2026-08-20 裁定）：副行那份「渠道 /
                         上游模型」多数时候就是主行换个写法，两行说一件事；映射关系
@@ -504,7 +552,7 @@ export default function Logs() {
                     </td>
                     {/* 上游凭证（口径层 v0.38）：多凭证放开后，「这次是哪个号在跑」
                         是排障第一问。记的是最后真正发出请求的那一份。 */}
-                    <td className="nowrap">
+                    <td className="nowrap" title={l.channel_key_name || undefined}>
                       {l.channel_key_name ? l.channel_key_name : <span className="muted">—</span>}
                     </td>
                     {/* 错误压在状态下面，不单占一列：它写的是网关自己的**固定词表**
@@ -519,32 +567,6 @@ export default function Logs() {
                         <div className="sub log-err" title={l.error}>
                           {l.error}
                         </div>
-                      )}
-                      {/* 判据是「这一行有没有细节可看」（PO 2026-08-14 裁定，#81），
-                          不是 status >= 400 那一条。
-                          失败这一半的判据是状态码而不是 error 非空：上游透传 4xx 的
-                          error 列本就是空的（透传成功不算网关侧错误），而那正是最想
-                          点开看上游到底说了什么的一种行。
-                          request-id 这一半把成功行也带进来了——用量对不上、想找上游
-                          查这次到底计了多少时，要的正是成功行的那个 id。它不另占一列
-                          （二十几个字符会把表撑出卡片）也不压在时间下面（同理），而
-                          这个框本来就是「这一行的额外细节」，上游原文只是它此前唯一
-                          的内容。
-                          排队耗时这一半同理（#7）：真排过队（> 0）的行多一段可看，
-                          成功与否无关——挤过闸的成功行正是看拥塞时要找的那种。
-                          成本这一半（#74）判非 null：算出钱的行详情里多一格四位小数，
-                          null（无用量可计）的行没有这段可看。 */}
-                      {(l.status >= 400 ||
-                        l.upstream_request_id !== '' ||
-                        l.queue_wait_ms > 0 ||
-                        l.cost !== null) && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost log-detail-toggle"
-                          onClick={() => setDetail(l)}
-                        >
-                          详情
-                        </button>
                       )}
                     </td>
                     <td className="num nowrap tnum">
@@ -571,6 +593,34 @@ export default function Logs() {
                       {l.reasoning_tokens ? (
                         <div className="sub">思考 {fmtInt(l.reasoning_tokens)}</div>
                       ) : null}
+                    </td>
+                    {/* 操作列（PO 2026-08-30）：详情从「状态」格里搬出来独立成列，
+                        一来失败行不再比成功行高一截，二来这列钉在视口右边（sticky），
+                        横向滚动时详情入口始终在手边。
+                        判据仍是「这一行有没有细节可看」（PO 2026-08-14 裁定，#81），
+                        不是 status >= 400 那一条：
+                        失败这一半判状态码而不是 error 非空——上游透传 4xx 的 error
+                        列本就是空的（透传成功不算网关侧错误），而那正是最想点开看
+                        上游说了什么的一种行。
+                        request-id 这一半把成功行也带进来——用量对不上、想找上游查
+                        这次计了多少时，要的正是成功行的那个 id。它不另占一列（二十
+                        几个字符会把表撑出卡片）也不压在时间下面（同理），而这个框
+                        本来就是「这一行的额外细节」，上游原文只是它此前唯一的内容。
+                        排队耗时这一半同理（#7）：真排过队（> 0）的行多一段可看。
+                        成本这一半（#74）判非 null：算出钱的行详情里多一格四位小数。 */}
+                    <td className="num">
+                      {(l.status >= 400 ||
+                        l.upstream_request_id !== '' ||
+                        l.queue_wait_ms > 0 ||
+                        l.cost !== null) && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost log-detail-toggle"
+                          onClick={() => setDetail(l)}
+                        >
+                          详情
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

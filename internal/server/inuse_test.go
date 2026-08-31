@@ -21,19 +21,19 @@ func TestDeleteChannelNamesTheAccessPointsHoldingIt(t *testing.T) {
 	var ch struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"old-resp","base_url":{"openai_responses":"`+up.URL+`"},
 		"credential":"sk-upstream"}`, &ch)
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch.ID)+"/models",
 		`{"upstream_model":"gpt-5.6-luna"}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	modelID := channels[0].Models[0].ID
-	a.JSONInto(t, http.MethodPost, "/admin/api/access-points",
+	a.JSONInto(t, http.MethodPost, "/panel/api/access-points",
 		`{"model":"gpt-luna","channel_model_id":`+itoa(modelID)+`}`, nil)
 
-	status, body := a.Do(t, http.MethodDelete, "/admin/api/channels/"+itoa(ch.ID), "")
+	status, body := a.Do(t, http.MethodDelete, "/panel/api/channels/"+itoa(ch.ID), "")
 	if status != http.StatusConflict {
 		t.Fatalf("被引用的渠道应该删不掉且回 409，得到 %d %s", status, body)
 	}
@@ -54,19 +54,19 @@ func TestDeleteChannelModelNamesTheAccessPointsHoldingIt(t *testing.T) {
 	var ch struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"old-resp","base_url":{"openai_responses":"`+up.URL+`"},
 		"credential":"sk-upstream"}`, &ch)
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch.ID)+"/models",
 		`{"upstream_model":"gpt-5.6-luna"}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	modelID := channels[0].Models[0].ID
-	a.JSONInto(t, http.MethodPost, "/admin/api/access-points",
+	a.JSONInto(t, http.MethodPost, "/panel/api/access-points",
 		`{"model":"gpt-luna","channel_model_id":`+itoa(modelID)+`}`, nil)
 
-	status, body := a.Do(t, http.MethodDelete, "/admin/api/channel-models/"+itoa(modelID), "")
+	status, body := a.Do(t, http.MethodDelete, "/panel/api/channel-models/"+itoa(modelID), "")
 	if status != http.StatusConflict {
 		t.Fatalf("被引用的纳管模型应该删不掉且回 409，得到 %d %s", status, body)
 	}
@@ -86,10 +86,10 @@ func TestDeleteChannelSucceedsOnceTheAccessPointPointsElsewhere(t *testing.T) {
 		var ch struct {
 			ID int64 `json:"id"`
 		}
-		a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+		a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 			"name":"`+name+`","base_url":{"openai":"`+up.URL+`"},
 			"credential":"sk-upstream"}`, &ch)
-		a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(ch.ID)+"/models",
+		a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(ch.ID)+"/models",
 			`{"upstream_model":"gpt-5.6-luna"}`, nil)
 		return ch.ID
 	}
@@ -97,7 +97,7 @@ func TestDeleteChannelSucceedsOnceTheAccessPointPointsElsewhere(t *testing.T) {
 	mkChannel("gpt-luna")
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	byName := map[string]int64{}
 	for _, c := range channels {
 		byName[c.Name] = c.Models[0].ID
@@ -106,14 +106,14 @@ func TestDeleteChannelSucceedsOnceTheAccessPointPointsElsewhere(t *testing.T) {
 	var ap struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/access-points",
+	a.JSONInto(t, http.MethodPost, "/panel/api/access-points",
 		`{"model":"gpt-luna","channel_model_id":`+itoa(byName["old-resp"])+`}`, &ap)
 
 	// 改指向：UpdateAccessPoint 是整条换候选，所以这一步就把引用挪走了。
-	a.JSONInto(t, http.MethodPut, "/admin/api/access-points/"+itoa(ap.ID),
+	a.JSONInto(t, http.MethodPut, "/panel/api/access-points/"+itoa(ap.ID),
 		`{"model":"gpt-luna","channel_model_id":`+itoa(byName["gpt-luna"])+`}`, nil)
 
-	if status, body := a.Do(t, http.MethodDelete, "/admin/api/channels/"+itoa(oldID), ""); status != http.StatusNoContent {
+	if status, body := a.Do(t, http.MethodDelete, "/panel/api/channels/"+itoa(oldID), ""); status != http.StatusNoContent {
 		t.Fatalf("引用挪走之后渠道还是删不掉：%d %s", status, body)
 	}
 }

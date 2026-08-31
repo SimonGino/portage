@@ -29,14 +29,14 @@ func CountAPIKeys(ctx context.Context, db *sql.DB) (int, error) {
 func InsertCallLog(ctx context.Context, db *sql.DB, l CallLog) error {
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO call_logs (
-			api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
+			api_key_name, user_id, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 			model_requested, model_upstream, channel_name, channel_key_name,
 			status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			reasoning_tokens, cost, error, error_detail,
 			upstream_request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.APIKeyName, l.Endpoint, l.UpstreamEndpoint, l.ClientProtocol, l.UpstreamProtocol,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.APIKeyName, l.UserID, l.Endpoint, l.UpstreamEndpoint, l.ClientProtocol, l.UpstreamProtocol,
 		l.ModelRequested, l.ModelUpstream, l.ChannelName, l.ChannelKeyName,
 		l.Status, l.RetryCount, l.IsStream, l.TTFTMs, l.TotalMs, l.QueueWaitMs,
 		l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheWriteTokens,

@@ -998,6 +998,10 @@ type CallLogRow struct {
 	ID         int64  `json:"id"`
 	CreatedAt  string `json:"created_at"`
 	APIKeyName string `json:"api_key_name"`
+	// User 是归属用户的邮箱（#75），LEFT JOIN 现查——流水存的是 user_id 不是快照，
+	// 用户改不了邮箱（v1 无此功能）所以现查即快照。空串 = 无主行（未鉴权、无主 key、
+	// 回填前的老行），前端读作「没有归属」。
+	User string `json:"user"`
 	// Endpoint 是这次打的转发端点路径（#17）。
 	//
 	// string 而不是指针：新行一律有值（callLog 中间件在任何事情失败之前就写死它），
@@ -1090,15 +1094,23 @@ type CallLogFilter struct {
 	// FailedOnly 只留 status >= 400 的行。判据是状态码而非 error 列非空——上游透传
 	// 4xx 的 error 列是空的（v0.28 纪律），漏掉它「只看失败」就名不副实。
 	FailedOnly bool
+	// UserID 只留归属这个用户的行（#75）：管理端按用户筛选传它，用户侧接口强制
+	// 把它钉成本人。0 = 不筛——流水的 user_id 没有 0（自增从 1 起），不撞。
+	UserID int64
 }
 
 // callLogWhere 把筛选条件拼成 WHERE 子句。列表与计数必须共用它——两处各拼一份的话，
 // 某天加了个筛选只改了一处，页码就会按另一组条件算出来（比如「只看失败」把总数算成
 // 全部流水，末页翻过去是空的）。
+// 列名一律带 call_logs. 前缀：ListCallLogs 自 #75 起 LEFT JOIN users 取归属邮箱，
+// id 在两张表里都有，不限定的话 SQL 直接报 ambiguous。
 func callLogWhere(f CallLogFilter) (string, []any) {
 	where, args := []string{}, []any{}
 	if f.Before > 0 {
-		where, args = append(where, "id < ?"), append(args, f.Before)
+		where, args = append(where, "call_logs.id < ?"), append(args, f.Before)
+	}
+	if f.UserID > 0 {
+		where, args = append(where, "call_logs.user_id = ?"), append(args, f.UserID)
 	}
 	if f.Model == UnknownModelLabel {
 		where = append(where, "model_requested = ''")
@@ -1138,12 +1150,14 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, created_at, api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
+		SELECT call_logs.id, call_logs.created_at, api_key_name, COALESCE(u.email, ''),
+		       endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, queue_wait_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens, cost,
 		       error, error_detail, upstream_request_id
-		FROM call_logs`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
+		FROM call_logs LEFT JOIN users u ON u.id = call_logs.user_id`+
+		clause+` ORDER BY call_logs.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,7 +1168,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		var ttft, in, outTok, cr, cw, reasoning sql.NullInt64
 		var stream sql.NullBool
 		var errWord, detail sql.NullString
-		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.Endpoint, &r.UpstreamEndpoint,
+		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.User, &r.Endpoint, &r.UpstreamEndpoint,
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &reasoning,
@@ -1175,22 +1189,30 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	return out, rows.Err()
 }
 
-// UsageRow 是用量汇总的一行。Label 按维度取值：接入点名，或上游凭证名。
+// UsageRow 是用量汇总的一行。Label 按维度取值：模型名、key 名、凭证名或用户邮箱。
 type UsageRow struct {
-	Label        string `json:"label"`
+	Label string `json:"label"`
+	// User 是这一行归属用户的邮箱（#75），只在 by=key 时有值：按 key 聚合改按
+	// (user_id, key 名) 分组防跨用户撞名，同名两行靠这一格分辨。label 仍是裸 key 名
+	// ——它还要当 /logs 的筛选值，掺了前缀就筛不动了；前缀是显示层的事。
+	User         string `json:"user,omitempty"`
 	Calls        int64  `json:"calls"`
 	Errors       int64  `json:"errors"`
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
 	CacheRead    int64  `json:"cache_read_tokens"`
 	CacheWrite   int64  `json:"cache_write_tokens"`
+	// CostUSD 是这一行的成本合计（#65/#75）：SUM(cost)，NULL 行天然不计。用户面板
+	// 的「按模型/按 key」要摆钱，配额进度也从这套数出。
+	CostUSD float64 `json:"cost_usd"`
 }
 
-// 用量聚合的三个维度（v0.38 加了按上游凭证，v0.53 加了按网关 key）。
+// 用量聚合的四个维度（v0.38 加按上游凭证，v0.53 加按网关 key，#75 加按用户）。
 const (
 	UsageByModel      = "model"
 	UsageByKey        = "key"
 	UsageByCredential = "credential"
+	UsageByUser       = "user"
 )
 
 // UnknownModelLabel 是「请求没解析到模型名」那一档的显示名。401 鉴权失败、请求体
@@ -1257,11 +1279,13 @@ func (r UsageRange) Spanned() bool { return !r.From.IsZero() && !r.To.IsZero() }
 //
 // From/To 在 Go 侧折成 UTC datetime 串再比，**不在 SQL 里对 created_at 套函数**：
 // 理由与 windowStart 那条同一个——整列过一遍函数，idx_call_logs_created_at 就废了。
+// created_at 带表名前缀：UsageBy 在 by=key / by=user 时 LEFT JOIN users，两张表都有
+// 这一列，不限定会 ambiguous；不 join 的路径上前缀无害。
 func (r UsageRange) where() (string, []any) {
 	if r.Spanned() {
-		return "created_at >= ? AND created_at < ?", []any{sqlTime(r.From), sqlTime(r.To)}
+		return "call_logs.created_at >= ? AND call_logs.created_at < ?", []any{sqlTime(r.From), sqlTime(r.To)}
 	}
-	return "created_at >= " + windowStart(r.Days), nil
+	return "call_logs.created_at >= " + windowStart(r.Days), nil
 }
 
 // sqlTime 把时刻折成 created_at 那一列的存储形态：UTC，CURRENT_TIMESTAMP 的格式。
@@ -1359,15 +1383,35 @@ func nextBucket(t time.Time, unit string) time.Time {
 	return t.AddDate(0, 0, 1)
 }
 
-func UsageBy(ctx context.Context, db Queryer, r UsageRange, dim string) ([]UsageRow, error) {
+// UsageBy 的第四个参数 forUser（#75）：> 0 时只聚这个用户的行，用户侧接口把它钉成
+// 本人；0 = 不筛，管理端照旧看全量。
+func UsageBy(ctx context.Context, db Queryer, r UsageRange, dim string, forUser int64) ([]UsageRow, error) {
 	// 模型这一档的兜底文案走参数而不是拼进 SQL：它在 Go 侧还要给 CallLogFilter 用，
 	// 两边照着同一个常量走才不会一边改了另一边筛不到。
 	label, args := `CASE WHEN model_requested <> '' THEN model_requested ELSE ? END`,
 		[]any{UnknownModelLabel}
-	if dim == UsageByKey {
+	// join / userCol / groupBy 三样按维度走：by=key 与 by=user 要联 users 拿邮箱，
+	// 其余维度不 join——每行多一次联表不是免费的。
+	join, userCol, groupBy := ``, `''`, `label`
+	switch dim {
+	case UsageByKey:
+		// 分组键是 (user_id, key 名) 不是裸 key 名（#64）：名字自 #73 起按用户唯一，
+		// 两个人各有一把「笔记本」是常态，混成一行两边的账都错。无主行 user_id 为
+		// NULL，SQLite 的 GROUP BY 把 NULL 归一组，恰是「无主算一档」的语义。
 		label, args = `CASE WHEN api_key_name <> '' THEN api_key_name ELSE '(未鉴权)' END`, nil
-	}
-	if dim == UsageByCredential {
+		join, userCol, groupBy = ` LEFT JOIN users u ON u.id = call_logs.user_id`,
+			`COALESCE(u.email, '')`, `call_logs.user_id, label`
+	case UsageByUser:
+		// 无主两档分开（#64 的成例）：api_key_name 非空是无主 key 的真调用（声明
+		// 形态、回填前的老行），空串是压根没鉴权——混成一档会把被扫的 401 算进
+		// 「无主」的账。
+		label, args = `CASE
+		           WHEN u.email IS NOT NULL   THEN u.email
+		           WHEN api_key_name <> ''    THEN '(无主 key)'
+		           ELSE '(未鉴权)'
+		         END`, nil
+		join = ` LEFT JOIN users u ON u.id = call_logs.user_id`
+	case UsageByCredential:
 		label, args = `CASE
 		           WHEN channel_key_name <> '' THEN channel_key_name
 		           WHEN channel_name <> ''     THEN '(未记录凭证)'
@@ -1377,15 +1421,20 @@ func UsageBy(ctx context.Context, db Queryer, r UsageRange, dim string) ([]Usage
 	// 范围的参数排在标签之后：SELECT 里那个 ? 先于 WHERE 里的两个出现。
 	where, rangeArgs := r.where()
 	args = append(args, rangeArgs...)
+	if forUser > 0 {
+		where += ` AND call_logs.user_id = ?`
+		args = append(args, forUser)
+	}
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT %s AS label,
+		SELECT %s AS label, %s,
 		       COUNT(*),
 		       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),
 		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
-		FROM call_logs
+		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0),
+		       COALESCE(SUM(cost), 0)
+		FROM call_logs%s
 		WHERE %s
-		GROUP BY label ORDER BY COUNT(*) DESC`, label, where), args...)
+		GROUP BY %s ORDER BY COUNT(*) DESC`, label, userCol, join, where, groupBy), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1393,8 +1442,8 @@ func UsageBy(ctx context.Context, db Queryer, r UsageRange, dim string) ([]Usage
 	out := []UsageRow{}
 	for rows.Next() {
 		var u UsageRow
-		if err := rows.Scan(&u.Label, &u.Calls, &u.Errors,
-			&u.InputTokens, &u.OutputTokens, &u.CacheRead, &u.CacheWrite); err != nil {
+		if err := rows.Scan(&u.Label, &u.User, &u.Calls, &u.Errors,
+			&u.InputTokens, &u.OutputTokens, &u.CacheRead, &u.CacheWrite, &u.CostUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

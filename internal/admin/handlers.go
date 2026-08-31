@@ -948,6 +948,115 @@ func (h *Handler) deleteMyKey(c *gin.Context) {
 	})
 }
 
+// ── 我的观测面（用户侧，#75）────────────────────────────────────────────
+//
+// 本人流水与聚合：归属焊死在 WHERE 的 user_id 上，查询参数给不出别人的账。
+// 露渠道名、错误词与 error_detail（自查「我这次为什么失败」要用），裁凭证名与
+// upstream_request_id（运营细节，#64）——裁在出口这一处，store 不知道谁在看。
+
+func (h *Handler) myQuota(c *gin.Context) {
+	q, err := store.UserQuotaState(c.Request.Context(), h.db, sessionUserFrom(c).ID, time.Now())
+	if err != nil {
+		h.log.Error("查我的配额失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"monthly_quota_usd": q.LimitUSD, "spent_usd": q.SpentUSD})
+}
+
+func (h *Handler) myLogs(c *gin.Context) {
+	f := store.CallLogFilter{
+		Limit:      clampQuery(c, "limit", 100, 1, maxLogLimit),
+		Offset:     clampQuery(c, "offset", 0, 0, 1<<20),
+		Before:     int64(clampQuery(c, "before", 0, 0, 1<<31-1)),
+		Model:      c.Query("model"),
+		Endpoint:   c.Query("endpoint"),
+		FailedOnly: c.Query("only") == "bad",
+		UserID:     sessionUserFrom(c).ID,
+	}
+	rows, err := store.ListCallLogs(c.Request.Context(), h.db, f)
+	if err != nil {
+		h.log.Error("列我的流水失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	total, err := store.CountCallLogs(c.Request.Context(), h.db, f)
+	if err != nil {
+		h.log.Error("数我的流水失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	for i := range rows {
+		rows[i].ChannelKeyName = ""
+		rows[i].UpstreamRequestID = ""
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows, "total": total})
+}
+
+// myUsage 是本人聚合：by=model（默认）/ by=key。by=user 在单人视角里没有意义，
+// by=credential 是运营细节，两者都不开——认不得的 by 当默认，同 usage。
+func (h *Handler) myUsage(c *gin.Context) {
+	dim := store.UsageByModel
+	if c.Query("by") == store.UsageByKey {
+		dim = store.UsageByKey
+	}
+	rng, ok := usageRange(c)
+	if !ok {
+		return
+	}
+	rows, err := store.UsageBy(c.Request.Context(), h.db, rng, dim, sessionUserFrom(c).ID)
+	if err != nil {
+		h.log.Error("汇总我的用量失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	// days 与 from/to 的取舍同 usage。
+	if !rng.Spanned() {
+		c.JSON(http.StatusOK, gin.H{"days": rng.Days, "by": dim, "rows": rows})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"by":   dim,
+		"from": rng.From.Unix(),
+		"to":   rng.To.Unix(),
+		"rows": rows,
+	})
+}
+
+// myModels 是「模型」页的只读清单（#76，DESIGN §12：全量开放，不按用户圈定）。
+// 复用 /v1/models 背后的同一份谓词——列出来的都调得通，两处不各算各的。
+func (h *Handler) myModels(c *gin.Context) {
+	models, err := store.ListExposedModels(c.Request.Context(), h.db)
+	if err != nil {
+		h.log.Error("列可路由模型失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	out := make([]gin.H, 0, len(models))
+	for _, m := range models {
+		out = append(out, gin.H{"id": m.ID, "direct": m.Direct})
+	}
+	c.JSON(http.StatusOK, gin.H{"models": out})
+}
+
+// updateProfile 改本人展示名（#76 账号页）。只有这一个字段：邮箱是登录标识不可改，
+// 密码另有专门接口。
+func (h *Handler) updateProfile(c *gin.Context) {
+	var in struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	if err := store.SetUserDisplayName(c.Request.Context(), h.db, sessionUserFrom(c).ID, in.DisplayName); err != nil {
+		h.log.Error("改展示名失败", "err", err)
+		fail(c, http.StatusInternalServerError, "保存失败")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // generateKey 造一把新的网关 key：sk-ptg- 前缀 + 32 位十六进制（128 bit 熵）。
 //
 // 前缀是给人看的——从一堆环境变量里一眼认出「这是网关的 key，不是上游的」。
@@ -1004,6 +1113,8 @@ func (h *Handler) listLogs(c *gin.Context) {
 		// 流水」——那比空列表更误导。
 		Endpoint:   c.Query("endpoint"),
 		FailedOnly: c.Query("only") == "bad",
+		// 按用户筛（#75）：user 传用户 id。0 = 不筛，解析失败同 clampQuery 的立论。
+		UserID: int64(clampQuery(c, "user", 0, 0, 1<<31-1)),
 	}
 	rows, err := store.ListCallLogs(c.Request.Context(), h.db, f)
 	if err != nil {
@@ -1021,7 +1132,7 @@ func (h *Handler) listLogs(c *gin.Context) {
 }
 
 // usage 汇总用量。by=model（默认，按请求的模型）/ by=key（按网关 API Key，v0.53）/
-// by=credential（按上游凭证，v0.38）。时间范围见 usageRange。
+// by=credential（按上游凭证，v0.38）/ by=user（按用户，#75）。时间范围见 usageRange。
 //
 // 认不得的 by 当默认处理而不是报错：这是个只影响展示的查询参数，写错了不该让整个
 // 页面打不开（同 clampQuery 的立论）。
@@ -1032,12 +1143,14 @@ func (h *Handler) usage(c *gin.Context) {
 		dim = store.UsageByKey
 	case store.UsageByCredential:
 		dim = store.UsageByCredential
+	case store.UsageByUser:
+		dim = store.UsageByUser
 	}
 	rng, ok := usageRange(c)
 	if !ok {
 		return
 	}
-	rows, err := store.UsageBy(c.Request.Context(), h.db, rng, dim)
+	rows, err := store.UsageBy(c.Request.Context(), h.db, rng, dim, 0)
 	if err != nil {
 		h.log.Error("汇总用量失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")

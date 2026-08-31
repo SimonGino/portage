@@ -26,6 +26,10 @@ import (
 // 同一件事，不值得为它再开一档 NULL。这条约定只在这里写一次，各字段不再复述。
 type Row struct {
 	APIKeyName string
+	// UserID 是这次调用归属的用户（口径层 §2.10，#64/#75），从认出的 key 的 owner
+	// 带过来。可空：未鉴权、无主 key（声明形态）都没有用户可归，NULL 就是事实——
+	// 与 APIKeyName 空串（未鉴权）不是同一格：无主 key 的行有 key 名、没有用户。
+	UserID sql.NullInt64
 	// Endpoint 是这次打的转发端点路径（#17），取值就是 protocol.Endpoint 那四条之一。
 	// 与 ClientProtocol 不是一回事：`/v1/messages` 与 `/v1/messages/count_tokens` 的
 	// 入站协议同为 anthropic，只看协议这两者在流水里结构上不可分。

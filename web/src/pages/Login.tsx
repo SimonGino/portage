@@ -85,7 +85,7 @@ export default function Login({
             {cfg && cfg.oauth.length > 0 && (
               <div className="login-oauth">
                 {cfg.oauth.map((p) => (
-                  <a key={p} className="btn btn-quiet" href={`/admin/oauth/${p}/start`}>
+                  <a key={p} className="btn btn-quiet" href={`/panel/oauth/${p}/start`}>
                     用 {PROVIDER_LABEL[p] ?? p} 登录
                   </a>
                 ))}

@@ -304,7 +304,7 @@ func TestAdminLogsExposeUpstreamRequestID(t *testing.T) {
 	gw.WaitCallRows(t, 2)
 
 	var got page
-	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/admin/api/logs", "", &got)
+	gw.LoggedIn(t).JSONInto(t, http.MethodGet, "/panel/api/logs", "", &got)
 	if len(got.Rows) != 2 {
 		t.Fatalf("流水 %d 行，期望 2", len(got.Rows))
 	}

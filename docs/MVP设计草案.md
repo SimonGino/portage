@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.20
+> 状态：草案 v1.22
+
+> v1.22 变更（#75/#76 落地：配额闸与流水用户维度、用户面板与 `/panel` 换名，2026-08-31）：口径见口径层 §2.10 与 v1.05，页面落点见 DESIGN v0.48/v0.49，这里只记实现层。①**配额**：`store/quota.go` 收 `UserQuotaState`（单条 SQL：限额列 + 相关子查询 `SUM(cost)`，月首按 UTC 钉死；查无此人 ErrNotFound）与 `SetUserQuota`（负数 InvalidInput）；闸挂 `server/quota.go`，链序 callLog → authRelay → rateLimit → **quotaGate** → relay——**按端点豁免** `count_tokens`（不按协议判：Anthropic 侧的 count_tokens 也不该被配额拦），key 无归属跳过，**DB 错回 500 不失败开放**，`LimitUSD != nil && Spent >= *Limit` 一条判据同时盖住 0 = 封停两档文案；429 前先 `Refused(QuotaExceeded)`（词表第 12 词，回绝半区）。不建月度计数器，逐请求 SUM——调额与新流水即时生效是白拿的（v1.20 ④ 原样）。②**迁移**：`addUserQuota` 补 `users.monthly_quota_usd`（hasColumn 探针——`CREATE TABLE IF NOT EXISTS` 不会给 #72 时代的库补列）；`addCallLogUserID` 补列 + 覆盖索引 `idx_call_logs_user_created(user_id, created_at, cost)`（配额 SUM 与用户维度聚合同一条索引答）；`backfillCallLogUsers` 每次启动幂等跑：`user_id IS NULL AND api_key_name <> ''` 的老行归第一个 admin（#75 裁定：单人时代的流水都是那个人的），无 admin 空转。③**用户侧观测面**：`GET /panel/api/my/{logs,usage,quota,models}` + `PUT /panel/api/account/profile`；my/logs 出手前抹 `channel_key_name` 与 `upstream_request_id`（运营细节不对用户展示，口径层 §2.10），渠道名、错误词与上游原文保留；my/usage 只认 `by=model|key`；管理侧 `/logs?user=`、`/usage?by=user`（无主两档 `(无主 key)` / `(未鉴权)` 分开，by=key 改按 `(user_id, name)` 分组防跨用户撞名、行带归属邮箱）与 `PUT /users/:id/quota`。④**`/panel` 换名**（口径层 v1.05）：vite `base` / Router `basename` / Go 挂载三处同串换 `/panel`，NoRoute 四路分流见 §8.1 实现口径；OAuth 中继 cookie `Path` 收 `/panel/oauth`，邮件链接 `/panel/verify|reset`；GitHub/Google redirect URI 要人工改的升级注记落 `docs/deploy*.md`（302 救不了回调）。⑤**测试**：store 侧 `quota_internal_test.go`（本月边界、NULL cost、无主行、回填三态跑两遍证幂等）；server 侧 `quota_test.go`（精确到限即拒且上游零请求、上月不算、0 封停、null 不限、count_tokens 豁免、调额即时生效、refused 行带 user_id）、`myview_test.go`（脱敏按**响应原文**断言不搜结构体、`?user=` 在 my/logs 上被无视）、`admin_test.go` 302 断言用 noFollow 客户端（`ErrUseLastResponse`）。修改人 jinpenga。
 
 > v1.21 变更（口径层 v1.03 落地：管理端导入加试算预览，2026-08-30）：口径与裁决见口径层 v1.03，这里只记实现层落点。①**`declcfg` 抽 `eval`**（闸一 selfCheck → 单事务 reconcile → 闸二 store.Validate，事务交还调用方定收场）：`Apply` 提交不变、新 `Preview` 回滚收场——两条路共用同一处编排，`Apply` 对外行为一字不变（启动日志、返回值、nil 归一原样）；错误分类（`ConfigError` → 400 原文）两条路逐字一致。②**`internal/admin/import.go`**：读体（4MB `MaxBytesReader`）与严格解析抽 `readDeclaredFile` 两条路共用；`POST /admin/api/import/preview` 注册在同一个 `rejectWritesWhenDeclarative` 写闸组，多用户闸与导入同款，`declcfg.Preview` → `{"changes": [...]}`（无变化回空数组），不走 `writeResult`（同 v1.19 ③ 的理由）。③**前端**：`api.previewImport` 与 `importConfig` 共用 `postYamlChanges`（回包同形、错误同形）；导入弹框改对账单三态（试算 loading → 清单/400 原文），确认键试算没过不渲染，汇总行新增/删除计数按清单动词前缀（与后端 reconcile 文案同仓耦合，注释钉着）；`Confirm` 补 `danger` 形态（未举起即实心红，与 ghost 同传时 ghost 优先）。④**用例分工**：`internal/server/import_test.go` 加两条——试算清单与真导入**逐字一致** + 库一行不动（事务回滚收场）+ 导完再试算同文件空数组；试算 400 带校验原文 + 库不动。`TestImportRequiresSession` 补未登录试算 401；声明形态 409 并进 `TestDeclarativeModeMakesBusinessConfigReadOnly` 写闸清单。修改人 jinpenga。
 > v1.20 变更（口径层 §2.10 多用户体系设计定稿落地，wayfinder [#60](https://github.com/SimonGino/portage/issues/60)，2026-08-30）：**设计定稿，实施另开里程碑**——本条只落数据模型、迁移步骤与测试方案（§7.10 新节），口径与裁决全文见口径层 v1.02 与地图各票。①新表 users / sessions / oauth_identities / invite_codes 与 settings 新键；②`api_keys` 加可空 owner + `UNIQUE(user_id, name)` 重建表迁移，无主认领规则；③`channel_models` 四价列、`channels.provider` 标注、`call_logs` 加 `user_id` / `cost`；④配额闸位置（令牌桶后、Resolve 前）、月度 SUM 不建计数器、outcome 词表第 12 词 `quota_exceeded`；⑤声明形态互斥闸（用户路由不注册、多用户库导出/导入拒绝）；⑥migration 五步幂等序列，无 admin 库全空转（横向约束：纯转发零负担）。修改人 jinpenga。
@@ -828,7 +830,7 @@ CREATE TABLE settings (            -- 管理端自己的状态，M3 起只有一
   - **拆桶的理由**（真机数据与被否掉的两档见口径层 v0.81）：#16 观测到 CC 开场 26 次 `count_tokens` 打空共用桶、紧随其后 11 条真实请求 429。选桶在 `rateLimit` 返回闭包**之前**算一次——端点是路由注册时就定死的，没有必要每个请求再判一遍。
   - **`count_tokens` 自己那只桶照样限**：它在 Anthropic 出口是真打上游的，`TestCountTokensIsStillRateLimited` 盯着这条；`TestCountTokensStormDoesNotStarveMessages` 盯 30 连打不饿死生成面，用 `burst=1` 而不是 2——桶只有一个令牌时，共用桶的旧行为下第一次 `count_tokens` 就把它拿走了，断言不必再靠「30 连打跑得比 1 秒快」（`qps=1`，一秒回一个令牌），机器一慢不会让被推翻的旧实现全绿。
 - **挂在鉴权之后**（`callLog → authRelay → rateLimit → relay`）。限流的目的是「钳制上游账单损失」，而没过鉴权的请求根本到不了上游；放在鉴权之前，被扫时扫描流量会把令牌吃光，把合法请求一起饿死——那是把防账单的闸变成了一个 DoS 放大器。代价是被扫时网关自己仍要为每个请求查一次 key，那是 SQLite 的一次索引命中，不是一个量级。副作用是好的：429 那行流水带得上 `api_key_name`，排查泄露时看得见是哪把 key 在刷。
-- **只挂转发面那四个 POST**。`/healthz` 被限会让监控在最忙的时候先报警；`/v1/models` 不打上游；`/admin` 走另一套凭证，把自己限出管理端毫无意义。
+- **只挂转发面那四个 POST**。`/healthz` 被限会让监控在最忙的时候先报警；`/v1/models` 不打上游；`/panel` 走另一套凭证，把自己限出管理端毫无意义。
 - **`Retry-After: 1` 固定值**。这个头的单位是整秒，而 10 QPS 下一个令牌 100ms 就回来，算出来的真值一律不足 1 秒、只能向上取整成 1。用 `Reserve()` 拿精确延迟还得记得 `Cancel()` 把令牌还回去（漏了等于每次被拒再扣一个），为一个恒等于 1 的结果不值当，所以用 `Allow()`。
 - **`rate_limit_qps: 0` 即关闭**，与 `retry.max_retries` 同一个陷阱：在 `config.Load` 里顺手补零值会让「写了 0」被悄悄改回 10，配置项形同虚设。`burst <= 0` 反过来必须兜底成 20——桶容量 0 时 `Allow` 恒假，整个转发面直接瘫掉。
 - **测试里默认关闭**（`gatewaytest.Options` 的零值），否则任何连打二十几个请求的用例会莫名变红，而且是间歇性的。要测限流的用例显式传 `qps=1`。
@@ -986,7 +988,7 @@ api_keys:
 
 **校验与失败模式**（口径层 §2.9 #31）：`yaml.Decoder` 开 `KnownFields(true)`；两道闸不合并但 problems 合并报，一次报全，退出码 1。路径三档语义写死：**空 = 没挂**（合法，走现状形态）、**非空但读不到 = 拒启**、**读到但内容不合法 = 拒启**。
 
-**空 `api_keys` 的判定按形态分岔**（口径层 v0.92，PO 2026-08-19 追认）：**挂了文件时拒启，没挂时维持现状的警告**。`main.go` 那处 `CountAPIKeys` 的警告是 v0.21 通则的一个刻意例外，注释里的立论是「配 key 得先有个跑着的网关（开 `/admin` 或对着它建的库灌 SQL），拒启会把这两条路一起堵死」——两条路在挂了文件的形态下同时消失，例外失去依据。**实现落点是那个 `if n == 0` 分支加一个形态判据**（`declcfg.Load` 是否返回了文件），不是把警告整个换成拒启；拒启那一支的 problems 并入 apply 前自校验那一批，一次报全（口径层 §2.9 #31），**不单独早退**——否则「文件里 API Key 一把都没写」会盖住同一份文件里的其余错，把一次重启变两次。**`main.go:54-56` 那三行注释同批改写**：它现在只写了例外那一半的立论，改后要写全两侧。
+**空 `api_keys` 的判定按形态分岔**（口径层 v0.92，PO 2026-08-19 追认）：**挂了文件时拒启，没挂时维持现状的警告**。`main.go` 那处 `CountAPIKeys` 的警告是 v0.21 通则的一个刻意例外，注释里的立论是「配 key 得先有个跑着的网关（开 `/panel` 或对着它建的库灌 SQL），拒启会把这两条路一起堵死」——两条路在挂了文件的形态下同时消失，例外失去依据。**实现落点是那个 `if n == 0` 分支加一个形态判据**（`declcfg.Load` 是否返回了文件），不是把警告整个换成拒启；拒启那一支的 problems 并入 apply 前自校验那一批，一次报全（口径层 §2.9 #31），**不单独早退**——否则「文件里 API Key 一把都没写」会盖住同一份文件里的其余错，把一次重启变两次。**`main.go:54-56` 那三行注释同批改写**：它现在只写了例外那一半的立论，改后要写全两侧。
 
 **导出**（口径层 §2.9 #32）：管理端一个按钮，沿用现有会话、不加 step-up。输出**按自然键字典序**排——渠道按 `name`、凭证按 `name`、纳管模型按 `upstream_model`、接入点按 `model`、候选按限定名、API Key 按 `name`——**不能按 id**，往返闸的字节相等全靠这一条。过滤运行期状态列（`channel_keys.disabled_reason` / `disabled_at`）。`key_plain` 为空串的存量 API Key **当场失败并点名是哪几把**。落盘 0600。**往返闸写成测试**：`export → 空库 apply → export` 字节相等；`channels.example.yaml` 就是这个导出器拿假数据跑出来的产物，由同一条测试钉住，不手写。
 
@@ -1015,7 +1017,7 @@ api_keys:
 
 **执行点与热路径**：鉴权 SELECT 改 **LEFT JOIN users**（取 `user_id`、判 `users.disabled`；无主 key 照常通过）；配额闸在**全局令牌桶之后、Resolve 之前**（判据只需 user_id），月度累计 = 流水 `SUM(cost)` 按 (user_id, UTC 当月) 现算 + 覆盖索引，**不建计数器表**；≥ 限额拒 429 + outcome 词表**第 12 词 `quota_exceeded`**（回绝半区），不预扣，`count_tokens` 豁免（#65）。聚合 `UsageBy`：key 维度改 `GROUP BY user_id, api_key_name`，加 user 第四维度与流水按用户筛选（#64）。用户侧接口强制限定本人，裁 `channel_key_name` 与 `upstream_request_id` 两列。
 
-**声明形态互斥闸**（#66）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；export 与 `POST /admin/api/import` 在存在非第一个 admin 名下 key 的库上拒绝；apply 对 `api_keys` 的覆盖删除语义不变。
+**声明形态互斥闸**（#66）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；export 与 `POST /panel/api/import` 在存在非第一个 admin 名下 key 的库上拒绝；apply 对 `api_keys` 的覆盖删除语义不变。
 
 **models.dev 快照**（#68）：MIT，`api.json` 裁剪后 gzip 约 164 KB `go:embed`，四价字段单位与渠道口径一致，随发版一条命令更新；缺价条目（434/7483）容忍手填。
 
@@ -1045,26 +1047,26 @@ api_keys:
 
 ### 8.1 管理端 API（M3，`internal/admin`）
 
-全部挂在 `/admin/api` 下，认 cookie 会话；`/admin` 下的其余路径发 SPA。错误统一 `{"error":"…"}`，写成功回 204 或一个小 JSON。
+全部挂在 `/panel/api` 下，认 cookie 会话；`/panel` 下的其余路径发 SPA。错误统一 `{"error":"…"}`，写成功回 204 或一个小 JSON。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/admin/api/login` | 验密码发会话；未设密码回 503 并说明补救动作（跟「密码错」分开说） |
-| POST | `/admin/api/logout` | |
-| GET | `/admin/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
-| POST | `/admin/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
-| GET POST | `/admin/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证。`base_url` 是协议名→根地址的对象（v1.12/口径层 v0.96）：填了哪个键就是声明了哪个协议，映射删到空即拒（渠道至少声明一个）；未知协议键 400 并点名（入参收 map 不收结构体，结构体会把拼错的键静默丢掉）；`protocols` 不再收，回包里仍带（派生值，省得前端每处自己算） |
-| ~~PUT~~ | ~~`/admin/api/channels/:id/credential`~~ | 整把替换，**v0.35 起作废**（口径层 v0.38 放开多凭证） |
-| GET POST | `/admin/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
-| PUT DELETE | `/admin/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |
-| POST | `/admin/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除。两者的 body 都可带 `protocols`（v0.38，协议子集；PUT 不传该字段=不动它，传空数组=清成继承）；PUT 另可带 `max_input_tokens`（v1.18，`*int`：不传=不动，0=清成不限，负数 400） |
-| POST | `/admin/api/channels/:id/fetch-models` | 拉上游 `/v1/models` 给表单做预勾选（v0.38）。**POST 而非 GET**：它朝上游发真请求、花上游的配额，不该被浏览器或中间层当可缓存的读操作重放。回一组 `{protocols, models, status, detail}`，**不落库、不进路由** |
-| POST | `/admin/api/channels/:id/probe` | 模型级检测（v1.13/口径层 v0.96 ①③）：body `{credential_id, model, protocols}`——凭证按 id 指定（**允许已停用**）、`model` 空串 = 全部启用中的纳管模型、`protocols` 必须 ⊆ 已声明协议（越出 400 且**零请求**——参数错误不该花钱）。每格发带模型名的最小真实请求，回 `{credential, models}` 三态矩阵（2xx 通 / 404、405 不通 / 其余说不清，我方固定词表不带上游原文）；**不落库、不进路由、无任何自动触发** |
-| GET POST | `/admin/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
-| GET POST | `/admin/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
-| GET | `/admin/api/logs?limit=&offset=&before=&model=&key=&endpoint=&only=bad` | 近期流水，limit 上限 500，回 `{rows, total}`（v0.60；此前是裸数组）。筛选**全在后端**（v0.53）：前端在已拉回的一页里过滤，筛出的是「这一页里的失败」。**翻页 = `before` 钉窗口上沿 + `offset` 在窗口内定位**（v0.60）：单用 offset 会错位（流水是时间序、新行插在头部，翻到第二页时已被推着往后错），单用游标跳不了页（没有逆向形式、也没有「往前数 60 条」这种形式）。管理端进页时拿第一发的最大 id 当上沿、之后每发都带 `before=anchor+1`。`total` 按**同一组条件、同一个 before** 数，于是它是页码的分母且翻页途中不变；两条语句不在一个事务里，唯一的窗口是不带 before 的第一发，下一次点击自动纠正。行里带 `upstream_request_id`（v0.70）：不可空，**空串照原样给不转 null**，前端只判空串。**没有按它筛的参数**——它逐次唯一，筛出来永远只有一行（口径层 v0.67 ⑥）。行里另带 `endpoint`（v0.86，口径层 v0.82），`endpoint=` 精确匹配那四条路径之一；**取值不校验**，与 `model`/`key` 同款原样下推——认不得的值筛出空列表，而校验后忽略等于把「筛错了」显示成「全部流水」，比空列表更误导。行里再带 `upstream_endpoint`（v0.87，口径层 v0.83），**只出不筛**：没有 `upstream_endpoint=` 这个参数，问「这批 count_tokens 怎么样」用的是客户端打的那条路径；同 `upstream_request_id` 一样不可空、空串照原样给不转 null |
-| GET | `/admin/api/usage?days=&by=model\|key\|credential&from=&to=` | 汇总，`by` 选维度：按模型（默认）、按**网关 API Key**（v0.53）或按**上游凭证**（v0.35）。后两者是两件事，标签写全称——只写「按凭证」两边都像。`from`/`to` 是 **unix 秒的半开区间 `[from, to)`**（v0.92，口径层 v0.86），两个都给时**顶掉 `days`**、`windowStart` 不参与，只给一个当没给；排行页点中节律带上某一格之后，排行列表 / 环形图 / 堆叠条用它重取那一格的构成。**顶掉 `days` 时回包也不带 `days`**（v0.94，PO 裁），改回 `from`/`to` 原值：回一个没参与计算的窗口档位是撒谎——于是这个端点有两种回包形状，`{days, by, rows}` 与 `{by, from, to, rows}`。**解析失败回 400**，见 §8.2 |
-| GET | `/admin/api/usage/buckets?days=&unit=hour\|day` | 按区间分桶的时间序列（v0.92，口径层 v0.86），排行页第一层「节律带」的取数。行里给 `bucket`（本地时区，`unit=hour` 为 `YYYY-MM-DD HH:00`、`unit=day` 为 `YYYY-MM-DD`）、`calls`、`errors` 与四个 token 列。**`errors` 与缓存两列必须给**：切片井摆的是缓存 / 净输入 / 输出三段，而净输入 = 毛值 − 缓存两项（口径层 v0.71），`UsageDaily` 那四列一个都没有。`unit` 认不得当 `day`（同 `by`）。**取代 `GET /admin/api/usage/daily`**（v0.52 加，v0.92 删；`unit=day` 完全覆盖它，其唯一消费者 `Overview.tsx` 自口径层 v0.75 去掉概览页起已是死代码） |
+| POST | `/panel/api/login` | 验密码发会话；未设密码回 503 并说明补救动作（跟「密码错」分开说） |
+| POST | `/panel/api/logout` | |
+| GET | `/panel/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
+| POST | `/panel/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
+| GET POST | `/panel/api/channels`、PUT DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证。`base_url` 是协议名→根地址的对象（v1.12/口径层 v0.96）：填了哪个键就是声明了哪个协议，映射删到空即拒（渠道至少声明一个）；未知协议键 400 并点名（入参收 map 不收结构体，结构体会把拼错的键静默丢掉）；`protocols` 不再收，回包里仍带（派生值，省得前端每处自己算） |
+| ~~PUT~~ | ~~`/panel/api/channels/:id/credential`~~ | 整把替换，**v0.35 起作废**（口径层 v0.38 放开多凭证） |
+| GET POST | `/panel/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
+| PUT DELETE | `/panel/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |
+| POST | `/panel/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除。两者的 body 都可带 `protocols`（v0.38，协议子集；PUT 不传该字段=不动它，传空数组=清成继承）；PUT 另可带 `max_input_tokens`（v1.18，`*int`：不传=不动，0=清成不限，负数 400） |
+| POST | `/panel/api/channels/:id/fetch-models` | 拉上游 `/v1/models` 给表单做预勾选（v0.38）。**POST 而非 GET**：它朝上游发真请求、花上游的配额，不该被浏览器或中间层当可缓存的读操作重放。回一组 `{protocols, models, status, detail}`，**不落库、不进路由** |
+| POST | `/panel/api/channels/:id/probe` | 模型级检测（v1.13/口径层 v0.96 ①③）：body `{credential_id, model, protocols}`——凭证按 id 指定（**允许已停用**）、`model` 空串 = 全部启用中的纳管模型、`protocols` 必须 ⊆ 已声明协议（越出 400 且**零请求**——参数错误不该花钱）。每格发带模型名的最小真实请求，回 `{credential, models}` 三态矩阵（2xx 通 / 404、405 不通 / 其余说不清，我方固定词表不带上游原文）；**不落库、不进路由、无任何自动触发** |
+| GET POST | `/panel/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
+| GET POST | `/panel/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
+| GET | `/panel/api/logs?limit=&offset=&before=&model=&key=&endpoint=&only=bad` | 近期流水，limit 上限 500，回 `{rows, total}`（v0.60；此前是裸数组）。筛选**全在后端**（v0.53）：前端在已拉回的一页里过滤，筛出的是「这一页里的失败」。**翻页 = `before` 钉窗口上沿 + `offset` 在窗口内定位**（v0.60）：单用 offset 会错位（流水是时间序、新行插在头部，翻到第二页时已被推着往后错），单用游标跳不了页（没有逆向形式、也没有「往前数 60 条」这种形式）。管理端进页时拿第一发的最大 id 当上沿、之后每发都带 `before=anchor+1`。`total` 按**同一组条件、同一个 before** 数，于是它是页码的分母且翻页途中不变；两条语句不在一个事务里，唯一的窗口是不带 before 的第一发，下一次点击自动纠正。行里带 `upstream_request_id`（v0.70）：不可空，**空串照原样给不转 null**，前端只判空串。**没有按它筛的参数**——它逐次唯一，筛出来永远只有一行（口径层 v0.67 ⑥）。行里另带 `endpoint`（v0.86，口径层 v0.82），`endpoint=` 精确匹配那四条路径之一；**取值不校验**，与 `model`/`key` 同款原样下推——认不得的值筛出空列表，而校验后忽略等于把「筛错了」显示成「全部流水」，比空列表更误导。行里再带 `upstream_endpoint`（v0.87，口径层 v0.83），**只出不筛**：没有 `upstream_endpoint=` 这个参数，问「这批 count_tokens 怎么样」用的是客户端打的那条路径；同 `upstream_request_id` 一样不可空、空串照原样给不转 null |
+| GET | `/panel/api/usage?days=&by=model\|key\|credential&from=&to=` | 汇总，`by` 选维度：按模型（默认）、按**网关 API Key**（v0.53）或按**上游凭证**（v0.35）。后两者是两件事，标签写全称——只写「按凭证」两边都像。`from`/`to` 是 **unix 秒的半开区间 `[from, to)`**（v0.92，口径层 v0.86），两个都给时**顶掉 `days`**、`windowStart` 不参与，只给一个当没给；排行页点中节律带上某一格之后，排行列表 / 环形图 / 堆叠条用它重取那一格的构成。**顶掉 `days` 时回包也不带 `days`**（v0.94，PO 裁），改回 `from`/`to` 原值：回一个没参与计算的窗口档位是撒谎——于是这个端点有两种回包形状，`{days, by, rows}` 与 `{by, from, to, rows}`。**解析失败回 400**，见 §8.2 |
+| GET | `/panel/api/usage/buckets?days=&unit=hour\|day` | 按区间分桶的时间序列（v0.92，口径层 v0.86），排行页第一层「节律带」的取数。行里给 `bucket`（本地时区，`unit=hour` 为 `YYYY-MM-DD HH:00`、`unit=day` 为 `YYYY-MM-DD`）、`calls`、`errors` 与四个 token 列。**`errors` 与缓存两列必须给**：切片井摆的是缓存 / 净输入 / 输出三段，而净输入 = 毛值 − 缓存两项（口径层 v0.71），`UsageDaily` 那四列一个都没有。`unit` 认不得当 `day`（同 `by`）。**取代 `GET /panel/api/usage/daily`**（v0.52 加，v0.92 删；`unit=day` 完全覆盖它，其唯一消费者 `Overview.tsx` 自口径层 v0.75 去掉概览页起已是死代码） |
 
 三条实现口径：
 
@@ -1387,14 +1389,14 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 - 灌配置在**宿主侧**做：scratch 里既没有 shell 也没有 sqlite3。`deploy/docker-compose.yml` 顶部写了对着卷跑 sqlite3 容器的命令，`--user 65532:65532` 不能省——身份不对只能只读，报的是 `attempt to write a readonly database`。
 - 健康检查刻意留空：为探活往镜像里塞一个 shell 或 curl，等于为一件外部就能做的事把攻击面加回来。
 
-**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/admin` 配（命令行那条路留着没删）。管理密码走 `PORTAGE_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
+**M3 更新**：镜像多了一层 `node:22-slim` 前端构建，Go 那层改用 `-tags webui`；灌配置不再需要 sqlite3 容器，起来直接开 `/panel` 配（命令行那条路留着没删）。管理密码走 `PORTAGE_ADMIN_PASSWORD` 环境变量，见 §7 与口径层 v0.28。镜像 25 MB。
 
 ### 11.2 前端 embed 策略（M3）
 
-- **build tag 二选一**：`internal/webui/embed.go`（`//go:build webui` + `//go:embed all:dist`）与 `stub.go`（`//go:build !webui`，返回「没有」）。不带 tag 的构建照样能过 `go build ./...`——CI 没有 Node，本地首次 clone 也没跑过 `npm build`，而 embed 失败的报错是「pattern dist: no matching files」，看不出跟前端有关。不带前端的二进制访问 `/admin` 会看到一页说明，转发不受影响。
+- **build tag 二选一**：`internal/webui/embed.go`（`//go:build webui` + `//go:embed all:dist`）与 `stub.go`（`//go:build !webui`，返回「没有」）。不带 tag 的构建照样能过 `go build ./...`——CI 没有 Node，本地首次 clone 也没跑过 `npm build`，而 embed 失败的报错是「pattern dist: no matching files」，看不出跟前端有关。不带前端的二进制访问 `/panel` 会看到一页说明，转发不受影响。
 - **产物落 `internal/webui/dist`，不落 `web/dist`**：`//go:embed` 只能读自己包目录下的文件。选 `internal/webui/` 而不是把 Go 文件挪进 `web/`，是为了让 Go 工具链永远不用走 `node_modules`。`all:` 前缀不能省，否则 Vite 的点开头目录会被静默跳过。
-- **`base: '/admin/'`（vite.config.ts）+ `basename="/admin"`（Router）**：默认 base 会让 index.html 去请求 `/assets/…`，而静态文件只在 `/admin` 下发——**这个故障只在 embed 后出现，`npm run dev` 一切正常**。`internal/server/webui_test.go`（`//go:build webui`）就是这条的哨兵：断言 index.html 引用的资源全在 `/admin/` 下且能取到、`.js` 的 Content-Type 是 `text/javascript`。
-- **SPA 走 `r.NoRoute` 而不是 `r.Static`**：深链接（`/admin/keys` 直接刷新）必须回同一份 index.html，而 gin 不允许 `/admin/*filepath` 与已注册的 `/admin/api/…` 并存——**注册时就 panic**，不是运行期 404。NoRoute 里三路分流：非 `/admin` → 普通 404；`/admin/api/…` 未知 → JSON 404（回 HTML 会让前端在 `JSON.parse` 上炸，报的错跟真正原因毫无关系）；其余 → SPA。
+- **`base: '/panel/'`（vite.config.ts）+ `basename="/panel"`（Router）**：默认 base 会让 index.html 去请求 `/assets/…`，而静态文件只在 `/panel` 下发——**这个故障只在 embed 后出现，`npm run dev` 一切正常**。`internal/server/webui_test.go`（`//go:build webui`）就是这条的哨兵：断言 index.html 引用的资源全在 `/panel/` 下且能取到、`.js` 的 Content-Type 是 `text/javascript`。
+- **SPA 走 `r.NoRoute` 而不是 `r.Static`**：深链接（`/panel/keys` 直接刷新）必须回同一份 index.html，而 gin 不允许 `/panel/*filepath` 与已注册的 `/panel/api/…` 并存——**注册时就 panic**，不是运行期 404。NoRoute 里四路分流（v1.22 起）：`/admin` 前缀先接住——GET 302 到 `/panel` 下同路径（query 原样带走），非 GET 404（口径层 v1.05 ③）；非 `/panel` → 普通 404（`/paneling` 这类只是前缀相似的照常 404）；`/panel/api/…` 未知 → JSON 404（回 HTML 会让前端在 `JSON.parse` 上炸，报的错跟真正原因毫无关系）；其余 → SPA。
 - **Content-Type 自己判，不用 `mime.TypeByExtension`**：后者读 `/etc/mime.types`，同一份二进制在两台机器上可能给出不同结果，`.js` 被判成 `text/plain` 时浏览器直接拒绝执行模块。`http.ServeContent` 只在头里没有 Content-Type 时才去猜，所以要先写好再调它。
 - index.html 发 `no-cache`，带 hash 的资源发 `immutable`：反过来的话，改完前端浏览器还拿着旧 index 去引用已经不存在的文件名，白屏。
 
@@ -1430,7 +1432,7 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 
 **这次验证的边界**：证的是这份 nginx 配置对 SSE 的行为，用的是桩上游，没有接真网关、没有跑 harness。真机上线仍要按 §10 的 harness 清单再走一遍。
 
-**只放行 `/v1`（+ 可选 `/healthz`）**，兑现口径层 §2.7「反代只放行转发面」：`/admin` 认的是 cookie 会话，公网上多一个可爆破的登录页没必要，要用走内网直连或 SSH 端口转发。样例末尾的 `location / { return 404; }` 是兜底，防以后加 location 时漏掉。
+**只放行 `/v1`（+ 可选 `/healthz`）**，兑现口径层 §2.7「反代只放行转发面」：`/panel` 认的是 cookie 会话，公网上多一个可爆破的登录页没必要，要用走内网直连或 SSH 端口转发。样例末尾的 `location / { return 404; }` 是兜底，防以后加 location 时漏掉。
 
 **全局限流不在这一层**：口径层 §2.7 已裁定全局令牌桶（10 QPS / 突发 20，v0.81 起两只——生成面一只、`count_tokens` 一只）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。实现见 §7.2。
 

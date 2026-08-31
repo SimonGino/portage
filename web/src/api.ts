@@ -1,6 +1,6 @@
 // 管理端 API 的唯一出入口。所有请求都从这里走，好处是 401 只需要在一个地方处理。
 
-const BASE = '/admin/api'
+const BASE = '/panel/api'
 
 /** ApiError 带着状态码，调用方靠它区分「配置被校验挡了」（400）和「掉线了」（401）。 */
 export class ApiError extends Error {
@@ -175,6 +175,46 @@ export function declaredProtocols(urls: BaseURLs): Protocol[] {
 export function firstBaseURL(urls: BaseURLs): string {
   const p = declaredProtocols(urls)[0]
   return p ? urls[p]! : ''
+}
+
+/**
+ * 「共用前缀 + 协议勾选」这份 UI 形态的状态（DESIGN v0.46，口径层 v1.04）：shared
+ * 是所有勾中协议共用的出站前缀，chips 是勾中的协议，overrides 是个别要不同前缀的
+ * 协议——键存在即「这个协议单独填」，值为空串视同没填（仍用 shared）。
+ *
+ * 它只是 UI 草稿，落库的仍是那份「协议 → 地址」map：勾选是写 map 的手势不是独立
+ * 字段，「填了哪个协议的地址就是声明了哪个协议」（v0.96 ②）在数据层原封不动。
+ */
+export interface BaseURLDraft {
+  shared: string
+  chips: Protocol[]
+  overrides: Partial<Record<Protocol, string>>
+}
+
+/**
+ * 从库里那份 map 反推 draft：共用前缀取回退序第一个已填协议的值（与 firstBaseURL
+ * 同一条秩序），值与它不同的已声明协议算覆盖。存量渠道无损拆开、join 回去不变——
+ * 库里的值都是服务端 trim 过的，这里不必再防空白值。
+ */
+export function splitBaseURLs(urls: BaseURLs): BaseURLDraft {
+  const shared = firstBaseURL(urls)
+  const overrides: Partial<Record<Protocol, string>> = {}
+  for (const p of declaredProtocols(urls)) {
+    if ((urls[p] ?? '') !== shared) overrides[p] = urls[p] ?? ''
+  }
+  return { shared, chips: declaredProtocols(urls), overrides }
+}
+
+/** splitBaseURLs 的逆：勾中的协议写值（有非空覆盖用覆盖，否则用共用前缀），
+ *  没勾的不写。勾了但共用前缀还空着的协议落空串 = 未声明，声明集由 declaredProtocols
+ *  照旧推导，不需要另一套判空。 */
+export function joinBaseURLs(d: BaseURLDraft): BaseURLs {
+  const urls: BaseURLs = {}
+  for (const p of d.chips) {
+    const ov = (d.overrides[p] ?? '').trim()
+    urls[p] = ov !== '' ? d.overrides[p]! : d.shared
+  }
+  return urls
 }
 
 /**
@@ -374,6 +414,8 @@ export interface CallLog {
   id: number
   created_at: string
   api_key_name: string
+  /** 归属用户的邮箱（#75），LEFT JOIN 现查。空串 = 无归属（未鉴权、无主 key、老流水）。 */
+  user: string
   /**
    * 这次打的转发端点路径（#17），取值是那四条之一：`/v1/messages`、
    * `/v1/messages/count_tokens`、`/v1/chat/completions`、`/v1/responses`。
@@ -452,15 +494,19 @@ export interface CallLog {
   upstream_request_id: string
 }
 
-/** 用量汇总的一行。label 按聚合维度取值：模型名 / 网关 key 名 / 上游凭证名。 */
+/** 用量汇总的一行。label 按聚合维度取值：模型名 / 网关 key 名 / 上游凭证名 / 用户。 */
 export interface UsageRow {
   label: string
+  /** 归属用户邮箱（#75），只在 by=key 时有值：同名 key 跨用户撞名靠它分辨。 */
+  user?: string
   calls: number
   errors: number
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  /** 这一行的成本合计（#65/#75）：SUM(cost)，无账可计的行天然不计。 */
+  cost_usd: number
 }
 
 /**
@@ -515,7 +561,22 @@ export interface User {
   email_verified: boolean
   /** false = OAuth-only 账号：设密码走「忘记密码」的邮件链路。 */
   has_password: boolean
+  /** 月度配额（#65/#75），USD。null = 不限额（默认），0 = 封停。 */
+  monthly_quota_usd: number | null
   created_at: string
+}
+
+/** 本人配额现状（GET /my/quota）：限额 + 本月（UTC 自然月）已用。 */
+export interface QuotaState {
+  monthly_quota_usd: number | null
+  spent_usd: number
+}
+
+/** 「模型」页只读清单的一行（GET /my/models）：与 /v1/models 同一份可路由谓词。 */
+export interface MyModel {
+  id: string
+  /** true = 纳管模型限定名（渠道名/模型名，直连），false = 接入点。 */
+  direct: boolean
 }
 
 export interface SessionState {

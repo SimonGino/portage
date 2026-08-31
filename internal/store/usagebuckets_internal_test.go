@@ -186,12 +186,12 @@ func TestUsageByRangeMatchesDays(t *testing.T) {
 	seedCall(t, db, today.Add(time.Hour), 200, 10, 20, 30, 40)
 	seedCall(t, db, today.Add(2*time.Hour), 500, 1, 2, 3, 4)
 
-	byDays, err := UsageBy(context.Background(), db, UsageRange{Days: 1}, UsageByModel)
+	byDays, err := UsageBy(context.Background(), db, UsageRange{Days: 1}, UsageByModel, 0)
 	if err != nil {
 		t.Fatalf("按 days 汇总失败: %v", err)
 	}
 	byRange, err := UsageBy(context.Background(), db,
-		UsageRange{Days: 1, From: today, To: today.AddDate(0, 0, 1)}, UsageByModel)
+		UsageRange{Days: 1, From: today, To: today.AddDate(0, 0, 1)}, UsageByModel, 0)
 	if err != nil {
 		t.Fatalf("按 from/to 汇总失败: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestUsageByRangeIsHalfOpen(t *testing.T) {
 	seedCall(t, db, at, 200, 0, 0, 0, 0)
 
 	rows, err := UsageBy(context.Background(), db,
-		UsageRange{From: at.Add(-time.Hour), To: at}, UsageByModel)
+		UsageRange{From: at.Add(-time.Hour), To: at}, UsageByModel, 0)
 	if err != nil {
 		t.Fatalf("汇总失败: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestUsageByRangeIsHalfOpen(t *testing.T) {
 		t.Errorf("右端点那一刻的行被数进来了: %+v", rows)
 	}
 	rows, err = UsageBy(context.Background(), db,
-		UsageRange{From: at, To: at.Add(time.Hour)}, UsageByModel)
+		UsageRange{From: at, To: at.Add(time.Hour)}, UsageByModel, 0)
 	if err != nil {
 		t.Fatalf("汇总失败: %v", err)
 	}

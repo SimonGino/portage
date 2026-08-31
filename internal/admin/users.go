@@ -113,6 +113,25 @@ func (h *Handler) setUserDisabled(c *gin.Context) {
 	h.userWrite(c, store.SetUserDisabled(c.Request.Context(), h.db, id, in.Disabled))
 }
 
+// setUserQuota 设月度配额（#75，口径层 §2.10）：null = 不限额（默认）、0 = 封停、
+// 正数 = 每月美元上限。指针直传——JSON 的 null 与数值 0 在这里语义完全不同，
+// 不能用零值兜。改额即时生效：闸每次请求现算 SUM，没有计数器要同步。
+func (h *Handler) setUserQuota(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "id 不是数字")
+		return
+	}
+	var in struct {
+		MonthlyQuotaUSD *float64 `json:"monthly_quota_usd"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.userWrite(c, store.SetUserQuota(c.Request.Context(), h.db, id, in.MonthlyQuotaUSD))
+}
+
 // userWrite 是两个用户治理写接口共用的收尾：ErrNotFound→404、守门条件→400。
 func (h *Handler) userWrite(c *gin.Context, err error) {
 	switch {
@@ -211,7 +230,7 @@ func (h *Handler) getAuthSettings(c *gin.Context) {
 		if site == "" {
 			return ""
 		}
-		return site + "/admin/oauth/" + provider + "/callback"
+		return site + "/panel/oauth/" + provider + "/callback"
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"site_url": site,

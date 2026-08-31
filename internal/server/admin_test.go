@@ -20,7 +20,7 @@ func TestAdminRejectsWithoutSession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.Admin(t) // 没登录
 
-	for _, path := range []string{"/admin/api/channels", "/admin/api/keys", "/admin/api/logs"} {
+	for _, path := range []string{"/panel/api/channels", "/panel/api/keys", "/panel/api/logs"} {
 		if status, body := a.Do(t, http.MethodGet, path, ""); status != http.StatusUnauthorized {
 			t.Errorf("%s 未登录时应 401，得到 %d：%s", path, status, body)
 		}
@@ -31,7 +31,7 @@ func TestAdminRejectsWithoutSession(t *testing.T) {
 func TestGatewayKeyCannotReachAdminAPI(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.URL+"/admin/api/channels", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.URL+"/panel/api/channels", nil)
 	if err != nil {
 		t.Fatalf("构造请求失败: %v", err)
 	}
@@ -93,10 +93,10 @@ func TestAdminLoginRejectsWrongPassword(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.Admin(t)
 
-	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"nope"}`); status != http.StatusUnauthorized {
+	if status, _ := a.Do(t, http.MethodPost, "/panel/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"nope"}`); status != http.StatusUnauthorized {
 		t.Errorf("密码错应 401，得到 %d", status)
 	}
-	if status, _ := a.Do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusUnauthorized {
+	if status, _ := a.Do(t, http.MethodGet, "/panel/api/channels", ""); status != http.StatusUnauthorized {
 		t.Errorf("登录失败后不该拿到会话，得到 %d", status)
 	}
 }
@@ -105,9 +105,9 @@ func TestAdminLogoutEndsSession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", nil)
-	a.JSONInto(t, http.MethodPost, "/admin/api/logout", "", nil)
-	if status, _ := a.Do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusUnauthorized {
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", nil)
+	a.JSONInto(t, http.MethodPost, "/panel/api/logout", "", nil)
+	if status, _ := a.Do(t, http.MethodGet, "/panel/api/channels", ""); status != http.StatusUnauthorized {
 		t.Errorf("登出之后还能访问，得到 %d", status)
 	}
 }
@@ -119,20 +119,20 @@ func TestPasswordChangeRevokesEverySession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	first, second := g.LoggedIn(t), g.LoggedIn(t)
 
-	first.JSONInto(t, http.MethodPost, "/admin/api/password",
+	first.JSONInto(t, http.MethodPost, "/panel/api/password",
 		`{"old_password":"`+gatewaytest.AdminPassword+`","new_password":"a-brand-new-one"}`, nil)
 
 	for name, a := range map[string]*gatewaytest.AdminClient{"改密码的那个会话": first, "另一个会话": second} {
-		if status, _ := a.Do(t, http.MethodGet, "/admin/api/channels", ""); status != http.StatusUnauthorized {
+		if status, _ := a.Do(t, http.MethodGet, "/panel/api/channels", ""); status != http.StatusUnauthorized {
 			t.Errorf("%s 在改密码之后仍然有效，得到 %d", name, status)
 		}
 	}
 
 	fresh := g.Admin(t)
-	if status, body := fresh.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"a-brand-new-one"}`); status != http.StatusOK {
+	if status, body := fresh.Do(t, http.MethodPost, "/panel/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"a-brand-new-one"}`); status != http.StatusOK {
 		t.Errorf("新密码登不进去：%d %s", status, body)
 	}
-	if status, _ := fresh.Do(t, http.MethodPost, "/admin/api/login",
+	if status, _ := fresh.Do(t, http.MethodPost, "/panel/api/login",
 		`{"email":"`+gatewaytest.AdminEmail+`","password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
 		t.Errorf("旧密码还能用，得到 %d", status)
 	}
@@ -143,17 +143,17 @@ func TestPasswordChangeRevokesEverySession(t *testing.T) {
 func TestConfigPasswordDoesNotOverrideChangedOne(t *testing.T) {
 	db := gatewaytest.NewDB(t)
 	g := gatewaytest.Start(t, db)
-	g.LoggedIn(t).JSONInto(t, http.MethodPost, "/admin/api/password",
+	g.LoggedIn(t).JSONInto(t, http.MethodPost, "/panel/api/password",
 		`{"old_password":"`+gatewaytest.AdminPassword+`","new_password":"changed-by-admin"}`, nil)
 
 	// 同一个库再起一次网关，等价于一次重启——Start 会照常拿配置里的密码去 Bootstrap。
 	restarted := gatewaytest.Start(t, db)
 	a := restarted.Admin(t)
-	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login",
+	if status, _ := a.Do(t, http.MethodPost, "/panel/api/login",
 		`{"email":"`+gatewaytest.AdminEmail+`","password":"`+gatewaytest.AdminPassword+`"}`); status != http.StatusUnauthorized {
 		t.Errorf("重启把配置里的旧密码又灌回去了，得到 %d", status)
 	}
-	if status, body := a.Do(t, http.MethodPost, "/admin/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"changed-by-admin"}`); status != http.StatusOK {
+	if status, body := a.Do(t, http.MethodPost, "/panel/api/login", `{"email":"`+gatewaytest.AdminEmail+`","password":"changed-by-admin"}`); status != http.StatusOK {
 		t.Errorf("重启之后改过的密码不认了：%d %s", status, body)
 	}
 }
@@ -184,14 +184,14 @@ func TestAdminCanConfigureAWorkingRoute(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"anthropic-main","base_url":{"anthropic":"`+up.URL+`"},
 		"credential":"sk-upstream-secret"}`, &created)
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(created.ID)+"/models",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(created.ID)+"/models",
 		`{"upstream_model":"claude-3-5-sonnet"}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 1 || len(channels[0].Models) != 1 {
 		t.Fatalf("渠道/纳管模型没建上：%+v", channels)
 	}
@@ -199,7 +199,7 @@ func TestAdminCanConfigureAWorkingRoute(t *testing.T) {
 	var ap struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/access-points",
+	a.JSONInto(t, http.MethodPost, "/panel/api/access-points",
 		`{"model":"claude-via-admin","channel_model_id":`+itoa(channels[0].Models[0].ID)+`}`, &ap)
 
 	resp := g.Post(t, "/v1/messages", `{"model":"claude-via-admin","messages":[]}`, nil)
@@ -224,13 +224,13 @@ func TestAdminReturnsCredentialOnlyFromThePool(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	// 凭证池：**要有**值，否则页面上没法认出这把是哪一把（PO 于 v0.47 裁定）。
-	if _, body := a.Do(t, http.MethodGet, "/admin/api/channels/1/credentials", ""); !strings.Contains(body, secret) {
+	if _, body := a.Do(t, http.MethodGet, "/panel/api/channels/1/credentials", ""); !strings.Contains(body, secret) {
 		t.Errorf("凭证池没把值发出来：%s", body)
 	}
 
 	// 其余读接口一个都不许带上它。回读是给凭证池那一屏开的口子，不是全局放开。
-	for _, path := range []string{"/admin/api/channels", "/admin/api/access-points",
-		"/admin/api/keys", "/admin/api/logs"} {
+	for _, path := range []string{"/panel/api/channels", "/panel/api/access-points",
+		"/panel/api/keys", "/panel/api/logs"} {
 		_, body := a.Do(t, http.MethodGet, path, "")
 		if strings.Contains(body, secret) {
 			t.Errorf("%s 把上游凭证吐出来了：%s", path, body)
@@ -238,12 +238,12 @@ func TestAdminReturnsCredentialOnlyFromThePool(t *testing.T) {
 	}
 
 	// 没登录就什么都拿不到——回读的前提是这一层拦得住。
-	if status, body := g.Admin(t).Do(t, http.MethodGet, "/admin/api/channels/1/credentials", ""); status == http.StatusOK || strings.Contains(body, secret) {
+	if status, body := g.Admin(t).Do(t, http.MethodGet, "/panel/api/channels/1/credentials", ""); status == http.StatusOK || strings.Contains(body, secret) {
 		t.Errorf("未登录也能读凭证：status=%d body=%s", status, body)
 	}
 
 	// 整把替换那个老接口连同它的路由一起退役（口径层 v0.38 改为逐条 CRUD）。
-	if status, _ := a.Do(t, http.MethodPut, "/admin/api/channels/1/credential", `{"credential":"sk-x"}`); status != http.StatusNotFound {
+	if status, _ := a.Do(t, http.MethodPut, "/panel/api/channels/1/credential", `{"credential":"sk-x"}`); status != http.StatusNotFound {
 		t.Errorf("整把替换的老接口还在，status=%d", status)
 	}
 }
@@ -258,23 +258,23 @@ func TestChannelSettingsDoNotTouchKeyMode(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"pool","base_url":{"anthropic":"https://api.example.com"},
 		"key_mode":"random","credential":"sk-x"}`, &created)
 
 	// 只改名字的保存。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings",
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/settings",
 		`{"name":"pool-renamed"}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 1 || channels[0].KeyMode != "random" {
 		t.Fatalf("key_mode 被静默重置了：%+v", channels)
 	}
 	// key_mode 走自己那一笔。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/key-mode",
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/key-mode",
 		`{"key_mode":"polling"}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if channels[0].KeyMode != "polling" {
 		t.Errorf("key-mode 那一笔没生效：%+v", channels)
 	}
@@ -294,28 +294,28 @@ func TestChannelSettingsBitSentinels(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"resp","base_url":{"openai_responses":"https://api.example.com"},
 		"credential":"sk-x"}`, &created)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 1 || channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
 		t.Fatalf("新建渠道的能力位默认该是 (否, 是)（PO 裁定）：%+v", channels)
 	}
 
 	id := itoa(created.ID)
 	// 显式拨离默认值。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+id+"/settings", `{
 		"name":"resp","supports_compaction":true,"supports_stateful_responses":false}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if !channels[0].SupportsCompaction || channels[0].SupportsStatefulResponses {
 		t.Fatalf("显式设的位没生效：%+v", channels)
 	}
 
 	// 一次只改名字的保存，请求体里没有位字段：两位都不该动。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{"name":"resp-renamed"}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+id+"/settings", `{"name":"resp-renamed"}`, nil)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if !channels[0].SupportsCompaction {
 		t.Errorf("compaction 位被静默关掉了：%+v", channels)
 	}
@@ -324,9 +324,9 @@ func TestChannelSettingsBitSentinels(t *testing.T) {
 	}
 
 	// 拨回去仍然要生效，否则「不动」就变成了「改不动」。
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+id+"/settings", `{
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+id+"/settings", `{
 		"name":"resp-renamed","supports_compaction":false,"supports_stateful_responses":true}`, nil)
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
 		t.Errorf("拨回默认没生效：%+v", channels)
 	}
@@ -341,15 +341,15 @@ func TestChannelSettingsForceBitDefaultsWithoutResponses(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"plain","base_url":{"openai":"https://api.example.com"},
 		"credential":"sk-x"}`, &created)
 
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/settings", `{
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/settings", `{
 		"name":"plain","supports_compaction":true,"supports_stateful_responses":false}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
 		t.Fatalf("不含 Responses 的渠道两位该钉在默认值 (否, 是)：%+v", channels)
 	}
@@ -365,16 +365,16 @@ func TestBaseURLWriteResetsBitsWhenResponsesDropped(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"resp","base_url":{"openai":"https://a.example.com","openai_responses":"https://api.example.com"},
 		"supports_compaction":true,"supports_stateful_responses":false,
 		"credential":"sk-x"}`, &created)
 
-	a.JSONInto(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+	a.JSONInto(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/base-url",
 		`{"base_url":{"openai":"https://a.example.com"}}`, nil)
 
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if channels[0].SupportsCompaction || !channels[0].SupportsStatefulResponses {
 		t.Fatalf("删掉 Responses 地址后两位该归位默认值 (否, 是)：%+v", channels)
 	}
@@ -384,7 +384,7 @@ func TestBaseURLWriteResetsBitsWhenResponsesDropped(t *testing.T) {
 // 任何理由发给页面——它是转发热路径的校验依据，多发一份只是多一个泄露面。
 func TestAdminNeverReturnsKeyHash(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
-	_, body := g.LoggedIn(t).Do(t, http.MethodGet, "/admin/api/keys", "")
+	_, body := g.LoggedIn(t).Do(t, http.MethodGet, "/panel/api/keys", "")
 	if strings.Contains(body, "key_hash") {
 		t.Errorf("key 列表里带上了哈希：%s", body)
 	}
@@ -398,7 +398,7 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 
 	// 建一个没有凭证的渠道：启用渠道至少要有一份启用凭证（口径层 v0.18 可达性通则，
 	// 上限那一半已于 v0.38 放开），这一步就该被挡。
-	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
 		`{"name":"no-credential","base_url":{"anthropic":"https://api.anthropic.com"}}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("无凭证渠道应被校验挡下，得到 %d：%s", status, body)
@@ -408,14 +408,14 @@ func TestAdminRejectsConfigTheStartupGateWouldReject(t *testing.T) {
 	}
 	// 回滚要真的回滚：挡下来的渠道不能留在库里。
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 0 {
 		t.Errorf("被挡下的写操作没有回滚：%+v", channels)
 	}
 
 	// base_url 缺 scheme 同样过不了——这类配置能存进去、能过启动，只在请求时炸。
 	// 用一个不会跟校验文案里的示例撞上的主机名，否则「回显了没有」根本断言不出来。
-	status, body = a.Do(t, http.MethodPost, "/admin/api/channels",
+	status, body = a.Do(t, http.MethodPost, "/panel/api/channels",
 		`{"name":"bad-url","base_url":{"anthropic":"tenant7.internal.example"},"credential":"sk-x"}`)
 	if status != http.StatusBadRequest {
 		t.Errorf("缺 scheme 的 base_url 应被挡下，得到 %d：%s", status, body)
@@ -438,7 +438,7 @@ func TestAdminKeyIsReadableAndWorks(t *testing.T) {
 		ID  int64  `json:"id"`
 		Key string `json:"key"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/keys", `{"name":"laptop"}`, &created)
+	a.JSONInto(t, http.MethodPost, "/panel/api/keys", `{"name":"laptop"}`, &created)
 	if !strings.HasPrefix(created.Key, "sk-ptg-") {
 		t.Fatalf("新 key 形状不对：%q", created.Key)
 	}
@@ -450,7 +450,7 @@ func TestAdminKeyIsReadableAndWorks(t *testing.T) {
 	}
 
 	// 之后照样读得到：明文跟哈希各存一列。
-	_, body := a.Do(t, http.MethodGet, "/admin/api/keys", "")
+	_, body := a.Do(t, http.MethodGet, "/panel/api/keys", "")
 	if !strings.Contains(body, created.Key) {
 		t.Errorf("key 列表里没有明文，PO 要的「能看能复制」落不了地：%s", body)
 	}
@@ -462,7 +462,7 @@ func TestAdminKeyIsReadableAndWorks(t *testing.T) {
 		Name string `json:"name"`
 		Key  string `json:"key"`
 	}
-	a.JSONInto(t, http.MethodGet, "/admin/api/keys", "", &keys)
+	a.JSONInto(t, http.MethodGet, "/panel/api/keys", "", &keys)
 	var seen bool
 	for _, k := range keys {
 		if k.Name == "存量" {
@@ -488,8 +488,8 @@ func TestAdminDisabledKeyStopsWorking(t *testing.T) {
 		ID  int64  `json:"id"`
 		Key string `json:"key"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/keys", `{"name":"temp"}`, &created)
-	a.JSONInto(t, http.MethodPut, "/admin/api/keys/"+itoa(created.ID),
+	a.JSONInto(t, http.MethodPost, "/panel/api/keys", `{"name":"temp"}`, &created)
+	a.JSONInto(t, http.MethodPut, "/panel/api/keys/"+itoa(created.ID),
 		`{"name":"temp","disabled":true}`, nil)
 
 	resp := g.Post(t, "/v1/messages", `{"model":"claude-direct","messages":[]}`,
@@ -511,7 +511,7 @@ func TestAllowedModelsIsEnforced(t *testing.T) {
 		ID  int64  `json:"id"`
 		Key string `json:"key"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/keys",
+	a.JSONInto(t, http.MethodPost, "/panel/api/keys",
 		`{"name":"scoped","allowed_models":"some-other-point"}`, &created)
 
 	resp := g.Post(t, "/v1/messages", `{"model":"claude-direct","messages":[]}`,
@@ -534,7 +534,7 @@ func TestAllowedModelsIsEnforced(t *testing.T) {
 	}
 
 	// 放开之后立刻生效，不需要重启。
-	a.JSONInto(t, http.MethodPut, "/admin/api/keys/"+itoa(created.ID),
+	a.JSONInto(t, http.MethodPut, "/panel/api/keys/"+itoa(created.ID),
 		`{"name":"scoped","allowed_models":"claude-direct, another"}`, nil)
 	resp = g.Post(t, "/v1/messages", `{"model":"claude-direct","messages":[]}`,
 		map[string]string{"x-api-key": created.Key})
@@ -559,7 +559,7 @@ func TestAdminUsageReflectsRelayedCalls(t *testing.T) {
 			Status         int    `json:"status"`
 		} `json:"rows"`
 	}
-	a.JSONInto(t, http.MethodGet, "/admin/api/logs?limit=10", "", &logs)
+	a.JSONInto(t, http.MethodGet, "/panel/api/logs?limit=10", "", &logs)
 	if len(logs.Rows) == 0 || logs.Rows[0].ModelRequested != "claude-direct" {
 		t.Fatalf("流水接口没返回刚才那次调用：%+v", logs)
 	}
@@ -570,7 +570,7 @@ func TestAdminUsageReflectsRelayedCalls(t *testing.T) {
 			Calls          int64  `json:"calls"`
 		} `json:"rows"`
 	}
-	a.JSONInto(t, http.MethodGet, "/admin/api/usage", "", &usage)
+	a.JSONInto(t, http.MethodGet, "/panel/api/usage", "", &usage)
 	if len(usage.Rows) == 0 || usage.Rows[0].Calls == 0 {
 		t.Errorf("用量汇总是空的：%+v", usage)
 	}
@@ -578,11 +578,12 @@ func TestAdminUsageReflectsRelayedCalls(t *testing.T) {
 
 // ── 静态资源 ────────────────────────────────────────────────────────────
 
-// 默认构建不含前端，/admin 该回一句说明而不是 404——404 会让人以为路由挂错了。
+// 默认构建不含前端，/panel 该回一句说明而不是 404——404 会让人以为路由挂错了。
 // 带 -tags webui 时这里拿到的是真页面，两种都算通过，断言只卡「不是 404」。
+// /admin 旧前缀（#76）：客户端会跟着 302 走，最终也该落在同一页 HTML 上。
 func TestAdminUIPathAnswers(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
-	for _, path := range []string{"/admin", "/admin/keys"} {
+	for _, path := range []string{"/panel", "/panel/keys", "/admin", "/admin/keys"} {
 		resp := g.Get(t, path)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("%s 应有响应，得到 %d", path, resp.StatusCode)
@@ -593,7 +594,45 @@ func TestAdminUIPathAnswers(t *testing.T) {
 	}
 }
 
-// NoRoute 是全局的：非 /admin 的未知路径必须照常 404，不能拿到管理端页面。
+// /admin 旧前缀只留 GET 302 到 /panel 下同路径、query 原样带走（#76 裁定 ③）：
+// 收藏夹与旧邮件里的链接一跳就到。POST 不接——旧前缀不是可编程接口；
+// /administrator 这类只是前缀相似的路径照常 404，不该被 302 吞。
+func TestAdminPrefixRedirectsToPanel(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	for path, want := range map[string]string{
+		"/admin":                "/panel",
+		"/admin/logs":           "/panel/logs",
+		"/admin/verify?token=x": "/panel/verify?token=x",
+	} {
+		resp, err := noFollow.Get(g.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound {
+			t.Errorf("GET %s = %d, 期望 302", path, resp.StatusCode)
+		}
+		if loc := resp.Header.Get("Location"); loc != want {
+			t.Errorf("GET %s 跳到 %q, 期望 %q", path, loc, want)
+		}
+	}
+	if resp, err := noFollow.Post(g.URL+"/admin/api/login", "application/json", strings.NewReader("{}")); err != nil {
+		t.Fatal(err)
+	} else if resp.Body.Close(); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST /admin/api/login = %d, 期望 404（旧前缀不接写请求）", resp.StatusCode)
+	}
+	if resp, err := noFollow.Get(g.URL + "/administrator"); err != nil {
+		t.Fatal(err)
+	} else if resp.Body.Close(); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /administrator = %d, 期望 404（不是旧前缀）", resp.StatusCode)
+	}
+}
+
+// NoRoute 是全局的：非 /panel 的未知路径必须照常 404，不能拿到管理端页面。
 func TestUnknownNonAdminPathStays404(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	if resp := g.Get(t, "/v1/nonexistent"); resp.StatusCode != http.StatusNotFound {
@@ -601,11 +640,11 @@ func TestUnknownNonAdminPathStays404(t *testing.T) {
 	}
 }
 
-// /admin/api 下的未知路径要回 JSON：回 HTML 的话前端在 JSON.parse 上炸，
+// /panel/api 下的未知路径要回 JSON：回 HTML 的话前端在 JSON.parse 上炸，
 // 报出来的错跟真正的原因（接口写错了）毫无关系。
 func TestUnknownAdminAPIPathReturnsJSON(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
-	status, body := g.LoggedIn(t).Do(t, http.MethodGet, "/admin/api/nope", "")
+	status, body := g.LoggedIn(t).Do(t, http.MethodGet, "/panel/api/nope", "")
 	if status != http.StatusNotFound {
 		t.Errorf("未知管理接口应 404，得到 %d", status)
 	}
@@ -631,29 +670,29 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	writes := []struct{ method, path string }{
-		{http.MethodPost, "/admin/api/channels"},
-		{http.MethodPut, "/admin/api/channels/1/base-url"},
-		{http.MethodPut, "/admin/api/channels/1/key-mode"},
-		{http.MethodPut, "/admin/api/channels/1/disabled"},
-		{http.MethodPut, "/admin/api/channels/1/settings"},
-		{http.MethodDelete, "/admin/api/channels/1"},
-		{http.MethodPost, "/admin/api/channels/1/credentials"},
-		{http.MethodPut, "/admin/api/credentials/1"},
-		{http.MethodDelete, "/admin/api/credentials/1"},
-		{http.MethodPost, "/admin/api/channels/1/models"},
-		{http.MethodPut, "/admin/api/channel-models/1"},
-		{http.MethodDelete, "/admin/api/channel-models/1"},
-		{http.MethodPost, "/admin/api/access-points"},
-		{http.MethodPut, "/admin/api/access-points/1"},
-		{http.MethodDelete, "/admin/api/access-points/1"},
-		{http.MethodPost, "/admin/api/keys"},
-		{http.MethodPut, "/admin/api/keys/1"},
-		{http.MethodDelete, "/admin/api/keys/1"},
+		{http.MethodPost, "/panel/api/channels"},
+		{http.MethodPut, "/panel/api/channels/1/base-url"},
+		{http.MethodPut, "/panel/api/channels/1/key-mode"},
+		{http.MethodPut, "/panel/api/channels/1/disabled"},
+		{http.MethodPut, "/panel/api/channels/1/settings"},
+		{http.MethodDelete, "/panel/api/channels/1"},
+		{http.MethodPost, "/panel/api/channels/1/credentials"},
+		{http.MethodPut, "/panel/api/credentials/1"},
+		{http.MethodDelete, "/panel/api/credentials/1"},
+		{http.MethodPost, "/panel/api/channels/1/models"},
+		{http.MethodPut, "/panel/api/channel-models/1"},
+		{http.MethodDelete, "/panel/api/channel-models/1"},
+		{http.MethodPost, "/panel/api/access-points"},
+		{http.MethodPut, "/panel/api/access-points/1"},
+		{http.MethodDelete, "/panel/api/access-points/1"},
+		{http.MethodPost, "/panel/api/keys"},
+		{http.MethodPut, "/panel/api/keys/1"},
+		{http.MethodDelete, "/panel/api/keys/1"},
 		// 导入也是业务配置写（#59）：声明文件形态下导进去的改动活不过下次重启
 		// apply，「导入成功」是假象，与其余写接口同一句 409。导入试算（口径层
 		// v1.03）同句：它预演的改动同样活不过重启，「试算成功」是同款假象。
-		{http.MethodPost, "/admin/api/import"},
-		{http.MethodPost, "/admin/api/import/preview"},
+		{http.MethodPost, "/panel/api/import"},
+		{http.MethodPost, "/panel/api/import/preview"},
 	}
 	for _, w := range writes {
 		if status, body := a.Do(t, w.method, w.path, "{}"); status != http.StatusConflict {
@@ -664,13 +703,13 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 	// 读与不写业务配置的 POST 照常：409 一个都不该出现。probe 缺参回 400、
 	// fetch-models 打的是假上游——状态码各是各的，这里只断言没被只读闸拦下。
 	passes := []struct{ method, path string }{
-		{http.MethodGet, "/admin/api/channels"},
-		{http.MethodGet, "/admin/api/channels/1/credentials"},
-		{http.MethodGet, "/admin/api/keys"},
-		{http.MethodGet, "/admin/api/export"},
-		{http.MethodGet, "/admin/api/logs"},
-		{http.MethodPost, "/admin/api/channels/1/probe"},
-		{http.MethodPost, "/admin/api/channels/1/fetch-models"},
+		{http.MethodGet, "/panel/api/channels"},
+		{http.MethodGet, "/panel/api/channels/1/credentials"},
+		{http.MethodGet, "/panel/api/keys"},
+		{http.MethodGet, "/panel/api/export"},
+		{http.MethodGet, "/panel/api/logs"},
+		{http.MethodPost, "/panel/api/channels/1/probe"},
+		{http.MethodPost, "/panel/api/channels/1/fetch-models"},
 	}
 	for _, w := range passes {
 		if status, body := a.Do(t, w.method, w.path, "{}"); status == http.StatusConflict {
@@ -681,7 +720,7 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 	t.Run("不挂文件时写接口照常", func(t *testing.T) {
 		g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 		a := g.LoggedIn(t)
-		status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
+		status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
 			`{"name":"qwen","base_url":{"openai":"https://example.internal/v1"},"credential":"sk-up"}`)
 		if status != http.StatusOK {
 			t.Fatalf("普通形态建渠道应 200，得到 %d：%s", status, body)
@@ -697,12 +736,12 @@ func TestDeclarativeModeHidesUserSystem(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	probes := []struct{ method, path string }{
-		{http.MethodGet, "/admin/api/auth-config"},
-		{http.MethodPost, "/admin/api/register"},
-		{http.MethodPost, "/admin/api/password-reset"},
-		{http.MethodGet, "/admin/api/users"},
-		{http.MethodGet, "/admin/api/invite-codes"},
-		{http.MethodGet, "/admin/api/auth-settings"},
+		{http.MethodGet, "/panel/api/auth-config"},
+		{http.MethodPost, "/panel/api/register"},
+		{http.MethodPost, "/panel/api/password-reset"},
+		{http.MethodGet, "/panel/api/users"},
+		{http.MethodGet, "/panel/api/invite-codes"},
+		{http.MethodGet, "/panel/api/auth-settings"},
 	}
 	for _, p := range probes {
 		if status, body := a.Do(t, p.method, p.path, "{}"); status != http.StatusNotFound {
@@ -710,7 +749,7 @@ func TestDeclarativeModeHidesUserSystem(t *testing.T) {
 		}
 	}
 	// 登录与会话是形态闸管的，不归 #66：声明形态下照常。
-	if status, _ := a.Do(t, http.MethodGet, "/admin/api/session", ""); status != http.StatusOK {
+	if status, _ := a.Do(t, http.MethodGet, "/panel/api/session", ""); status != http.StatusOK {
 		t.Errorf("声明形态 session 探测应 200，得到 %d", status)
 	}
 }

@@ -43,7 +43,7 @@ func (g *Gateway) Admin(t *testing.T) *AdminClient {
 func (g *Gateway) LoggedIn(t *testing.T) *AdminClient {
 	t.Helper()
 	a := g.Admin(t)
-	if status, _ := a.Do(t, http.MethodPost, "/admin/api/login",
+	if status, _ := a.Do(t, http.MethodPost, "/panel/api/login",
 		`{"email":"`+AdminEmail+`","password":"`+AdminPassword+`"}`); status != http.StatusOK {
 		t.Fatalf("管理端登录失败，status=%d", status)
 	}

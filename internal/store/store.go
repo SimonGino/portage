@@ -124,7 +124,79 @@ func migrate(db *sql.DB) error {
 	if err := rebuildAPIKeysOwner(db); err != nil {
 		return err
 	}
-	return claimOrphanKeys(db)
+	if err := claimOrphanKeys(db); err != nil {
+		return err
+	}
+	if err := addUserQuota(db); err != nil {
+		return err
+	}
+	// ⑤ 流水的用户维度（#64，落在 #75）：加列、建索引、老行回填第一个 admin。
+	// 排在认领之后：回填与认领归的是同一个人，秩序上是同一步的两半。
+	return addCallLogUserID(db)
+}
+
+// addUserQuota 补 users.monthly_quota_usd（#65/#75）：NULL = 不限额（默认），
+// 0 = 封停。#72 建出来的库 users 表没有这一列，CREATE TABLE IF NOT EXISTS 不补列。
+func addUserQuota(db *sql.DB) error {
+	has, err := hasColumn(db, "users", "monthly_quota_usd")
+	if err != nil {
+		return fmt.Errorf("检查 users.monthly_quota_usd: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN monthly_quota_usd REAL`); err != nil {
+		return fmt.Errorf("迁移 users.monthly_quota_usd: %w", err)
+	}
+	return nil
+}
+
+// addCallLogUserID 是多用户迁移序列的第 ⑤ 步（展开层 §7.10，#64/#75）：call_logs
+// 加可空 user_id、建 (user_id, created_at, cost) 覆盖索引、老行回填第一个 admin。
+//
+// 回填的判据是 `api_key_name <> ”`（#64）：有 key 名的行是真调用，历史上只有一个
+// 人在用，归第一个 admin；未鉴权的行（key 名空串）没有用户可归，留 NULL。**回填每次
+// 启动都跑**，幂等靠语义：回填过的行 user_id 非 NULL 不再命中；新行由写侧带值；
+// 无 admin 的库上 FirstAdminID 报 ErrNotFound，整步空转——纯转发/声明形态零负担。
+// 注意这一步**不是**纯数据 UPDATE 的雷（口径层 v0.71 ④）：`user_id IS NULL` 就是
+// 天然探针，重跑零行命中，不会加倍。
+//
+// 索引带上 cost 一列是配额闸的覆盖索引（#65）：月度判据是每请求一次的
+// SUM(cost) WHERE user_id = ? AND created_at >= 月首，三列都在索引里就不用回表。
+func addCallLogUserID(db *sql.DB) error {
+	has, err := hasColumn(db, "call_logs", "user_id")
+	if err != nil {
+		return fmt.Errorf("检查 call_logs.user_id: %w", err)
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN user_id INTEGER`); err != nil {
+			return fmt.Errorf("迁移 call_logs.user_id: %w", err)
+		}
+	}
+	if _, err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_call_logs_user_created
+		ON call_logs(user_id, created_at, cost)`); err != nil {
+		return fmt.Errorf("建流水用户索引: %w", err)
+	}
+	return backfillCallLogUsers(db)
+}
+
+// backfillCallLogUsers 把无用户的历史流水行归到第一个 admin 名下（#64），无 admin
+// 空转。单独成函数是给迁移三态测试一个直接的靶子，不用整库重开一遍 Open。
+func backfillCallLogUsers(db *sql.DB) error {
+	adminID, err := FirstAdminID(context.Background(), db)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("找第一个 admin: %w", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE call_logs SET user_id = ?
+		WHERE user_id IS NULL AND api_key_name <> ''`, adminID); err != nil {
+		return fmt.Errorf("回填流水用户: %w", err)
+	}
+	return nil
 }
 
 // rebuildAPIKeysOwner 是多用户迁移序列的第 ③ 步（展开层 §7.10，#63/#66/#73）：

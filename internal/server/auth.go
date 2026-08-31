@@ -68,7 +68,7 @@ func (s *Server) authRelay(ep protocol.Endpoint) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		recorderFrom(c).Authenticated(key.Name)
+		recorderFrom(c).Authenticated(key.Name, key.UserID)
 		// allowed_models 的校验**不在这里**：这一层还没读请求体，不知道客户端要哪个
 		// 接入点。把 key 传下去，由 relay 在解析出 head.Model 之后判（M3）。
 		c.Set(ctxAPIKey, key)

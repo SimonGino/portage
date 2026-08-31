@@ -35,7 +35,7 @@ func TestRecorderFromFallsBackToADetachedRecorder(t *testing.T) {
 				t.Fatal("recorderFrom 回了 nil，调用方随即会空指针")
 			}
 			// 沿途动词照常收，收尾哪儿也不写——不 panic 本身就是断言的一部分。
-			rec.Authenticated("k")
+			rec.Authenticated("k", nil)
 			rec.Refused(calllog.Unauthorized)
 			rec.Finish(401)
 		})

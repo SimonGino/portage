@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AuthSettings, InviteCode, User } from '../api'
-import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, fmtTime, useList } from '../ui'
+import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, fmtMoney, fmtTime, useList } from '../ui'
 import { Segmented } from '../fields'
 
 /**
@@ -12,6 +12,7 @@ export default function Users() {
   const users = useList(() => api.get<User[] | null>('/users'))
   const invites = useList(() => api.get<InviteCode[] | null>('/invite-codes'))
   const [creating, setCreating] = useState(false)
+  const [quotaFor, setQuotaFor] = useState<User | null>(null)
 
   // 任免/停用共用的提交壳：护栏（最后一个启用的 admin 不许降/停）长在服务端，
   // 这里只负责把那句 400 原文摆出来。
@@ -49,6 +50,7 @@ export default function Users() {
                 <th>名字</th>
                 <th>角色</th>
                 <th>登录方式</th>
+                <th>月配额</th>
                 <th>状态</th>
                 <th>创建时间</th>
                 <th className="col-actions" />
@@ -61,6 +63,18 @@ export default function Users() {
                   <td>{u.display_name || <span className="muted">—</span>}</td>
                   <td>{u.role === 'admin' ? '管理员' : '用户'}</td>
                   <td className="muted">{u.has_password ? '密码' : '仅 OAuth'}</td>
+                  {/* 月配额（#65/#75）：null = 不限（默认）、0 = 封停、正数 = 每月
+                      USD 上限。点开弹框改——三态里有个 null，行内输入框表达不了
+                      「清空回不限」。 */}
+                  <td>
+                    <button className="btn btn-ghost" onClick={() => setQuotaFor(u)}>
+                      {u.monthly_quota_usd === null
+                        ? '不限'
+                        : u.monthly_quota_usd === 0
+                          ? '封停'
+                          : `${fmtMoney(u.monthly_quota_usd)}/月`}
+                    </button>
+                  </td>
                   <td>
                     {u.disabled ? (
                       <span className="muted">已停用</span>
@@ -128,13 +142,80 @@ export default function Users() {
           }}
         />
       )}
+      {quotaFor && (
+        <QuotaDialog
+          user={quotaFor}
+          onClose={() => setQuotaFor(null)}
+          onSaved={() => {
+            setQuotaFor(null)
+            void users.reload()
+          }}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * 调月配额（#65/#75）：留空 = 不限额（null）、0 = 封停、正数 = 每月 USD 上限。
+ * 改额立即生效——闸每次请求现算本月已用，当月已用不重算、不清零。
+ */
+function QuotaDialog({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: () => void }) {
+  const [value, setValue] = useState(user.monthly_quota_usd === null ? '' : String(user.monthly_quota_usd))
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const parsed = value.trim() === '' ? null : Number(value)
+  const invalid = parsed !== null && (!Number.isFinite(parsed) || parsed < 0)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await api.put(`/users/${user.id}/quota`, { monthly_quota_usd: parsed })
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog title={`月配额：${user.display_name || user.email}`} onClose={onClose}>
+      <form className="form" onSubmit={submit}>
+        <Field
+          label="每月上限（USD）"
+          hint={invalid ? '要是 0 或正数' : '留空 = 不限额；0 = 封停该账号的转发；按 UTC 自然月，下月自动恢复'}
+        >
+          <input
+            autoFocus
+            inputMode="decimal"
+            placeholder="不限额"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </Field>
+        {parsed === 0 && (
+          <div className="bar bar-warn">0 是封停：这个账号的转发请求会立即全部被拒。</div>
+        )}
+        <ErrorBar message={error} />
+        <div className="form-actions">
+          <button type="button" className="btn btn-quiet" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-primary" disabled={busy || invalid}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   )
 }
 
 function CreateUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [role, setRole] = useState<'user' | 'admin'>('user')
   const [error, setError] = useState('')
@@ -168,7 +249,23 @@ function CreateUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
           />
         </Field>
         <Field label="初始密码" hint="至少 8 位，发给对方后建议其自行修改">
-          <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </Field>
+        <Field
+          label="确认初始密码"
+          hint={confirmPw && confirmPw !== password ? '两次输入不一致' : undefined}
+        >
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+          />
         </Field>
         <Field label="名字" hint="可留空">
           <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
@@ -188,7 +285,10 @@ function CreateUserDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
           <button type="button" className="btn btn-quiet" onClick={onClose}>
             取消
           </button>
-          <button className="btn btn-primary" disabled={busy || !email || password.length < 8}>
+          <button
+            className="btn btn-primary"
+            disabled={busy || !email || password.length < 8 || confirmPw !== password}
+          >
             {busy ? '创建中…' : '创建'}
           </button>
         </div>

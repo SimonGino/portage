@@ -7,12 +7,12 @@
 # 接入点 / 候选 / 凭证 / API Key——不在这里，它有两条入口，走哪条看有没有挂声明文件
 # （口径层 §2.9）：
 #
-#   - 不挂：落 DB，由管理端（/admin）维护。
+#   - 不挂：落 DB，由管理端（/panel）维护。
 #   - 挂了：那份 channels.yaml 是**唯一事实源**，启动时 apply 进 DB，管理端只读。
 #     路径走 PORTAGE_CHANNELS 环境变量——本镜像的 ENTRYPOINT 把 -config 写死了，
 #     用 flag 就得覆盖整个 entrypoint，而 env 加一行就行。
 #
-# 顺带一条形态：**不设管理密码 = 纯转发形态**，/admin 与 /admin/api/* 整个不注册
+# 顺带一条形态：**不设管理密码 = 纯转发形态**，/panel 与 /panel/api/* 整个不注册
 # （路由级 404），只剩 /v1 转发面。两件事正交——挂不挂文件决定「谁是事实源」，
 # 有没有密码决定「管理面存不存在」。
 #
@@ -39,7 +39,7 @@ retry:
   base_delay: 500ms
   max_delay: 10s
 
-# 全局限流：一只桶，不分 key/IP，只挂转发面（/healthz 与 /admin 不受影响）。
+# 全局限流：一只桶，不分 key/IP，只挂转发面（/healthz 与 /panel 不受影响）。
 # 它防的是 key 泄露或被扫时刷爆上游账单，不是公平调度。超限回 429 + Retry-After: 1。
 # 写 0 关掉。10 QPS 的取值依据见口径层 v0.15：agent 会话峰值 <5 QPS，留了双会话余量。
 rate_limit_qps: 500

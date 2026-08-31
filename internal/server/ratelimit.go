@@ -45,7 +45,7 @@ func newLimiter(qps, burst int) *rate.Limiter {
 // 不是一个量级的损失。
 //
 // 只挂转发面那四个 POST：`/healthz` 是探活（限它等于让监控在忙时先报警），
-// `/v1/models` 不打上游，`/admin` 走的是另一套凭证、把自己限出管理端毫无意义。
+// `/v1/models` 不打上游，`/panel` 走的是另一套凭证、把自己限出管理端毫无意义。
 func (s *Server) rateLimit(ep protocol.Endpoint) gin.HandlerFunc {
 	lim := s.pickLimiter(ep)
 	return func(c *gin.Context) {

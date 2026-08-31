@@ -11,6 +11,7 @@ export default function ChangePassword({
 }) {
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -32,7 +33,7 @@ export default function ChangePassword({
   }
 
   return (
-    <Dialog title="修改管理密码" onClose={onClose}>
+    <Dialog title="修改密码" onClose={onClose}>
       <form className="form" onSubmit={submit}>
         <div className="bar bar-warn">改完所有登录状态一起失效，需要用新密码重新登录。</div>
         <Field label="原密码">
@@ -52,12 +53,26 @@ export default function ChangePassword({
             onChange={(e) => setNewPw(e.target.value)}
           />
         </Field>
+        <Field
+          label="确认新密码"
+          hint={confirmPw && confirmPw !== newPw ? '两次输入不一致' : undefined}
+        >
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+          />
+        </Field>
         <ErrorBar message={error} />
         <div className="form-actions">
           <button type="button" className="btn btn-quiet" onClick={onClose}>
             取消
           </button>
-          <button className="btn btn-primary" disabled={busy || !oldPw || newPw.length < 8}>
+          <button
+            className="btn btn-primary"
+            disabled={busy || !oldPw || newPw.length < 8 || confirmPw !== newPw}
+          >
             {busy ? '提交中…' : '确认修改'}
           </button>
         </div>

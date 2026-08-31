@@ -88,14 +88,15 @@ func Bootstrap(ctx context.Context, db *sql.DB, plaintext string) (bool, error) 
 	return true, nil
 }
 
-// Mount 挂管理端的全部路由。
+// Mount 挂管理端的全部路由。前缀自 #76 起是中性的 /panel（整站单前缀，普通用户
+// 的「我的」空间与治理面共用一个 SPA）；/admin 只留 GET 302 兜底，见 mountUI。
 //
-// 收 *gin.Engine 而不是 *gin.RouterGroup：前端是个 SPA，深链接（/admin/keys）
-// 得回同一份 index.html，而 gin 的路由树不允许 `/admin/*filepath` 与
-// `/admin/api/...` 并存（catch-all 与静态段冲突，注册时直接 panic）。所以静态资源
+// 收 *gin.Engine 而不是 *gin.RouterGroup：前端是个 SPA，深链接（/panel/keys）
+// 得回同一份 index.html，而 gin 的路由树不允许 `/panel/*filepath` 与
+// `/panel/api/...` 并存（catch-all 与静态段冲突，注册时直接 panic）。所以静态资源
 // 走 NoRoute 兜底，那需要引擎本身。
 func (h *Handler) Mount(r *gin.Engine) {
-	api := r.Group("/admin/api")
+	api := r.Group("/panel/api")
 
 	// 登录三件套不鉴权：没登录的时候正是要调它们。
 	api.POST("/login", h.login)
@@ -113,10 +114,13 @@ func (h *Handler) Mount(r *gin.Engine) {
 		api.POST("/password-reset/confirm", h.confirmPasswordReset)
 		api.GET("/oauth/pending", h.oauthPending)
 		api.POST("/oauth/complete", h.oauthComplete)
-		// OAuth 跳转两条是浏览器导航不是 fetch，不挂 /admin/api 前缀——错误也回
+		// OAuth 跳转两条是浏览器导航不是 fetch，不挂 /panel/api 前缀——错误也回
 		// 302 到页面，回 JSON 的话人盯着的是一屏裸字符串。
-		r.GET("/admin/oauth/:provider/start", h.oauthStart)
-		r.GET("/admin/oauth/:provider/callback", h.oauthCallback)
+		// 注意这两条**没有** /admin 的 302 兜底（#76 裁定 ②）：中转 cookie 限定在
+		// /panel/oauth 路径下，302 过来 cookie 不跟——GitHub/Google 后台的回调地址
+		// 必须手动改成 /panel，见迁移说明。
+		r.GET("/panel/oauth/:provider/start", h.oauthStart)
+		r.GET("/panel/oauth/:provider/callback", h.oauthCallback)
 	}
 
 	auth := api.Group("", h.requireSession())
@@ -134,6 +138,12 @@ func (h *Handler) Mount(r *gin.Engine) {
 		my.POST("/keys", h.createKey)
 		my.PUT("/keys/:id", h.updateMyKey)
 		my.DELETE("/keys/:id", h.deleteMyKey)
+		// 我的观测面（#75）：本人流水/用量/配额与可用模型清单。归属焊死在 handler
+		// 的 WHERE 里，不收 user 参数——这四条给不出别人的账。
+		my.GET("/logs", h.myLogs)
+		my.GET("/usage", h.myUsage)
+		my.GET("/quota", h.myQuota)
+		my.GET("/models", h.myModels)
 	}
 	auth.POST("/password", h.changePassword)
 	if !h.declarative {
@@ -142,6 +152,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 		// 账号侧的 OAuth 绑定/解绑（#62 决议 4 的「手动」半边；页面壳在 #76）。
 		auth.GET("/account/identities", h.listIdentities)
 		auth.DELETE("/account/identities/:provider", h.unlinkIdentity)
+		// 改本人展示名（#76 账号页）。不进写闸：展示名是用户体系的运行期状态，
+		// 不在声明文件里——但用户体系本身在声明形态下不挂载，所以同在 #66 闸内。
+		auth.PUT("/account/profile", h.updateProfile)
 	}
 
 	// 治理面：现有的全部业务配置与观测接口都是 admin 的地盘。#72 之前登录即 admin，
@@ -161,6 +174,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 		adm.POST("/users", h.createUser)
 		adm.PUT("/users/:id/role", h.setUserRole)
 		adm.PUT("/users/:id/disabled", h.setUserDisabled)
+		adm.PUT("/users/:id/quota", h.setUserQuota)
 		adm.GET("/invite-codes", h.listInviteCodes)
 		adm.POST("/invite-codes", h.createInviteCodes)
 		adm.DELETE("/invite-codes/:id", h.revokeInviteCode)

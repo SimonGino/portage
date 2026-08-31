@@ -6,7 +6,7 @@
 #
 #   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f deploy/docker-compose.yml up -d --build
 #
-# 起来之后开 http://127.0.0.1:8317/admin ，用那个密码登录，在页面上配渠道、
+# 起来之后开 http://127.0.0.1:8317/panel ，用那个密码登录，在页面上配渠道、
 # 纳管模型、接入点、网关 key。库是空的很正常（日志里会有一条
 # `api_keys 表是空的，所有转发请求都会回 401`），配完就没了。
 #

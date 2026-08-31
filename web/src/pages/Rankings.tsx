@@ -49,6 +49,7 @@ const DAY_OPTIONS = [
 const DIM_OPTIONS = [
   { value: 'model' as const, label: '按模型' },
   { value: 'key' as const, label: '按 API Key' },
+  { value: 'user' as const, label: '按用户' },
   { value: 'credential' as const, label: '按上游凭证' },
 ]
 
@@ -58,6 +59,7 @@ type Dim = (typeof DIM_OPTIONS)[number]['value']
 const DIM_UNIT: Record<Dim, string> = {
   model: '个模型',
   key: '把 API Key',
+  user: '位用户',
   credential: '份上游凭证',
 }
 
@@ -92,9 +94,9 @@ export default function Rankings() {
   const [sel, setSel] = useState<number | null>(null)
 
   // 环与两条堆叠条恒要 model + key（口径层 v0.86 ⑧），排行列表要当前维度。
-  // 按凭证看时才多取一路，前两档不多发一次请求。
+  // 按凭证 / 按用户看时才多取一路，前两档不多发一次请求。
   const dims = useMemo<Dim[]>(
-    () => (dim === 'credential' ? ['model', 'key', 'credential'] : ['model', 'key']),
+    () => (dim === 'model' || dim === 'key' ? ['model', 'key'] : ['model', 'key', dim]),
     [dim],
   )
   const dimsKey = dims.join(',')
@@ -358,7 +360,9 @@ export default function Rankings() {
             {ranked.map((r, i) => {
               const t = tokensOf(r)
               return (
-                <li className="rank-row" key={r.label}>
+                // key 名自 #73 起按用户唯一而非全局唯一，裸 label 会撞；带上归属才是
+                // 这一行的自然键（其余维度 user 恒空，退化回原样）。
+                <li className="rank-row" key={`${r.user ?? ''} ${r.label}`}>
                   {/* 名次单独一格、等宽右对齐：它是这份列表唯一的序，让它自己成一列，
                       1 和 10 的个位才对得齐。 */}
                   <span className="rank-no tnum">{i + 1}</span>
@@ -372,6 +376,9 @@ export default function Rankings() {
                     {/* 原来那张表的六列压成一行附注：主指标只留 token 合计，其余退到这里。
                         缓存两项只在非零时露出——绝大多数上游根本不报，每行挂一对 0 是噪声。 */}
                     <div className="sub">
+                      {/* 按 key 看时把归属摆进附注（#75）：两个人各有一把「笔记本」
+                          是常态，不带归属这两行分不出彼此。 */}
+                      {r.user ? `${r.user} · ` : ''}
                       {fmtInt(r.calls)} 次调用
                       {r.errors > 0 && (
                         <>

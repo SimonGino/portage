@@ -6,7 +6,7 @@
 // 的地方都会同时编译失败——而失败信息是「pattern dist: no matching files」，看不出
 // 跟前端有关。
 //
-// 默认（不带 tag）编出来的二进制不含管理端，访问 /admin 会拿到一句说明。
+// 默认（不带 tag）编出来的二进制不含管理端，访问 /panel 会拿到一句说明。
 // 发布构建（Dockerfile、Makefile release）带 -tags webui，那时才真 embed。
 package webui
 

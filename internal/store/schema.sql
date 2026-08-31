@@ -222,6 +222,13 @@ CREATE TABLE IF NOT EXISTS call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   api_key_name TEXT NOT NULL,
+  -- 这次调用归属的用户（口径层 §2.10，#64/#75），从认出的 key 的 owner 快照。
+  -- 可空且必须可空：NULL = 未鉴权（api_key_name 也空）或无主 key（api_key_name
+  -- 非空）——声明形态的合法形态，不入任何人的账、不受配额。老行由 migrate 回填
+  -- 第一个 admin（判据 api_key_name <> ''，见 backfillCallLogUsers）。
+  -- 配额闸的月度 SUM 与用户侧查询靠 idx_call_logs_user_created（建在 migrate 里，
+  -- 理由同 idx_api_keys_unowned_name：schema 跑在 migrate 之前，老库那时还没这列）。
+  user_id INTEGER,
   -- 这次打的是哪个转发端点（#17），取值就是 protocol.Endpoint 的那四条路径原样。
   -- client_protocol 分不开它：`/v1/messages` 与 `/v1/messages/count_tokens` 的入站
   -- 协议同为 anthropic，而 count_tokens 命中非 Anthropic 渠道回 501、限流回 429 的

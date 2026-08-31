@@ -16,7 +16,7 @@ import (
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
-// keyRow 是 GET /admin/api/keys 一行里本票关心的字段。
+// keyRow 是 GET /panel/api/keys 一行里本票关心的字段。
 type keyRow struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
@@ -60,7 +60,7 @@ func TestKeysListShowsOwnerAndMasksOthersPlaintext(t *testing.T) {
 
 	a := g.LoggedIn(t)
 	var rows []keyRow
-	a.JSONInto(t, http.MethodGet, "/admin/api/keys", "", &rows)
+	a.JSONInto(t, http.MethodGet, "/panel/api/keys", "", &rows)
 
 	orphan := findKey(t, rows, "test-default") // Start 种的 DefaultKey，无主
 	if !orphan.Mine || orphan.Key != gatewaytest.DefaultKey {
@@ -76,7 +76,7 @@ func TestKeysListShowsOwnerAndMasksOthersPlaintext(t *testing.T) {
 	if bobs.Key != "" {
 		t.Errorf("他人的 key 明文漏出来了：%q", bobs.Key)
 	}
-	if strings.Contains(func() string { _, body := a.Do(t, http.MethodGet, "/admin/api/keys", ""); return body }(),
+	if strings.Contains(func() string { _, body := a.Do(t, http.MethodGet, "/panel/api/keys", ""); return body }(),
 		"sk-ptg-bob-secret") {
 		t.Error("响应原文里带着 bob 的明文——掩码掩了字段没掩住值")
 	}
@@ -88,7 +88,7 @@ func TestOthersKeyAllowsGovernanceOnly(t *testing.T) {
 	_, bobID := g.UserSession(t, "bob@x")
 	keyID := seedOwnedKey(t, g, bobID, "bob 的", "sk-ptg-bob-secret")
 	a := g.LoggedIn(t)
-	path := fmt.Sprintf("/admin/api/keys/%d", keyID)
+	path := fmt.Sprintf("/panel/api/keys/%d", keyID)
 
 	// 停用：名字与白名单原样回传（前端的开关就是这么发的）。
 	if status, body := a.Do(t, http.MethodPut, path,
@@ -130,7 +130,7 @@ func TestMyKeysScopedToSelf(t *testing.T) {
 		ID  int64  `json:"id"`
 		Key string `json:"key"`
 	}
-	u.JSONInto(t, http.MethodPost, "/admin/api/my/keys",
+	u.JSONInto(t, http.MethodPost, "/panel/api/my/keys",
 		`{"name":"我的第一把","allowed_models":"claude-x"}`, &created)
 	if !strings.HasPrefix(created.Key, "sk-ptg-") {
 		t.Fatalf("建出来的 key 长相不对：%q", created.Key)
@@ -142,7 +142,7 @@ func TestMyKeysScopedToSelf(t *testing.T) {
 
 	// 列：只有自己的——无主的 DefaultKey 不在里面。
 	var rows []keyRow
-	u.JSONInto(t, http.MethodGet, "/admin/api/my/keys", "", &rows)
+	u.JSONInto(t, http.MethodGet, "/panel/api/my/keys", "", &rows)
 	if len(rows) != 1 || rows[0].Name != "我的第一把" {
 		t.Fatalf("我的列表该只有自己那把：%+v", rows)
 	}
@@ -151,7 +151,7 @@ func TestMyKeysScopedToSelf(t *testing.T) {
 	}
 
 	// 改与删自己的：白名单可自设（#63：自我约束工具不是权限边界）。
-	mine := fmt.Sprintf("/admin/api/my/keys/%d", created.ID)
+	mine := fmt.Sprintf("/panel/api/my/keys/%d", created.ID)
 	if status, body := u.Do(t, http.MethodPut, mine,
 		`{"name":"改名了","allowed_models":"*","disabled":true}`); status != http.StatusNoContent {
 		t.Fatalf("改自己的 key 期望 204，得到 %d：%s", status, body)
@@ -163,7 +163,7 @@ func TestMyKeysScopedToSelf(t *testing.T) {
 		t.Fatalf("找 DefaultKey: %v", err)
 	}
 	for _, id := range []int64{orphanID, 99999} {
-		p := fmt.Sprintf("/admin/api/my/keys/%d", id)
+		p := fmt.Sprintf("/panel/api/my/keys/%d", id)
 		if status, _ := u.Do(t, http.MethodPut, p, `{"name":"抢","allowed_models":"*"}`); status != http.StatusNotFound {
 			t.Errorf("PUT %s 期望 404，得到 %d", p, status)
 		}
@@ -177,9 +177,9 @@ func TestMyKeysScopedToSelf(t *testing.T) {
 
 	// user 角色摸治理面：403——「我的 Key」开门不等于整个管理面开门。
 	for _, probe := range []struct{ method, path, body string }{
-		{http.MethodGet, "/admin/api/keys", ""},
-		{http.MethodGet, "/admin/api/channels", ""},
-		{http.MethodPost, "/admin/api/keys", `{"name":"越权"}`},
+		{http.MethodGet, "/panel/api/keys", ""},
+		{http.MethodGet, "/panel/api/channels", ""},
+		{http.MethodPost, "/panel/api/keys", `{"name":"越权"}`},
 	} {
 		if status, _ := u.Do(t, probe.method, probe.path, probe.body); status != http.StatusForbidden {
 			t.Errorf("%s %s 对 user 角色期望 403，得到 %d", probe.method, probe.path, status)
@@ -194,10 +194,16 @@ func TestUserRoutesUnregisteredInDeclarativeForm(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	for _, probe := range []struct{ method, path string }{
-		{http.MethodGet, "/admin/api/my/keys"},
-		{http.MethodPost, "/admin/api/my/keys"},
-		{http.MethodPut, "/admin/api/my/keys/1"},
-		{http.MethodDelete, "/admin/api/my/keys/1"},
+		{http.MethodGet, "/panel/api/my/keys"},
+		{http.MethodPost, "/panel/api/my/keys"},
+		{http.MethodPut, "/panel/api/my/keys/1"},
+		{http.MethodDelete, "/panel/api/my/keys/1"},
+		{http.MethodGet, "/panel/api/my/logs"},
+		{http.MethodGet, "/panel/api/my/usage"},
+		{http.MethodGet, "/panel/api/my/quota"},
+		{http.MethodGet, "/panel/api/my/models"},
+		{http.MethodPut, "/panel/api/account/profile"},
+		{http.MethodPut, "/panel/api/users/1/quota"},
 	} {
 		status, _ := a.Do(t, probe.method, probe.path, `{"name":"x"}`)
 		if status != http.StatusNotFound {
@@ -205,12 +211,12 @@ func TestUserRoutesUnregisteredInDeclarativeForm(t *testing.T) {
 		}
 	}
 	// 对照组：治理面的 key 写接口是「挂载了但被声明形态锁写」，仍走 409 写闸。
-	if status, _ := a.Do(t, http.MethodPost, "/admin/api/keys", `{"name":"x"}`); status != http.StatusConflict {
-		t.Errorf("声明形态下 POST /admin/api/keys 期望 409，得到 %d", status)
+	if status, _ := a.Do(t, http.MethodPost, "/panel/api/keys", `{"name":"x"}`); status != http.StatusConflict {
+		t.Errorf("声明形态下 POST /panel/api/keys 期望 409，得到 %d", status)
 	}
 }
 
-// 导入闸（#66 ⑤）：多用户库上 POST /admin/api/import 拒绝——覆盖语义会静默清光
+// 导入闸（#66 ⑤）：多用户库上 POST /panel/api/import 拒绝——覆盖语义会静默清光
 // 用户的 key。409 且点名，库里一行不动。
 func TestImportRefusedOnMultiUserDB(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
@@ -218,7 +224,7 @@ func TestImportRefusedOnMultiUserDB(t *testing.T) {
 	seedOwnedKey(t, g, bobID, "bob 的", "sk-ptg-bob-secret")
 	a := g.LoggedIn(t)
 
-	status, body := a.Do(t, http.MethodPost, "/admin/api/import", `
+	status, body := a.Do(t, http.MethodPost, "/panel/api/import", `
 api_keys:
   - name: 导入的
     key: sk-ptg-imported

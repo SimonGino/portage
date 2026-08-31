@@ -38,7 +38,7 @@ export default function OAuthComplete({ onDone }: { onDone: () => void }) {
     setError('')
     // 不走 api.post：400 的响应体里除了 error 还有换发的新 token，ApiError 只带得动文案。
     try {
-      const res = await fetch('/admin/api/oauth/complete', {
+      const res = await fetch('/panel/api/oauth/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, invite_code: code }),

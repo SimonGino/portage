@@ -102,8 +102,9 @@ func (s *Server) Engine() *gin.Engine {
 		protocol.EndpointResponses,
 	} {
 		// 顺序即语义：日志层最外，鉴权失败也落得下那一行；限流在鉴权之后，
-		// 理由见 rateLimit 的注释。
-		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.rateLimit(ep), s.relay(ep))
+		// 理由见 rateLimit 的注释；配额闸在限流之后、Resolve（relay 内）之前，
+		// 理由见 quotaGate 的注释。
+		r.POST(ep.Path, s.callLog(ep), s.authRelay(ep), s.rateLimit(ep), s.quotaGate(ep), s.relay(ep))
 	}
 	// legacy 的 v1 compact 明确回 501（口径层 v0.54），不落到 SPA 的 NoRoute 上去。
 	r.POST("/v1/responses/compact", compactUnsupported)
@@ -111,8 +112,8 @@ func (s *Server) Engine() *gin.Engine {
 	// 它同时接管 NoRoute 来发 SPA，所以必须在全部业务路由注册完之后调。
 	//
 	// **形态闸（口径层 §2.9 #27，§2.10 #61 演化）：库里存在 admin 用户 或 配了管理
-	// 密码 → 挂管理面。** 两个判据都不中时整个 Mount 不调，于是 /admin 页面、
-	// /admin/api/* 与登录会话全部**不注册**——404 是路由级的，不是鉴权级。将来的
+	// 密码 → 挂管理面。** 两个判据都不中时整个 Mount 不调，于是 /panel 页面、
+	// /panel/api/* 与登录会话全部**不注册**——404 是路由级的，不是鉴权级。将来的
 	// 用户面板（#75）与管理端同一个闸，不拆「只挂面板」形态。
 	//
 	// 「闸只看 cfg 不看库」的旧口径被 #61 **正式推翻**：用户是库里的实体，「有没有

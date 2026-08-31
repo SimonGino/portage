@@ -403,7 +403,7 @@ func TestSinkFailureIsLoggedAndSwallowed(t *testing.T) {
 // 用例都没有过——网关全链路上走不到这条路（走到了就说明路由被改坏了）。
 func TestDetachedRecorderSwallowsEverything(t *testing.T) {
 	rec := calllog.Detached()
-	rec.Authenticated("k")
+	rec.Authenticated("k", nil)
 	rec.RequestParsed("claude-sonnet-4", true)
 	rec.RecordRequestBody([]byte("{}"))
 	rec.Routed("ch", protocol.OpenAI, "gpt-4o", calllog.Prices{})
@@ -446,7 +446,7 @@ func TestQueueWaitMsReportsWhatAttemptedRecorded(t *testing.T) {
 // 不是凭证值也不是 base_url。这条用一次装配跑满的调用钉住。
 func TestRowCarriesNamesNeverSecrets(t *testing.T) {
 	h := newHarness()
-	h.rec.Authenticated("gateway-key-名")
+	h.rec.Authenticated("gateway-key-名", nil)
 	h.rec.RequestParsed("claude-sonnet-4", true)
 	h.rec.Routed("渠道甲", protocol.OpenAI, "gpt-4o", calllog.Prices{})
 	h.rec.Dialing("/v1/chat/completions")

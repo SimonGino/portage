@@ -25,10 +25,10 @@ func seedSplitRoots(t *testing.T) (*gatewaytest.Gateway, *gatewaytest.Upstream, 
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"split","base_url":{"openai":"`+upCC.URL+`","anthropic":"`+upA.URL+`"},
 		"credential":"sk-upstream"}`, &created)
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels/"+itoa(created.ID)+"/models",
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels/"+itoa(created.ID)+"/models",
 		`{"upstream_model":"m-split"}`, nil)
 	return gw, upCC, upA
 }
@@ -113,11 +113,11 @@ func TestAdminRejectsDeletingTheLastBaseURL(t *testing.T) {
 	var created struct {
 		ID int64 `json:"id"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/channels", `{
+	a.JSONInto(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"one-root","base_url":{"anthropic":"https://api.example.com"},
 		"credential":"sk-x"}`, &created)
 
-	status, body := a.Do(t, http.MethodPut, "/admin/api/channels/"+itoa(created.ID)+"/base-url",
+	status, body := a.Do(t, http.MethodPut, "/panel/api/channels/"+itoa(created.ID)+"/base-url",
 		`{"base_url":{}}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("删到零地址应 400，得到 %d：%s", status, body)
@@ -128,7 +128,7 @@ func TestAdminRejectsDeletingTheLastBaseURL(t *testing.T) {
 
 	// 拒掉之后原地址不动。
 	var channels []adminChannel
-	a.JSONInto(t, http.MethodGet, "/admin/api/channels", "", &channels)
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 1 {
 		t.Fatalf("渠道丢了：%+v", channels)
 	}
@@ -140,7 +140,7 @@ func TestAdminRejectsUnknownProtocolKeyInBaseURL(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
 		`{"name":"typo","base_url":{"anthropic_messages":"https://api.example.com"},"credential":"sk-x"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("未知协议键应 400，得到 %d：%s", status, body)

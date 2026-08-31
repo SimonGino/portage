@@ -25,14 +25,14 @@ var assetRef = regexp.MustCompile(`(?:src|href)="(/[^"]+\.(?:js|css))"`)
 // TestEmbeddedUIReferencesAdminPrefixedAssets 是 base 路径那个坑的哨兵。
 //
 // Vite 默认 base 是 `/`，产物里的 index.html 会去请求 /assets/index-xxx.js。
-// 而网关只在 /admin 下发静态文件，那些请求全 404，页面白屏——且这个故障
+// 而网关只在 /panel 下发静态文件，那些请求全 404，页面白屏——且这个故障
 // 只在 embed 后的二进制里出现，前端开发时完全看不见。
 func TestEmbeddedUIReferencesAdminPrefixedAssets(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 
-	body, ct := getOK(t, g.URL+"/admin")
+	body, ct := getOK(t, g.URL+"/panel")
 	if !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("/admin 的 Content-Type = %q，期望 text/html", ct)
+		t.Fatalf("/panel 的 Content-Type = %q，期望 text/html", ct)
 	}
 
 	refs := assetRef.FindAllStringSubmatch(body, -1)
@@ -41,8 +41,8 @@ func TestEmbeddedUIReferencesAdminPrefixedAssets(t *testing.T) {
 	}
 	for _, m := range refs {
 		ref := m[1]
-		if !strings.HasPrefix(ref, "/admin/") {
-			t.Errorf("资源引用 %q 不在 /admin/ 下——vite.config.ts 的 base 掉了，装进容器会白屏", ref)
+		if !strings.HasPrefix(ref, "/panel/") {
+			t.Errorf("资源引用 %q 不在 /panel/ 下——vite.config.ts 的 base 掉了，装进容器会白屏", ref)
 			continue
 		}
 		_, assetCT := getOK(t, g.URL+ref)
@@ -58,18 +58,18 @@ func TestEmbeddedUIReferencesAdminPrefixedAssets(t *testing.T) {
 }
 
 // TestEmbeddedUIServesDeepLinks：SPA 的深链接直接刷新要回同一份 index.html，
-// 前端路由再自己接管。回 404 的话，「在 /admin/keys 上按 F5」就废了。
+// 前端路由再自己接管。回 404 的话，「在 /panel/keys 上按 F5」就废了。
 func TestEmbeddedUIServesDeepLinks(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 
-	root, _ := getOK(t, g.URL+"/admin")
-	for _, p := range []string{"/admin/keys", "/admin/access-points", "/admin/usage", "/admin/whatever"} {
+	root, _ := getOK(t, g.URL+"/panel")
+	for _, p := range []string{"/panel/keys", "/panel/access-points", "/panel/usage", "/panel/whatever"} {
 		body, ct := getOK(t, g.URL+p)
 		if !strings.HasPrefix(ct, "text/html") {
 			t.Errorf("%s 的 Content-Type = %q，期望 text/html", p, ct)
 		}
 		if body != root {
-			t.Errorf("%s 发的不是 /admin 那一份 index.html", p)
+			t.Errorf("%s 发的不是 /panel 那一份 index.html", p)
 		}
 	}
 }

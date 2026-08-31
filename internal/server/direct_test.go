@@ -185,7 +185,7 @@ func TestChannelNameWithSlashIsRejectedOnSave(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	status, body := a.Do(t, http.MethodPost, "/admin/api/channels", `{
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels", `{
 		"name":"vendor/relay","base_url":{"openai":"`+up.URL+`"},
 		"credential":"sk-upstream"}`)
 	if status != http.StatusBadRequest {

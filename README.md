@@ -97,7 +97,7 @@ PORTAGE_ADMIN_PASSWORD='pick-a-password' \
   docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-Open <http://127.0.0.1:8317/admin>, log in, and add a channel → managed models →
+Open <http://127.0.0.1:8317/panel>, log in, and add a channel → managed models →
 an access point → an API key. Test the upstreams from here: a forwarding-only instance
 never probes anything, so whatever you don't verify on this machine, nobody verifies.
 
@@ -207,7 +207,7 @@ one place — the credential pool — and appear in no list, no log, and no erro
 The left rail also holds the export button that produces `channels.yaml`.
 
 **On a forwarding-only instance none of this exists.** With no admin password set,
-`/admin` and `/admin/api/*` — login and session included — are never registered: the
+`/panel` and `/panel/api/*` — login and session included — are never registered: the
 404 comes from the router, not from an auth check. There is no login form to brute-force
 and no admin surface to accidentally leave exposed. `/v1` and `/healthz` are all that's
 listening.

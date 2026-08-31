@@ -15,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const exportPath = "/admin/api/export"
+const exportPath = "/panel/api/export"
 
 // engineWith 只为拿到路由表：形态闸在注册期就决定了管理面在不在，所以判断得看
 // 路由表本身，而不是打一发请求看回什么码。
@@ -56,7 +56,7 @@ func TestExportNeedsSessionAndHasNoSecondDoor(t *testing.T) {
 
 	t.Run("整个引擎只有这一条导出路由", func(t *testing.T) {
 		// 用路由表而不是猜路径：将来谁加了 `/export.yaml` 或者一条挂在
-		// /admin/api 之外的导出端点，这条断言会先红。
+		// /panel/api 之外的导出端点，这条断言会先红。
 		var found []string
 		for _, r := range engineWith(t, gatewaytest.AdminPassword).Routes() {
 			if strings.Contains(r.Path, "export") {

@@ -1,6 +1,6 @@
 package server_test
 
-// import_test.go 钉导入接口（#59）：POST /admin/api/import 走启动 apply 同一条链路，
+// import_test.go 钉导入接口（#59）：POST /panel/api/import 走启动 apply 同一条链路，
 // 覆盖式（文件里没有的实体删掉）、失败整份回滚一次报全、成功后不切事实源（管理端
 // 照常可写）。声明文件形态下的 409 在 admin_test.go 的写闸清单里一并钉着。
 
@@ -44,7 +44,7 @@ func TestImportOverwritesAndKeepsAdminWritable(t *testing.T) {
 	var out struct {
 		Changes []string `json:"changes"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/import", importFile, &out)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import", importFile, &out)
 	if len(out.Changes) == 0 {
 		t.Fatal("导入动了库却没回变更清单")
 	}
@@ -64,7 +64,7 @@ func TestImportOverwritesAndKeepsAdminWritable(t *testing.T) {
 	}
 
 	// 不切事实源：导入之后管理端写接口照常成功，而不是像声明文件形态那样 409。
-	status, body := a.Do(t, http.MethodPost, "/admin/api/channels",
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
 		`{"name":"after-import","base_url":{"openai":"https://example.internal/v1"},"credential":"sk-x"}`)
 	if status != http.StatusOK {
 		t.Errorf("导入之后管理端应照常可写，得到 %d：%s", status, body)
@@ -77,8 +77,8 @@ func TestImportSameFileTwiceReportsNoChanges(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	a.JSONInto(t, http.MethodPost, "/admin/api/import", importFile, nil)
-	_, raw := a.Do(t, http.MethodPost, "/admin/api/import", importFile)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import", importFile, nil)
+	_, raw := a.Do(t, http.MethodPost, "/panel/api/import", importFile)
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatalf("第二遍导入的响应不是 JSON：%s", raw)
@@ -97,13 +97,13 @@ func TestImportInvalidFileRollsBackAndReportsAll(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	t.Run("解析错", func(t *testing.T) {
-		status, body := a.Do(t, http.MethodPost, "/admin/api/import", "channels: [")
+		status, body := a.Do(t, http.MethodPost, "/panel/api/import", "channels: [")
 		if status != http.StatusBadRequest || !strings.Contains(body, "解析声明文件") {
 			t.Errorf("坏 YAML 应 400 且点名解析失败，得到 %d：%s", status, body)
 		}
 	})
 	t.Run("未知字段被严格档拒", func(t *testing.T) {
-		status, body := a.Do(t, http.MethodPost, "/admin/api/import",
+		status, body := a.Do(t, http.MethodPost, "/panel/api/import",
 			strings.Replace(importFile, "    base_url:", "    base_urls:", 1))
 		if status != http.StatusBadRequest {
 			t.Errorf("未知字段应 400，得到 %d：%s", status, body)
@@ -112,7 +112,7 @@ func TestImportInvalidFileRollsBackAndReportsAll(t *testing.T) {
 	t.Run("自校验错一次报全", func(t *testing.T) {
 		bad := strings.Replace(importFile, "  - name: laptop\n    key: sk-ptg-import-test\n", "", 1)
 		bad = strings.Replace(bad, "target: qwen/Qwen3-27B", "target: qwen/不存在", 1)
-		status, body := a.Do(t, http.MethodPost, "/admin/api/import", bad)
+		status, body := a.Do(t, http.MethodPost, "/panel/api/import", bad)
 		if status != http.StatusBadRequest {
 			t.Fatalf("自校验错应 400，得到 %d：%s", status, body)
 		}
@@ -124,7 +124,7 @@ func TestImportInvalidFileRollsBackAndReportsAll(t *testing.T) {
 	})
 	t.Run("库校验错整份回滚", func(t *testing.T) {
 		// base_url 缺 scheme：selfCheck 放行（那是 Validate 的判据），闸二在事务里拦下。
-		status, body := a.Do(t, http.MethodPost, "/admin/api/import",
+		status, body := a.Do(t, http.MethodPost, "/panel/api/import",
 			strings.Replace(importFile, "https://example.internal/v1", "example.internal", 1))
 		if status != http.StatusBadRequest {
 			t.Errorf("库校验错应 400，得到 %d：%s", status, body)
@@ -148,10 +148,10 @@ func TestImportInvalidFileRollsBackAndReportsAll(t *testing.T) {
 // 改）整份业务配置，未登录连门都不该进。
 func TestImportRequiresSession(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
-	if status, body := g.Admin(t).Do(t, http.MethodPost, "/admin/api/import", importFile); status != http.StatusUnauthorized {
+	if status, body := g.Admin(t).Do(t, http.MethodPost, "/panel/api/import", importFile); status != http.StatusUnauthorized {
 		t.Errorf("未登录导入应 401，得到 %d：%s", status, body)
 	}
-	if status, body := g.Admin(t).Do(t, http.MethodPost, "/admin/api/import/preview", importFile); status != http.StatusUnauthorized {
+	if status, body := g.Admin(t).Do(t, http.MethodPost, "/panel/api/import/preview", importFile); status != http.StatusUnauthorized {
 		t.Errorf("未登录试算应 401，得到 %d：%s", status, body)
 	}
 }
@@ -162,15 +162,15 @@ func TestExportImportRoundtripIsNoop(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
 	a := g.LoggedIn(t)
 
-	a.JSONInto(t, http.MethodPost, "/admin/api/import", importFile, nil)
-	status, exported := a.Do(t, http.MethodGet, "/admin/api/export", "")
+	a.JSONInto(t, http.MethodPost, "/panel/api/import", importFile, nil)
+	status, exported := a.Do(t, http.MethodGet, "/panel/api/export", "")
 	if status != http.StatusOK {
 		t.Fatalf("导出失败：%d %s", status, exported)
 	}
 	var out struct {
 		Changes []string `json:"changes"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/import", exported, &out)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import", exported, &out)
 	if len(out.Changes) != 0 {
 		t.Errorf("导出再导入应无变化，实际：%v", out.Changes)
 	}
@@ -189,7 +189,7 @@ func TestImportPreviewMatchesRealImportWithoutWriting(t *testing.T) {
 	var preview struct {
 		Changes []string `json:"changes"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/import/preview", importFile, &preview)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import/preview", importFile, &preview)
 	if len(preview.Changes) == 0 {
 		t.Fatal("试算没报任何变更，清单不该是空的")
 	}
@@ -209,7 +209,7 @@ func TestImportPreviewMatchesRealImportWithoutWriting(t *testing.T) {
 	var applied struct {
 		Changes []string `json:"changes"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/import", importFile, &applied)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import", importFile, &applied)
 	if strings.Join(applied.Changes, "；") != strings.Join(preview.Changes, "；") {
 		t.Errorf("真导入清单与试算不一致：\n试算 %v\n导入 %v", preview.Changes, applied.Changes)
 	}
@@ -218,7 +218,7 @@ func TestImportPreviewMatchesRealImportWithoutWriting(t *testing.T) {
 	var again struct {
 		Changes []string `json:"changes"`
 	}
-	a.JSONInto(t, http.MethodPost, "/admin/api/import/preview", importFile, &again)
+	a.JSONInto(t, http.MethodPost, "/panel/api/import/preview", importFile, &again)
 	if len(again.Changes) != 0 {
 		t.Errorf("导完再试算同一份文件应无变化，实际：%v", again.Changes)
 	}
@@ -233,7 +233,7 @@ func TestImportPreviewRejectsInvalidFile(t *testing.T) {
 	a := g.LoggedIn(t)
 
 	bad := strings.Replace(importFile, "target: qwen/Qwen3-27B", "target: qwen/不存在", 1)
-	status, body := a.Do(t, http.MethodPost, "/admin/api/import/preview", bad)
+	status, body := a.Do(t, http.MethodPost, "/panel/api/import/preview", bad)
 	if status != http.StatusBadRequest {
 		t.Fatalf("试算自校验错应 400，得到 %d：%s", status, body)
 	}

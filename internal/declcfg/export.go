@@ -55,7 +55,7 @@ func Export(ctx context.Context, db store.Queryer) ([]byte, error) {
 // 之外的用户**名下的 key 时报错并逐把点名。第一个 admin 与无主的 key 不算——
 // 单管理员库正是这套形态的主场。
 //
-// 导出与导入（POST /admin/api/import）共用这一份：声明文件表达不了归属，导出会把
+// 导出与导入（POST /panel/api/import）共用这一份：声明文件表达不了归属，导出会把
 // 用户 key 撞名压平、owner 静默丢失，那是一份回不去的文件（#66 ④）；导入则会把
 // 用户 key 静默清光（#66 ⑤）。两边都拒绝比消歧诚实。**启动 apply 不走这道闸**：
 // 挂声明文件是显式切事实源的动作，照删文件外的 key、含用户 key（#66 ③）。

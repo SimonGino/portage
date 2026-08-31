@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, download, importConfig, previewImport, setUnauthorizedHandler } from './api'
 import { PortageMark } from './brand'
 import type { SessionState, User } from './api'
@@ -11,13 +11,13 @@ import Logs from './pages/Logs'
 import Rankings from './pages/Rankings'
 import Users from './pages/Users'
 import ChangePassword from './pages/ChangePassword'
-import AuthCard from './pages/auth/AuthCard'
 import Register from './pages/auth/Register'
 import Forgot from './pages/auth/Forgot'
 import Reset from './pages/auth/Reset'
 import Verify from './pages/auth/Verify'
 import VerifyGate from './pages/auth/VerifyGate'
 import OAuthComplete from './pages/auth/OAuthComplete'
+import MySpace from './pages/my/MySpace'
 import { RailMidTarget, RailProvider } from './rail'
 import { Confirm, Dialog, ErrorBar } from './ui'
 
@@ -130,23 +130,11 @@ export default function App() {
     return <VerifyGate email={session.user.email} onRefresh={refresh} onLogout={refresh} />
   }
 
-  // 普通用户的面板（Key、用量、账号设置）在 #76：本票先立一块诚实的占位，
-  // 别让人落进一个每个接口都 403 的管理壳里。
-  if (session.user && session.user.role !== 'admin') {
-    return (
-      <AuthCard title="已登录">
-        <p className="login-note">
-          你好，<b>{session.user.display_name || session.user.email}</b>。用户面板还在修建中——
-          目前这个账号还没有可用的页面，API Key 相关功能随后到来。
-        </p>
-        <button
-          className="btn btn-quiet"
-          onClick={() => void api.post('/logout').then(refresh, refresh)}
-        >
-          退出登录
-        </button>
-      </AuthCard>
-    )
+  // 「我的」空间（DESIGN §12，#76）：普通用户整个应用就是它，永远见不到左栏；
+  // admin 从左栏顶部的「管理 | 我的」切进来，路径进 /my 即换壳。
+  const isAdmin = session.user?.role === 'admin'
+  if (session.user && (!isAdmin || loc.pathname === '/my' || loc.pathname.startsWith('/my/'))) {
+    return <MySpace user={session.user} isAdmin={isAdmin} onLogout={refresh} onRefresh={refresh} />
   }
 
   return (
@@ -363,6 +351,7 @@ function Shell({
   onLogout: () => void
 }) {
   const loc = useLocation()
+  const nav = useNavigate()
   const wide = loc.pathname.startsWith('/logs')
 
   return (
@@ -372,6 +361,18 @@ function Shell({
           <PortageMark size={22} />
           <b>Portage</b>
         </span>
+        {/* 「管理 ⇄ 我的」两空间切换（DESIGN §12）：管理空间的切换器在左栏顶部。
+            只有带用户身份的会话才摆——纯密码时代的老会话没有「我的」可去。 */}
+        {user && (
+          <div className="segmented rail-space" role="radiogroup" aria-label="空间">
+            <button type="button" role="radio" aria-checked className="segment is-on">
+              管理
+            </button>
+            <button type="button" role="radio" aria-checked={false} className="segment" onClick={() => nav('/my')}>
+              我的
+            </button>
+          </div>
+        )}
         <nav className="nav" aria-label="主导航">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to}>
@@ -425,7 +426,7 @@ function Shell({
               不交给下面那个 `*`：开着旧标签刷新会掉到渠道页上，那不像跳转，像页面没了。 */}
           <Route path="/overview" element={<Navigate to="/rankings" replace />} />
           <Route path="/usage" element={<Navigate to="/rankings" replace />} />
-          {/* 兜住 /admin 本身以及任何不认识的深链接。用 replace 是为了不在
+          {/* 兜住 /panel 本身以及任何不认识的深链接。用 replace 是为了不在
               浏览器历史里留下一个「回退就又跳一次」的空档。 */}
           <Route path="*" element={<Navigate to="/channels" replace />} />
         </Routes>

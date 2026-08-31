@@ -18,7 +18,7 @@ One thing decides which shape you get: whether an admin password is set.
 | **Forwarding only** | not set anywhere | comes from a declarative file | the machine you deploy *to* |
 
 The password's **value is only used for seeding; its presence decides the shape**. With no
-admin password set, `/admin` and `/admin/api/*` — login and session included — are never
+admin password set, `/panel` and `/panel/api/*` — login and session included — are never
 registered: the 404 comes from the router, not from an auth check. There is no login form
 to brute-force and no admin surface to accidentally leave exposed. `/v1` and `/healthz`
 are all that's listening.
@@ -33,7 +33,7 @@ PORTAGE_ADMIN_PASSWORD='pick-a-password' \
   docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-Open <http://127.0.0.1:8317/admin>, log in, and add a channel → managed models →
+Open <http://127.0.0.1:8317/panel>, log in, and add a channel → managed models →
 an access point → an API key. Test the upstreams from here: a forwarding-only instance
 never probes anything, so whatever you don't verify on this machine, nobody verifies.
 
@@ -134,6 +134,17 @@ Change it on the local instance, export again, redeploy the file, restart. The t
 machines share nothing and there is no file watching — the declarative file is read once,
 at boot.
 
+## Upgrade notes
+
+**The panel prefix moved from `/admin` to `/panel`** (#76). GETs on the old prefix 302
+to the same path under the new one, so bookmarks and verification / reset links in old
+emails keep working. **The one thing the redirect cannot save is the OAuth callback**:
+GitHub / Google only redirect to the exact URI registered in their consoles. If you
+configured OAuth login, update the callback URL in both consoles after upgrading, from
+`…/admin/oauth/<provider>/callback` to `…/panel/oauth/<provider>/callback` — the panel's
+"用户 → 登录与邮件" card shows the new URL ready to copy. Until you do, GitHub / Google
+logins are rejected at the provider's step.
+
 ## Writing `channels.yaml` by hand (the secondary path)
 
 [`channels.example.yaml`](../channels.example.yaml) is real exporter output run over fake
@@ -154,7 +165,7 @@ make build          # builds the web admin and embeds it into bin/portage
 ./bin/portage
 ```
 
-A plain `go build ./cmd/portage` works too — without the `webui` build tag, `/admin`
+A plain `go build ./cmd/portage` works too — without the `webui` build tag, `/panel`
 serves a "frontend not built" page. That's the path CI and Node-less machines take.
 Note this is a build-time switch over the bundled assets only; whether the admin plane
 exists at all is the password question above, not this tag.

@@ -4,7 +4,7 @@ import { api } from '../../api'
 import AuthCard from './AuthCard'
 
 /**
- * 邮箱验证落地页：邮件链接指到 /admin/verify?token=...，加载即消费。点链接的
+ * 邮箱验证落地页：邮件链接指到 /panel/verify?token=...，加载即消费。点链接的
  * 浏览器未必是注册时那个——token 本身就是凭据，这页不要求登录。
  */
 export default function Verify({ onVerified }: { onVerified: () => void }) {

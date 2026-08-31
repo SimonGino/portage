@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// notBuiltPage 是没带前端的二进制在 /admin 上回的东西。
+// notBuiltPage 是没带前端的二进制在 /panel 上回的东西。
 //
 // 回一句人话而不是 404：`go build ./cmd/portage` 编出来的二进制默认就不含前端，
 // 而 404 会让人以为路由挂错了，跑去翻 Mount。
@@ -25,30 +25,50 @@ const notBuiltPage = `<!doctype html><meta charset="utf-8">
 <pre style="background:#f5f5f5;padding:1em;overflow-x:auto">make build-ui        # 或者 cd web &amp;&amp; npm ci &amp;&amp; npm run build
 go build -tags webui -o portage ./cmd/portage</pre>
 <p>Docker 镜像（<code>deploy/docker-compose.yml</code>）默认就是带管理端的构建。</p>
-<p>开发前端时不用编 Go：<code>cd web &amp;&amp; npm run dev</code>，Vite 会把 /admin/api 代理到本网关。</p>
+<p>开发前端时不用编 Go：<code>cd web &amp;&amp; npm run dev</code>，Vite 会把 /panel/api 代理到本网关。</p>
 </body>`
 
-// mountUI 把管理端 SPA 挂到 /admin 下。
+// mountUI 把管理端 SPA 挂到 /panel 下（#76：换中性前缀，普通用户的「我的」空间
+// 与治理面共用一个 SPA，路径上不再自称 admin）。
 //
-// 走 NoRoute 而不是 r.Static("/admin", ...)：SPA 的深链接（/admin/keys 直接刷新）
-// 必须回同一份 index.html，而 gin 的路由树不允许 `/admin/*filepath` 与已经注册的
-// `/admin/api/...` 并存——注册时就 panic，不是运行期 404。
+// 走 NoRoute 而不是 r.Static("/panel", ...)：SPA 的深链接（/panel/keys 直接刷新）
+// 必须回同一份 index.html，而 gin 的路由树不允许 `/panel/*filepath` 与已经注册的
+// `/panel/api/...` 并存——注册时就 panic，不是运行期 404。
+//
+// /admin 旧前缀只留 GET 302 跳到 /panel 下同路径（#76 裁定 ③）：收藏夹、旧邮件里
+// 的链接一跳就到；POST 不接（回跳等于鼓励拿旧前缀继续写代码），OAuth 回调 302 也
+// 救不了（中转 cookie 限定在 /panel/oauth，见 oauth.go）——那一条只能改上游后台。
+// 兜底与 SPA 同在这只 NoRoute 里，于是同一道挂载闸管住两边：Mount 不调，/admin
+// 与 /panel 一起 404。
 func (h *Handler) mountUI(r *gin.Engine) {
 	assets, ok := webui.Files()
 
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		// 分开判 `/admin` 与 `/admin/` 前缀，而不是一句 HasPrefix(p, "/admin")：
-		// 后者连 /administrator 这种毫不相干的路径也会吞掉，回一页管理端 HTML。
-		if p != "/admin" && !strings.HasPrefix(p, "/admin/") {
+		// 分开判整段与斜杠前缀，而不是一句 HasPrefix(p, "/panel")：后者连
+		// /paneling 这种毫不相干的路径也会吞掉，回一页管理端 HTML。/admin 同理
+		// （/administrator 不该被 302 走）。
+		if p == "/admin" || strings.HasPrefix(p, "/admin/") {
+			if c.Request.Method != http.MethodGet {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			target := "/panel" + strings.TrimPrefix(p, "/admin")
+			if q := c.Request.URL.RawQuery; q != "" {
+				target += "?" + q
+			}
+			c.Redirect(http.StatusFound, target)
+			return
+		}
+		if p != "/panel" && !strings.HasPrefix(p, "/panel/") {
 			// 不是管理端的路径就照常 404。NoRoute 是全局的，这里必须放行，
 			// 否则 /v1/ 上的笔误会拿到一个管理端页面。
 			c.Status(http.StatusNotFound)
 			return
 		}
-		// /admin/api 下的未知路径也不该回 HTML：前端拿到 200 + HTML 会在
+		// /panel/api 下的未知路径也不该回 HTML：前端拿到 200 + HTML 会在
 		// JSON.parse 上炸，报出来的错跟真正的原因（接口写错了）毫无关系。
-		if strings.HasPrefix(p, "/admin/api") {
+		if strings.HasPrefix(p, "/panel/api") {
 			fail(c, http.StatusNotFound, "接口不存在")
 			return
 		}
@@ -56,7 +76,7 @@ func (h *Handler) mountUI(r *gin.Engine) {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(notBuiltPage))
 			return
 		}
-		serveSPA(c, assets, strings.TrimPrefix(strings.TrimPrefix(p, "/admin"), "/"))
+		serveSPA(c, assets, strings.TrimPrefix(strings.TrimPrefix(p, "/panel"), "/"))
 	})
 }
 

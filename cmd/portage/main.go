@@ -94,7 +94,7 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	// 而这里的处置**按形态分岔**（口径层 v0.92）：
 	//
 	//   - **没挂声明文件**：只警告不拒启。干净库第一次起来必然是空的，而配 key 得先
-	//     有个跑着的网关（开 /admin 或对着它建的库灌 SQL），拒启会把这两条路一起堵死。
+	//     有个跑着的网关（开 /panel 或对着它建的库灌 SQL），拒启会把这两条路一起堵死。
 	//   - **挂了声明文件**：拒启。上面那条立论的两条路同时消失——管理面按密码闸不
 	//     注册，灌 SQL 被「文件是唯一事实源」封掉，而 API Key 必须在文件里显式给值。
 	//     例外失去依据，回归通则。
@@ -104,14 +104,14 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	if n, err := store.CountAPIKeys(ctx, db); err != nil {
 		return err
 	} else if n == 0 && file == nil {
-		log.Warn("api_keys 表是空的，所有转发请求都会回 401；开 /admin 建一把，无 UI 的部署见 scripts/seed-example.sql 的「网关 key」一节")
+		log.Warn("api_keys 表是空的，所有转发请求都会回 401；开 /panel 建一把，无 UI 的部署见 scripts/seed-example.sql 的「网关 key」一节")
 	}
 
 	// 管理端密码：配置里的明文只用来**初始化**，库里已经有了就一概不动
 	// （口径层 §2.7「登录后可改，改后配置项失效」）。同样只警告不拒启。
 	//
 	// 没设密码不再只是「管理端登不进去」，而是**纯转发形态**（口径层 §2.9 #27）：
-	// server.Engine 那边整个 admin.Mount 不调，/admin 与 /admin/api/* 一律 404。
+	// server.Engine 那边整个 admin.Mount 不调，/panel 与 /panel/api/* 一律 404。
 	// 日志措辞跟着改——报「登不进去」会让人以为是密码错了，跑去查会话或 cookie。
 	//
 	// #61 起挂载闸多了半个判据（库里存在 admin 用户也挂），警告跟着闸走：库里有
@@ -123,7 +123,7 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 		if has, err := store.HasAdminUser(ctx, db); err != nil {
 			return err
 		} else if !has {
-			log.Warn("未设置管理密码，本进程是纯转发形态：/admin 与 /admin/api/* 整个不注册（404），只提供 /v1 转发面；" +
+			log.Warn("未设置管理密码，本进程是纯转发形态：/panel 与 /panel/api/* 整个不注册（404），只提供 /v1 转发面；" +
 				"要管理面就填 config.yaml 的 admin_password 或设 PORTAGE_ADMIN_PASSWORD 后重启")
 		}
 	}

@@ -37,6 +37,7 @@ function usage(label: string, tokens: number, over: Partial<UsageRow> = {}): Usa
     output_tokens: 0,
     cache_read_tokens: 0,
     cache_write_tokens: 0,
+    cost_usd: 0,
     ...over,
   }
 }

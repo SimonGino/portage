@@ -166,7 +166,7 @@ func (h *Handler) sendVerifyMail(ctx context.Context, userID int64, email string
 
 点击下面的链接完成 Portage 的邮箱验证（24 小时内有效）：
 
-%s/admin/verify?token=%s
+%s/panel/verify?token=%s
 
 如果这不是你发起的注册，忽略这封邮件即可。`, site, token)
 	return h.mail(ctx, h.db, email, "验证你的 Portage 邮箱", body)
@@ -301,7 +301,7 @@ func (h *Handler) requestPasswordReset(c *gin.Context) {
 
 点击下面的链接为 Portage 账号%s（30 分钟内有效，只能用一次）：
 
-%s/admin/reset?token=%s
+%s/panel/reset?token=%s
 
 如果这不是你发起的，忽略这封邮件即可，密码不会被改动。`, action, site, token)
 	if err := h.mail(ctx, h.db, u.Email, "Portage "+action, body); err != nil {
@@ -378,7 +378,7 @@ func (h *Handler) inTx(ctx context.Context, fn func(tx store.Conn) error) error 
 // redirectAdmin 把浏览器导航送回 SPA，带上给登录页看的一句话（query 上的
 // oauth_error）。空串即不带参数。
 func redirectAdmin(c *gin.Context, path string, params url.Values) {
-	target := "/admin/" + strings.TrimPrefix(path, "/")
+	target := "/panel/" + strings.TrimPrefix(path, "/")
 	if len(params) > 0 {
 		target += "?" + params.Encode()
 	}

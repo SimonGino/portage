@@ -92,8 +92,10 @@ type User struct {
 	EmailVerified bool   `json:"email_verified"`
 	// HasPassword 区分密码账号与 OAuth-only 账号：账号页要据此说「设置密码」还是
 	// 「修改密码」，列表要能看出「这个人只能走 OAuth 进来」。
-	HasPassword bool   `json:"has_password"`
-	CreatedAt   string `json:"created_at"`
+	HasPassword bool `json:"has_password"`
+	// MonthlyQuotaUSD 是月度限额（#65）：null = 不限额（默认），0 = 封停。
+	MonthlyQuotaUSD *float64 `json:"monthly_quota_usd"`
+	CreatedAt       string   `json:"created_at"`
 }
 
 // NormalizeEmail 是邮箱的统一形态：去空白、折小写。邮箱即登录标识（#61），
@@ -128,9 +130,9 @@ func GetUser(ctx context.Context, db Queryer, id int64) (User, error) {
 	var u User
 	var hash sql.NullString
 	err := db.QueryRowContext(ctx, `
-		SELECT id, email, display_name, role, disabled, email_verified, password_hash, created_at
+		SELECT id, email, display_name, role, disabled, email_verified, password_hash, monthly_quota_usd, created_at
 		FROM users WHERE id = ?`, id).Scan(
-		&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Disabled, &u.EmailVerified, &hash, &u.CreatedAt)
+		&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Disabled, &u.EmailVerified, &hash, &u.MonthlyQuotaUSD, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -180,7 +182,7 @@ func getUserAuth(ctx context.Context, db Queryer, where string, arg any) (UserAu
 // ListUsers 列全部用户，按 id 序（第一个 admin 恒在最上面，它是有身份的角色）。
 func ListUsers(ctx context.Context, db Queryer) ([]User, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, email, display_name, role, disabled, email_verified, password_hash, created_at
+		SELECT id, email, display_name, role, disabled, email_verified, password_hash, monthly_quota_usd, created_at
 		FROM users ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -191,13 +193,21 @@ func ListUsers(ctx context.Context, db Queryer) ([]User, error) {
 		var u User
 		var hash sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Disabled,
-			&u.EmailVerified, &hash, &u.CreatedAt); err != nil {
+			&u.EmailVerified, &hash, &u.MonthlyQuotaUSD, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.HasPassword = hash.Valid && hash.String != ""
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// SetUserDisplayName 改展示名（#76 账号页）。展示名是纯显示字段，空串合法——
+// 清空即回退到「显示邮箱」。
+func SetUserDisplayName(ctx context.Context, db Conn, id int64, name string) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE users SET display_name = ? WHERE id = ?`, strings.TrimSpace(name), id)
+	return affectedOne(res, err)
 }
 
 // SetEmailVerified 把用户标成已验证。验证是单向的：没有反向接口，改邮箱重验是

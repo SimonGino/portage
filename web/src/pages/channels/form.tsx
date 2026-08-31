@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, PROTOCOL_LABEL, PROTOCOL_PATH, PROTOCOL_SOON, declaredProtocols, firstBaseURL } from '../../api'
-import type { BaseURLs, Channel, PricingProvider, Protocol } from '../../api'
+import { api, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs } from '../../api'
+import type { BaseURLDraft, BaseURLs, Channel, PricingProvider } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
 import type { Option } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
+import { BaseURLFields } from './baseurl'
 
 /**
  * joinURL 复刻服务端 `upstream.buildURL` 的拼法：右侧去尾斜杠，直接接子路径。
@@ -46,14 +47,13 @@ export function ChannelForm({
   onDelete?: () => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
-  // 每协议一份出站根地址（口径层 v0.96 ②）：**填了哪个协议的地址就是声明了哪个协议**，
-  // 没有独立的协议勾选。只在**新建**时出现在这张表单里——编辑走模型页上的「API 地址」
-  // 常驻区块（PO 2026-08-20），这儿不再留一份：两处各存一份编辑态，后保存的会把先
+  // API 地址是一份共用前缀 + 协议勾选（DESIGN v0.46，口径层 v1.04）；落库前由
+  // joinBaseURLs 合回那份「协议 → 地址」map，声明语义照旧由「哪些协议填了地址」
+  // 推导。只在**新建**时出现在这张表单里——编辑走模型页上的「API 地址」常驻
+  // 区块（PO 2026-08-20），那儿不再留一份：两处各存一份编辑态，后保存的会把先
   // 保存的悄悄盖回去。
-  const [urls, setUrls] = useState<BaseURLs>({})
-  // OpenAI Responses 收进「更多设置」（DESIGN.md v0.32 ③）：回退序里它排第二，但
-  // 用得最少——折叠的是使用频率不是优先级。填过值就自动展开，免得值被折叠藏住。
-  const [more, setMore] = useState(false)
+  const [draft, setDraft] = useState<BaseURLDraft>({ shared: '', chips: [], overrides: {} })
+  const urls = useMemo(() => joinBaseURLs(draft), [draft])
   // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
   const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
   // compaction 能力位（口径层 v0.54）。只在声明了 Responses 时露出来：它问的是「这个
@@ -113,8 +113,15 @@ export function ChannelForm({
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
 
-  function setURL(p: Protocol, v: string) {
-    setUrls((prev) => ({ ...prev, [p]: v }))
+  // 新建落库前把空值剔掉：勾了协议但共用前缀还空着的项落空串 = 未声明，
+  // 服务端 store 那边同判，这里剔掉只是不让空键走网络。
+  function payloadURLs(): BaseURLs {
+    const out: BaseURLs = {}
+    for (const p of PROTOCOL_ORDER) {
+      const v = (urls[p] ?? '').trim()
+      if (v !== '') out[p] = v
+    }
+    return out
   }
 
   async function submit(e: React.FormEvent) {
@@ -136,7 +143,7 @@ export function ChannelForm({
       } else {
         const created = await api.post<{ id: number }>('/channels', {
           name,
-          base_url: urls,
+          base_url: payloadURLs(),
           max_concurrency: maxConcValue,
           provider,
           ...(showCompaction ? { supports_compaction: compaction } : {}),
@@ -150,21 +157,6 @@ export function ChannelForm({
     } finally {
       setBusy(false)
     }
-  }
-
-  /** 一行端点：协议名做标签，地址值即声明。预览紧随其下（§7：能拼出来的就摆出来）。 */
-  function endpointField(p: Protocol, hint?: string) {
-    const v = urls[p] ?? ''
-    return (
-      <Field label={`${PROTOCOL_LABEL[p]} 地址`} hint={hint}>
-        <input value={v} onChange={(e) => setURL(p, e.target.value)} placeholder="留空 = 不声明这个协议" />
-        {v.trim() !== '' && (
-          <div className="baseurl-preview" title="网关实际会请求的完整地址：你填的前缀 + 协议固定子路径">
-            → <code>{joinURL(v, PROTOCOL_PATH[p] ?? '')}</code>
-          </div>
-        )}
-      </Field>
-    )
   }
 
   return (
@@ -230,33 +222,13 @@ export function ChannelForm({
         <Picker value={provider} options={providerOptions} onChange={setProvider} placeholder="未标注" />
       </Field>
 
-      {/* 端点设置（口径层 v0.96 ②，DESIGN.md v0.32 ③）：每协议一行地址，**填了即声明
-          该协议**，没有勾选框。地址存的是「协议子路径之前」的前缀，子路径由网关自己接
-          ——每行下面的预览把拼出来的结果直接摆出来，比任何一句「不要带 /v1」都硬。
-          OpenAI / Anthropic 常驻，Responses 收「更多设置」。
-          编辑态没有这一段（它在页面上的「API 地址」区块里）。 */}
-      {!channel && (
-        <>
-          <div className="form-row">
-            {endpointField('openai', '填了即声明该协议，同一上游共用前缀就几行填同一个值')}
-            {endpointField('anthropic')}
-          </div>
-          {!more && !(urls.openai_responses ?? '').trim() ? (
-            <button type="button" className="btn btn-quiet" onClick={() => setMore(true)}>
-              更多设置（OpenAI Responses{PROTOCOL_SOON.length ? '、' + PROTOCOL_SOON.map((s) => s.label).join('、') : ''}）
-            </button>
-          ) : (
-            <div className="form-row">
-              {endpointField(
-                'openai_responses',
-                PROTOCOL_SOON.length
-                  ? PROTOCOL_SOON.map((s) => `${s.label} ${s.hint}`).join('；')
-                  : undefined,
-              )}
-            </div>
-          )}
-        </>
-      )}
+      {/* 端点设置（DESIGN v0.46，口径层 v1.04）：一份共用前缀 + 协议勾选即声明，
+          个别协议要不同前缀时在预览行上单独填。地址存的是「协议子路径之前」的前缀，
+          子路径由网关自己接——每行预览把拼出来的结果直接摆出来，比任何一句
+          「不要带 /v1」都硬。三个协议都是一颗 chip，不再折叠（v0.32 ③ 折的是
+          每协议一行的地址框，chips 行三颗同宽，没有可折叠的体积）。
+          编辑态没有这一段（它在页面上的「API 地址」区块里，同一控件）。 */}
+      {!channel && <BaseURLFields draft={draft} onChange={setDraft} />}
 
       {/* Codex 压缩能力位（口径层 v0.54）。默认「不支持」，得人明确勾——上游认不认
           compaction_trigger 网关探不出来，而猜错的代价是 Codex 在长会话里直接 Fatal。 */}
