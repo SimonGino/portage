@@ -6,11 +6,11 @@ import { Empty, ErrorBar, useList } from '../ui'
 import { ChannelIcon } from '../icons'
 import { ChannelDetail } from './channels/detail'
 import { ChannelForm } from './channels/form'
-import { RailMid } from '../rail'
 
 /**
- * 模型页（路由仍是 /channels）：渠道列表 portal 进左栏中段，主画布是选中渠道的
- * 纳管模型（口径层 v0.75）。新建时主区整页是表单，没有模型列表。
+ * 模型页（路由仍是 /channels）：页内主从两栏——左列渠道清单（sticky），右栏是
+ * 选中渠道的纳管模型（口径层 v0.75；v0.54 左栏退役后清单从壳搬回页内）。
+ * 新建时右栏整个是表单，没有模型列表。
  */
 export default function Channels() {
   const { id } = useParams()
@@ -22,7 +22,7 @@ export default function Channels() {
   const [fetched, setFetched] = useState<Record<number, ModelListResult[]>>({})
 
   useEffect(() => {
-    document.querySelector('.main')?.scrollTo(0, 0)
+    window.scrollTo(0, 0)
   }, [id])
 
   async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
@@ -57,16 +57,16 @@ export default function Channels() {
     : channels
 
   return (
-    <>
-      <RailMid>
-        <div className="rail-label">渠道</div>
+    <div className="split">
+      <aside className="master" aria-label="渠道">
+        <div className="master-label">渠道</div>
         <input
-          className="rail-search"
+          className="master-search"
           placeholder="搜渠道…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="rail-list">
+        <div className="master-list">
           {visible.length === 0 ? (
             <div className="muted master-empty">
               {channels.length === 0 ? '还没有渠道。' : `没有匹配「${query}」的渠道。`}
@@ -100,55 +100,57 @@ export default function Channels() {
         </div>
         <button
           type="button"
-          className={'rail-new' + (creating ? ' is-on' : '')}
+          className={'master-new' + (creating ? ' is-on' : '')}
           onClick={() => nav('/channels/new')}
         >
           新建渠道
         </button>
-      </RailMid>
+      </aside>
 
-      <ErrorBar message={error} />
-      {creating ? (
-        <>
-          <header className="page-head">
-            <h1>新建渠道</h1>
-          </header>
-          <ChannelForm
-            key="new"
-            channel={null}
-            onCancel={() => nav(current ? `/channels/${current.id}` : '/channels')}
-            onSaved={(newID) => {
-              // 保存后什么都不跑（口径层 v0.96 ①）：真实请求的钱只在人手点检测时花。
-              void reload()
-              nav(`/channels/${newID}`, { replace: true })
+      <div className="detail-col">
+        <ErrorBar message={error} />
+        {creating ? (
+          <>
+            <header className="page-head">
+              <h1>新建渠道</h1>
+            </header>
+            <ChannelForm
+              key="new"
+              channel={null}
+              onCancel={() => nav(current ? `/channels/${current.id}` : '/channels')}
+              onSaved={(newID) => {
+                // 保存后什么都不跑（口径层 v0.96 ①）：真实请求的钱只在人手点检测时花。
+                void reload()
+                nav(`/channels/${newID}`, { replace: true })
+              }}
+            />
+          </>
+        ) : current ? (
+          <ChannelDetail
+            key={current.id}
+            ch={current}
+            fetched={fetched[current.id]}
+            onFetchModelsDone={(results) =>
+              setFetched((p) => ({ ...p, [current.id]: results }))
+            }
+            onCredentialsChanged={() => void reload()}
+            onDelete={() => {
+              void mutate(() => api.del(`/channels/${current.id}`)).then((ok) => {
+                if (ok) nav('/channels', { replace: true })
+              })
             }}
+            onSaved={() => void reload()}
+            mutate={mutate}
           />
-        </>
-      ) : current ? (
-        <ChannelDetail
-          key={current.id}
-          ch={current}
-          fetched={fetched[current.id]}
-          onFetchModelsDone={(results) =>
-            setFetched((p) => ({ ...p, [current.id]: results }))
-          }
-          onCredentialsChanged={() => void reload()}
-          onDelete={() => {
-            void mutate(() => api.del(`/channels/${current.id}`)).then((ok) => {
-              if (ok) nav('/channels', { replace: true })
-            })
-          }}
-          onSaved={() => void reload()}
-          mutate={mutate}
-        />
-      ) : (
-        <>
-          <header className="page-head">
-            <h1>模型</h1>
-          </header>
-          <Empty>还没有渠道。左边「新建渠道」接一家，再拉模型。</Empty>
-        </>
-      )}
-    </>
+        ) : (
+          <>
+            <header className="page-head">
+              <h1>模型</h1>
+            </header>
+            <Empty>还没有渠道。左边「新建渠道」接一家，再拉模型。</Empty>
+          </>
+        )}
+      </div>
+    </div>
   )
 }

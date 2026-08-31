@@ -44,7 +44,7 @@ func bucketOf(rows []BucketUsage, key string) (BucketUsage, bool) {
 // 区间的分母算错——那张图在一天过完之前会永远低估。
 func TestUsageBucketsStopsAtNow(t *testing.T) {
 	db, now := openTestDB(t), fixedNow(t)
-	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now)
+	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestUsageBucketsFillsEmptyHours(t *testing.T) {
 	at := time.Date(now.Year(), now.Month(), now.Day(), 8, 15, 0, 0, now.Location())
 	seedCall(t, db, at, 200, 10, 20, 30, 40)
 
-	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now)
+	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestUsageBucketsCountsErrors(t *testing.T) {
 	seedCall(t, db, at, 429, 0, 0, 0, 0)
 	seedCall(t, db, at, 500, 0, 0, 0, 0)
 
-	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now)
+	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestUsageBucketsCrossesMidnight(t *testing.T) {
 	seedCall(t, db, late, 200, 0, 0, 0, 0)
 	seedCall(t, db, early, 200, 0, 0, 0, 0)
 
-	one, err := UsageBuckets(context.Background(), db, 1, BucketHour, now)
+	one, err := UsageBuckets(context.Background(), db, 1, BucketHour, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestUsageBucketsCrossesMidnight(t *testing.T) {
 		t.Errorf("今天 00:00 这一格 = %+v (存在: %v), 期望 1 次调用", b, ok)
 	}
 
-	two, err := UsageBuckets(context.Background(), db, 2, BucketHour, now)
+	two, err := UsageBuckets(context.Background(), db, 2, BucketHour, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}
@@ -150,12 +150,39 @@ func TestUsageBucketsCrossesMidnight(t *testing.T) {
 	}
 }
 
+// forUser 只聚本人（#76 用户侧节律带）：别人的行连同无主行（user_id NULL）一律
+// 不进桶——无主行不属于任何人，混进谁的图都是把别人的账画在他名下。
+func TestUsageBucketsForUser(t *testing.T) {
+	db, now := openTestDB(t), fixedNow(t)
+	at := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, now.Location())
+	seedCall(t, db, at, 200, 1, 1, 0, 0) // 无主行
+	for user, in := range map[int64]int64{1: 10, 2: 99} {
+		if _, err := db.Exec(`INSERT INTO call_logs
+			(created_at, api_key_name, client_protocol, upstream_protocol, model_requested,
+			 model_upstream, channel_name, status, total_ms,
+			 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, user_id)
+			VALUES (?, 'k', 'anthropic', 'anthropic', 'model-a', 'model-a', 'ch', 200, 1, ?, 0, 0, 0, ?)`,
+			at.UTC().Format("2006-01-02 15:04:05"), in, user); err != nil {
+			t.Fatalf("种带归属的流水失败: %v", err)
+		}
+	}
+
+	rows, err := UsageBuckets(context.Background(), db, 1, BucketHour, now, 1)
+	if err != nil {
+		t.Fatalf("分桶失败: %v", err)
+	}
+	hit, ok := bucketOf(rows, at.Format("2006-01-02 15:00"))
+	if !ok || hit.Calls != 1 || hit.InputTokens != 10 {
+		t.Errorf("用户 1 的 09:00 格 = %+v (存在: %v), 期望只有本人那 1 次 / 10 输入", hit, ok)
+	}
+}
+
 // unit=day 与老的 UsageDaily 同口径：恒 days 行、最后一行是本地时区的今天。
 func TestUsageBucketsByDay(t *testing.T) {
 	db, now := openTestDB(t), fixedNow(t)
 	seedCall(t, db, now.Add(-time.Hour), 200, 0, 0, 0, 0)
 
-	rows, err := UsageBuckets(context.Background(), db, 7, BucketDay, now)
+	rows, err := UsageBuckets(context.Background(), db, 7, BucketDay, now, 0)
 	if err != nil {
 		t.Fatalf("分桶失败: %v", err)
 	}

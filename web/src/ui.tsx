@@ -130,7 +130,9 @@ export function Dialog({
             ×
           </button>
         </header>
-        {children}
+        {/* 正文区单独滚：框整体限高（84vh），内容再长头部也钉在原地，
+            尾排按钮靠 CSS sticky 钉底——签字键不该被清单顶出屏幕。 */}
+        <div className="dialog-body">{children}</div>
       </div>
     </div>
   )

@@ -16,7 +16,6 @@
   --shadow: 0 1px 2px rgba(62, 52, 30, 0.05), 0 10px 30px rgba(62, 52, 30, 0.07);
   --r: 10px;
   --r-sm: 8px;
-  --side: 248px;
   /* 衬线只给标题（页标题 / 区块标题 / 渠道身份条上的渠道名 / 空态首句）。
      中文不加载衬线 webfont，落本机的宋体。 */
   --serif: "Source Serif 4", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
@@ -150,31 +149,25 @@ button, input, textarea, select {
   font-size: 15px;
 }
 
-/* ── 壳：248 左栏 + 白画布 ─────────────────────────────────────────── */
+/* ── 壳：统一顶栏 + 居中画布列（v0.54）──────────────────────────────────
+   管理与「我的」两空间共用这一只壳（PO 2026-08-31 裁定统一，248 左栏退役）：
+   顶栏 = 品牌 + 一排 tab + 右侧动作区，主区是居中的画布列，三档宽——
+   narrow 760（「我的」单列文档流）/ 默认 920 / wide 1320（流水表、主从两栏——
+   流水表 min-width 1100 加 sticky 操作列，1180 那档装不下会横滚，操作列被削）。
+   羊皮纸底与色彩纪律照旧：页面底 --paper，画布 --canvas、上缘圆角。 */
 
-.app {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  background: var(--paper);
-  color: var(--ink);
-}
-
-.rail {
-  width: var(--side);
-  flex: 0 0 var(--side);
-  height: 100%;
+.shell {
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 18px 12px 14px;
-  min-height: 0;
+  background: var(--paper);
+  color: var(--ink);
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px 18px;
 }
 
 .brand b {
@@ -184,176 +177,71 @@ button, input, textarea, select {
   letter-spacing: -0.03em;
 }
 
-.nav {
+/* 顶栏钉在视口顶上：页面改整窗滚动之后，滚掉的第一样东西不该是导航。
+   底色必须不透明（--paper），不然内容会从它底下透出来。 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 22px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.topnav {
+  display: flex;
   gap: 2px;
 }
 
-.nav a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
+.topnav a {
+  padding: 7px 12px;
   border-radius: var(--r-sm);
   color: var(--ink-2);
   text-decoration: none;
-  text-align: left;
-}
-
-.nav a svg {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  opacity: 0.72;
-}
-
-.nav a:hover {
-  background: var(--hover);
-}
-
-.nav a.active {
-  background: var(--sunken);
-  color: var(--ink);
-  font-weight: 500;
-}
-
-.nav a.active svg {
-  opacity: 1;
-}
-
-.rail-mid {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  margin-top: 22px;
-  overflow: auto;
-}
-
-.rail-label {
-  padding: 0 12px 8px;
-  color: var(--faint);
-  font-size: 12px;
-  letter-spacing: 0.01em;
-}
-
-.rail-search {
-  margin: 0 8px 8px;
-  width: calc(100% - 16px);
-  background: var(--sunken);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  font-size: 13px;
-}
-
-.rail-search::placeholder {
-  color: var(--faint);
-}
-
-.rail-search:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1.5px var(--ink);
-}
-
-.rail-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.rail-list button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  text-align: left;
-  color: var(--ink-2);
-  min-height: 38px;
-  cursor: pointer;
-}
-
-.rail-list button:hover {
-  background: var(--hover);
-}
-
-.rail-list button.is-on {
-  background: var(--sunken);
-  color: var(--ink);
-  font-weight: 500;
-}
-
-.rail-list .nm {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rail-list .nm .avatar {
-  flex: 0 0 auto;
-}
-
-.rail-list .mark {
-  font-size: 12px;
-  color: var(--mute);
-  flex: 0 0 auto;
-}
-
-.rail-list button.is-off .nm {
-  color: var(--faint);
-}
-
-.rail-new {
-  margin: 8px 8px 0;
-  width: calc(100% - 16px);
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  text-align: left;
-  color: var(--mute);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.rail-new:hover {
+.topnav a:hover {
   background: var(--hover);
-  color: var(--ink);
 }
 
-.rail-new.is-on {
+.topnav a.active {
   background: var(--sunken);
   color: var(--ink);
   font-weight: 500;
 }
 
-.account {
-  padding: 10px 8px 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.who {
+.topbar-right {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 6px;
 }
 
+/* 画布列。弹框遮罩是 position: fixed 的整屏罩子，不受这里的 max-width 影响
+   （fixed 对着视口定位，限宽只限普通流里的东西）。 */
+.sheet {
+  flex: 1;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 28px 18px 48px;
+  background: var(--canvas);
+  border-radius: var(--r) var(--r) 0 0;
+}
+
+.sheet-narrow {
+  max-width: 760px;
+}
+
+.sheet-wide {
+  max-width: 1320px;
+}
+
+/* 头像即按钮：点开顶栏右侧的账号菜单。 */
 .acct-avatar {
   width: 32px;
   height: 32px;
@@ -366,6 +254,41 @@ button, input, textarea, select {
   font-size: 13px;
   letter-spacing: -0.03em;
   flex-shrink: 0;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.acct-avatar:hover {
+  box-shadow: 0 0 0 2px var(--hover);
+}
+
+.avatar-menu {
+  position: relative;
+}
+
+/* 账号菜单浮层：身份一段 + 一列动作。z-index 压在弹框遮罩（100）之下——
+   导出/导入的弹框从菜单里开出来，得盖住菜单。 */
+.avatar-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  background: var(--canvas);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+}
+
+.avatar-pop .who {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 6px;
 }
 
 .who strong {
@@ -380,58 +303,28 @@ button, input, textarea, select {
   font-size: 12px;
 }
 
-.acct-acts {
-  display: flex;
-  /* 三个按钮在 248px 的左栏里刚好排得下，但字号或文案一变就会挤出去——
-     允许换行，挤不下时掉一行比横向溢出好看。 */
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 4px;
-}
-
-.acct-acts button {
-  color: var(--mute);
-  font-size: 13px;
-  padding: 6px 8px;
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: none;
+  color: var(--ink-2);
+  font-size: 13px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.acct-acts button:hover {
+.menu-item:hover {
   background: var(--hover);
   color: var(--ink);
 }
 
-.main {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  overflow: auto;
-  background: var(--canvas);
-  border-radius: 12px 0 0 12px;
-  padding: 36px 32px 48px;
-  max-width: none;
-}
-
-/* 内容列居中。`:not(.overlay)` 不是洁癖，是必须的：弹框的遮罩也是 .main 的直接
-   子元素（页面组件把 <Dialog> 摆在自己那个 fragment 里，而 Routes 不多包一层
-   DOM），而它是 `position: fixed` + `inset: 0` 的整屏罩子。被这条规则套上限宽和
-   auto 外边距之后，左右两边同时被钉在 0 又被限宽，浏览器只能靠外边距把它居中——
-   罩子缩成内容列那么宽、浮在屏幕中间，左栏与两侧留白照旧亮着，看着像页面中间凭空
-   多出一块灰（1874px 宽的窗口上实测 x=309.5、w=1240）。
-   两条选择器都得排除：光排上面那条不够，is-wide 这条只给 max-width，而对一个左右
-   都钉住的定位元素来说，单是 max-width 就足以把宽度截断。 */
-.main > *:not(.overlay) {
-  max-width: 920px;
-  margin-left: auto;
-  margin-right: auto;
-  width: 100%;
-}
-
-.main.is-wide > *:not(.overlay) {
-  max-width: 1240px;
+.menu-item:disabled {
+  color: var(--faint);
+  cursor: default;
 }
 
 .spacer {
@@ -718,10 +611,9 @@ button, input, textarea, select {
    多出来的部分在视口内部竖着滚：动的是视口里面，页面本身不动。
    （详情按钮已搬去独立的操作列，不再计进行高；727 仍按成功行 68.5 那次量法成立。）
    矮窗口上让位给屏幕（min）：一屏装不下 727 时硬撑的结果是页面和视口两条纵向滚动
-   条并排。190 是这块表上下的固定开销，按 A-v2 的壳重量的（旧值 260 还带着顶栏时代
-   的 53px 导航，多扣一百像素，表现是高窗口上视口被压到 727 以下，白挨一刀）：
-   上 96 = .main 上边距 36 + 区段标题那一排 60；下 88 = 翻页上边距 10 + 翻页一排 30
-   + .main 下边距 48；余下 6px 留给窄窗口翻页折行。
+   条并排。235 是这块表上下的固定开销，按 v0.54 统一顶栏壳量的：
+   上 141 = sticky 顶栏 53 + .sheet 上边距 28 + 区段标题那一排 60；
+   下 88 = 翻页上边距 10 + 翻页一排 30 + .sheet 下边距 48；余下 6px 留给折行。
    横向滚动一并归它管（原来是 .scroll-x）：一个容器同时管两个方向，不然纵向那条
    滚动条出现时，横向的会被剪在视口外面。
 
@@ -733,13 +625,13 @@ button, input, textarea, select {
    底边留一条线：视口底沿常把一行切成半行，没有线的话那半行像是断在半空；有线之后
    它终止在一条边上，读起来就是「下面还有，滚就是了」。 */
 .log-viewport {
-  height: min(727px, calc(100vh - 190px));
+  height: min(727px, calc(100vh - 235px));
   overflow: auto;
   border-bottom: 1px solid var(--line);
 }
 
 /* 横向滚动的下限**逐表给**，不给一个全局值：它是「窄到这个份上就该滚了」的地板，
-   跟内容区上限（.main 那条）是两件事。1100px：九列时代是 900，详情独立成操作列
+   跟内容区上限（.sheet 那条）是两件事。1100px：九列时代是 900，详情独立成操作列
    （第十列）后加回去；fixed 布局下弹性列只剩模型、端点两个，八个钉死列按 15px
    正文实量已吃掉约 790，再给弹性列留 300 以上，窄窗口才不至于两头全靠省略号。
    fixed 布局（PO 2026-08-30「把列固定住」）：列宽全由 <colgroup> 钉死，翻页只换
@@ -835,48 +727,62 @@ button, input, textarea, select {
 
 /* ── 渠道 ──────────────────────────────────────────────────────────── */
 
-/* 主从两栏（口径层 v0.45）。左栏只列渠道，右栏是选中那一个的全部。
-   `align-items: flex-start` 是为了让左栏能 sticky——拉伸到等高的话 sticky 没有
-   可滚的余地。 */
+/* 主从两栏（口径层 v0.45；v0.54 左栏退役后渠道清单从壳搬回页内）。左列只管
+   渠道，右栏是选中那一个的全部。`align-items: flex-start` 是为了让左列能
+   sticky——拉伸到等高的话 sticky 没有可滚的余地。 */
 .split {
   display: flex;
   align-items: flex-start;
   gap: 24px;
 }
 
-/* 左栏钉住：右栏动辄几屏（模型列表 + 探测矩阵），滚到底还能直接换渠道，
+/* 左列钉住：右栏动辄几屏（模型列表 + 探测矩阵），滚到底还能直接换渠道，
    不用先滚回顶上。宽度固定不跟着窗口涨——它装的是一串名字，给它 20% 的
    弹性只会在宽屏上摊出一列空条。 */
 .master {
   flex: 0 0 232px;
   position: sticky;
-  /* 53px 是导航条（52px + 1px 下边框）——它自己也是 sticky 的，不让开这一档
-     就会被它盖住半个标题。 */
-  top: 69px;
-  max-height: calc(100vh - 91px);
+  /* 67px 让开 sticky 顶栏（约 53px：10px 内衬 ×2 + 32px 头像 + 1px 底线）再
+     留一口气；max-height 再扣 14px 给底部呼吸。 */
+  top: 67px;
+  max-height: calc(100vh - 81px);
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.master-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
+.master-label {
+  padding: 0 12px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  letter-spacing: 0.01em;
 }
 
 .master-search {
-  flex: 1;
-  min-width: 0;
+  margin: 0 0 8px;
+  width: 100%;
+  background: var(--sunken);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.master-search::placeholder {
+  color: var(--faint);
+}
+
+.master-search:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
 }
 
 .master-list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  min-height: 0;
   overflow-y: auto;
-  padding: 6px 0;
 }
 
 .master-empty {
@@ -885,77 +791,95 @@ button, input, textarea, select {
 }
 
 /* 选中态用 --sunken 的底 + 字重，不用 accent：accent 只给焦点环（DESIGN.md §3）。
-   左栏一整列同样的行，靠底色区分「在哪一个上」比靠一条彩色竖线更稳——竖线在
+   一整列同样的行，靠底色区分「在哪一个上」比靠一条彩色竖线更稳——竖线在
    停用渠道的半透明下几乎看不见。 */
-.master-item {
+.master-list button {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 7px 9px;
+  width: 100%;
+  padding: 8px 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: none;
-  color: inherit;
-  font: inherit;
   text-align: left;
+  color: var(--ink-2);
+  min-height: 38px;
   cursor: pointer;
-  min-width: 0;
 }
 
-.master-item:hover {
+.master-list button:hover {
+  background: var(--hover);
+}
+
+.master-list button.is-on {
   background: var(--sunken);
+  color: var(--ink);
+  font-weight: 500;
 }
 
-.master-item.is-current {
-  background: var(--sunken);
-  font-weight: 550;
-}
-
-.master-item.is-off {
-  opacity: 0.55;
-}
-
-.master-name {
-  flex: 1;
+.master-list .nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.master-list .nm .avatar {
+  flex: 0 0 auto;
+}
+
+.master-list .mark {
+  font-size: 12px;
+  color: var(--mute);
+  flex: 0 0 auto;
+}
+
+.master-list button.is-off .nm {
+  color: var(--faint);
+}
+
+.master-new {
+  margin: 8px 0 0;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+  color: var(--mute);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.master-new:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.master-new.is-on {
+  background: var(--sunken);
+  color: var(--ink);
+  font-weight: 500;
+}
+
 /* 右栏。`min-width: 0` 是必须的：里面有 model-grid 和会横滚的表格，
    flex 子项默认 min-width:auto 会让它们把整页撑宽。
-   两栏之间那条竖线画在**右栏的左边框**上，不画在左栏的右边框上：左栏是 sticky 的，
-   且被 max-height 封了顶，它的边框只有那一列名字那么长——三个渠道时就是一截 100px
-   的短线杵在半空。右栏没有这两个限制，高度就是这一屏内容的高度，线跟着内容走。 */
-.detail {
+   两栏之间那条竖线画在**右栏的左边框**上，不画在左列的右边框上（v0.16 ①）：
+   左列是 sticky 的，且被 max-height 封了顶，它的边框只有那一列名字那么长——
+   三个渠道时就是一截 100px 的短线杵在半空。右栏没有这两个限制，高度就是
+   这一屏内容的高度，线跟着内容走。 */
+.detail-col {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  /* 18 → 28：段标题底下多了一条线之后，标题上方的空档必须明显大于标题与线之间的
-     那点距离，否则那条线看着像是给**上面**那段收尾的。 */
-  gap: 28px;
   border-left: 1px solid var(--line);
   padding-left: 24px;
-}
-
-.detail-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.detail-head h2 {
-  font-size: 18px;
-  letter-spacing: -0.02em;
-}
-
-.detail-head.is-off {
-  opacity: 0.62;
 }
 
 /* 新增凭证那一格：输入框 + 「显示」。按钮不参与拉伸，输入框吃掉剩下的宽度。 */
@@ -1642,9 +1566,10 @@ textarea:focus {
   white-space: pre-wrap;
 }
 
-/* 导入完成的变更清单：每行「新增渠道 xxx」一类的短句，普通列表即可，间距略收。 */
+/* 导入试算的变更清单：每行「新增渠道 xxx」一类的短句，普通列表即可，间距略收。
+   外边距交给 .dialog-note 的 gap（它只活在那个框里）。 */
 .import-changes {
-  margin: 12px 0 0;
+  margin: 0;
   padding-left: 20px;
 }
 
@@ -1684,6 +1609,9 @@ textarea:focus {
   overflow-y: auto;
 }
 
+/* 整框限高、正文区滚（v0.52，PO 2026-08-31 看导入试算 23 行清单把框撑到满屏后
+   裁定）：内容决定高度就是 v0.19 那个病——清单多长框多高，按钮跟着沉底出屏。
+   84vh 与遮罩上下各 8vh 的内衬正好凑满一屏，框永远不会长过视口。 */
 .dialog {
   background: var(--canvas);
   border: 0;
@@ -1691,6 +1619,36 @@ textarea:focus {
   box-shadow: var(--shadow);
   width: 100%;
   max-width: 520px;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* min-height: 0 是让位声明：flex 子项默认不肯缩过内容高，没有它滚不起来。 */
+.dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 尾排按钮钉底：正文滚动时签字键（取消 / 保存 / 导入并覆盖）必须一直看得见。
+   只钉「长在内容根末尾」的那排——检测弹层的「检测」键身后还挂着结果区，是
+   表单中段的动作不是页脚，:last-child 恰好把它排除在外。负外边距把内容根的
+   18px 底衬挪进按钮排自己的内衬里，不滚动时布局分毫不变；侧衬里本就没有字，
+   不需要左右满铺。 */
+.dialog-body .form-actions:last-child {
+  position: sticky;
+  bottom: 0;
+  background: var(--canvas);
+  margin-bottom: -18px;
+  padding-bottom: 18px;
+}
+
+/* 弹框可能整个渲染在某个 .section 的 DOM 里（账号页的「修改密码」就是，PO
+   2026-08-31 截图「挤在一起」），前面 `.section .form` 的去衬会把框里的表单
+   一并剥光。框是浮层，不在页面区块的排版语境里——把 18px 内衬要回来。
+   （.cred-dialog .form 的去衬在本条之后声明，照旧压过它。） */
+.dialog .form {
+  padding: 18px;
 }
 
 /* 装列表的框才放宽。表单不跟着变宽：一行输入框拉到 900px，标签和光标离得老远。 */
@@ -1718,11 +1676,28 @@ textarea:focus {
   gap: 12px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--line);
+  /* 框限高后头部是 flex 子项，不给这条它会跟着正文一起被压扁 */
+  flex: none;
 }
 
 .dialog-head h3 {
   margin: 0;
   font-size: 14px;
+}
+
+/* 纯文案弹框（导入试算 / 导入完成 / 导出失败）的内容根：形制同 .form。此前这三个
+   框的正文直接贴在框壳里，是全站唯一没有 18px 内衬的弹框。段落、警示条、清单的
+   自带外边距一律交给 gap，不然叠出双份行距。 */
+.dialog-note {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.dialog-note p,
+.dialog-note .bar {
+  margin: 0;
 }
 
 .keybox {
@@ -2370,7 +2345,9 @@ textarea:focus {
 .picker-search {
   border: 0;
   border-bottom: 1px solid var(--line);
-  border-radius: 0;
+  /* 顶部两角跟着弹层的圆角走：弹层 overflow: hidden 按 --r-sm 剪切，方角输入框
+     的聚焦内环会在左上 / 右上被剪缺一截（PO 2026-08-31 截图）。 */
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
 }
 
 .picker-search:focus {
@@ -2598,6 +2575,14 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* 表格里的密钥值折行不撑列（PO 2026-08-31 截图：点「显示」后整串明文把 key 表
+   撑出卡片，旁边的列被挤成竖排）。上面那套 nowrap + 省略号靠外层 flex 的宽度箍
+   着才成立，表格格子没人箍——只能让长串自己折。掩码态短，永远折不到。 */
+.table .secret-value {
+  white-space: normal;
+  word-break: break-all;
+}
+
 
 /* ── 身份条下的区块：API 地址 / 上游凭证（PO 2026-08-20 提出井外，v0.35 常驻展开）── */
 
@@ -2685,6 +2670,10 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 它自己也是 .baseurl-view-row 的 flex 子项：不给 flex:1 会缩成输入框的固有
+     宽度（约 20 字符），「单独填」编辑框窄得摆不下一段路径（PO 2026-08-31 截图）。 */
+  flex: 1;
+  min-width: 0;
 }
 
 /* 预览是输入框下的一行小字，不套底色盒：逐行紧随时（DESIGN v0.32 ②）盒装预览比
@@ -3814,7 +3803,7 @@ button.cal-day,
   .page-head h1 {
     font-size: 22px;
   }
-  .main {
+  .sheet {
     border-radius: 0;
     padding: 28px 18px 40px;
   }
@@ -3833,57 +3822,9 @@ button.cal-day,
 }
 
 /* ── 「我的」空间（DESIGN §12，#76）────────────────────────────────────────
-   无左栏的轻面板：顶栏 = 品牌 + 四个 tab + 配额微条与头像，主区单列文档流
-   （约 760px 居中）。沿用管理空间的排版与色彩纪律：羊皮纸底、墨蓝只落在
-   焦点环与链接、区块靠间距分隔不包卡片。 */
-
-.myspace {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--paper);
-}
-
-.mytop {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 22px;
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.mytop .brand {
-  padding: 0;
-}
-
-.mytabs {
-  display: flex;
-  gap: 2px;
-}
-
-.mytabs a {
-  padding: 7px 12px;
-  border-radius: var(--r-sm);
-  color: var(--ink-2);
-  text-decoration: none;
-}
-
-.mytabs a:hover {
-  background: var(--hover);
-}
-
-.mytabs a.active {
-  background: var(--sunken);
-  color: var(--ink);
-  font-weight: 500;
-}
-
-.mytop-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+   壳与管理空间共用（v0.54，见文件前部「壳」一节）：tab 换成本人五页，右侧
+   多一枚配额微条，主区走 narrow 档（760px 单列文档流）。沿用同一套排版与
+   色彩纪律：羊皮纸底、墨蓝只落在焦点环与链接、区块靠间距分隔不包卡片。 */
 
 /* 顶栏配额微条：等宽数字，超限换错误色。 */
 .quota-chip {
@@ -3900,16 +3841,6 @@ button.cal-day,
   color: var(--err-text);
   border-color: var(--err-line);
   background: var(--err-bg);
-}
-
-.mymain {
-  flex: 1;
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 28px 18px 48px;
-  background: var(--canvas);
-  border-radius: var(--r) var(--r) 0 0;
 }
 
 /* 配额卡：置顶的一段，不包边框——数字的字号就是它的分量。 */
@@ -3952,22 +3883,12 @@ button.cal-day,
   background: var(--err-text);
 }
 
-/* 左栏顶部的「管理 | 我的」空间切换：品牌与主导航之间，占满栏宽。 */
-.rail-space {
-  margin: 0 12px 14px;
-  display: flex;
-}
-
-.rail-space .segment {
-  flex: 1;
-}
-
 @media (max-width: 720px) {
-  .mytop {
+  .topbar {
     flex-wrap: wrap;
     gap: 10px;
   }
-  .mymain {
+  .sheet {
     border-radius: 0;
     padding: 22px 14px 40px;
   }

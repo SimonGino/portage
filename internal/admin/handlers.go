@@ -1215,12 +1215,22 @@ func unixQuery(c *gin.Context, name string) (time.Time, bool) {
 //
 // 认不得的 unit 当 day 处理而不是报错：同 by，这是个只影响展示的查询参数。
 func (h *Handler) usageBuckets(c *gin.Context) {
+	h.writeBuckets(c, 0)
+}
+
+// myUsageBuckets 是本人节律带（#76 用户侧排行形态）。分桶口径与管理端同一份，
+// 差别只有 WHERE 里焊死的 user_id——桶里全是聚合数，没有可裁剪的运营细节。
+func (h *Handler) myUsageBuckets(c *gin.Context) {
+	h.writeBuckets(c, sessionUserFrom(c).ID)
+}
+
+func (h *Handler) writeBuckets(c *gin.Context, forUser int64) {
 	days := clampQuery(c, "days", 7, 1, 365)
 	unit := store.BucketDay
 	if c.Query("unit") == store.BucketHour {
 		unit = store.BucketHour
 	}
-	rows, err := store.UsageBuckets(c.Request.Context(), h.db, days, unit, time.Now())
+	rows, err := store.UsageBuckets(c.Request.Context(), h.db, days, unit, time.Now(), forUser)
 	if err != nil {
 		h.log.Error("按区间分桶汇总用量失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")

@@ -45,6 +45,17 @@ func (h *Handler) mountUI(r *gin.Engine) {
 
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
+		// 根路径 302 进面板：对着 8317 敲回车的人要去的就是登录页，裸 404 是把
+		// 入口藏起来。挂在同一道挂载闸后——纯转发形态 Mount 不调，/ 照旧 404，
+		// 不多暴露一个字。只接 GET：/ 上的 POST 不是人在找页面。
+		if p == "/" {
+			if c.Request.Method != http.MethodGet {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.Redirect(http.StatusFound, "/panel")
+			return
+		}
 		// 分开判整段与斜杠前缀，而不是一句 HasPrefix(p, "/panel")：后者连
 		// /paneling 这种毫不相干的路径也会吞掉，回一页管理端 HTML。/admin 同理
 		// （/administrator 不该被 302 走）。

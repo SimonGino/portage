@@ -142,6 +142,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 		// 的 WHERE 里，不收 user 参数——这四条给不出别人的账。
 		my.GET("/logs", h.myLogs)
 		my.GET("/usage", h.myUsage)
+		my.GET("/usage/buckets", h.myUsageBuckets)
 		my.GET("/quota", h.myQuota)
 		my.GET("/models", h.myModels)
 	}

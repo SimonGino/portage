@@ -1324,10 +1324,18 @@ type BucketUsage struct {
 //
 // now 补的是桶序列，SQL 里的窗口下界仍走 datetime('now')——两者必须是**同一天**
 // （测试里可以钉死钟点，但别钉到别的日期上，否则补齐序列与窗口对不上）。
-func UsageBuckets(ctx context.Context, db Queryer, days int, unit string, now time.Time) ([]BucketUsage, error) {
+//
+// forUser 同 UsageBy（#75 的成例）：> 0 时只聚这个用户的行，用户侧接口把它钉成
+// 本人；0 = 不筛，管理端照旧看全量。
+func UsageBuckets(ctx context.Context, db Queryer, days int, unit string, now time.Time, forUser int64) ([]BucketUsage, error) {
 	expr, layout := `date(created_at, 'localtime')`, "2006-01-02"
 	if unit == BucketHour {
 		expr, layout = `strftime('%Y-%m-%d %H:00', created_at, 'localtime')`, "2006-01-02 15:00"
+	}
+	where, args := `created_at >= `+windowStart(days), []any{}
+	if forUser > 0 {
+		where += ` AND user_id = ?`
+		args = append(args, forUser)
 	}
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS bucket,
@@ -1336,8 +1344,8 @@ func UsageBuckets(ctx context.Context, db Queryer, days int, unit string, now ti
 		       COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 		       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0)
 		FROM call_logs
-		WHERE created_at >= %s
-		GROUP BY bucket ORDER BY bucket`, expr, windowStart(days)))
+		WHERE %s
+		GROUP BY bucket ORDER BY bucket`, expr, where), args...)
 	if err != nil {
 		return nil, err
 	}

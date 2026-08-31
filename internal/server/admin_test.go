@@ -632,6 +632,28 @@ func TestAdminPrefixRedirectsToPanel(t *testing.T) {
 	}
 }
 
+// 根路径 302 进面板：对着端口敲回车的人要去的就是登录页。只接 GET，
+// 别的方法不是人在找页面。
+func TestRootRedirectsToPanel(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := noFollow.Get(g.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/panel" {
+		t.Errorf("GET / = %d → %q, 期望 302 → /panel", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if resp, err := noFollow.Post(g.URL+"/", "application/json", strings.NewReader("{}")); err != nil {
+		t.Fatal(err)
+	} else if resp.Body.Close(); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST / = %d, 期望 404", resp.StatusCode)
+	}
+}
+
 // NoRoute 是全局的：非 /panel 的未知路径必须照常 404，不能拿到管理端页面。
 func TestUnknownNonAdminPathStays404(t *testing.T) {
 	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
