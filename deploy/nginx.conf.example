@@ -74,6 +74,11 @@ server {
     location = /privacy { proxy_pass http://127.0.0.1:8317; }
     location = /terms   { proxy_pass http://127.0.0.1:8317; }
 
+    # /panel 对公网开放的部署可以再把根路径引到登录页（网关自己也会 302，
+    # 在 nginx 层跳省一次回源）。只放行 /v1 的纯转发实例别开——那是把入口指向
+    # 一个 404。
+    # location = / { return 302 /panel; }
+
     # 其余一律不给。写在最后兜底，免得以后加 location 时漏掉。
     location / {
         return 404;
