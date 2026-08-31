@@ -16,6 +16,7 @@ import type {
   ModelListResult,
   PricingModelPrice,
   PricingModels,
+  PricingProvider,
   Protocol,
 } from '../../api'
 import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Toggle } from '../../ui'
@@ -40,6 +41,15 @@ import { ModelPicker } from './picker'
  * 检测弹层（口径层 v0.96 ③）：发起、勾选、结果都在弹层里，关弹层即失——页面上
  * 不再有常驻探测区块。获取模型列表与手动添加落在「纳管模型」标题旁；启停在渠道名旁立刻生效。
  */
+// 厂商标注的显示名（v0.58）：库里存的是 models.dev 的 id（如 302ai），身份条上摆
+// 人话名（302 AI）。名单是发版内置的只读资产，进程里拉一次全局共用；拉失败就摆
+// id 本身——标注是可选项，不为它挂错误条（与设置表单里那次拉取同一姿态）。
+let providersOnce: Promise<PricingProvider[]> | null = null
+function fetchProvidersOnce() {
+  providersOnce ??= api.get<PricingProvider[]>('/pricing/providers').catch(() => [] as PricingProvider[])
+  return providersOnce
+}
+
 export function ChannelDetail({
   ch,
   fetched,
@@ -81,6 +91,19 @@ export function ChannelDetail({
         if (!gone) setSuggested(r.models)
       })
       .catch(() => {})
+    return () => {
+      gone = true
+    }
+  }, [ch.provider])
+  // 厂商标注设了才在身份条上体现（v0.58，PO「设置了要在外面就能体现，没设置就算了」）。
+  const [providerName, setProviderName] = useState('')
+  useEffect(() => {
+    setProviderName('')
+    if (!ch.provider) return
+    let gone = false
+    void fetchProvidersOnce().then((list) => {
+      if (!gone) setProviderName(list.find((p) => p.id === ch.provider)?.name ?? ch.provider)
+    })
     return () => {
       gone = true
     }
@@ -127,6 +150,13 @@ export function ChannelDetail({
               </span>
             ))}
             {protos.length === 0 && <span className="tag tag-warn">协议集为空</span>}
+            {/* 厂商标注：设了才摆，未标注不摆一个「未标注」占位。描边空底与协议的
+                实心 chip 形制分开——同排两类，一眼要读得出「这不是又一个协议」。 */}
+            {ch.provider && providerName && (
+              <span className="tag tag-vendor" title={'厂商标注 · ' + ch.provider}>
+                {providerName}
+              </span>
+            )}
             <Toggle
               on={!ch.disabled}
               label={ch.name}

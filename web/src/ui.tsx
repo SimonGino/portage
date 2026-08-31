@@ -96,6 +96,7 @@ export function Dialog({
   onClose,
   wide,
   guard,
+  scroll,
   children,
 }: {
   title: string
@@ -106,6 +107,10 @@ export function Dialog({
   /** guard：框里攒着还没提交的东西（比如勾了一半的模型），点遮罩不关。
    *  Esc 不受影响——那是明确的按键，而遮罩点击多半是想点框边上的东西点歪了。 */
   guard?: boolean
+  /** scroll：内容是无上限的清单（导入试算）才开——整框限高 84vh、正文区滚、
+   *  尾排按钮钉底（v0.52 机制，v0.57 从全局降为 opt-in）。普通表单别开：
+   *  正文区一旦 overflow:auto 就会把 Picker 的浮层裁剪在框里。 */
+  scroll?: boolean
   children: ReactNode
 }) {
   // Esc 关闭。表单填错了想退出去，第一反应是按 Esc 而不是找那个叉。
@@ -121,7 +126,7 @@ export function Dialog({
     <div className="overlay" onMouseDown={guard ? undefined : onClose}>
       {/* 阻止冒泡：在框里面按下鼠标不该关掉框（选文本时很容易拖到框外） */}
       <div
-        className={'dialog' + (wide ? ' dialog-wide' : '')}
+        className={'dialog' + (wide ? ' dialog-wide' : '') + (scroll ? ' dialog-scroll' : '')}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="dialog-head">
@@ -130,7 +135,7 @@ export function Dialog({
             ×
           </button>
         </header>
-        {/* 正文区单独滚：框整体限高（84vh），内容再长头部也钉在原地，
+        {/* scroll 档下正文区单独滚：框整体限高（84vh），内容再长头部也钉在原地，
             尾排按钮靠 CSS sticky 钉底——签字键不该被清单顶出屏幕。 */}
         <div className="dialog-body">{children}</div>
       </div>

@@ -261,7 +261,7 @@ function ImportButton() {
         }}
       />
       {pending && (
-        <Dialog title="导入配置" guard onClose={close}>
+        <Dialog title="导入配置" guard scroll onClose={close}>
           <div className="dialog-note">
             {preview?.state === 'loading' && <p>正在试算 {pending.name} 会带来的变更…</p>}
             {preview?.state === 'error' && (

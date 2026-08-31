@@ -813,6 +813,14 @@ button.acct-avatar:hover {
   background: var(--hover);
 }
 
+/* 焦点环收进行内（v0.60）：行距只有 2px，全局那圈 3px 外扩的环会压到邻行，
+   叠在 sunken 选中底上像给行描了个黑框。收成 -2px 后环贴着药丸内缘走，
+   键盘导航的可见性不丢。 */
+.master-list button:focus-visible,
+.master-new:focus-visible {
+  outline-offset: -2px;
+}
+
 .master-list button.is-on {
   background: var(--sunken);
   color: var(--ink);
@@ -1208,6 +1216,21 @@ button.acct-avatar:hover {
 
 .tag-off {
   opacity: 0.8;
+}
+
+/* 身份条上的两类 tag 要一眼分清（v0.59，PO「都太淡了，没有对比，明明一个是协议
+   一个是 provider」）：协议是能力位，实心 chip、字加深一档提对比；厂商标注是
+   身份，走描边空底——同排两类，形制不同才读得出类不同。描边占掉的 1px 从内衬里
+   扣回来，两类同高。 */
+.ch-id .tag:not(.tag-warn) {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.tag-vendor {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 2px 7px;
 }
 
 .tag-warn {
@@ -1627,9 +1650,6 @@ textarea:focus {
   overflow-y: auto;
 }
 
-/* 整框限高、正文区滚（v0.52，PO 2026-08-31 看导入试算 23 行清单把框撑到满屏后
-   裁定）：内容决定高度就是 v0.19 那个病——清单多长框多高，按钮跟着沉底出屏。
-   84vh 与遮罩上下各 8vh 的内衬正好凑满一屏，框永远不会长过视口。 */
 .dialog {
   background: var(--canvas);
   border: 0;
@@ -1637,13 +1657,21 @@ textarea:focus {
   box-shadow: var(--shadow);
   width: 100%;
   max-width: 520px;
-  max-height: 84vh;
   display: flex;
   flex-direction: column;
 }
 
-/* min-height: 0 是让位声明：flex 子项默认不肯缩过内容高，没有它滚不起来。 */
-.dialog-body {
+/* 整框限高、正文区滚——**scroll 档专属**（v0.52 立、v0.57 从全局降为 opt-in，
+   PO 2026-08-31「这种弹框没必要一棒子写死大小」）：内容无上限的清单弹框（导入
+   试算）才需要它，84vh 与遮罩上下各 8vh 的内衬凑满一屏、清单多长框也不出屏。
+   普通表单弹框不能套：正文区一旦 overflow:auto 就成了裁剪盒，Picker 的绝对定位
+   浮层会被剪在框里（v0.52 全局套上后「厂商标注」下拉被裁就是这一刀）。
+   min-height: 0 是让位声明：flex 子项默认不肯缩过内容高，没有它滚不起来。 */
+.dialog-scroll {
+  max-height: 84vh;
+}
+
+.dialog-scroll .dialog-body {
   min-height: 0;
   overflow-y: auto;
 }
@@ -1653,7 +1681,7 @@ textarea:focus {
    表单中段的动作不是页脚，:last-child 恰好把它排除在外。负外边距把内容根的
    18px 底衬挪进按钮排自己的内衬里，不滚动时布局分毫不变；侧衬里本就没有字，
    不需要左右满铺。 */
-.dialog-body .form-actions:last-child {
+.dialog-scroll .dialog-body .form-actions:last-child {
   position: sticky;
   bottom: 0;
   background: var(--canvas);
@@ -2398,8 +2426,9 @@ textarea:focus {
   font-size: 11px;
 }
 
-/* 绝对定位而不是 portal：它只出现在 Dialog 里，而 Dialog 没有 overflow 裁剪，
-   用 portal 就得自己算位置、自己跟随滚动，为这一个控件不值当。 */
+/* 绝对定位而不是 portal：默认档的 Dialog 没有 overflow 裁剪（v0.52 全局限高时
+   被剪过一回，v0.57 降回 opt-in 后前提恢复），用 portal 就得自己算位置、自己跟随
+   滚动，为这一个控件不值当。代价是一条纪律：scroll 档的弹框里不能放 Picker。 */
 .picker-pop {
   position: absolute;
   z-index: 20;
