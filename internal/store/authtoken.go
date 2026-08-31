@@ -1,7 +1,7 @@
 package store
 
-// 一次性动作 token（#62 决议 2/5/6）：邮箱验证、重置密码、OAuth 完成注册。
-// 三档 TTL 是口径钉死的数，常量收在这里；表结构见 schema.sql 的 auth_tokens。
+// 一次性动作 token（#62 决议 2/5/6）：邮箱验证、重置密码、OAuth 完成注册、OAuth 绑定。
+// TTL 常量收在这里；表结构见 schema.sql 的 auth_tokens。
 
 import (
 	"context"
@@ -12,20 +12,26 @@ import (
 	"time"
 )
 
-// token 的三种用途。消费必须带用途——同一张表存三种权限完全不同的凭据，
+// token 的用途。消费必须带用途——同一张表存权限完全不同的凭据，
 // 不带用途的消费等于让验证邮件里的链接能重置密码。
 const (
 	TokenVerifyEmail   = "verify_email"
 	TokenResetPassword = "reset_password"
 	TokenOAuthSignup   = "oauth_signup"
+	// TokenOAuthLink 是账号页「绑定」的 start → callback 接力：回调是从上游跳回来
+	// 的跨站导航，SameSite=Strict 的会话 cookie 在那一跳上不发，「绑给谁」只能在
+	// start 时（同站请求，会话还读得到）就签进服务端一次性令牌里。
+	TokenOAuthLink = "oauth_link"
 )
 
-// 三档 TTL（口径层 §2.10）：验证链接 24h、重置链接 30min。OAuth 完成注册那一档
-// 口径没定数——它只是回调页与填码页之间的接力棒，够填完一个邀请码即可，给 15 分钟。
+// TTL（口径层 §2.10）：验证链接 24h、重置链接 30min。OAuth 完成注册那一档口径
+// 没定数——它只是回调页与填码页之间的接力棒，够填完一个邀请码即可，给 15 分钟。
+// 绑定接力与装 state 的接力 cookie 同寿（10 分钟）。
 const (
 	TokenTTLVerifyEmail   = 24 * time.Hour
 	TokenTTLResetPassword = 30 * time.Minute
 	TokenTTLOAuthSignup   = 15 * time.Minute
+	TokenTTLOAuthLink     = 10 * time.Minute
 )
 
 // CreateAuthToken 发一个一次性 token。userID 可空（OAuth 完成注册时用户还不存在），

@@ -170,6 +170,38 @@ type ImportPreview =
 const adds = (changes: string[]) => changes.filter((c) => c.startsWith('新增')).length
 const dels = (changes: string[]) => changes.filter((c) => c.startsWith('删除')).length
 
+// 清单按动词分两摞摆（v0.55）：后端 reconcile 的输出按实体类型交错，混排时人得
+// 逐行扫动词才拼得出「哪些会没」。删除是覆盖导入里真正危险的那半，组头着警示色。
+// 动词对不上号的行（后端加了新动词而这里没跟上）兜进末尾无头组，掉出清单才是事故。
+function ImportChanges({ changes }: { changes: string[] }) {
+  const added = changes.filter((c) => c.startsWith('新增'))
+  const deleted = changes.filter((c) => c.startsWith('删除'))
+  const rest = changes.filter((c) => !c.startsWith('新增') && !c.startsWith('删除'))
+  const groups = [
+    { label: '新增', items: added },
+    { label: '删除', items: deleted, danger: true },
+    { label: '', items: rest },
+  ].filter((g) => g.items.length > 0)
+  return (
+    <>
+      {groups.map((g) => (
+        <div className="import-group" key={g.label || '其他'}>
+          {g.label && (
+            <p className={'import-group-label' + (g.danger ? ' import-group-danger' : '')}>
+              {g.label} · {g.items.length}
+            </p>
+          )}
+          <ul className="import-changes">
+            {g.items.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </>
+  )
+}
+
 function ImportButton() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ name: string; text: string } | null>(null)
@@ -248,13 +280,7 @@ function ImportButton() {
                     ? '配置无变化——文件内容与当前配置一致。'
                     : `将新增 ${adds(preview.changes)} 项、删除 ${dels(preview.changes)} 项。`}
                 </p>
-                {preview.changes.length > 0 && (
-                  <ul className="import-changes">
-                    {preview.changes.map((c) => (
-                      <li key={c}>{c}</li>
-                    ))}
-                  </ul>
-                )}
+                {preview.changes.length > 0 && <ImportChanges changes={preview.changes} />}
               </>
             )}
             <p className="muted">文件里没有的一律删除，有的一律按文件覆盖。</p>
@@ -311,10 +337,8 @@ function Shell({
   onPassword: () => void
   onLogout: () => void
 }) {
-  const loc = useLocation()
-  // 调用记录横着十来列、模型页是主从两栏，都吃宽；其余页 920 的默认档正好。
-  const wide = loc.pathname.startsWith('/logs') || loc.pathname.startsWith('/channels')
-
+  // 管理空间六页统一 wide 档（v0.55）：此前按「吃宽与否」分 920/1320 两档，
+  // 切 tab 时画布左右边缘跳来跳去，比省下的留白更扎眼。
   return (
     <TopShell
       tabs={NAV.map((item) => (
@@ -361,7 +385,7 @@ function Shell({
           </AvatarMenu>
         </>
       }
-      width={wide ? 'wide' : undefined}
+      width="wide"
     >
       <Routes>
         <Route path="/channels" element={<Channels />} />

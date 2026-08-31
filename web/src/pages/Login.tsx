@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import type { AuthConfig } from '../api'
 import { PortageMark } from '../brand'
+import { Avatar } from '../icons'
 import { ErrorBar } from '../ui'
 
 const PROVIDER_LABEL: Record<string, string> = { github: 'GitHub', google: 'Google' }
@@ -48,10 +49,17 @@ export default function Login({
   return (
     <div className="login-wrap">
       <form className="login" onSubmit={submit}>
-        <h1>
-          <PortageMark size={20} />
-          Portage
-        </h1>
+        <div className="login-mark">
+          <PortageMark size={26} />
+        </div>
+        <h1>登录 Portage</h1>
+        {/* 注册入口升到标题底下那行（门页骨架 v0.56）：它是「你走错门了吗」的
+            岔路口，不是表单脚注。关着时不画，找谁开门的说明仍在页脚。 */}
+        {passwordSet && cfg?.registration_open && (
+          <p className="login-sub">
+            还没有账号？<Link to="/register">邀请码注册</Link>
+          </p>
+        )}
         {/* 「还没设密码」跟「密码错了」要分开说：前者的补救是去改配置重启，
             后者是再输一次。含糊成一句「登录失败」会让人对着配置文件反复重试。 */}
         {!passwordSet ? (
@@ -62,37 +70,46 @@ export default function Login({
         ) : (
           <>
             {oauthError && <div className="bar bar-error">{oauthError}</div>}
-            <input
-              type="email"
-              autoFocus
-              autoComplete="username"
-              placeholder="邮箱"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <input
-              type="password"
-              autoComplete="current-password"
-              placeholder="密码"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            {/* OAuth 在密码表单上面（v0.56 照搬 Resend 门页次序）：配了它就是
+                更省事的那条路。浏览器导航不是 fetch：start 会 302 去上游授权页。 */}
+            {cfg && cfg.oauth.length > 0 && (
+              <>
+                <div className="login-oauth">
+                  {cfg.oauth.map((p) => (
+                    <a key={p} className="btn" href={`/panel/oauth/${p}/start`}>
+                      <Avatar vendor={p} fallback={PROVIDER_LABEL[p] ?? p} size={16} />
+                      用 {PROVIDER_LABEL[p] ?? p} 登录
+                    </a>
+                  ))}
+                </div>
+                <div className="login-or">或</div>
+              </>
+            )}
+            <label className="login-field">
+              <span>邮箱</span>
+              <input
+                type="email"
+                autoFocus
+                autoComplete="username"
+                placeholder="name@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label className="login-field">
+              <span>密码</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
             <ErrorBar message={error} />
-            <button className="btn btn-primary" disabled={busy || !email || !password}>
+            <button className="btn btn-primary login-submit" disabled={busy || !email || !password}>
               {busy ? '登录中…' : '登录'}
             </button>
-            {/* OAuth 是浏览器导航不是 fetch：start 会 302 去上游授权页。 */}
-            {cfg && cfg.oauth.length > 0 && (
-              <div className="login-oauth">
-                {cfg.oauth.map((p) => (
-                  <a key={p} className="btn btn-quiet" href={`/panel/oauth/${p}/start`}>
-                    用 {PROVIDER_LABEL[p] ?? p} 登录
-                  </a>
-                ))}
-              </div>
-            )}
             <div className="login-links">
-              {cfg?.registration_open && <Link to="/register">邀请码注册</Link>}
               <Link to="/forgot">忘记密码</Link>
             </div>
             {/* 注册入口关闭时说清找谁，而不是让人以为自己点坏了什么。 */}

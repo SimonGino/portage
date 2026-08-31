@@ -121,6 +121,11 @@ func (h *Handler) Mount(r *gin.Engine) {
 		// 必须手动改成 /panel，见迁移说明。
 		r.GET("/panel/oauth/:provider/start", h.oauthStart)
 		r.GET("/panel/oauth/:provider/callback", h.oauthCallback)
+		// 站点级法务页（legal.go）：Google OAuth 切正式版硬要求公开的隐私权政策
+		// 网址。挂根路径不挂 /panel——它们是给门外的人和审核爬虫看的整页 HTML，
+		// 不属于 SPA；声明形态没有用户体系也就没有 OAuth，跟着整组不注册。
+		r.GET("/privacy", h.privacyPage)
+		r.GET("/terms", h.termsPage)
 	}
 
 	auth := api.Group("", h.requireSession())

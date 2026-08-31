@@ -46,11 +46,16 @@ const oauthCookie = "portage_oauth"
 // oauthFlow 是那只 cookie 里装的东西。不签名：它本来就只对「同一个浏览器」有意义
 // ——state 要跟回调 query 里的比对，verifier 只有配上上游签发的 code 才有用，
 // 伪造自己浏览器里的 cookie 骗不到任何别人的东西。**唯一不能信它的地方是身份**：
-// 绑定模式下「绑到谁名下」必须重验会话 cookie，不能从这里读（见 oauthCallback）。
+// 绑定模式下「绑到谁名下」不能由客户端可改的字段决定——LinkToken 只是服务端
+// 签发的一次性令牌的引子，身份在服务端表里，伪造令牌撞不出别人的（见 finishOAuthLink）。
 type oauthFlow struct {
 	State    string `json:"state"`
 	Verifier string `json:"verifier"`
 	Link     bool   `json:"link,omitempty"`
+	// LinkToken 是绑定模式的身份接力（TokenOAuthLink）：回调是跨站导航，
+	// SameSite=Strict 的会话 cookie 在那一跳上不发，会话在回调里必然读不到，
+	// 「绑给谁」只能在 start 时就定下来。
+	LinkToken string `json:"link_token,omitempty"`
 }
 
 // oauthConfig 从 settings 现读一家 provider 的 client 配置；没配齐（id 或 secret
@@ -121,9 +126,19 @@ func (h *Handler) oauthStart(c *gin.Context) {
 		return
 	}
 	link := c.Query("mode") == "link"
+	var linkToken string
 	if link {
-		if _, ok, err := h.validSession(c); err != nil || !ok {
+		su, ok, err := h.validSession(c)
+		if err != nil || !ok {
 			redirectAdmin(c, "", url.Values{"oauth_error": {"绑定前先登录"}})
+			return
+		}
+		// 「绑给谁」在这里就签进服务端一次性令牌：start 是账号页点出来的同站导航，
+		// 会话还读得到；回调那一跳读不到（见 oauthFlow.LinkToken 注记）。
+		linkToken, err = store.CreateAuthToken(ctx, h.db, store.TokenOAuthLink, &su.ID, "", store.TokenTTLOAuthLink)
+		if err != nil {
+			h.log.Error("签发绑定令牌失败", "err", err)
+			redirectAdmin(c, "", url.Values{"oauth_error": {"内部错误"}})
 			return
 		}
 	}
@@ -133,7 +148,7 @@ func (h *Handler) oauthStart(c *gin.Context) {
 		redirectAdmin(c, "", url.Values{"oauth_error": {"内部错误"}})
 		return
 	}
-	flow := oauthFlow{State: state, Verifier: oauth2.GenerateVerifier(), Link: link}
+	flow := oauthFlow{State: state, Verifier: oauth2.GenerateVerifier(), Link: link, LinkToken: linkToken}
 	raw, err := json.Marshal(flow)
 	if err != nil {
 		h.log.Error("编码 OAuth cookie 失败", "err", err)
@@ -245,22 +260,30 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 	ident.Email = store.NormalizeEmail(ident.Email)
 
 	if flow.Link {
-		h.finishOAuthLink(c, ident)
+		h.finishOAuthLink(c, ident, flow.LinkToken)
 		return
 	}
 	h.finishOAuthLogin(c, ident)
 }
 
-// finishOAuthLink 是账号页「绑定」的收尾：身份必须重新从会话 cookie 里验出来，
-// 绝不信接力 cookie——那只 cookie 客户端改得动，信它等于让人把身份绑进别人账号。
-func (h *Handler) finishOAuthLink(c *gin.Context, ident oauthIdentity) {
+// finishOAuthLink 是账号页「绑定」的收尾。「绑给谁」凭 start 时签发的服务端一次性
+// 令牌查出来，不验会话 cookie——回调是从上游跳回来的跨站导航，SameSite=Strict 的
+// 会话 cookie 在这一跳上根本不发，在这里验会话是必失败的（上线头一版就栽在这上，
+// 每次绑定都报「会话已过期」）。接力 cookie 本身依旧不可信身份：令牌是服务端签发
+// 的随机数、一次性消费，伪造撞不出别人的。
+func (h *Handler) finishOAuthLink(c *gin.Context, ident oauthIdentity, linkToken string) {
 	ctx := c.Request.Context()
-	su, ok, err := h.validSession(c)
-	if err != nil || !ok {
-		redirectAdmin(c, "", url.Values{"oauth_error": {"会话已过期，重新登录后再绑定"}})
+	uid, _, err := store.ConsumeAuthToken(ctx, h.db, linkToken, store.TokenOAuthLink)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && uid == nil) {
+		redirectAdmin(c, "", url.Values{"oauth_error": {"绑定流程已过期，请重新发起绑定"}})
 		return
 	}
-	if err := store.LinkOAuthIdentity(ctx, h.db, su.ID, ident.Provider, ident.UserID); err != nil {
+	if err != nil {
+		h.log.Error("消费绑定令牌失败", "err", err)
+		redirectAdmin(c, "", url.Values{"oauth_error": {"绑定失败"}})
+		return
+	}
+	if err := store.LinkOAuthIdentity(ctx, h.db, *uid, ident.Provider, ident.UserID); err != nil {
 		if isConstraint(err) {
 			redirectAdmin(c, "", url.Values{"oauth_error": {"绑定失败：这个上游账号已被绑定，或你已绑定过这家"}})
 			return

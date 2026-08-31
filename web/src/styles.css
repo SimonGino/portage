@@ -1567,7 +1567,25 @@ textarea:focus {
 }
 
 /* 导入试算的变更清单：每行「新增渠道 xxx」一类的短句，普通列表即可，间距略收。
-   外边距交给 .dialog-note 的 gap（它只活在那个框里）。 */
+   外边距交给 .dialog-note 的 gap（它只活在那个框里）。按动词分两摞（v0.55）：
+   组头贴着自己那摞（组内 4px），摞与摞之间靠 .dialog-note 的 gap 分开。 */
+.import-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* 删除是覆盖导入里真正会让东西消失的那半，组头着警示色把它从新增里拎出来。 */
+.import-group-danger {
+  color: var(--err-text);
+}
+
 .import-changes {
   margin: 0;
   padding-left: 20px;
@@ -1883,49 +1901,100 @@ textarea:focus {
   color: var(--ok-text);
 }
 
-/* ── 登录页 ────────────────────────────────────────────────────────── */
+/* ── 门外页（登录与注册/找回/验证一族）────────────────────────────────
+   骨架照搬 Resend 门页（v0.56，PO 拍板「结构照搬、留羊皮纸」）：居中标记方块 +
+   大标题 + OAuth 置顶 + 「或」分隔 + 带标签的表单。整页单一表面：门外没有导航
+   与多区块，画布铺满即可，卡片壳（浮起的 360px 小卡）随之退役——配色仍是
+   羊皮纸全套，v0.29「只做亮色」不动。 */
 
 .login-wrap {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 24px 16px;
+  background: var(--canvas);
 }
 
 .login {
   width: 100%;
-  max-width: 360px;
+  max-width: 384px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: var(--canvas);
-  border: 0;
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  padding: 32px 28px;
 }
 
-/* flex 而不是 text-align: center——标记与字要在基线之外还对上中心，
-   而 text-align 只管行内内容的水平位置，管不了这一件。 */
-.login h1 {
-  margin: 0 0 4px;
+/* 品牌标记住进一枚墨色圆角方块（参照图那枚黑方块的羊皮纸译法）：
+   标记是 currentColor，反白靠这里的 color。 */
+.login-mark {
+  align-self: center;
+  width: 52px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  border-radius: 14px;
+  background: var(--ink);
+  color: var(--canvas);
+}
+
+.login h1 {
+  margin: 2px 0 4px;
+  text-align: center;
   font-family: var(--serif);
   font-weight: 600;
-  font-size: 22px;
+  font-size: 26px;
   letter-spacing: -0.03em;
 }
 
-/* 卡片副题（注册/找回/验证那几页）：h1 底下一行居中的小字，说明这一页是哪扇门。 */
+/* 标题底下一行居中的小字：登录页放注册岔路，其余门页留给各自的说明。 */
 .login-sub {
-  margin: -8px 0 0;
+  margin: -12px 0 0;
   text-align: center;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* 副题里的岔路链接走墨蓝（§4 白名单 ②「文字链接」）。 */
+.login-sub a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.login-sub a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 「或」分隔（OAuth 与密码表单之间）：两侧细线，线色取最轻那档——它只是
+   换行方式的注记，不是区块分界。 */
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.login-or::before,
+.login-or::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* 带标签的输入（门页专用）：站内表单靠 placeholder，门外这几张是给还不熟悉
+   这个系统的人签的，标签常驻。 */
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.login-submit {
+  width: 100%;
 }
 
 /* 门外页里的表单体：与 .login 卡片同一套竖排节奏。 */
@@ -1935,15 +2004,17 @@ textarea:focus {
   gap: 14px;
 }
 
-/* OAuth 按钮一列排：与密码登录之间自然分段，不画分隔线——按钮形态已是分界。 */
+/* OAuth 大按钮置顶（v0.56）：配了 OAuth 它就是更省事的那条路。两家并排、
+   一家整行；chip 底的 .btn 加高一档，图标 + 字居中。 */
 .login-oauth {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
 }
 
 .login-oauth .btn {
-  text-align: center;
+  padding: 9px 12px;
+  font-size: 14px;
   text-decoration: none;
 }
 
