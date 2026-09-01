@@ -47,7 +47,7 @@ func TestProbeModelVerdictAndVocabulary(t *testing.T) {
 	}
 	for _, tc := range cases {
 		url := probeStatusUpstream(t, tc.status)
-		res := ProbeModel(context.Background(), url, protocol.OpenAI, "sk-test", "m")
+		res := ProbeModel(context.Background(), url, protocol.OpenAI, "", "sk-test", "m")
 		if res.State != tc.state {
 			t.Errorf("状态码 %d 判成 %q，期望 %q", tc.status, res.State, tc.state)
 		}
@@ -66,7 +66,7 @@ func TestProbeModelVerdictAndVocabulary(t *testing.T) {
 // 连不上：说不清、状态码 0、摘要以「本次检测失败」开头且不带地址（Redact）。
 func TestProbeModelTransportFailureWording(t *testing.T) {
 	res := ProbeModel(context.Background(),
-		"http://127.0.0.1:1/secret-path", protocol.OpenAI, "sk-test", "m")
+		"http://127.0.0.1:1/secret-path", protocol.OpenAI, "", "sk-test", "m")
 	if res.State != ProbeUnclear || res.Status != 0 {
 		t.Errorf("连不上应是 unclear 且状态码 0：%+v", res)
 	}

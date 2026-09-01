@@ -55,7 +55,7 @@ type ModelListResult struct {
 // 这也是它能区分协议的原理：同一个 base_url 下 `/v1/models` 只有一条，但带 openai
 // 的 Bearer 头和带 anthropic 的 x-api-key 头打过去，聚合型中转站会回各自视角的列表。
 // `gpt-4o` 出现在前者不出现在后者，就是「它只走 openai」的依据。
-func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, credential string) ModelListResult {
+func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, scheme, credential string) ModelListResult {
 	res := ModelListResult{Protocols: sameModelsEndpoint(p)}
 
 	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
@@ -67,7 +67,7 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, creden
 		res.Detail = "请求构造失败"
 		return res
 	}
-	applyHeaders(req.Header, http.Header{}, p, credential, false)
+	applyHeaders(req.Header, http.Header{}, p, scheme, credential, false)
 
 	resp, err := (&http.Client{Timeout: listModelsTimeout}).Do(req)
 	if err != nil {
@@ -120,7 +120,7 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, creden
 //
 // 串行而不是并发：拉的是同一个上游同一把凭证，两三次请求并发过去省不下多少，却容易
 // 在限流严的中转站上把两次都撞成 429。这跟 Probe 逐凭证串行探是同一个取舍。
-func ListModelsFor(ctx context.Context, urls store.BaseURLs, credential string) []ModelListResult {
+func ListModelsFor(ctx context.Context, urls store.BaseURLs, scheme, credential string) []ModelListResult {
 	set := urls.Protocols()
 	out := []ModelListResult{}
 	done := map[protocol.Protocol]bool{}
@@ -129,7 +129,7 @@ func ListModelsFor(ctx context.Context, urls store.BaseURLs, credential string) 
 			continue
 		}
 		base := urls.Get(p)
-		res := ListModels(ctx, base, p, credential)
+		res := ListModels(ctx, base, p, scheme, credential)
 		// 一份结果只对「同组**且同地址**」的协议成立：openai 拉过之后
 		// openai_responses 不用再打一次的前提是两者挂在同一个根下，v0.96 起它们
 		// 可以各挂各的，地址不同就是两份答案、各拉各的。顺带把回给前端的

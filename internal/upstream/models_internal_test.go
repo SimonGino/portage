@@ -33,7 +33,7 @@ func TestListModelsForUsesPerProtocolBaseURL(t *testing.T) {
 	urlA := modelsUpstream(t, "gpt-x", &hitsA)
 	urlB := modelsUpstream(t, "claude-x", &hitsB)
 
-	out := ListModelsFor(context.Background(), store.BaseURLs{OpenAI: urlA, Anthropic: urlB}, "sk-x")
+	out := ListModelsFor(context.Background(), store.BaseURLs{OpenAI: urlA, Anthropic: urlB}, "", "sk-x")
 
 	if len(hitsA) != 1 || len(hitsB) != 1 {
 		t.Fatalf("两个根各该收到一次拉取，实得 openai 根 %d 次、anthropic 根 %d 次", len(hitsA), len(hitsB))
@@ -58,7 +58,7 @@ func TestListModelsForSharesFetchOnlyOnSameURL(t *testing.T) {
 		var hits []string
 		url := modelsUpstream(t, "gpt-x", &hits)
 		out := ListModelsFor(context.Background(),
-			store.BaseURLs{OpenAI: url, OpenAIResponses: url}, "sk-x")
+			store.BaseURLs{OpenAI: url, OpenAIResponses: url}, "", "sk-x")
 		if len(hits) != 1 {
 			t.Fatalf("同根该只拉一次，实得 %d 次", len(hits))
 		}
@@ -71,7 +71,7 @@ func TestListModelsForSharesFetchOnlyOnSameURL(t *testing.T) {
 		urlA := modelsUpstream(t, "gpt-x", &hitsA)
 		urlB := modelsUpstream(t, "gpt-r", &hitsB)
 		out := ListModelsFor(context.Background(),
-			store.BaseURLs{OpenAI: urlA, OpenAIResponses: urlB}, "sk-x")
+			store.BaseURLs{OpenAI: urlA, OpenAIResponses: urlB}, "", "sk-x")
 		if len(hitsA) != 1 || len(hitsB) != 1 {
 			t.Fatalf("异根各该拉一次，实得 %d/%d 次", len(hitsA), len(hitsB))
 		}
@@ -91,7 +91,7 @@ func TestListModelsForSharesFetchOnlyOnSameURL(t *testing.T) {
 func TestListModelsForNarrowsProtocolsToDeclared(t *testing.T) {
 	var hits []string
 	url := modelsUpstream(t, "gpt-x", &hits)
-	out := ListModelsFor(context.Background(), store.BaseURLs{OpenAIResponses: url}, "sk-x")
+	out := ListModelsFor(context.Background(), store.BaseURLs{OpenAIResponses: url}, "", "sk-x")
 	if len(out) != 1 {
 		t.Fatalf("该出一份结果：%+v", out)
 	}

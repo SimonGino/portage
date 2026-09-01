@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.23
+> 状态：草案 v1.24
+
+> v1.24 变更（口径层 v1.12 落地：多用户库导出改跳过用户 key，2026-09-01）：口径与裁决见口径层 v1.12，这里只记实现层落点。①**`declcfg.Export`/`Snapshot` 签名加第二返回值**：跳过名单（`[]string`，`名（邮箱）`、按 key 名序）——`exportAPIKeys` 改为 LEFT JOIN users 拿归属，`user_id` 非空且 ≠ 第一个 admin 的 key 不进文件、进名单；无 admin 库 adminID 落 0，用户 key 一律算跳过（与 `firstAdminOrZero` 助手同源，导入闸同一判据）。②**`CheckSingleUser` 收窄为导入闸**：只服务 `POST /panel/api/import` 与 preview 的 409（文案改口「要导入声明文件」），`Snapshot` 不再进门先过它；报错措辞去掉「压平成无主」改「覆盖时静默清光」——压平是导出写入才会发生的事。③**管理端导出**：名单非空逐把记 Info 日志，下载响应不变。④**用例**：`multiuser_test.go` 导出闸条整条重写——多用户库导出成功、跳过名单点名、同名跨用户取第一个 admin 那把、跳过后往返字节相等、同库上 `CheckSingleUser` 仍拒。修改人 jinpenga。
 
 > v1.23 变更（口径层 v1.07 落地：输入上限估算的 base64 大段换算，wayfinder [#77](https://github.com/SimonGino/portage/issues/77)，2026-08-31）：裁决与常数依据见口径层 v1.07 与 [#80](https://github.com/SimonGino/portage/issues/80)，这里只记实现层。估算从 `len(body)/4` 抽成 `server/inputestimate.go` 的 `estimateInputTokens`：单趟字节扫描，连续标准 base64 字符（`A-Za-z0-9+/=`）≥4096 的段按 `max(256, 段长×3/2048)` 计（= 解码字节 ÷512 保底 256），段外 ÷4，多段线性求和；闸的挂点、413 形状、count_tokens 豁免、流水词一概不动。测试分两层：纯函数钉换算与识别（`inputestimate_internal_test.go`：阈值两侧、保底、线性缩放、混合体叠加、base64url 不命中、尾段 flush），闸行为原文件加一条「1MB 假图 ÷4 必拒、换算放行」的起因场景用例（`inputlimit_test.go`，构造 base64 段——真实样本按 #77 裁定不入库）。修改人 jinpenga。
 
@@ -1019,7 +1021,7 @@ api_keys:
 
 **执行点与热路径**：鉴权 SELECT 改 **LEFT JOIN users**（取 `user_id`、判 `users.disabled`；无主 key 照常通过）；配额闸在**全局令牌桶之后、Resolve 之前**（判据只需 user_id），月度累计 = 流水 `SUM(cost)` 按 (user_id, UTC 当月) 现算 + 覆盖索引，**不建计数器表**；≥ 限额拒 429 + outcome 词表**第 12 词 `quota_exceeded`**（回绝半区），不预扣，`count_tokens` 豁免（#65）。聚合 `UsageBy`：key 维度改 `GROUP BY user_id, api_key_name`，加 user 第四维度与流水按用户筛选（#64）。用户侧接口强制限定本人，裁 `channel_key_name` 与 `upstream_request_id` 两列。
 
-**声明形态互斥闸**（#66）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；export 与 `POST /panel/api/import` 在存在非第一个 admin 名下 key 的库上拒绝；apply 对 `api_keys` 的覆盖删除语义不变。
+**声明形态互斥闸**（#66；导出半边口径层 v1.12 放宽）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；`POST /panel/api/import`（含试算）在存在非第一个 admin 名下 key 的库上拒绝 409；**导出不拒**（口径层 v1.12）——只导第一个 admin 与无主的 key，非 admin 用户名下的 key 跳过并回跳过名单，管理端逐把记日志；apply 对 `api_keys` 的覆盖删除语义不变。
 
 **models.dev 快照**（#68）：MIT，`api.json` 裁剪后 gzip 约 164 KB `go:embed`，四价字段单位与渠道口径一致，随发版一条命令更新；缺价条目（434/7483）容忍手填。
 
@@ -1030,8 +1032,8 @@ api_keys:
 - 配额闸：月界（UTC 自然月首尾）、恰好 = 限额拒、NULL 不限、0 封停、`count_tokens` 豁免、调低到已用之下即封、`quota_exceeded` 落词与半区谓词（outcome_test 全覆盖断言会逼着分半区）。
 - cost 计算：四项求和、未定价记 0、无用量 NULL、落库时点（改价后旧行不动）。
 - 停用用户：key 立即 401 路径外的拒绝语义 + session 当场失效（LEFT JOIN 两处）。
-- 声明形态互斥：挂文件时用户路由 404、多用户库导出/导入拒绝、apply 删用户 key。
-- 往返闸（§7.9）在含无主 key 的库上仍字节相等；含多用户 key 的库导出直接失败并点名。
+- 声明形态互斥：挂文件时用户路由 404、多用户库导入（含试算）拒绝、多用户库导出跳过用户 key 并回跳过名单、apply 删用户 key。
+- 往返闸（§7.9）在含无主 key 与「全归第一个 admin」的库上仍字节相等；含非 admin 用户 key 的库导出跳过那几把（名单回给调用方点名）、跳过后往返仍字节相等；导入闸在同库上仍拒绝并点名。
 
 ## 8. 最小管理接口
 

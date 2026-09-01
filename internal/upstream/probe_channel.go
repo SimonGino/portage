@@ -114,7 +114,7 @@ func ProbeChannel(ctx context.Context, target store.ProbeTarget, sel ProbeSelect
 				sem <- struct{}{}
 				defer func() { <-sem }()
 				// 各协议打各的根地址（口径层 v0.96）：测的就是「这一侧真会被请求的那一串」。
-				rows[i].Results[j] = ProbeModel(ctx, target.BaseURLs.Get(p), p, cred.Value, m)
+				rows[i].Results[j] = ProbeModel(ctx, target.BaseURLs.Get(p), p, target.AuthScheme, cred.Value, m)
 			})
 		}
 	}

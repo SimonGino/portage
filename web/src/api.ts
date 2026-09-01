@@ -316,6 +316,12 @@ export interface Channel {
   base_url: BaseURLs
   /** 凭证选取模式（口径层 v0.11）：轮询或随机。 */
   key_mode: KeyMode
+  /**
+   * 上游认证头写法（口径层 v1.13，#82）：default = 按协议惯例（anthropic 发
+   * x-api-key，openai 侧发 Authorization: Bearer）；bearer = 一律 Bearer；raw =
+   * 一律 Authorization: 裸凭证（PAI-EAS 这类网关只认裸 token，带 Bearer 反而 401）。
+   */
+  auth_scheme: AuthScheme
   /** 渠道级并发上限（口径层 v0.49）：0 = 不限。 */
   max_concurrency: number
   /**
@@ -350,6 +356,14 @@ export interface Channel {
 }
 
 export type KeyMode = 'polling' | 'random'
+
+export type AuthScheme = 'default' | 'bearer' | 'raw'
+
+export const AUTH_SCHEME_OPTIONS: { value: AuthScheme; label: string }[] = [
+  { value: 'default', label: '默认' },
+  { value: 'bearer', label: 'Bearer' },
+  { value: 'raw', label: '裸 Authorization' },
+]
 
 export const KEY_MODE_OPTIONS: { value: KeyMode; label: string; hint: string }[] = [
   { value: 'polling', label: '轮询', hint: '依次轮转' },

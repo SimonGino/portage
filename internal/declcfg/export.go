@@ -3,6 +3,7 @@ package declcfg
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -43,31 +44,43 @@ const header = `# 由 portage 管理端导出（口径层 §2.9）。这份文�
 //
 // **输出按自然键字典序排，不按 id**：往返闸的字节相等全靠这一条。sub2api 正是栽在
 // 这里——它的导出物没有身份键，只能 append 不能 apply。
-func Export(ctx context.Context, db store.Queryer) ([]byte, error) {
-	f, err := Snapshot(ctx, db)
+//
+// **第二个返回值是跳过名单**（口径层 v1.04）：非第一个 admin 用户名下的 key 不进
+// 文件，归属表达不了，跳过是裁定过的行为——但跳过必须明说，名单交调用方出口
+// （管理端逐把记日志），不让「少了几把」无声发生。
+func Export(ctx context.Context, db store.Queryer) ([]byte, []string, error) {
+	f, skipped, err := Snapshot(ctx, db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return Marshal(f)
+	raw, err := Marshal(f)
+	if err != nil {
+		return nil, nil, err
+	}
+	return raw, skipped, nil
 }
 
-// CheckSingleUser 是声明形态互斥闸的库侧判据（#66 ④⑤）：库里存在**第一个 admin
-// 之外的用户**名下的 key 时报错并逐把点名。第一个 admin 与无主的 key 不算——
-// 单管理员库正是这套形态的主场。
-//
-// 导出与导入（POST /panel/api/import）共用这一份：声明文件表达不了归属，导出会把
-// 用户 key 撞名压平、owner 静默丢失，那是一份回不去的文件（#66 ④）；导入则会把
-// 用户 key 静默清光（#66 ⑤）。两边都拒绝比消歧诚实。**启动 apply 不走这道闸**：
-// 挂声明文件是显式切事实源的动作，照删文件外的 key、含用户 key（#66 ③）。
-//
-// 无 admin 却有用户名下 key 的库（只有手写 SQL 造得出）按全违规算：那不是这套
-// 形态认识的任何形状。
-func CheckSingleUser(ctx context.Context, db store.Queryer) error {
+// firstAdminOrZero 返回第一个 admin 的 id；没有 admin 的库回 0——AUTOINCREMENT 从
+// 1 起，0 匹配不上任何用户。导入闸与导出跳过共用这一条判据，两处对「谁是第一个
+// admin」必须说同一句话。
+func firstAdminOrZero(ctx context.Context, db store.Queryer) (int64, error) {
 	adminID, err := store.FirstAdminID(ctx, db)
 	if errors.Is(err, store.ErrNotFound) {
-		adminID = 0 // AUTOINCREMENT 从 1 起，0 匹配不上任何用户 = 全部归属都违规
-	} else if err != nil {
-		return fmt.Errorf("找第一个 admin：%w", err)
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("找第一个 admin：%w", err)
+	}
+	return adminID, nil
+}
+
+// keysOwnedByOthers 点名「第一个 admin 之外的用户」名下的 API Key，格式
+// `名（邮箱）`，按 key 名序。导入闸拿它拒绝，导出拿它点名跳过了谁——判据同源，
+// 两处说同一批名字。
+func keysOwnedByOthers(ctx context.Context, db store.Queryer) ([]string, error) {
+	adminID, err := firstAdminOrZero(ctx, db)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT k.name, COALESCE(u.email, '') FROM api_keys k
@@ -75,24 +88,41 @@ func CheckSingleUser(ctx context.Context, db store.Queryer) error {
 		WHERE k.user_id IS NOT NULL AND k.user_id <> ?
 		ORDER BY k.name`, adminID)
 	if err != nil {
-		return fmt.Errorf("读 API Key 归属：%w", err)
+		return nil, fmt.Errorf("读 API Key 归属：%w", err)
 	}
 	defer rows.Close()
 	var owned []string
 	for rows.Next() {
 		var name, email string
 		if err := rows.Scan(&name, &email); err != nil {
-			return err
+			return nil, err
 		}
 		owned = append(owned, fmt.Sprintf("%q（%s）", name, email))
 	}
-	if err := rows.Err(); err != nil {
+	return owned, rows.Err()
+}
+
+// CheckSingleUser 是声明形态**导入闸**的库侧判据（#66 ⑤）：库里存在**第一个 admin
+// 之外的用户**名下的 key 时报错并逐把点名。第一个 admin 与无主的 key 不算——
+// 单管理员库正是这套形态的主场。
+//
+// 服务的是 `POST /panel/api/import` 与它的试算：声明文件表达不了归属，导入的覆盖
+// 语义会把用户 key 静默清光（#66 ⑤），那不是纪律是事故。**导出不走这道闸**——
+// 导出对用户 key 的处置改成了跳过并点名（口径层 v1.04，PO 2026-09-01：不需要导出
+// 用户的 key），见 Snapshot。**启动 apply 也不走这道闸**：挂声明文件是显式切事实源
+// 的动作，照删文件外的 key、含用户 key（#66 ③）。
+//
+// 无 admin 却有用户名下 key 的库（只有手写 SQL 造得出）按全违规算：那不是这套
+// 形态认识的任何形状。
+func CheckSingleUser(ctx context.Context, db store.Queryer) error {
+	owned, err := keysOwnedByOthers(ctx, db)
+	if err != nil {
 		return err
 	}
 	if len(owned) > 0 {
 		return fmt.Errorf("声明形态不支持多用户：这几把 API Key 归属在第一个 admin 之外的用户名下：%s。"+
-			"声明文件表达不了归属，硬来会把它们压平成无主、覆盖时清掉用户的 key——"+
-			"要用声明文件，先删掉这些 key（或让用户自行删除）", strings.Join(owned, "、"))
+			"声明文件表达不了归属，覆盖时会把它们静默清光——"+
+			"要导入声明文件，先删掉这些 key（或让用户自行删除）", strings.Join(owned, "、"))
 	}
 	return nil
 }
@@ -101,31 +131,36 @@ func CheckSingleUser(ctx context.Context, db store.Queryer) error {
 //
 // 拆出来是为了让往返闸能在结构层面比对，也让导出的取数与排版各自可测。
 //
-// 进门先过多用户闸（#66 ④）：含其他用户 key 的库直接拒绝导出并点名，见
-// CheckSingleUser。
-func Snapshot(ctx context.Context, db store.Queryer) (*File, error) {
-	if err := CheckSingleUser(ctx, db); err != nil {
-		return nil, err
+// **只导第一个 admin 与无主的 key**（口径层 v1.04，PO 2026-09-01：不需要导出用户的
+// key，取代 #66 ④ 的「多用户库拒绝导出」）：归属在第一个 admin 之外的用户名下的
+// key 不进文件——apply 落库一律无主，把它们写进文件等于当场把归属压平，文件还回
+// 不去（#66 ④ 的原由）；跳过则什么也不丢，用户 key 留在原库里原封不动。跳过不是
+// 静默的：名单走第二个返回值交调用方点名。无 admin 的库没有「第一个 admin」，
+// 用户名下的 key 一律算跳过。
+func Snapshot(ctx context.Context, db store.Queryer) (*File, []string, error) {
+	adminID, err := firstAdminOrZero(ctx, db)
+	if err != nil {
+		return nil, nil, err
 	}
 	channels, err := exportChannels(ctx, db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	aps, err := exportAccessPoints(ctx, db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	keys, err := exportAPIKeys(ctx, db)
+	keys, skipped, err := exportAPIKeys(ctx, db, adminID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &File{Channels: channels, AccessPoints: aps, APIKeys: keys}, nil
+	return &File{Channels: channels, AccessPoints: aps, APIKeys: keys}, skipped, nil
 }
 
 func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, name, base_url_openai, base_url_openai_responses, base_url_anthropic,
-		       credential_type, key_mode,
+		       credential_type, key_mode, auth_scheme,
 		       max_concurrency, supports_compaction, supports_stateful_responses, provider, disabled
 		FROM channels ORDER BY name`)
 	if err != nil {
@@ -140,8 +175,13 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 		var compaction, stateful, disabled int
 		if err := rows.Scan(&id, &ch.Name, &ch.BaseURL.OpenAI, &ch.BaseURL.OpenAIResponses,
 			&ch.BaseURL.Anthropic, &ch.CredentialType,
-			&ch.KeyMode, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled); err != nil {
+			&ch.KeyMode, &ch.AuthScheme, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled); err != nil {
 			return nil, err
+		}
+		// default 不背一行（omitempty 只略过空串）：apply 侧 orDefault 会补回来，
+		// 往返闸两边对得上。
+		if ch.AuthScheme == store.AuthSchemeDefault {
+			ch.AuthScheme = ""
 		}
 		ch.SupportsCompaction = compaction != 0
 		bit := stateful != 0
@@ -285,21 +325,32 @@ func exportCandidates(ctx context.Context, db store.Queryer, apID int64) ([]Cand
 //     且纯转发形态下没有页面能看出少了几把。
 //   - 写占位值 —— 只是把同一个失败推晚一站，还多骗一次人。
 //   - 失败 —— 当场知道要去把那几把删了重建。
-func exportAPIKeys(ctx context.Context, db store.Queryer) ([]APIKey, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT name, key_plain, allowed_models, disabled FROM api_keys ORDER BY name`)
+func exportAPIKeys(ctx context.Context, db store.Queryer, adminID int64) ([]APIKey, []string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT k.name, k.key_plain, k.allowed_models, k.disabled, k.user_id, COALESCE(u.email, '')
+		FROM api_keys k LEFT JOIN users u ON u.id = k.user_id
+		ORDER BY k.name`)
 	if err != nil {
-		return nil, fmt.Errorf("读 API Key：%w", err)
+		return nil, nil, fmt.Errorf("读 API Key：%w", err)
 	}
 	defer rows.Close()
 	var out []APIKey
-	var lost []string
+	var lost, skipped []string
 	for rows.Next() {
 		var k APIKey
 		var allowed string
 		var disabled int
-		if err := rows.Scan(&k.Name, &k.Key, &allowed, &disabled); err != nil {
-			return nil, err
+		var owner sql.NullInt64
+		var email string
+		if err := rows.Scan(&k.Name, &k.Key, &allowed, &disabled, &owner, &email); err != nil {
+			return nil, nil, err
+		}
+		// 非第一个 admin 名下的 key 不进文件（Snapshot 的注释讲全了为什么是跳过
+		// 不是拒绝），但逐把记下名字交调用方点名——静默少几把 key 是这套代码最
+		// 反对的失败模式。
+		if owner.Valid && owner.Int64 != adminID {
+			skipped = append(skipped, fmt.Sprintf("%q（%s）", k.Name, email))
+			continue
 		}
 		if strings.TrimSpace(k.Key) == "" {
 			lost = append(lost, k.Name)
@@ -310,14 +361,14 @@ func exportAPIKeys(ctx context.Context, db store.Queryer) ([]APIKey, error) {
 		out = append(out, k)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(lost) > 0 {
-		return nil, fmt.Errorf("这几把 API Key 存的只有哈希、拿不到原值，导不出去：%s。"+
+		return nil, nil, fmt.Errorf("这几把 API Key 存的只有哈希、拿不到原值，导不出去：%s。"+
 			"它们建于 key_plain 这一列之前，哈希不可逆——在管理端把它们删了重建，再导一次",
 			strings.Join(quoted(lost), "、"))
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 // parseAllowedModels 把库里那一列解回列表形态。

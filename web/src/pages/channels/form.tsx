@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs } from '../../api'
-import type { BaseURLDraft, BaseURLs, Channel, PricingProvider } from '../../api'
+import { api, AUTH_SCHEME_OPTIONS, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs } from '../../api'
+import type { AuthScheme, BaseURLDraft, BaseURLs, Channel, PricingProvider } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
 import type { Option } from '../../fields'
@@ -69,6 +69,9 @@ export function ChannelForm({
   // provider 标注（口径层 §2.10，#74）：models.dev 的 id，只服务填价建议与图标分组，
   // 不参与路由。空串 = 未标注，是合法常态（中转站多半对不上任何一家）。
   const [provider, setProvider] = useState(channel?.provider ?? '')
+  // 认证头写法（口径层 v1.13，#82）。default 即老行为；raw 给 PAI-EAS 这类只认
+  // 裸 Authorization 的网关——错配的表象是清一色 401，人会先怀疑凭证本身。
+  const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? 'default')
   const [providers, setProviders] = useState<PricingProvider[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -106,6 +109,7 @@ export function ChannelForm({
     (name !== channel.name ||
       maxConcValue !== channel.max_concurrency ||
       provider !== channel.provider ||
+      authScheme !== channel.auth_scheme ||
       (showCompaction && compaction !== channel.supports_compaction) ||
       (showStateful && stateful !== channel.supports_stateful_responses))
 
@@ -136,6 +140,7 @@ export function ChannelForm({
           name,
           max_concurrency: maxConcValue,
           provider,
+          auth_scheme: authScheme,
           ...(showCompaction ? { supports_compaction: compaction } : {}),
           ...(showStateful ? { supports_stateful_responses: stateful } : {}),
         })
@@ -146,6 +151,7 @@ export function ChannelForm({
           base_url: payloadURLs(),
           max_concurrency: maxConcValue,
           provider,
+          auth_scheme: authScheme,
           ...(showCompaction ? { supports_compaction: compaction } : {}),
           ...(showStateful ? { supports_stateful_responses: stateful } : {}),
           credential,
@@ -220,6 +226,16 @@ export function ChannelForm({
         hint="这个上游对应 models.dev 的哪一家，只用来给模型页出建议价与图标分组，不影响转发；中转站对不上就留「未标注」"
       >
         <Picker value={provider} options={providerOptions} onChange={setProvider} placeholder="未标注" />
+      </Field>
+
+      {/* 认证头写法（口径层 v1.13，#82）。默认按协议惯例（anthropic 发 x-api-key、
+          openai 侧发 Bearer），PAI-EAS 这类只认裸 Authorization 的网关选「裸」——
+          错配的表象是清一色 401，提示语把这条因果直接说出来。 */}
+      <Field
+        label="认证头"
+        hint="凭证以哪种头发给上游：默认按协议惯例（anthropic 发 x-api-key，openai 发 Authorization: Bearer）；自部署网关（如阿里 PAI-EAS）只认 Authorization 裸凭证时选「裸 Authorization」——选错的表现是上游一律回 401"
+      >
+        <Segmented value={authScheme} options={AUTH_SCHEME_OPTIONS} onChange={setAuthScheme} />
       </Field>
 
       {/* 端点设置（DESIGN v0.46，口径层 v1.04）：一份共用前缀 + 协议勾选即声明，

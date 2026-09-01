@@ -3,6 +3,7 @@ package admin
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/declcfg"
 
@@ -18,13 +19,18 @@ import (
 //
 // 响应体里是**明文秘密**，所以 no-store：它不该躺在任何中间层或磁盘缓存里。
 func (h *Handler) exportConfig(c *gin.Context) {
-	raw, err := declcfg.Export(c.Request.Context(), h.db)
+	raw, skipped, err := declcfg.Export(c.Request.Context(), h.db)
 	if err != nil {
 		h.log.Error("导出声明文件失败", "err", err)
 		// 这里回显 err 本身：导出的失败模式只有「哪几把 key 拿不到原值」这一类，
 		// 报文里是实体名不是秘密值，而不报名字的话人根本不知道去删哪几把。
 		fail(c, http.StatusInternalServerError, fmt.Sprintf("导出失败：%v", err))
 		return
+	}
+	// 多用户库导出跳过非 admin 名下的 key（口径层 v1.04）：跳过不是丢，但必须
+	// 明说——逐把记进日志，别让「文件里少了几把」无声发生。
+	if len(skipped) > 0 {
+		h.log.Info("导出略过了用户名下的 API Key（声明文件表达不了归属，不进文件）", "keys", strings.Join(skipped, "、"))
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Disposition", `attachment; filename="channels.yaml"`)

@@ -72,7 +72,7 @@ func applyFile(t *testing.T, db *sql.DB, f *declcfg.File) {
 
 func mustExport(t *testing.T, db *sql.DB) []byte {
 	t.Helper()
-	raw, err := declcfg.Export(context.Background(), db)
+	raw, _, err := declcfg.Export(context.Background(), db)
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestExportSortsByNaturalKeyNotID(t *testing.T) {
 	}
 	applyFile(t, db, f)
 
-	out, err := declcfg.Snapshot(context.Background(), db)
+	out, _, err := declcfg.Snapshot(context.Background(), db)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestExportFailsNamingKeysWithoutPlaintext(t *testing.T) {
 	if _, err := db.Exec(`UPDATE api_keys SET key_plain = '' WHERE name = '默认'`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := declcfg.Export(context.Background(), db)
+	_, _, err := declcfg.Export(context.Background(), db)
 	if err == nil {
 		t.Fatal("拿不到原值的 API Key 必须让导出当场失败")
 	}

@@ -94,6 +94,9 @@ func migrate(db *sql.DB) error {
 	if err := addSupportsCompaction(db); err != nil {
 		return err
 	}
+	if err := addAuthScheme(db); err != nil {
+		return err
+	}
 	if err := addSupportsStatefulResponses(db); err != nil {
 		return err
 	}
@@ -511,6 +514,23 @@ func addSupportsCompaction(db *sql.DB) error {
 	return nil
 }
 
+// addAuthScheme 补 v1.13 的 channels.auth_scheme（#82）。
+//
+// 默认 default（按协议惯例发认证头），存量行落 default 即现行为，零变化。
+func addAuthScheme(db *sql.DB) error {
+	has, err := hasColumn(db, "channels", "auth_scheme")
+	if err != nil {
+		return fmt.Errorf("检查 channels.auth_scheme: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN auth_scheme TEXT NOT NULL DEFAULT 'default'`); err != nil {
+		return fmt.Errorf("迁移 channels.auth_scheme: %w", err)
+	}
+	return nil
+}
+
 // addSupportsStatefulResponses 补 v0.88 的 channels.supports_stateful_responses。
 //
 // 默认 1（支持），存量行一律落 1——与上面那位的「存量一律落否」**相反**，是 PO 明确
@@ -789,6 +809,9 @@ type Candidate struct {
 	Credentials []Credential
 	// KeyMode 是渠道级的选取模式：polling（默认）/ random。
 	KeyMode string
+	// AuthScheme 是渠道级的上游认证头写法（口径层 v1.13，#82）：default（按协议
+	// 惯例）/ bearer / raw。怎么写头是 upstream applyHeaders 的事，这里只带值。
+	AuthScheme string
 }
 
 // 渠道级的凭证选取模式（口径层 v0.11）。库里的默认值是 polling，认不得的取值一律
@@ -796,6 +819,18 @@ type Candidate struct {
 const (
 	KeyModePolling = "polling"
 	KeyModeRandom  = "random"
+)
+
+// 渠道级的上游认证头写法（口径层 v1.13，#82）。写库时校验值域（admin.go），读侧
+// 宽容：认不得的取值一律当 default——理由同 KeyMode，这一列可以是手写 SQL 灌进来的。
+//
+//   - default：按协议惯例——anthropic 发 `x-api-key`，openai 侧发 `Authorization: Bearer`。
+//   - bearer：一律 `Authorization: Bearer <凭证>`（sglang --api-key 这类）。
+//   - raw：一律 `Authorization: <凭证原文>`（PAI-EAS 这类网关只认裸 token，带 Bearer 反而 401）。
+const (
+	AuthSchemeDefault = "default"
+	AuthSchemeBearer  = "bearer"
+	AuthSchemeRaw     = "raw"
 )
 
 // Credential 是凭证池里的一份凭证。
@@ -843,7 +878,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -861,7 +896,7 @@ func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *s
 		&c.MaxInputTokens,
 		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
-		&c.KeyMode, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
 }
 
 // finishCandidate 是谓词的 Go 半边加收尾：凭证复查、协议交集、定出站根地址。

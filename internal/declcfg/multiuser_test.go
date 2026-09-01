@@ -1,8 +1,9 @@
 package declcfg_test
 
-// 声明形态 × 多用户的互斥闸用例（#66/#73，展开层 §7.10.1）：apply 建的 key 无主、
-// 认领后的归属在覆盖时保留、文件外的用户 key 照删、多用户库导出拒绝并点名、
-// 往返闸在无主与「第一个 admin 名下」两种库上都成立。
+// 声明形态 × 多用户的互斥用例（#66/#73，展开层 §7.10.1；导出半边口径层 v1.04 放宽）：
+// apply 建的 key 无主、认领后的归属在覆盖时保留、文件外的用户 key 照删、多用户库导出
+// **跳过**用户 key 并点名（导入闸照拒并点名）、往返闸在无主与「第一个 admin 名下」
+// 两种库上都成立。
 
 import (
 	"bytes"
@@ -120,14 +121,16 @@ func TestApplyDeletesUserKeysOutsideFile(t *testing.T) {
 	}
 }
 
-// 导出闸（#66 ④）：库里存在第一个 admin 之外的用户名下的 key → 拒绝导出并点名；
-// 只有第一个 admin 与无主 key 的库照常导出。
-func TestExportRefusesMultiUserDBNamingKeys(t *testing.T) {
+// 导出对用户 key 的处置（口径层 v1.04，取代 #66 ④ 的拒绝闸）：非第一个 admin
+// 名下的 key **不进文件**、名单回给调用方点名；第一个 admin 与无主 key 照常导出。
+// 同名不同主（#73 的 UNIQUE(user_id, name) 允许）也不压平——文件里的 laptop 就是
+// admin 那一把。导入闸（CheckSingleUser）原样保留：同库上仍拒绝并点名。
+func TestExportSkipsKeysOwnedByOtherUsers(t *testing.T) {
 	db := openDB(t)
 	mustApply(t, db, twoKeysYAML)
 	adminID := seedUser(t, db, "admin@localhost", "admin")
 	bobID := seedUser(t, db, "bob@x", "user")
-	// laptop 归第一个 admin（合法）、ci 归 bob（违规），再留一把无主的。
+	// laptop 归第一个 admin（照常导出）、ci 归 bob（跳过）。
 	if _, err := db.Exec(`UPDATE api_keys SET user_id = ? WHERE name = 'laptop'`, adminID); err != nil {
 		t.Fatalf("归属 laptop: %v", err)
 	}
@@ -135,22 +138,60 @@ func TestExportRefusesMultiUserDBNamingKeys(t *testing.T) {
 		t.Fatalf("归属 ci: %v", err)
 	}
 
-	_, err := declcfg.Export(context.Background(), db)
+	raw, skipped, err := declcfg.Export(context.Background(), db)
+	if err != nil {
+		t.Fatalf("多用户库该能导出（用户 key 跳过而不是拒绝）: %v", err)
+	}
+	if !strings.Contains(string(raw), "sk-ptg-multiuser-a") {
+		t.Error("第一个 admin 名下的 key 该照常导出")
+	}
+	for _, want := range []string{"ci", "sk-ptg-multiuser-b"} {
+		if strings.Contains(string(raw), want) {
+			t.Errorf("导出物里不该有用户名下的 %q", want)
+		}
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "ci") || !strings.Contains(skipped[0], "bob@x") {
+		t.Errorf("跳过名单该点名 %q（%s），实得 %v", "ci", "bob@x", skipped)
+	}
+
+	// 同名不同主：bob 也有一把叫 laptop 的。文件里的 laptop 必须是 admin 那把，
+	// bob 的进跳过名单——#66 ④ 当年拒导出的「撞名压平」由此消失。
+	if _, err := db.Exec(
+		`INSERT INTO api_keys (name, key_hash, key_plain, user_id) VALUES ('laptop', 'h-bob-laptop', 'sk-ptg-bob-laptop', ?)`,
+		bobID); err != nil {
+		t.Fatalf("种 bob 的同名 key: %v", err)
+	}
+	raw, skipped, err = declcfg.Export(context.Background(), db)
+	if err != nil {
+		t.Fatalf("同名跨用户的库也该能导出: %v", err)
+	}
+	if !strings.Contains(string(raw), "sk-ptg-multiuser-a") || strings.Contains(string(raw), "sk-ptg-bob-laptop") {
+		t.Error("撞名时导出的必须是第一个 admin 那把，bob 的只能进跳过名单")
+	}
+	if len(skipped) != 2 || !strings.Contains(skipped[1], "laptop") {
+		t.Errorf("跳过名单该多出 bob 的那把 laptop，实得 %v", skipped)
+	}
+
+	// 跳过不破坏往返：导出物 → 空库 apply → 再导出，字节相等。
+	parsed, err := declcfg.Parse(raw, "skip.yaml")
+	if err != nil {
+		t.Fatalf("解析导出物: %v", err)
+	}
+	db2 := openDB(t)
+	applyFile(t, db2, parsed)
+	if second := mustExport(t, db2); !bytes.Equal(raw, second) {
+		t.Error("跳过用户 key 后导出的文件往返不等——跳过名单漏进了文件或排序变了")
+	}
+
+	// 导入闸原样：同库上 CheckSingleUser 仍拒绝并点名。
+	err = declcfg.CheckSingleUser(context.Background(), db)
 	if err == nil {
-		t.Fatal("多用户库该拒绝导出")
+		t.Fatal("多用户库的导入闸该仍拒绝")
 	}
 	for _, want := range []string{"ci", "bob@x", "不支持多用户"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("拒绝导出的报错没点到 %q：%v", want, err)
+			t.Errorf("导入闸的报错没点到 %q：%v", want, err)
 		}
-	}
-
-	// 把 bob 的那把删掉，admin 名下 + 无主的组合照常导出。
-	if _, err := db.Exec(`DELETE FROM api_keys WHERE name = 'ci'`); err != nil {
-		t.Fatalf("删 bob 的 key: %v", err)
-	}
-	if _, err := declcfg.Export(context.Background(), db); err != nil {
-		t.Errorf("单用户库该能导出: %v", err)
 	}
 }
 

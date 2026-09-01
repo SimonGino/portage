@@ -155,7 +155,7 @@ func (c *Client) send(ctx context.Context, cand store.Candidate, cred store.Cred
 			return nil, err
 		}
 		req.ContentLength = int64(len(body))
-		applyHeaders(req.Header, clientHdr, cand.Protocol, cred.Value, stream)
+		applyHeaders(req.Header, clientHdr, cand.Protocol, cand.AuthScheme, cred.Value, stream)
 
 		resp, err := c.http.Do(req)
 		at.Sends++
@@ -286,7 +286,11 @@ func Redact(err error) error {
 //
 // credential 是**这次尝试**用的那份凭证值（key 层内环会在同一次请求里换，所以它
 // 是参数而不是从候选上读）。
-func applyHeaders(dst, client http.Header, p protocol.Protocol, credential string, stream bool) {
+//
+// scheme 是渠道级的认证头写法（口径层 v1.13，#82）：bearer / raw 改写认证头本身，
+// 协议头（anthropic-version 等）与认证档位无关照发；default 与认不得的取值都走按
+// 协议惯例那条老路——这一列可能是手写 SQL 灌的，读侧宽容与 KeyMode 同一条理由。
+func applyHeaders(dst, client http.Header, p protocol.Protocol, scheme, credential string, stream bool) {
 	if ct := client.Get("Content-Type"); ct != "" {
 		dst.Set("Content-Type", ct)
 	} else {
@@ -305,9 +309,7 @@ func applyHeaders(dst, client http.Header, p protocol.Protocol, credential strin
 		dst.Set("Accept-Encoding", "identity")
 	}
 
-	switch p {
-	case protocol.Anthropic:
-		dst.Set("x-api-key", credential)
+	if p == protocol.Anthropic {
 		version := client.Get("anthropic-version")
 		if version == "" {
 			version = "2023-06-01"
@@ -316,8 +318,20 @@ func applyHeaders(dst, client http.Header, p protocol.Protocol, credential strin
 		if beta := client.Get("anthropic-beta"); beta != "" {
 			dst.Set("anthropic-beta", beta)
 		}
-	default:
+	}
+
+	switch scheme {
+	case store.AuthSchemeBearer:
 		dst.Set("Authorization", "Bearer "+credential)
+	case store.AuthSchemeRaw:
+		// PAI-EAS 这类网关只认裸 token，带 Bearer 前缀反而 401。
+		dst.Set("Authorization", credential)
+	default:
+		if p == protocol.Anthropic {
+			dst.Set("x-api-key", credential)
+		} else {
+			dst.Set("Authorization", "Bearer "+credential)
+		}
 	}
 }
 

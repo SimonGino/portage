@@ -126,6 +126,8 @@ type Channel struct {
 	// 只是从单串变成了协议 → 地址的映射。
 	BaseURLs BaseURLs `json:"base_url"`
 	KeyMode  string   `json:"key_mode"`
+	// AuthScheme 是上游认证头写法（口径层 v1.13，#82）：default / bearer / raw。
+	AuthScheme string `json:"auth_scheme"`
 	// MaxConcurrency 是渠道级 in-flight 并发上限（口径层 v0.49）：0 = 不限。
 	MaxConcurrency int `json:"max_concurrency"`
 	// SupportsCompaction 记上游认不认 Codex 的 compaction_trigger（口径层 v0.54）。
@@ -151,7 +153,7 @@ type Channel struct {
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
-		       ch.key_mode, ch.max_concurrency,
+		       ch.key_mode, ch.auth_scheme, ch.max_concurrency,
 		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
@@ -166,7 +168,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	for rows.Next() {
 		var c Channel
 		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
-			&c.KeyMode, &c.MaxConcurrency,
+			&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency,
 			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
@@ -257,6 +259,9 @@ type ChannelInput struct {
 	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
 	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
 	KeyMode string `json:"key_mode"`
+	// AuthScheme 是上游认证头写法 default / bearer / raw（口径层 v1.13，#82）。空串
+	// 是「没提这个字段」——哨兵语义同 KeyMode：建渠道时补 default，改渠道时不动。
+	AuthScheme string `json:"auth_scheme"`
 	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针的 nil 是
 	// 「没提这个字段」——与 KeyMode 的空串同一个陷阱（v0.35⑸ 整体覆盖）：它是并发
 	// 闸批才露到表单上的，老请求体里没有，缺省时那一列不动；0 在这里是有意义的
@@ -312,6 +317,18 @@ func (in ChannelInput) keyMode() (string, error) {
 	}
 }
 
+// authScheme 归一化认证头写法，**空串原样返回**表示「这次请求没提这个字段」——哨兵
+// 语义与 keyMode 逐字相同。认不得的取值直接拒：拼错的档位静默退化成 default，表现是
+// 「配了 raw 怎么还是 401」，比一条点名的 400 难查得多。
+func authScheme(v string) (string, error) {
+	switch v = strings.TrimSpace(v); v {
+	case "", AuthSchemeDefault, AuthSchemeBearer, AuthSchemeRaw:
+		return v, nil
+	default:
+		return "", InvalidInput{Reason: "认证头写法只能是 default（按协议惯例）、bearer（Authorization: Bearer）或 raw（Authorization 裸凭证）"}
+	}
+}
+
 // maxConcurrency 校验并发上限。负数直接拒而不是当 0 用：写 -1 的人多半以为它是
 // 某种「不限」的暗号，静默当成 0 恰好蒙对了语义，但下次改成 -5 想「更不限」时就
 // 该困惑了——说清楚只有 0 表示不限。
@@ -335,6 +352,13 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	}
 	if mode == "" {
 		mode = KeyModePolling
+	}
+	scheme, err := authScheme(in.AuthScheme)
+	if err != nil {
+		return 0, err
+	}
+	if scheme == "" {
+		scheme = AuthSchemeDefault
 	}
 	maxConc, err := in.maxConcurrency()
 	if err != nil {
@@ -374,10 +398,10 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
-		                      credential_type, key_mode, max_concurrency,
+		                      credential_type, key_mode, auth_scheme, max_concurrency,
 		                      supports_compaction, supports_stateful_responses, provider, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, conc,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, scheme, conc,
 		boolInt(compaction), boolInt(stateful), provider, boolInt(in.Disabled))
 	if err != nil {
 		return 0, err
@@ -397,6 +421,10 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if err != nil {
 		return err
 	}
+	scheme, err := authScheme(in.AuthScheme)
+	if err != nil {
+		return err
+	}
 	maxConc, err := in.maxConcurrency()
 	if err != nil {
 		return err
@@ -413,6 +441,10 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if mode != "" {
 		sets += `, key_mode = ?`
 		args = append(args, mode)
+	}
+	if scheme != "" {
+		sets += `, auth_scheme = ?`
+		args = append(args, scheme)
 	}
 	if maxConc != nil {
 		sets += `, max_concurrency = ?`
@@ -498,6 +530,9 @@ type ChannelSettings struct {
 	MaxConcurrency            *int   `json:"max_concurrency"`
 	SupportsCompaction        *bool  `json:"supports_compaction"`
 	SupportsStatefulResponses *bool  `json:"supports_stateful_responses"`
+	// AuthScheme 是上游认证头写法（口径层 v1.13，#82）。nil = 没提不动（老前端的
+	// 请求体里没有这个字段）；非空值必须是 default / bearer / raw 之一。
+	AuthScheme *string `json:"auth_scheme"`
 	// Provider 是 models.dev 标注（#74）。nil = 没提不动；空串是显式清掉。
 	// 不校验取值，理由见 ChannelInput.Provider。
 	Provider *string `json:"provider"`
@@ -527,6 +562,18 @@ func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSett
 	if s.MaxConcurrency != nil {
 		sets += `, max_concurrency = ?`
 		args = append(args, *s.MaxConcurrency)
+	}
+	if s.AuthScheme != nil {
+		// 意图写没有「没提这个字段」的形态（nil 才是），空串在这里就是非法值。
+		scheme, err := authScheme(*s.AuthScheme)
+		if err == nil && scheme == "" {
+			err = InvalidInput{Reason: "认证头写法不能为空：default（按协议惯例）、bearer 或 raw"}
+		}
+		if err != nil {
+			return err
+		}
+		sets += `, auth_scheme = ?`
+		args = append(args, scheme)
 	}
 	if s.Provider != nil {
 		sets += `, provider = ?`
@@ -560,6 +607,9 @@ type ProbeTarget struct {
 	// 即回退序。检测与拉模型列表按协议各取各的地址。
 	BaseURLs  BaseURLs
 	Protocols protocol.Set
+	// AuthScheme 是渠道的认证头写法（#82）：检测与拉模型列表复用转发那套头，问的
+	// 就是「按我们发请求的方式打过去通不通」，认证档位自然也得跟着。
+	AuthScheme string
 	// Credentials 含**已停用**的凭证（口径层 v0.96 承接 v0.38 的立论）：恢复是
 	// 纯人工的，「这把停用的凭证还坏不坏」除了发一次请求没有别的办法回答——
 	// 检测就得能选中它。
@@ -581,9 +631,9 @@ type ProbeCredential struct {
 func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
 	var t ProbeTarget
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic
+		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme
 		FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic)
+		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound
 	}

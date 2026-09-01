@@ -58,7 +58,11 @@ type Channel struct {
 	BaseURL        store.BaseURLs `yaml:"base_url"`
 	CredentialType string         `yaml:"credential_type"`
 	KeyMode        string         `yaml:"key_mode"`
-	MaxConcurrency int            `yaml:"max_concurrency"`
+	// AuthScheme 是上游认证头写法 default/bearer/raw（口径层 v1.13，#82）。omitempty
+	// ——default 是绝大多数渠道的常态，导出时写空（不背一行）、apply 落 default，
+	// 往返闸两边对得上。
+	AuthScheme     string `yaml:"auth_scheme,omitempty"`
+	MaxConcurrency int    `yaml:"max_concurrency"`
 
 	// Provider 是 models.dev 的 provider id 标注（口径层 §2.10，#74）：只服务管理端
 	// 的建议价与图标分组，不参与路由。omitempty——没标注的渠道不背一行空串，往返闸

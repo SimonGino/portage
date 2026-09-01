@@ -225,6 +225,9 @@ type channelInput struct {
 	BaseURL map[string]string `json:"base_url"`
 	// KeyMode 是凭证选取模式 polling/random（口径层 v0.44 起露在凭证池弹窗里，不在渠道表单）。
 	KeyMode string `json:"key_mode"`
+	// AuthScheme 是上游认证头写法 default/bearer/raw（口径层 v1.13，#82）。空串 =
+	// 没提这个字段，建渠道时落 default。
+	AuthScheme string `json:"auth_scheme"`
 	// MaxConcurrency 是渠道级并发上限（口径层 v0.49）：0 = 不限。指针留 nil 表示
 	// 「请求体没提」，缺省不动库里那一列（同 KeyMode 的整体覆盖陷阱）。
 	MaxConcurrency *int `json:"max_concurrency"`
@@ -266,6 +269,7 @@ func (in channelInput) toStore() (store.ChannelInput, error) {
 		Name:                      strings.TrimSpace(in.Name),
 		BaseURLs:                  urls,
 		KeyMode:                   strings.TrimSpace(in.KeyMode),
+		AuthScheme:                strings.TrimSpace(in.AuthScheme),
 		MaxConcurrency:            in.MaxConcurrency,
 		SupportsCompaction:        in.SupportsCompaction,
 		SupportsStatefulResponses: in.SupportsStatefulResponses,
@@ -471,7 +475,7 @@ func (h *Handler) fetchChannelModels(c *gin.Context) {
 	}
 	// 各协议打各的出站根地址（口径层 v0.96 ②，#49）：哪个协议用哪个地址的知识在
 	// upstream 里，这儿只把整份映射递过去。
-	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, cred)
+	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, target.AuthScheme, cred)
 	// 只报渠道名与拉到几组，不报 base_url，更不报凭证值。
 	h.log.Info("拉上游模型列表", "channel", target.Name, "groups", len(results))
 	c.JSON(http.StatusOK, gin.H{"results": results})

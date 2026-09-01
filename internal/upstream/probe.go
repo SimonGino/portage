@@ -49,7 +49,7 @@ type ModelProbeResult struct {
 //
 // 结论沿 v0.33 血统：只提示、不落库、不进路由——检测结果会过期，把一个可能撒谎
 // 的缓存放进请求路径是更坏的失败模式。
-func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, credential, model string) ModelProbeResult {
+func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, scheme, credential, model string) ModelProbeResult {
 	res := ModelProbeResult{Protocol: p, State: ProbeUnclear}
 	ep, ok := protocol.UpstreamEndpoint(p)
 	if !ok {
@@ -68,7 +68,7 @@ func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, creden
 	}
 	// 复用转发路径那套认证头，不另写一份：检测要问的正是「按我们发请求的方式打过去
 	// 通不通」，换一套头就可能测出一个和真实转发不一样的结论。
-	applyHeaders(req.Header, http.Header{}, p, credential, false)
+	applyHeaders(req.Header, http.Header{}, p, scheme, credential, false)
 
 	resp, err := (&http.Client{Timeout: probeTimeout}).Do(req)
 	if err != nil {
