@@ -1,6 +1,6 @@
 package declcfg_test
 
-// 声明形态 × 多用户的互斥用例（#66/#73，展开层 §7.10.1；导出半边口径层 v1.04 放宽）：
+// 声明形态 × 多用户的互斥用例（#66/#73，展开层 §7.10.1；导出半边口径层 v1.12 放宽）：
 // apply 建的 key 无主、认领后的归属在覆盖时保留、文件外的用户 key 照删、多用户库导出
 // **跳过**用户 key 并点名（导入闸照拒并点名）、往返闸在无主与「第一个 admin 名下」
 // 两种库上都成立。
@@ -121,7 +121,7 @@ func TestApplyDeletesUserKeysOutsideFile(t *testing.T) {
 	}
 }
 
-// 导出对用户 key 的处置（口径层 v1.04，取代 #66 ④ 的拒绝闸）：非第一个 admin
+// 导出对用户 key 的处置（口径层 v1.12，取代 #66 ④ 的拒绝闸）：非第一个 admin
 // 名下的 key **不进文件**、名单回给调用方点名；第一个 admin 与无主 key 照常导出。
 // 同名不同主（#73 的 UNIQUE(user_id, name) 允许）也不压平——文件里的 laptop 就是
 // admin 那一把。导入闸（CheckSingleUser）原样保留：同库上仍拒绝并点名。
@@ -192,6 +192,58 @@ func TestExportSkipsKeysOwnedByOtherUsers(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("导入闸的报错没点到 %q：%v", want, err)
 		}
+	}
+}
+
+// 无 admin 的库（只有手写 SQL 造得出）：没有「第一个 admin」，用户名下的 key 一律
+// 算跳过（口径层 v1.12 ①：firstAdminOrZero 回 0，匹配不上任何用户），无主的照常导出。
+func TestExportSkipsAllUserKeysWhenNoAdmin(t *testing.T) {
+	db := openDB(t)
+	mustApply(t, db, twoKeysYAML)
+	bobID := seedUser(t, db, "bob@x", "user")
+	// ci 归 bob，laptop 留无主。库里没有任何 admin。
+	if _, err := db.Exec(`UPDATE api_keys SET user_id = ? WHERE name = 'ci'`, bobID); err != nil {
+		t.Fatalf("归属 ci: %v", err)
+	}
+
+	raw, skipped, err := declcfg.Export(context.Background(), db)
+	if err != nil {
+		t.Fatalf("无 admin 的库该能导出（用户 key 全跳过）: %v", err)
+	}
+	if !strings.Contains(string(raw), "sk-ptg-multiuser-a") {
+		t.Error("无主的 key 该照常导出")
+	}
+	if strings.Contains(string(raw), "sk-ptg-multiuser-b") {
+		t.Error("无 admin 时用户名下的 key 一律不进文件")
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "ci") {
+		t.Errorf("跳过名单该点名 ci，实得 %v", skipped)
+	}
+}
+
+// 被跳过的用户 key 明文丢失（key_plain 空串）不炸导出：跳过判定在「拿不到原值」判定
+// 之前——它反正不进文件，缺原值缺得无所谓；同一缺陷落在要导出的 key 上照旧当场失败
+// （那半由 TestExportFailsNamingKeysWithoutPlaintext 钉着）。
+func TestExportIgnoresLostPlaintextOnSkippedKeys(t *testing.T) {
+	db := openDB(t)
+	mustApply(t, db, twoKeysYAML)
+	seedUser(t, db, "admin@localhost", "admin")
+	bobID := seedUser(t, db, "bob@x", "user")
+	if _, err := db.Exec(
+		`INSERT INTO api_keys (name, key_hash, key_plain, user_id) VALUES ('老 key', 'h-bob-old', '', ?)`,
+		bobID); err != nil {
+		t.Fatalf("种 bob 的无明文 key: %v", err)
+	}
+
+	raw, skipped, err := declcfg.Export(context.Background(), db)
+	if err != nil {
+		t.Fatalf("跳过的 key 缺明文不该让导出失败: %v", err)
+	}
+	if strings.Contains(string(raw), "老 key") {
+		t.Error("bob 的 key 不该进文件")
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "老 key") {
+		t.Errorf("跳过名单该点名「老 key」，实得 %v", skipped)
 	}
 }
 

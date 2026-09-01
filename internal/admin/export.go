@@ -3,7 +3,6 @@ package admin
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/SimonGino/portage/internal/declcfg"
 
@@ -27,10 +26,10 @@ func (h *Handler) exportConfig(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, fmt.Sprintf("导出失败：%v", err))
 		return
 	}
-	// 多用户库导出跳过非 admin 名下的 key（口径层 v1.04）：跳过不是丢，但必须
+	// 多用户库导出跳过非 admin 名下的 key（口径层 v1.12）：跳过不是丢，但必须
 	// 明说——逐把记进日志，别让「文件里少了几把」无声发生。
-	if len(skipped) > 0 {
-		h.log.Info("导出略过了用户名下的 API Key（声明文件表达不了归属，不进文件）", "keys", strings.Join(skipped, "、"))
+	for _, key := range skipped {
+		h.log.Info("导出略过了用户名下的 API Key（声明文件表达不了归属，不进文件）", "key", key)
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Disposition", `attachment; filename="channels.yaml"`)
