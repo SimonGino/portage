@@ -284,7 +284,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			rec.Refused(calllog.RequestTooLarge)
 			ep.Proto.WriteError(c.Writer, http.StatusRequestEntityTooLarge,
 				"请求过大：估算输入 "+strconv.Itoa(est)+" token，超出模型 "+head.Model+
-					" 的输入上限 "+strconv.Itoa(cand.MaxInputTokens)+"（按请求体字节数估算，不精确）")
+					" 的输入上限 "+strconv.Itoa(cand.MaxInputTokens))
 			return
 		}
 
