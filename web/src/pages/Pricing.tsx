@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { api } from '../api'
-import type { Channel, ChannelModel, PricingModelPrice, PricingModels } from '../api'
-import { Card, Empty, ErrorBar, useList } from '../ui'
+import type { Channel, ChannelModel, PricingModelPrice, PricingModels, PricingProvider } from '../api'
+import { Card, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
 import { Segmented } from '../fields'
+import { Picker } from '../fields'
+import type { Option } from '../fields'
 import { ChannelIcon, ModelIcon } from '../icons'
-import { fmtFourTitle, fmtPrice, isUnpriced } from '../prices'
-import type { FourPrices } from '../prices'
+import { ModelPrices } from './channels/modelprices'
+import { isUnpriced } from '../prices'
 
 /**
- * 定价页（口径层 v1.10，#81；DESIGN §5.4）：全渠道纳管模型 × 四价的**平铺只读
- * 总表**，答「每个纳管模型记什么价、谁还没定价」。这一页没有编辑面——定价输入组、
- * 「采纳」、批量填价都只住在渠道详情页那一处，点行跳过去改；总表不重复造第二套
- * 输入组（两套必然漂移）。
+ * 定价页（口径层 v1.10 立、v1.11 改可编辑；#81；DESIGN §5.4）：全渠道纳管模型 ×
+ * 四价的平铺总表，答「每个纳管模型记什么价、谁还没定价」，并且**当场能改**——
+ * 定价格就是渠道详情页那副 ModelPrices 胶囊（同一个组件，不是第二套编辑面），
+ * 三态、采纳建议、未定价提醒全一致；「厂商标注」列行内可标（未标注的渠道标上
+ * 才有建议价）。渠道格是文字链接，去详情页管协议、上限、批量填价那些渠道级的事。
  *
- * 未定价行（四价全 null 且**有用量**，口径层判据）恒置顶并标 tag-warn：用过的
- * 未定价条目每一笔 cost 都在记 0，钱正在悄悄漏；没人用过的只算「还没填」，不催。
- * 「只看未定价」筛的是四价全 null 的全部行——催的按用量分档，找的不分。
+ * 未定价行（四价全 null 且**有用量**，口径层判据）恒置顶：用过的未定价条目每一笔
+ * cost 都在记 0，钱正在悄悄漏；没人用过的只算「还没填」，不催。「只看未定价」筛的
+ * 是四价全 null 的全部行——催的按用量分档，找的不分。
  */
 
 const PRICING_FILTERS = [
@@ -29,39 +32,80 @@ interface Row {
   m: ChannelModel
   /** 四价全 null——「未定价」，与真免费（0）两态分开。 */
   unpriced: boolean
-  /** 未定价且有用量：口径层的提醒判据，置顶 + 警示色。 */
+  /** 未定价且有用量：口径层的提醒判据，置顶。 */
   alert: boolean
 }
 
-/** 单价面走 sans + tabular-nums，不套等宽——DESIGN §3 的 mono 白名单只有标识符，
- *  §5.1 既有的定价芯片也是这一副字形，别在总表上分叉。 */
-function priceCell(m: ChannelModel) {
-  const four: FourPrices = {
-    input: m.price_input,
-    output: m.price_output,
-    cache_read: m.price_cache_read,
-    cache_write: m.price_cache_write,
+/** 厂商标注的行内编辑（口径层 v1.11）：改的是渠道的 provider 标注——与「上游设置」
+ *  弹框里那格是同一个字段，这里只是就地给一个入口，标上总表立刻有建议价。 */
+function ProviderDialog({
+  ch,
+  onClose,
+  onSaved,
+}: {
+  ch: Channel
+  onClose: () => void
+  onSaved: () => Promise<unknown>
+}) {
+  const providers = useList(() => api.get<PricingProvider[]>('/pricing/providers'))
+  const [value, setValue] = useState(ch.provider)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const options = useMemo<Option<string>[]>(
+    () => [
+      { value: '', label: '未标注' },
+      ...(providers.data ?? []).map((p) => ({ value: p.id, label: p.name })),
+    ],
+    [providers.data],
+  )
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      // ChannelSettings 是指针语义：只带 name（必填）与 provider，其余字段不动。
+      await api.put(`/channels/${ch.id}/settings`, { name: ch.name, provider: value })
+      await onSaved()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setBusy(false)
+    }
   }
+
   return (
-    <span title={fmtFourTitle(four)}>
-      {fmtPrice(m.price_input)}/{fmtPrice(m.price_output)}
-      {(m.price_cache_read !== null || m.price_cache_write !== null) && (
-        <span className="muted pricing-cache">
-          {' '}
-          缓存 {fmtPrice(m.price_cache_read)}/{fmtPrice(m.price_cache_write)}
-        </span>
-      )}
-    </span>
+    <Dialog title={`厂商标注：${ch.name}`} onClose={onClose}>
+      <form className="form" onSubmit={submit}>
+        <Field
+          label="厂商标注"
+          hint="这个上游对应 models.dev 的哪一家，只用来出建议价与图标分组，不影响转发；中转站对不上就留「未标注」"
+        >
+          <Picker value={value} options={options} onChange={setValue} placeholder="未标注" />
+        </Field>
+        <ErrorBar message={error || providers.error} />
+        <div className="form-actions">
+          <button type="button" className="btn btn-quiet" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-primary" disabled={busy}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   )
 }
 
 export default function Pricing() {
   const channels = useList(() => api.get<Channel[] | null>('/channels'))
-  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<'all' | 'unpriced'>('all')
-  // models.dev 建议价对照列：按渠道标注过的 provider 各拉一次快照。纯对照——采纳
-  // 回渠道详情页做。拉失败当没有建议（快照是发版内置资产），不为它挂错误条。
+  const [annotating, setAnnotating] = useState<Channel | null>(null)
+  // provider id → 人话名（302ai → 302 AI），标注列显名字——与身份条上那颗 tag
+  // 同一副读法。拉失败就显 id，标注是可选项不为它挂错误条。
+  const providerNames = useList(() => api.get<PricingProvider[]>('/pricing/providers').catch(() => []))
+  // models.dev 建议价：按渠道标注过的 provider 各拉一次快照，喂给定价胶囊的
+  // chip-suggest。拉失败当没有建议（快照是发版内置资产），不为它挂错误条。
   const [suggested, setSuggested] = useState<Record<string, Record<string, PricingModelPrice>>>({})
   const providers = useMemo(
     () => [...new Set((channels.data ?? []).map((c) => c.provider).filter(Boolean))],
@@ -82,6 +126,19 @@ export default function Pricing() {
       gone = true
     }
   }, [providers, suggested])
+
+  // 写操作统一走这一个口（同 AccessPoints 的成例）：失败上 ErrorBar，成功后整表
+  // 重拉——定价胶囊与置顶排序都吃列表数据，改完就该看到新样子。
+  async function mutate(fn: () => Promise<unknown>) {
+    try {
+      await fn()
+      channels.setError('')
+    } catch (e) {
+      channels.setError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    await channels.reload()
+  }
 
   const rows = useMemo(() => {
     const out: Row[] = []
@@ -116,6 +173,13 @@ export default function Pricing() {
   return (
     <>
       <ErrorBar message={channels.error} />
+      {annotating && (
+        <ProviderDialog
+          ch={annotating}
+          onClose={() => setAnnotating(null)}
+          onSaved={() => channels.reload()}
+        />
+      )}
       <Card
         title="定价"
         action={
@@ -140,60 +204,59 @@ export default function Pricing() {
               <tr>
                 <th>渠道</th>
                 <th>模型</th>
+                <th>厂商标注</th>
                 <th>定价（USD/百万 token）</th>
-                <th>models.dev 建议</th>
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => {
-                const sugg = r.ch.provider ? (suggested[r.ch.provider]?.[r.m.upstream_model] ?? null) : null
-                return (
-                  <tr
-                    key={r.m.id}
-                    className={'pricing-row' + (r.m.disabled ? ' is-off' : '')}
-                    title={`去「${r.ch.name}」的详情页改价`}
-                    onClick={() => navigate(`/channels/${r.ch.id}`)}
-                  >
-                    <td>
-                      <span className="chip">
-                        <ChannelIcon channel={r.ch} size={14} />
-                        {r.ch.name}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="chip">
-                        <ModelIcon model={r.m.upstream_model} size={14} />
-                        <code>{r.m.upstream_model}</code>
-                      </span>
-                    </td>
-                    <td>
-                      {r.unpriced ? (
-                        <span
-                          className={r.alert ? 'tag tag-warn' : 'muted'}
-                          title={
-                            r.alert
-                              ? '有用量但四价全空，每一笔成本都在记 0——去渠道详情页填价'
-                              : '四价全空（未定价）。还没有用量，不急'
-                          }
-                        >
-                          未定价
-                        </span>
-                      ) : (
-                        priceCell(r.m)
-                      )}
-                    </td>
-                    <td className="muted">
-                      {sugg ? (
-                        <span title={fmtFourTitle(sugg) + '。只是对照，采纳去渠道详情页'}>
-                          {fmtPrice(sugg.input)}/{fmtPrice(sugg.output)}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
+              {shown.map((r) => (
+                <tr key={r.m.id} className={r.m.disabled ? 'is-off' : ''}>
+                  <td>
+                    {/* 文字链接（§4 白名单②）：渠道级的事（协议、上限、批量填价）
+                        还在详情页，这格就是过去的门。 */}
+                    <Link className="pricing-ch" to={`/channels/${r.ch.id}`} title={`去「${r.ch.name}」详情页`}>
+                      <ChannelIcon channel={r.ch} size={14} />
+                      {r.ch.name}
+                    </Link>
+                  </td>
+                  <td>
+                    <span className="chip">
+                      <ModelIcon model={r.m.upstream_model} size={14} />
+                      <code>{r.m.upstream_model}</code>
+                    </span>
+                  </td>
+                  <td>
+                    {/* 同一颗钮管两态：已标注显名字（点了换），未标注是虚线「+ 标注」
+                        ——标上这行立刻有建议价可采。 */}
+                    {r.ch.provider ? (
+                      <button
+                        type="button"
+                        className="chip-toggle"
+                        title={`models.dev 标注 · ${r.ch.provider}。点击修改`}
+                        onClick={() => setAnnotating(r.ch)}
+                      >
+                        {providerNames.data?.find((p) => p.id === r.ch.provider)?.name ?? r.ch.provider}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="chip-add"
+                        title="标注这个渠道对应 models.dev 的哪一家，标上才有建议价可采纳"
+                        onClick={() => setAnnotating(r.ch)}
+                      >
+                        + 标注
+                      </button>
+                    )}
+                  </td>
+                  <td>
+                    <ModelPrices
+                      model={r.m}
+                      suggest={r.ch.provider ? (suggested[r.ch.provider]?.[r.m.upstream_model] ?? null) : null}
+                      mutate={mutate}
+                    />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

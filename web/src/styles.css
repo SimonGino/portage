@@ -3934,19 +3934,13 @@ button.cal-day,
   font-size: 13px;
 }
 
-/* 整行即链接（这一页没有编辑面，点行去渠道详情页改价）：hover 给个底才知道能点。
-   停用行照 §7 降灰不隐藏，tr.is-off 既有档直接管。 */
-.pricing-row {
-  cursor: pointer;
-}
-
-.pricing-row:hover td {
-  background: var(--hover);
-}
-
-/* 缓存两价是随行小字：主读数是 $入/$出，缓存价看一眼有没有就够，要全文去 title。 */
-.pricing-cache {
-  font-size: 11px;
+/* 渠道格是文字链接（§4 白名单②：默认不带下划线，悬停才加）：渠道级的事（协议、
+   上限、批量填价）在详情页，这格是过去的门。停用行照 §7 降灰不隐藏，tr.is-off
+   既有档直接管。 */
+.pricing-ch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ── 「我的」空间（DESIGN §12，#76）────────────────────────────────────────
