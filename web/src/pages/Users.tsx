@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AuthSettings, InviteCode, User } from '../api'
-import { Card, Confirm, CopyCode, Dialog, Empty, ErrorBar, Field, fmtMoney, fmtTime, useList } from '../ui'
+import { Card, Confirm, CopyButton, CopyCode, Dialog, Empty, ErrorBar, Field, fmtMoney, fmtTime, useList } from '../ui'
 import { Segmented } from '../fields'
 
 /**
@@ -398,13 +398,10 @@ function InviteSection({ invites }: { invites: ReturnType<typeof useList<InviteC
 }
 
 /**
- * FreshInvites 是邀请码生成后的回执，形制照抄 Keys 的 FreshKey：keybox + 「复制」
- * 幽灵键。多个码一次复制、换行分隔——发给几个人时各拆一行正好。clipboard API 在
- * 非 HTTPS 的非 localhost 页面上不可用（局域网访问就是这种情况），失败了别报错，
- * 让人手动选中复制。
+ * FreshInvites 是邀请码生成后的回执，形制照抄 Keys 的 FreshKey：keybox + CopyButton
+ * 幽灵键。多个码一次复制、换行分隔——发给几个人时各拆一行正好。
  */
 function FreshInvites({ codes, onClose }: { codes: string[]; onClose: () => void }) {
-  const [copied, setCopied] = useState(false)
   return (
     <Dialog title="邀请码已生成" onClose={onClose}>
       <div className="form">
@@ -415,19 +412,10 @@ function FreshInvites({ codes, onClose }: { codes: string[]; onClose: () => void
           </code>
         ))}
         <div className="form-actions">
-          <button
-            className="btn btn-quiet"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(codes.join('\n'))
-                setCopied(true)
-              } catch {
-                setCopied(false)
-              }
-            }}
-          >
-            {copied ? '已复制' : codes.length > 1 ? `复制全部 ${codes.length} 个` : '复制'}
-          </button>
+          <CopyButton
+            value={codes.join('\n')}
+            label={codes.length > 1 ? `复制全部 ${codes.length} 个` : '复制'}
+          />
           <button className="btn btn-primary" onClick={onClose}>
             好
           </button>

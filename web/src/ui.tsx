@@ -293,6 +293,40 @@ export function CopyIconButton({ value, title = '复制' }: { value: string; tit
   )
 }
 
+/**
+ * CopyButton 是回执弹框里的「复制」幽灵键：FreshKey / FreshInvites 这类「生成完拿去用」
+ * 的框，keybox 下面一颗 `btn-quiet`。成功原地变「已复制」绿一拍，1.2s 自己回来——
+ * 节奏同 CopyCode / CopyIconButton，全站复制反馈只有这一种。clipboard API 在非 HTTPS
+ * 的非 localhost 页面上不可用（局域网访问就是这种情况）：失败不报错，值就在框里，
+ * 手动选中总比一颗报错钮强。
+ */
+export function CopyButton({ value, label = '复制' }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1200)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  return (
+    <button
+      type="button"
+      className={'btn btn-quiet' + (copied ? ' is-copied' : '')}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value)
+          setCopied(true)
+        } catch {
+          // clipboard 不可用的环境：不报错，值本来就显示在框里。
+        }
+      }}
+    >
+      {copied ? '已复制' : label}
+    </button>
+  )
+}
+
 /** mask 只露头尾：头几位是「这是哪一类 key」（sk-ant / sk-ptg），尾四位是「这是哪一把」。
  *  短到没法既遮住又留出线索时全遮——留两位等于没遮。 */
 function mask(v: string) {

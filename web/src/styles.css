@@ -1328,6 +1328,14 @@ button.acct-avatar:hover {
   color: var(--ink);
 }
 
+/* 复制成功那一下：文字换「已复制」、走成功色，1.2s 后自己回来（时序在组件里，
+   同 .act-icon.is-copied 的节奏）。 */
+.btn-quiet.is-copied,
+.btn-quiet.is-copied:hover:not(:disabled) {
+  color: var(--ok-text);
+  background: transparent;
+}
+
 /* ── 行内动作按钮（DESIGN v0.38，推翻 v0.34 ② 的墨蓝文字链接）──────────────
    两级分量，回应 v0.34 当年否掉描边按钮的理由（一排同等分量的框盖过行首正主）：
    词级 .act 只给块级动作（上游设置 / 管理 / 检测 / 编辑 / 完成），每行至多两枚，

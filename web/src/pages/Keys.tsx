@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import type { AccessPoint, ApiKey, Channel } from '../api'
-import { Card, Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../ui'
+import { Card, Confirm, CopyButton, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../ui'
 import { Chips } from '../fields'
 import type { Option } from '../fields'
 import { ModelIcon } from '../icons'
@@ -177,28 +177,13 @@ export default function Keys() {
  * 只剩「拿去用」这一个作用，那句「关掉就再也看不到」的警告也跟着撤了——留着就是撒谎。
  */
 function FreshKey({ value, onClose }: { value: string; onClose: () => void }) {
-  const [copied, setCopied] = useState(false)
   return (
     <Dialog title="新 API Key 已生成" onClose={onClose}>
       <div className="form">
         <p className="muted">复制走就能用。这把之后在列表里随时能再看到、再复制。</p>
         <code className="keybox">{value}</code>
         <div className="form-actions">
-          <button
-            className="btn btn-quiet"
-            onClick={async () => {
-              // clipboard API 在非 HTTPS 的非 localhost 页面上是不可用的
-              // （局域网访问就是这种情况），失败了别报错，让人手动选中复制。
-              try {
-                await navigator.clipboard.writeText(value)
-                setCopied(true)
-              } catch {
-                setCopied(false)
-              }
-            }}
-          >
-            {copied ? '已复制' : '复制'}
-          </button>
+          <CopyButton value={value} />
           <button className="btn btn-primary" onClick={onClose}>
             我已保存
           </button>

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../../api'
 import type { ApiKey, MyModel } from '../../api'
-import { Card, Confirm, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../../ui'
+import { Card, Confirm, CopyButton, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../../ui'
 import { Chips } from '../../fields'
 import type { Option } from '../../fields'
 import { ModelIcon } from '../../icons'
@@ -138,12 +138,7 @@ export default function MyKeys({ quota }: { quota: QuotaHook }) {
             <p className="muted">复制走就能用。这把之后在列表里随时能再看到、再复制。</p>
             <code className="keybox">{fresh}</code>
             <div className="form-actions">
-              <button
-                className="btn btn-quiet"
-                onClick={() => void navigator.clipboard.writeText(fresh).catch(() => {})}
-              >
-                复制
-              </button>
+              <CopyButton value={fresh} />
               <button className="btn btn-primary" onClick={() => setFresh('')}>
                 我已保存
               </button>
