@@ -392,24 +392,48 @@ function InviteSection({ invites }: { invites: ReturnType<typeof useList<InviteC
           }}
         />
       )}
-      {fresh && (
-        <Dialog title="邀请码已生成" onClose={() => setFresh(null)}>
-          <div className="form">
-            <p className="muted">一码一人，用后作废。之后在列表里随时能再看到。</p>
-            {fresh.map((c) => (
-              <code key={c} className="keybox">
-                {c}
-              </code>
-            ))}
-            <div className="form-actions">
-              <button className="btn btn-primary" onClick={() => setFresh(null)}>
-                好
-              </button>
-            </div>
-          </div>
-        </Dialog>
-      )}
+      {fresh && <FreshInvites codes={fresh} onClose={() => setFresh(null)} />}
     </>
+  )
+}
+
+/**
+ * FreshInvites 是邀请码生成后的回执，形制照抄 Keys 的 FreshKey：keybox + 「复制」
+ * 幽灵键。多个码一次复制、换行分隔——发给几个人时各拆一行正好。clipboard API 在
+ * 非 HTTPS 的非 localhost 页面上不可用（局域网访问就是这种情况），失败了别报错，
+ * 让人手动选中复制。
+ */
+function FreshInvites({ codes, onClose }: { codes: string[]; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <Dialog title="邀请码已生成" onClose={onClose}>
+      <div className="form">
+        <p className="muted">一码一人，用后作废。之后在列表里随时能再看到。</p>
+        {codes.map((c) => (
+          <code key={c} className="keybox">
+            {c}
+          </code>
+        ))}
+        <div className="form-actions">
+          <button
+            className="btn btn-quiet"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(codes.join('\n'))
+                setCopied(true)
+              } catch {
+                setCopied(false)
+              }
+            }}
+          >
+            {copied ? '已复制' : codes.length > 1 ? `复制全部 ${codes.length} 个` : '复制'}
+          </button>
+          <button className="btn btn-primary" onClick={onClose}>
+            好
+          </button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
