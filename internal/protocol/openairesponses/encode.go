@@ -71,11 +71,12 @@ func (c *Codec) EncodeStream(w io.Writer, events <-chan protocol.Event) error {
 // newStreamEncoder 把每请求状态从 codec 实例搬到编码器上，两条编码入口共用。
 func (c *Codec) newStreamEncoder(w io.Writer) *streamEncoder {
 	return &streamEncoder{
-		w:           w,
-		customTools: c.customTools,
-		compaction:  c.compaction,
-		now:         time.Now,
-		beatEvery:   heartbeatInterval,
+		w:              w,
+		customTools:    c.customTools,
+		namespaceTools: c.namespaceTools,
+		compaction:     c.compaction,
+		now:            time.Now,
+		beatEvery:      heartbeatInterval,
 	}
 }
 
@@ -84,6 +85,10 @@ type streamEncoder struct {
 
 	// customTools 来自同一个 codec 实例的 DecodeRequest（见 codec.go 的实例约定）。
 	customTools map[string]bool
+	// namespaceTools 同源：摊平名 → {命名空间名，裸名}，出向把模型对摊平名的调用
+	// 还原成 namespace 字段 + 裸名（口径层 v1.14 ⑤）。表里没有的（默认命名空间与
+	// 顶层）照旧不带字段。
+	namespaceTools map[string]NamespaceTool
 
 	// compaction 打开本地合成模式（portage-legacy#74）：正常 output item 一个不发，assistant 正文
 	// 攒起来，收尾时合成恰好一个 compaction item。同样来自 DecodeRequest。
@@ -303,10 +308,24 @@ func (e *streamEncoder) flushTool(index int) error {
 		args = "{}"
 	}
 
-	item := map[string]any{
-		"id": itemID, "type": itemType, "status": "in_progress",
-		"call_id": pending.id, "name": pending.name, argsField: "",
+	// 回程还原：模型调的是摊平名，客户端认的是 namespace 字段 + 裸子名（codex-rs 两种
+	// 调用 item 都读 namespace）。只查表不拆串——命名空间名自身可含 `__`。
+	name := pending.name
+	var namespace string
+	if src, ok := e.namespaceTools[pending.name]; ok {
+		name, namespace = src.Name, src.Namespace
 	}
+	withNamespace := func(m map[string]any) map[string]any {
+		if namespace != "" {
+			m["namespace"] = namespace
+		}
+		return m
+	}
+
+	item := withNamespace(map[string]any{
+		"id": itemID, "type": itemType, "status": "in_progress",
+		"call_id": pending.id, "name": name, argsField: "",
+	})
 	if err := e.frame("response.output_item.added", map[string]any{
 		"type": "response.output_item.added", "output_index": e.outputIndex, "item": item,
 	}); err != nil {
@@ -319,17 +338,17 @@ func (e *streamEncoder) flushTool(index int) error {
 			return err
 		}
 	}
-	if err := e.frame(doneEvent, map[string]any{
+	if err := e.frame(doneEvent, withNamespace(map[string]any{
 		"type": doneEvent, "item_id": itemID, "output_index": e.outputIndex,
-		"call_id": pending.id, "name": pending.name, argsField: args,
-	}); err != nil {
+		"call_id": pending.id, "name": name, argsField: args,
+	})); err != nil {
 		return err
 	}
 
-	final := map[string]any{
+	final := withNamespace(map[string]any{
 		"id": itemID, "type": itemType, "status": "completed",
-		"call_id": pending.id, "name": pending.name, argsField: args,
-	}
+		"call_id": pending.id, "name": name, argsField: args,
+	})
 	if err := e.frame("response.output_item.done", map[string]any{
 		"type": "response.output_item.done", "output_index": e.outputIndex, "item": final,
 	}); err != nil {

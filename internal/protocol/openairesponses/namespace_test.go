@@ -360,3 +360,150 @@ func TestDecodeRequestRejectsInvalidFlatName(t *testing.T) {
 
 // must2 把 (值, error) 收成 error，喂给只看错误的断言。
 func must2[T any](_ T, err error) error { return err }
+
+// 回程还原（口径层 v1.14 ⑤，#95）：模型调的是摊平名，客户端认的是 namespace 字段 +
+// 裸子名。只查表——命名空间名 mcp__ade_asset_knowledge 自身含 `__`，按分隔符拆必错。
+// 顶层工具不带 namespace 字段（客户端本来就没这个键）。
+func TestEncodeStreamRestoresNamespaceToolCall(t *testing.T) {
+	c := NewCodec()
+	if _, err := c.DecodeRequest(loadSample(t, "in-responses-namespace-turn1"), true); err != nil {
+		t.Fatal(err)
+	}
+	frames := encodeStream(t, c,
+		protocol.Event{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "mcp__ade_asset_knowledge__readKnowledgeIndexFile"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{"path":"x"}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "shell_command"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 1, Text: `{"command":"ls"}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 1},
+		protocol.Event{Type: protocol.EvDone, StopReason: "tool_calls"},
+	)
+	assertEventOrder(t, frames,
+		"response.created", "response.in_progress",
+		"response.output_item.added", "response.function_call_arguments.delta",
+		"response.function_call_arguments.done", "response.output_item.done",
+		"response.output_item.added", "response.function_call_arguments.delta",
+		"response.function_call_arguments.done", "response.output_item.done",
+		"response.completed",
+	)
+	// 命名空间子工具：added / arguments.done / output_item.done 三处都还原。
+	for _, i := range []int{2, 4, 5} {
+		m := frames[i].data
+		if item, ok := m["item"].(map[string]any); ok {
+			m = item
+		}
+		if m["name"] != "readKnowledgeIndexFile" || m["namespace"] != "mcp__ade_asset_knowledge" {
+			t.Errorf("帧 %d（%s）没还原: name=%v namespace=%v", i, frames[i].event, m["name"], m["namespace"])
+		}
+	}
+	// 顶层工具：裸名照旧，且没有 namespace 键。
+	for _, i := range []int{6, 8, 9} {
+		m := frames[i].data
+		if item, ok := m["item"].(map[string]any); ok {
+			m = item
+		}
+		if _, has := m["namespace"]; m["name"] != "shell_command" || has {
+			t.Errorf("帧 %d（%s）顶层工具不该带 namespace: %v", i, frames[i].event, m)
+		}
+	}
+
+	// 非流式同源（EncodeFullBody 复用流编码器）。
+	body, err := c.EncodeFullBody([]protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "ade_task__orchestrateTask"},
+		{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{}`},
+		{Type: protocol.EvToolCallEnd, Index: 0},
+		{Type: protocol.EvDone, StopReason: "tool_calls"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var full struct {
+		Output []map[string]any `json:"output"`
+	}
+	if err := json.Unmarshal(body, &full); err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Output) != 1 || full.Output[0]["name"] != "orchestrateTask" || full.Output[0]["namespace"] != "ade_task" {
+		t.Errorf("非流式 output 没还原: %v", full.Output)
+	}
+}
+
+// 回带对回声明表（口径层 v1.14 ⑤⑥，#95）。真 GLM-5.2 实测：历史里的调用名若与模型
+// 眼前的摊平名不一致，下一轮模型就跟着历史叫裸名，调到声明表里没有的工具。
+// 三种回带形态 + tool_choice 点名，一张表钉住；零中/多中原样带过去、不 400。
+func TestDecodeRequestRestoresReplayNames(t *testing.T) {
+	const tools = `[
+		{"type":"function","name":"top","parameters":{}},
+		{"type":"namespace","name":"ade_task","tools":[
+			{"type":"function","name":"orchestrateTask","parameters":{}},
+			{"type":"function","name":"list","parameters":{}}]},
+		{"type":"namespace","name":"mcp__x","tools":[
+			{"type":"function","name":"list","parameters":{}},
+			{"type":"function","name":"top","parameters":{}}]},
+		{"type":"namespace","name":"functions","tools":[
+			{"type":"function","name":"bare","parameters":{}}]}
+	]`
+	cases := []struct {
+		label string
+		item  string // 回带的 function_call item（不含 call_id/arguments）
+		want  string
+	}{
+		{"自带 namespace：套摊平规则", `"name":"orchestrateTask","namespace":"ade_task"`, "ade_task__orchestrateTask"},
+		{"自带 namespace 且是默认命名空间：裸名", `"name":"bare","namespace":"functions"`, "bare"},
+		{"自带 namespace 撞了顶层名：信客户端", `"name":"top","namespace":"mcp__x"`, "mcp__x__top"},
+		{"摊平名恰中：原样", `"name":"ade_task__orchestrateTask"`, "ade_task__orchestrateTask"},
+		{"顶层名恰中：原样（不去查表）", `"name":"top"`, "top"},
+		{"裸名唯一查表：补前缀", `"name":"orchestrateTask"`, "ade_task__orchestrateTask"},
+		{"裸名多中：原样，不 400", `"name":"list"`, "list"},
+		{"根本没声明：原样，不 400", `"name":"nope"`, "nope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			body := `{"model":"m","tools":` + tools + `,"input":[
+				{"role":"user","content":[{"type":"input_text","text":"go"}]},
+				{"type":"function_call","call_id":"call_1",` + tc.item + `,"arguments":"{}"},
+				{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`
+			req, err := NewCodec().DecodeRequest([]byte(body), true)
+			if err != nil {
+				t.Fatalf("解不动: %v", err)
+			}
+			var calls []*protocol.ToolCall
+			for _, m := range req.Messages {
+				for _, b := range m.Content {
+					if b.Kind == protocol.BlockToolUse {
+						calls = append(calls, b.ToolCall)
+					}
+				}
+			}
+			if len(calls) != 1 {
+				t.Fatalf("解出 %d 个调用, 期望 1", len(calls))
+			}
+			if calls[0].Name != tc.want {
+				t.Errorf("回带名 = %q, 期望 %q", calls[0].Name, tc.want)
+			}
+			if _, left := calls[0].Extras["namespace"]; left {
+				t.Errorf("namespace 读完该从 Extras 删掉: %v", calls[0].Extras)
+			}
+		})
+	}
+
+	// tool_choice 点名同一条规则：摊平名恰中、裸名唯一查表、多中原样（后面出口自己判）。
+	for _, tc := range []struct{ name, want string }{
+		{"ade_task__orchestrateTask", "ade_task__orchestrateTask"},
+		{"orchestrateTask", "ade_task__orchestrateTask"},
+		{"top", "top"},
+		{"list", "list"},
+	} {
+		body := `{"model":"m","tools":` + tools + `,"tool_choice":{"type":"function","name":"` + tc.name + `"},
+			"input":[{"role":"user","content":[{"type":"input_text","text":"go"}]}]}`
+		req, err := NewCodec().DecodeRequest([]byte(body), true)
+		if err != nil {
+			t.Fatalf("tool_choice %q: %v", tc.name, err)
+		}
+		if req.ToolChoice.Mode != "tool" || req.ToolChoice.Name != tc.want {
+			t.Errorf("tool_choice %q → %+v, 期望 Name=%q", tc.name, req.ToolChoice, tc.want)
+		}
+	}
+}

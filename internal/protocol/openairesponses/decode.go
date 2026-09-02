@@ -104,6 +104,9 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	if err != nil {
 		return nil, err
 	}
+	// 回带的调用 item 与 tool_choice 点名对回本轮声明表里的名字（namespace.go）。
+	// 必须在 input 与 tools 都解完之后：查表要用完整的声明表。
+	restoreReplayNames(req, namespaceTools)
 
 	req.Extras = collectExtras(root, topLevelKnown)
 	// 同 anthropic 侧：思考档位提成一等字段，Responses 侧它在 reasoning.effort。

@@ -209,3 +209,65 @@ func invalidFlatName(name string, o toolOrigin) *protocol.RequestError {
 		Param: o.path + ".name",
 	}
 }
+
+// restoreReplayNames 是 input 与 tools 都解完之后的一趟后处理（口径层 v1.14 ⑤⑥，#95）：
+// 把客户端回放的调用 item 与 tool_choice 点名对回**本轮声明表**里的名字。
+//
+// 模型看到的工具名是摊平名，历史里的调用名必须与之一致——否则模型会跟着历史改口
+// 叫裸名（真 GLM-5.2 实测：回带裸名 + namespace 后，下一次调用就发成了声明表里
+// 没有的裸名 orchestrateTask）。规则见 resolveReplayName。
+//
+// namespace 字段在 decodeToolCall 里落在 ToolCall.Extras，这里读完即删：它已经被
+// 消费进名字里，Extras 本来也永不外带。
+func restoreReplayNames(req *protocol.Request, table map[string]NamespaceTool) {
+	declared := make(map[string]bool, len(req.Tools))
+	for _, t := range req.Tools {
+		declared[t.Name] = true
+	}
+	for _, m := range req.Messages {
+		for _, b := range m.Content {
+			if b.Kind != protocol.BlockToolUse || b.ToolCall == nil {
+				continue
+			}
+			call := b.ToolCall
+			ns, _ := call.Extras["namespace"].(string)
+			delete(call.Extras, "namespace")
+			call.Name = resolveReplayName(call.Name, ns, declared, table)
+		}
+	}
+	if req.ToolChoice.Mode == "tool" {
+		req.ToolChoice.Name = resolveReplayName(req.ToolChoice.Name, "", declared, table)
+	}
+}
+
+// resolveReplayName 决定一个回带的名字在 canonical 里叫什么：
+//   - 自带 namespace 字段：套与声明侧同一条摊平规则（默认命名空间裸名，其余加前缀），
+//     不看声明表——客户端说了它属于哪个命名空间，就信它。
+//   - 没带：名字恰是本轮声明的某个名字（摊平名或顶层名）就原样；否则拿它当裸名在
+//     映射表里做唯一查表，恰只在一个非默认命名空间里出现就补前缀；零中或多中原样
+//     带过去，不 400——历史 item 被拒客户端无法自救。
+//
+// tool_choice 点名走同一条（口径层 ⑥）：规范没有点名 namespace 子项的写法，写成
+// 摊平名的自然能中，写裸名的靠唯一查表。
+func resolveReplayName(name, ns string, declared map[string]bool, table map[string]NamespaceTool) string {
+	if ns != "" {
+		if isDefaultNamespace(ns) {
+			return name
+		}
+		return flatToolName(ns, name)
+	}
+	if declared[name] {
+		return name
+	}
+	var hit string
+	hits := 0
+	for flat, src := range table {
+		if src.Name == name {
+			hit, hits = flat, hits+1
+		}
+	}
+	if hits == 1 {
+		return hit
+	}
+	return name
+}
