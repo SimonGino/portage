@@ -2,6 +2,7 @@ package openaicc_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,7 +101,7 @@ func encode(t *testing.T, req *protocol.Request, stream bool) ([]byte, []string,
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("编出来的不是合法 JSON: %v\n%s", err, body)
 	}
-	return body, dropped, out
+	return body, dropped.Kinds(), out
 }
 
 // 严格中转的第一条：content 必须是**字符串**。第三方 OpenAI 兼容上游对数组形态的
@@ -252,41 +253,48 @@ func TestEncodeRequestReportsMandatoryDrops(t *testing.T) {
 	}
 }
 
-// tool_choice 的两种非法组合会被严格上游整体拒收，编码侧就得挡掉（§5 坑清单）。
+// tool_choice 的两种非法组合会被严格上游整体拒收，编码侧就得处置（§5 坑清单）。
+// 处置分两档（口径层 v1.14 ⑧）：auto / none 落空省略但登记 tool_choice 档；required
+// 与点名落空回 400——原先「静默不发」的两个用例（指名未声明、点名服务端工具）改判
+// 400，静默降档正是那条口径推翻的现状。
 func TestEncodeRequestSanitizesToolChoice(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
+	hi := []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}}
 	cases := []struct {
-		name   string
-		req    protocol.Request
-		expect string // "" 表示不该出现 tool_choice
+		name    string
+		req     protocol.Request
+		expect  string // "" 表示不该出现 tool_choice
+		wantErr bool   // 该回 400（*protocol.RequestError）
 	}{
 		{
-			name: "有 tool_choice 没有 tools",
+			name: "有 tool_choice 没有 tools：auto 落空省略并登记",
 			req: protocol.Request{
-				Model:      "m",
+				Model: "m", Messages: hi,
 				ToolChoice: protocol.ToolChoice{Mode: "auto"},
 			},
 		},
 		{
 			name: "tool_choice 指名未声明的工具",
 			req: protocol.Request{
-				Model:      "m",
+				Model: "m", Messages: hi,
 				Tools:      []protocol.Tool{{Kind: protocol.ToolFunction, Name: "Read", Schema: schema}},
 				ToolChoice: protocol.ToolChoice{Mode: "tool", Name: "没声明过的"},
 			},
+			wantErr: true,
 		},
 		{
 			name: "服务端工具不算声明过",
 			req: protocol.Request{
-				Model:      "m",
+				Model: "m", Messages: hi,
 				Tools:      []protocol.Tool{{Kind: protocol.ToolServer, Name: "advisor"}},
 				ToolChoice: protocol.ToolChoice{Mode: "tool", Name: "advisor"},
 			},
+			wantErr: true,
 		},
 		{
 			name: "指名已声明的工具",
 			req: protocol.Request{
-				Model:      "m",
+				Model: "m", Messages: hi,
 				Tools:      []protocol.Tool{{Kind: protocol.ToolFunction, Name: "Read", Schema: schema}},
 				ToolChoice: protocol.ToolChoice{Mode: "tool", Name: "Read"},
 			},
@@ -295,7 +303,7 @@ func TestEncodeRequestSanitizesToolChoice(t *testing.T) {
 		{
 			name: "required 透传",
 			req: protocol.Request{
-				Model:      "m",
+				Model: "m", Messages: hi,
 				Tools:      []protocol.Tool{{Kind: protocol.ToolFunction, Name: "Read", Schema: schema}},
 				ToolChoice: protocol.ToolChoice{Mode: "required"},
 			},
@@ -305,10 +313,20 @@ func TestEncodeRequestSanitizesToolChoice(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, out := encode(t, &tc.req, false)
+			if tc.wantErr {
+				_, _, err := openaicc.NewCodec().EncodeRequestReport(&tc.req, false)
+				if _, ok := errors.AsType[*protocol.RequestError](err); !ok {
+					t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+				}
+				return
+			}
+			_, dropped, out := encode(t, &tc.req, false)
 			if tc.expect == "" {
 				if len(out.ToolChoice) > 0 {
 					t.Errorf("tool_choice 不该出现: %s", out.ToolChoice)
+				}
+				if !contains(dropped, openaicc.DropToolChoice) {
+					t.Errorf("tool_choice 落空却没登记: %v", dropped)
 				}
 				return
 			}
@@ -659,6 +677,120 @@ func decodeAnthropic(t *testing.T, body string) *protocol.Request {
 		t.Fatalf("解码失败: %v", err)
 	}
 	return req
+}
+
+// 转换失败口径（口径层 v1.14 ⑦，#96）：编码后 messages 一条不剩就回 400，错误是
+// *protocol.RequestError（走 400 档，不落 500）。dropped 得跟错误一起回——上层要先
+// 出丢弃日志再拒，让人看得出「为什么会空」。
+func TestEncodeRequestRejectsEmptyMessages(t *testing.T) {
+	_, dropped, err := openaicc.NewCodec().EncodeRequestReport(&protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{Role: protocol.RoleAssistant, Content: []protocol.Block{
+			{Kind: protocol.BlockThinking, Text: "只有思考"},
+		}}},
+	}, false)
+	reqErr, ok := errors.AsType[*protocol.RequestError](err)
+	if !ok {
+		t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+	}
+	if reqErr.Param != protocol.ParamMessages || reqErr.Code != protocol.CodeEmptyArray {
+		t.Errorf("code/param = %q/%q，期望 %q/%q", reqErr.Code, reqErr.Param, protocol.CodeEmptyArray, protocol.ParamMessages)
+	}
+	if !dropped.Has(openaicc.DropThinking) {
+		t.Errorf("拒收时 dropped 也要一并回，好出日志: %v", dropped)
+	}
+}
+
+// 口径层 v1.14 ⑧：required 落空、点名落空回 400，文案得说清楚是谁被丢了。
+func TestEncodeRequestRejectsToolChoiceLeftEmpty(t *testing.T) {
+	hi := []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}}
+	server := []protocol.Tool{{Kind: protocol.ToolServer, Name: "advisor"}}
+	fn := []protocol.Tool{{Kind: protocol.ToolFunction, Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)}}
+	cases := map[string]struct {
+		choice protocol.ToolChoice
+		tools  []protocol.Tool
+		wantIn []string // 错误文案里必须出现的字样
+	}{
+		"required 落空：只剩服务端工具":  {protocol.ToolChoice{Mode: "required"}, server, []string{"advisor"}},
+		"required 落空：一个工具都没声明": {protocol.ToolChoice{Mode: "required"}, nil, []string{"没有声明"}},
+		"点名的是服务端工具":            {protocol.ToolChoice{Mode: "tool", Name: "advisor"}, server, []string{"advisor", "服务端工具"}},
+		"点名没声明的工具":             {protocol.ToolChoice{Mode: "tool", Name: "ghost"}, fn, []string{"ghost", "Read"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := openaicc.NewCodec().EncodeRequestReport(&protocol.Request{
+				Model: "m", Messages: hi, Tools: c.tools, ToolChoice: c.choice,
+			}, false)
+			reqErr, ok := errors.AsType[*protocol.RequestError](err)
+			if !ok {
+				t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+			}
+			if reqErr.Param != protocol.ParamToolChoice {
+				t.Errorf("param = %q，期望 %q", reqErr.Param, protocol.ParamToolChoice)
+			}
+			for _, want := range c.wantIn {
+				if !strings.Contains(reqErr.Message, want) {
+					t.Errorf("文案没提 %q: %s", want, reqErr.Message)
+				}
+			}
+		})
+	}
+}
+
+// auto / none 落空不是错：tool_choice 省略、登记 tool_choice 档，名单记的是 mode。
+func TestEncodeRequestRegistersToolChoiceLeftEmpty(t *testing.T) {
+	for _, mode := range []string{"auto", "none"} {
+		t.Run(mode, func(t *testing.T) {
+			body, dropped, err := openaicc.NewCodec().EncodeRequestReport(&protocol.Request{
+				Model:      "m",
+				Messages:   []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}},
+				Tools:      []protocol.Tool{{Kind: protocol.ToolServer, Name: "advisor"}},
+				ToolChoice: protocol.ToolChoice{Mode: mode},
+			}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(body), "tool_choice") {
+				t.Errorf("落空的 tool_choice 不该发: %s", body)
+			}
+			if got := dropped.Names(openaicc.DropToolChoice); len(got) != 1 || got[0] != mode {
+				t.Errorf("tool_choice 档名单 = %v，期望 [%s]", got, mode)
+			}
+		})
+	}
+}
+
+// 口径层 v1.14 ⑨：工具类丢弃要带名字。丢三个服务端工具，三个名字都得在名单上，
+// 档位本身不重复登记。
+func TestEncodeRequestDropNamesEveryServerTool(t *testing.T) {
+	_, dropped, err := openaicc.NewCodec().EncodeRequestReport(&protocol.Request{
+		Model:    "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}},
+		Tools: []protocol.Tool{
+			{Kind: protocol.ToolServer, Name: "advisor"},
+			{Kind: protocol.ToolFunction, Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Kind: protocol.ToolServer, Name: "web_search"},
+			{Kind: protocol.ToolServer, Name: "computer"},
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := dropped.Names(openaicc.DropServerTool)
+	for _, want := range []string{"advisor", "web_search", "computer"} {
+		if !contains(got, want) {
+			t.Errorf("server_tool 名单缺 %q: %v", want, got)
+		}
+	}
+	n := 0
+	for _, d := range dropped {
+		if d.Kind == openaicc.DropServerTool {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("server_tool 档登记了 %d 次，期望合并成 1 条: %v", n, dropped)
+	}
 }
 
 func contains(s []string, v string) bool {

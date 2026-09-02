@@ -137,12 +137,12 @@ func TestEncodeRequestImageBlocks(t *testing.T) {
 	cases := map[string]struct {
 		img      *protocol.Image
 		wantType string
-		check    func(t *testing.T, src map[string]any, dropped []string, body string)
+		check    func(t *testing.T, src map[string]any, dropped protocol.Drops, body string)
 	}{
 		"base64": {
 			img:      &protocol.Image{MediaType: "image/png", Data: png},
 			wantType: "base64",
-			check: func(t *testing.T, src map[string]any, dropped []string, body string) {
+			check: func(t *testing.T, src map[string]any, dropped protocol.Drops, body string) {
 				t.Helper()
 				if src["media_type"] != "image/png" || src["data"] != png {
 					t.Errorf("source = %v", src)
@@ -155,7 +155,7 @@ func TestEncodeRequestImageBlocks(t *testing.T) {
 		"url": {
 			img:      &protocol.Image{URL: "https://example.com/a.png"},
 			wantType: "url",
-			check: func(t *testing.T, src map[string]any, dropped []string, _ string) {
+			check: func(t *testing.T, src map[string]any, dropped protocol.Drops, _ string) {
 				t.Helper()
 				if src["url"] != "https://example.com/a.png" {
 					t.Errorf("source = %v", src)
@@ -165,7 +165,7 @@ func TestEncodeRequestImageBlocks(t *testing.T) {
 		"空 MediaType 兜底 png": {
 			img:      &protocol.Image{Data: png},
 			wantType: "base64",
-			check: func(t *testing.T, src map[string]any, _ []string, _ string) {
+			check: func(t *testing.T, src map[string]any, _ protocol.Drops, _ string) {
 				t.Helper()
 				if src["media_type"] != "image/png" {
 					t.Errorf("空 media_type 应兜底 image/png，实得 %v", src["media_type"])
@@ -175,7 +175,7 @@ func TestEncodeRequestImageBlocks(t *testing.T) {
 		"svg 原样": {
 			img:      &protocol.Image{MediaType: "image/svg+xml", Data: png},
 			wantType: "base64",
-			check: func(t *testing.T, src map[string]any, _ []string, _ string) {
+			check: func(t *testing.T, src map[string]any, _ protocol.Drops, _ string) {
 				t.Helper()
 				if src["media_type"] != "image/svg+xml" {
 					t.Errorf("svg 应原样发出，实得 %v", src["media_type"])
@@ -188,9 +188,14 @@ func TestEncodeRequestImageBlocks(t *testing.T) {
 			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
 				&protocol.Request{
 					Model: "m", MaxTokens: 16,
+					// 图旁边带一句正文：file_id 图整个不发，只剩图的消息会被丢空，
+					// 全空 messages 按口径层 v1.14 ⑦ 回 400——本测只看登记档，不看那条。
 					Messages: []protocol.Message{{
-						Role:    protocol.RoleUser,
-						Content: []protocol.Block{{Kind: protocol.BlockImage, Image: c.img}},
+						Role: protocol.RoleUser,
+						Content: []protocol.Block{
+							{Kind: protocol.BlockText, Text: "看图"},
+							{Kind: protocol.BlockImage, Image: c.img},
+						},
 					}},
 				}, false)
 			if err != nil {
@@ -290,9 +295,14 @@ func TestEncodeRequestDropsImageDetail(t *testing.T) {
 			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(
 				&protocol.Request{
 					Model: "m", MaxTokens: 16,
+					// 图旁边带一句正文：file_id 图整个不发，只剩图的消息会被丢空，
+					// 全空 messages 按口径层 v1.14 ⑦ 回 400——本测只看登记档，不看那条。
 					Messages: []protocol.Message{{
-						Role:    protocol.RoleUser,
-						Content: []protocol.Block{{Kind: protocol.BlockImage, Image: c.img}},
+						Role: protocol.RoleUser,
+						Content: []protocol.Block{
+							{Kind: protocol.BlockText, Text: "看图"},
+							{Kind: protocol.BlockImage, Image: c.img},
+						},
 					}},
 				}, false)
 			if err != nil {

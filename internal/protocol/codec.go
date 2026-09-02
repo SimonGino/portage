@@ -58,8 +58,13 @@ type Codec interface {
 // 不并进 Codec 接口，是因为六条转换路径里只有出口侧用得上它；并进去等于让每个
 // 入口侧实现都背一个恒空的返回值。调用方按需类型断言，断言不中就没警告可打。
 type RequestEncodeReporter interface {
-	// dropped 是丢弃项的稳定标识（各 codec 包的 DropXxx 常量），没丢就是 nil。
-	EncodeRequestReport(req *Request, stream bool) ([]byte, []string, error)
+	// dropped 是丢弃登记清单（档位是各 codec 包的 DropXxx 常量，工具类三档附名单，
+	// 见 Drops），没丢就是 nil。
+	//
+	// 编码后请求已不成立（messages 空了、tool_choice 的硬要求落空，口径层 v1.14 ⑦⑧）
+	// 时回 *RequestError，调用方逐字回 400；**dropped 照常交出**——那条丢弃 Warn 与这个
+	// 400 对照，才分得出「客户端发空」与「我们丢光」。
+	EncodeRequestReport(req *Request, stream bool) ([]byte, Drops, error)
 }
 
 // StreamReadReporter 是 Codec 解码侧的可选扩展：交出「这次流式解码是不是**读上游

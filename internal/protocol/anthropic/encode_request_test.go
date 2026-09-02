@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -372,36 +373,57 @@ func TestEncodeRequestKeepsVendorExtrasOut(t *testing.T) {
 	}
 }
 
-// tool_choice 的两种会被拒的组合要挡掉（§5 坑清单，与 CC 出口同一条理由）。
+// tool_choice 的两种会被拒的组合要处置（§5 坑清单，与 CC 出口同一条理由）。
+// 处置分两档（口径层 v1.14 ⑧）：auto / none 落空省略但登记 tool_choice 档；
+// 点名落空回 400——「指名没声明的工具就不发」原先是静默丢，改判 400。
 func TestEncodeRequestToolChoice(t *testing.T) {
 	tools := []protocol.Tool{{
 		Kind: protocol.ToolFunction, Name: "wait", Schema: json.RawMessage(`{"type":"object"}`),
 	}}
 	cases := map[string]struct {
-		choice protocol.ToolChoice
-		tools  []protocol.Tool
-		want   any
+		choice  protocol.ToolChoice
+		tools   []protocol.Tool
+		want    any
+		wantErr bool
 	}{
-		"auto":            {protocol.ToolChoice{Mode: "auto"}, tools, map[string]any{"type": "auto"}},
-		"required 映成 any": {protocol.ToolChoice{Mode: "required"}, tools, map[string]any{"type": "any"}},
+		"auto":            {choice: protocol.ToolChoice{Mode: "auto"}, tools: tools, want: map[string]any{"type": "auto"}},
+		"required 映成 any": {choice: protocol.ToolChoice{Mode: "required"}, tools: tools, want: map[string]any{"type": "any"}},
 		"指名已声明的工具": {
-			protocol.ToolChoice{Mode: "tool", Name: "wait"}, tools,
-			map[string]any{"type": "tool", "name": "wait"},
+			choice: protocol.ToolChoice{Mode: "tool", Name: "wait"}, tools: tools,
+			want: map[string]any{"type": "tool", "name": "wait"},
 		},
-		"指名没声明的工具就不发":  {protocol.ToolChoice{Mode: "tool", Name: "不存在"}, tools, nil},
-		"没有 tools 就不发": {protocol.ToolChoice{Mode: "auto"}, nil, nil},
+		"指名没声明的工具回 400":   {choice: protocol.ToolChoice{Mode: "tool", Name: "不存在"}, tools: tools, wantErr: true},
+		"没有 tools 就不发但登记": {choice: protocol.ToolChoice{Mode: "auto"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			out := encodeReq(t, &protocol.Request{
+			req := &protocol.Request{
 				Model: "m", Tools: c.tools, ToolChoice: c.choice,
 				Messages: []protocol.Message{userMsg("hi")},
-			}, Options{DefaultMaxTokens: 8192})
+			}
+			if c.wantErr {
+				_, _, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(req, false)
+				if _, ok := errors.AsType[*protocol.RequestError](err); !ok {
+					t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+				}
+				return
+			}
+			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(req, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]any
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
 
 			got := out["tool_choice"]
 			if c.want == nil {
 				if got != nil {
 					t.Errorf("tool_choice = %v, 期望不发", got)
+				}
+				if !hasDrop(dropped, DropToolChoice) {
+					t.Errorf("tool_choice 落空却没登记: %v", dropped)
 				}
 				return
 			}
@@ -431,9 +453,126 @@ func TestEncodeRequestRejectsNil(t *testing.T) {
 	}
 }
 
-func hasDrop(dropped []string, want string) bool {
+// 转换失败口径（口径层 v1.14 ⑦，#96）：编码后 messages 一条不剩就回 400，错误是
+// *protocol.RequestError（走 400 档，不落 500）。dropped 得跟错误一起回——上层要先
+// 出丢弃日志再拒，让人看得出「为什么会空」。
+func TestEncodeRequestRejectsEmptyMessages(t *testing.T) {
+	_, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(&protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{{Role: protocol.RoleAssistant, Content: []protocol.Block{
+			{Kind: protocol.BlockThinking, Extras: map[string]any{"encrypted_content": "gAAAAAB-opaque"}},
+		}}},
+	}, false)
+	reqErr, ok := errors.AsType[*protocol.RequestError](err)
+	if !ok {
+		t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+	}
+	if reqErr.Param != protocol.ParamMessages || reqErr.Code != protocol.CodeEmptyArray {
+		t.Errorf("code/param = %q/%q，期望 %q/%q", reqErr.Code, reqErr.Param, protocol.CodeEmptyArray, protocol.ParamMessages)
+	}
+	if !hasDrop(dropped, DropThinking) {
+		t.Errorf("拒收时 dropped 也要一并回，好出日志: %v", dropped)
+	}
+}
+
+// 口径层 v1.14 ⑧：required 落空、点名落空回 400，文案得说清楚是谁被丢了。
+func TestEncodeRequestRejectsToolChoiceLeftEmpty(t *testing.T) {
+	server := []protocol.Tool{{Kind: protocol.ToolServer, Name: "web_search"}}
+	fn := []protocol.Tool{{Kind: protocol.ToolFunction, Name: "wait", Schema: json.RawMessage(`{"type":"object"}`)}}
+	cases := map[string]struct {
+		choice protocol.ToolChoice
+		tools  []protocol.Tool
+		wantIn []string // 错误文案里必须出现的字样
+	}{
+		"required 落空：只剩服务端工具":  {protocol.ToolChoice{Mode: "required"}, server, []string{"web_search"}},
+		"required 落空：一个工具都没声明": {protocol.ToolChoice{Mode: "required"}, nil, []string{"没有声明"}},
+		"点名的是服务端工具":            {protocol.ToolChoice{Mode: "tool", Name: "web_search"}, server, []string{"web_search", "服务端工具"}},
+		"点名没声明的工具":             {protocol.ToolChoice{Mode: "tool", Name: "ghost"}, fn, []string{"ghost", "wait"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(&protocol.Request{
+				Model: "m", Tools: c.tools, ToolChoice: c.choice,
+				Messages: []protocol.Message{userMsg("hi")},
+			}, false)
+			reqErr, ok := errors.AsType[*protocol.RequestError](err)
+			if !ok {
+				t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+			}
+			if reqErr.Param != protocol.ParamToolChoice {
+				t.Errorf("param = %q，期望 %q", reqErr.Param, protocol.ParamToolChoice)
+			}
+			for _, want := range c.wantIn {
+				if !strings.Contains(reqErr.Message, want) {
+					t.Errorf("文案没提 %q: %s", want, reqErr.Message)
+				}
+			}
+		})
+	}
+}
+
+// auto / none 落空不是错：tool_choice 省略、登记 tool_choice 档，名单记的是 mode。
+func TestEncodeRequestRegistersToolChoiceLeftEmpty(t *testing.T) {
+	for _, mode := range []string{"auto", "none"} {
+		t.Run(mode, func(t *testing.T) {
+			body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(&protocol.Request{
+				Model: "m", ToolChoice: protocol.ToolChoice{Mode: mode},
+				Tools:    []protocol.Tool{{Kind: protocol.ToolServer, Name: "web_search"}},
+				Messages: []protocol.Message{userMsg("hi")},
+			}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(body), "tool_choice") {
+				t.Errorf("落空的 tool_choice 不该发: %s", body)
+			}
+			if got := dropped.Names(DropToolChoice); len(got) != 1 || got[0] != mode {
+				t.Errorf("tool_choice 档名单 = %v，期望 [%s]", got, mode)
+			}
+		})
+	}
+}
+
+// 口径层 v1.14 ⑨：工具类丢弃要带名字。丢三个服务端工具，三个名字都得在名单上，
+// 档位本身不重复登记。
+func TestEncodeRequestDropNamesEveryServerTool(t *testing.T) {
+	_, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(&protocol.Request{
+		Model: "m",
+		Tools: []protocol.Tool{
+			{Kind: protocol.ToolServer, Name: "web_search"},
+			{Kind: protocol.ToolFunction, Name: "wait", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Kind: protocol.ToolServer, Name: "file_search"},
+			{Kind: protocol.ToolServer, Name: "code_interpreter"},
+		},
+		Messages: []protocol.Message{userMsg("hi")},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := dropped.Names(DropServerTool)
+	for _, want := range []string{"web_search", "file_search", "code_interpreter"} {
+		found := false
+		for _, n := range got {
+			found = found || n == want
+		}
+		if !found {
+			t.Errorf("server_tool 名单缺 %q: %v", want, got)
+		}
+	}
+	n := 0
 	for _, d := range dropped {
-		if d == want {
+		if d.Kind == DropServerTool {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("server_tool 档登记了 %d 次，期望合并成 1 条: %v", n, dropped)
+	}
+}
+
+func hasDrop(dropped protocol.Drops, want string) bool {
+	for _, d := range dropped {
+		if d.Kind == want {
 			return true
 		}
 	}

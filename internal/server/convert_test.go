@@ -180,6 +180,97 @@ func TestConvertedRequestWarnsAboutDroppedFields(t *testing.T) {
 	}
 }
 
+// 工具类丢弃日志要带名字（口径层 v1.14 ⑨，#96）：丢三个服务端工具，警告里三个名字
+// 都得在，光一句 server_tool 看日志的人对不回是哪几个。
+func TestConvertedDropWarningNamesEveryServerTool(t *testing.T) {
+	gw, up := newConvertGateway(t)
+	ccStreamAll(t, up)
+
+	body := `{"model":"gw-sonnet","max_tokens":64,"stream":true,` +
+		`"tools":[{"name":"Read","input_schema":{"type":"object"}},` +
+		`{"type":"advisor_20260301","name":"advisor","model":"claude-fable-5","input_schema":{"type":"object"}},` +
+		`{"type":"web_search_20250305","name":"web_search"},` +
+		`{"type":"computer_20250124","name":"computer"}],` +
+		`"messages":[{"role":"user","content":"hi"}]}`
+	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", body, nil))
+
+	if len(gw.Lines("跨协议转换丢弃字段")) == 0 {
+		t.Fatalf("没有丢弃警告日志；已落日志: %s", gw.RawLog())
+	}
+	raw := gw.RawLog()
+	for _, want := range []string{"advisor", "web_search", "computer"} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("丢弃警告里没提服务端工具 %q: %s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "tool_choice") {
+		t.Errorf("没带 tool_choice 的请求不该登记 tool_choice 档: %s", raw)
+	}
+}
+
+// 转换失败口径（口径层 v1.14 ⑧，#96）：tool_choice 硬性要求（any）却一个工具都转不
+// 过去，编码侧回 400 而不是静默降档。它走 RequestError 那一档：Anthropic 错误外壳、
+// 一个字节不打上游、调用日志记 rejected 且 upstream_endpoint 为空——是入站被拒，
+// 不是上游拒收。
+func TestConvertedRejectsToolChoiceLeftEmpty(t *testing.T) {
+	gw, up := newConvertGateway(t)
+
+	body := `{"model":"gw-sonnet","max_tokens":64,` +
+		`"tools":[{"type":"advisor_20260301","name":"advisor","model":"claude-fable-5","input_schema":{"type":"object"}}],` +
+		`"tool_choice":{"type":"any"},` +
+		`"messages":[{"role":"user","content":"hi"}]}`
+	resp := gw.Post(t, "/v1/messages", body, nil)
+	got := gatewaytest.ReadBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d, 期望 400；body=%s", resp.StatusCode, got)
+	}
+	assertAnthropicError(t, got, "invalid_request_error")
+	if !strings.Contains(got, "advisor") {
+		t.Errorf("400 文案要点名被丢的工具: %s", got)
+	}
+	if up.Count() != 0 {
+		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
+	}
+	// 拒之前先把丢弃日志打出来，看日志的人才知道 required 为什么会落空。
+	if len(gw.Lines("跨协议转换丢弃字段")) == 0 {
+		t.Errorf("拒收前没出丢弃警告；已落日志: %s", gw.RawLog())
+	}
+	if len(gw.Lines("转换后的请求被拒")) == 0 {
+		t.Errorf("没有拒收日志；已落日志: %s", gw.RawLog())
+	}
+
+	row := gw.LastCallRow(t)
+	if row.Status != http.StatusBadRequest {
+		t.Errorf("调用日志 status = %d, 期望 400", row.Status)
+	}
+	if row.Error.String != "rejected" {
+		t.Errorf("调用日志 error = %q, 期望 rejected", row.Error.String)
+	}
+	if row.UpstreamEndpoint != "" {
+		t.Errorf("没发到上游，upstream_endpoint 应为空，实际 %q", row.UpstreamEndpoint)
+	}
+}
+
+// 空 messages 那一条（口径层 v1.14 ⑦）：整段 messages 转完一条不剩（只剩 thinking 块
+// 的 assistant 消息会被丢空）就回 400，而不是把空数组发给上游让它拒。
+func TestConvertedRejectsEmptyMessagesAfterEncode(t *testing.T) {
+	gw, up := newConvertGateway(t)
+
+	body := `{"model":"gw-sonnet","max_tokens":64,` +
+		`"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"只有思考","signature":"sig"}]}]}`
+	resp := gw.Post(t, "/v1/messages", body, nil)
+	got := gatewaytest.ReadBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d, 期望 400；body=%s", resp.StatusCode, got)
+	}
+	assertAnthropicError(t, got, "invalid_request_error")
+	if up.Count() != 0 {
+		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
+	}
+}
+
 // 下行响应：CC 的 SSE 要变成 Anthropic 的线格式，并行工具调用按序重组成互不嵌套的
 // 内容块。
 func TestConvertedStreamIsAnthropicWireFormat(t *testing.T) {
