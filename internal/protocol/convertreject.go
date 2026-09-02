@@ -26,6 +26,7 @@ const (
 	// tool_choice 同名；消息列表 Responses 叫 input，但落空的判定发生在出口编码之后，
 	// 这一格报的是**出口侧**那个字段。
 	ParamMessages   = "messages"
+	ParamInput      = "input"
 	ParamToolChoice = "tool_choice"
 )
 
@@ -33,12 +34,15 @@ const (
 //
 // 文案里点明是**转换后**空：客户端自己发空 messages 与我们把它丢光，日志上要靠这句与
 // 同一次请求的丢弃 Warn 对照才分得开（口径层 v1.14 ⑦），文案先把「哪一步空的」说清。
-func EmptyMessagesRejection() *RequestError {
+//
+// param 是出口侧那个字段名：CC / Anthropic 出口传 ParamMessages，Responses 出口传
+// ParamInput（口径层 v1.15，三个出口同一规则）。文案里的字段名跟着 param 走。
+func EmptyMessagesRejection(param string) *RequestError {
 	return &RequestError{
-		Message: "转换后没有可发送的消息：messages 里没有一条能转到渠道协议的消息" +
+		Message: "转换后没有可发送的消息：" + param + " 里没有一条能转到渠道协议的消息" +
 			"（空正文、只剩 thinking 块的消息都会被丢掉），请至少带一条有正文或工具调用的消息",
 		Code:  CodeEmptyArray,
-		Param: ParamMessages,
+		Param: param,
 	}
 }
 

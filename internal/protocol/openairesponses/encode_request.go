@@ -71,7 +71,14 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	drop := func(what string) { dropped.Add(what) }
 
 	out := map[string]any{"model": req.Model}
-	out["input"] = encodeInput(req, drop)
+	input := encodeInput(req, drop)
+	if len(input) == 0 {
+		// 转换后一个 item 都不剩：我们自己 400，不交上游裁（口径层 v1.14 ⑦、v1.15
+		// 拉平到三个出口）。dropped 照常交出——丢弃 Warn 与这个 400 对照，才分得出
+		// 「客户端发空」与「我们丢光」。param 报出口侧的字段名 input。
+		return nil, dropped, protocol.EmptyMessagesRejection(protocol.ParamInput)
+	}
+	out["input"] = input
 
 	tools, declared, droppedTools := encodeOutTools(req.Tools, &dropped)
 	if len(tools) > 0 {

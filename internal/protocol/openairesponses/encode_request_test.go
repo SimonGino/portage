@@ -225,6 +225,7 @@ func TestEncodeOrphanToolResultDropped(t *testing.T) {
 	req := &protocol.Request{
 		Model: "m",
 		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{textBlock("q")}},
 			{Role: protocol.RoleTool, Content: []protocol.Block{
 				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
 					ToolCallID: "ghost", Content: []protocol.Block{textBlock("x")},
@@ -233,7 +234,7 @@ func TestEncodeOrphanToolResultDropped(t *testing.T) {
 		},
 	}
 	out, dropped := encodeOut(t, req, false)
-	if len(items(t, out)) != 0 {
+	if got := items(t, out); len(got) != 1 || got[0]["role"] != "user" {
 		t.Errorf("孤儿结果没丢: %v", out["input"])
 	}
 	if !hasDrop(dropped, DropOrphanResult) {
@@ -268,7 +269,8 @@ func TestEncodeCustomArgsAreWrapped(t *testing.T) {
 // TestEncodeToolsAreFlat：工具声明是扁平的，custom 工具补一份合成 schema。
 func TestEncodeToolsAreFlat(t *testing.T) {
 	req := &protocol.Request{
-		Model: "m",
+		Model:    "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{textBlock("q")}}},
 		Tools: []protocol.Tool{
 			{Kind: protocol.ToolFunction, Name: "f", Description: "d", Schema: json.RawMessage(`{"type":"object"}`)},
 			{Kind: protocol.ToolCustom, Name: "exec", Description: "js"},
@@ -329,7 +331,8 @@ func TestEncodeToolChoice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := &protocol.Request{Model: "m", Tools: tc.tools, ToolChoice: tc.choice}
+			req := &protocol.Request{Model: "m", Tools: tc.tools, ToolChoice: tc.choice,
+				Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{textBlock("q")}}}}
 			if tc.wantErr != "" {
 				_, dropped, err := NewCodec().EncodeRequestReport(req, false)
 				reqErr, ok := errors.AsType[*protocol.RequestError](err)
@@ -406,7 +409,7 @@ func TestEncodeTopLevelKeys(t *testing.T) {
 
 // TestEncodeMaxTokensOmittedWhenZero：没限就整键省略，不合成默认值。
 func TestEncodeMaxTokensOmittedWhenZero(t *testing.T) {
-	out := mustOut(t, &protocol.Request{Model: "m"})
+	out := mustOut(t, &protocol.Request{Model: "m", Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{textBlock("q")}}}})
 	if _, ok := out["max_output_tokens"]; ok {
 		t.Error("MaxTokens 为零仍发了 max_output_tokens")
 	}
@@ -450,6 +453,7 @@ func TestEncodeVendorDropsRegistered(t *testing.T) {
 			"没见过的键":    1,
 		},
 		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{
+			textBlock("q"),
 			{Kind: "input_audio", Extras: map[string]any{"cache_control": map[string]any{}}},
 		}}},
 	}
@@ -782,5 +786,34 @@ func TestEncodeRequestLiftsImagesAfterAllToolOutputs(t *testing.T) {
 	p, _ := parts[0].(map[string]any)
 	if p["detail"] != "high" {
 		t.Errorf("抬出来的图丢了 detail: %v", p)
+	}
+}
+
+// TestEncodeEmptyInputRejects：转换后 input 空回 400，与 CC / Anthropic 出口同一规则
+// （口径层 v1.14 ⑦、v1.15）。param 报出口侧的字段名 input；dropped 跟错误一起回。
+func TestEncodeEmptyInputRejects(t *testing.T) {
+	cases := map[string]*protocol.Request{
+		"一条消息都没有": {Model: "m"},
+		"只剩 thinking 块的消息": {Model: "m", Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{Kind: protocol.BlockThinking, Text: "hmm"}}},
+		}},
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, dropped, err := NewCodec().EncodeRequestReport(req, false)
+			reqErr, ok := errors.AsType[*protocol.RequestError](err)
+			if !ok {
+				t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+			}
+			if reqErr.Param != protocol.ParamInput || reqErr.Code != protocol.CodeEmptyArray {
+				t.Errorf("code/param = %q/%q，期望 %q/%q", reqErr.Code, reqErr.Param, protocol.CodeEmptyArray, protocol.ParamInput)
+			}
+			if !strings.Contains(reqErr.Message, "input 里") {
+				t.Errorf("文案没点到出口侧字段名: %q", reqErr.Message)
+			}
+			if len(req.Messages) > 0 && !dropped.Has(DropThinking) {
+				t.Errorf("出错时 dropped 没交出来: %v", dropped)
+			}
+		})
 	}
 }

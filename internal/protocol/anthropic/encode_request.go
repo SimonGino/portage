@@ -95,7 +95,7 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 		// 会让渠道在流水里背「上游拒绝」，归因反了。dropped 照常交出，丢弃 Warn 与这个
 		// 400 对照才分得出「客户端发空」与「我们丢光」。system 不算：它在顶层，Anthropic
 		// 对只有 system 没有 messages 的请求同样 400。
-		return nil, dropped, protocol.EmptyMessagesRejection()
+		return nil, dropped, protocol.EmptyMessagesRejection(protocol.ParamMessages)
 	}
 	out["messages"] = encoded
 

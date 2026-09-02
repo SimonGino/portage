@@ -270,6 +270,17 @@ func buildURL(baseURL string, ep protocol.Endpoint, rawQuery string) string {
 	return u
 }
 
+// Timeout 判一条传输错误是不是「等超时了」——拨号超时、TLS 握手超时、
+// ResponseHeaderTimeout，以及客户端 ctx 的 deadline。调用方据此把收场分成
+// 502（拨不通 / 链路坏）与 504（等不到），见 exchange.Do（口径层 v1.16）。
+//
+// 判据用 net.Error.Timeout() 而不是认字符串：*url.Error 自己就实现了 net.Error 并
+// 把 Timeout() 转发给内层，所以裹没裹一层都认得出。
+func Timeout(err error) bool {
+	netErr, ok := errors.AsType[net.Error](err)
+	return ok && netErr.Timeout()
+}
+
 // Redact strips the request URL out of a transport error so the 渠道 base_url does
 // not reach a log line or, later, call_logs.error.
 func Redact(err error) error {

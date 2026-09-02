@@ -126,8 +126,9 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 		// 这一支没有响应体可截，落库的原文就是这条传输错误本身（口径层 v0.53）。
 		// 不落的话，最想看细节的那半边——连不上、握手失败、读超时——恰好永远是空。
 		rec.Failed(calllog.UpstreamError, upstream.Redact(err).Error())
-		x.Log.Error("上游请求失败", "channel", req.Cand.ChannelName, "err", upstream.Redact(err))
-		req.Inbound.WriteError(w, http.StatusBadGateway, "上游渠道 "+req.Cand.ChannelName+" 请求失败")
+		status, msg := transportStatus(err, req.Cand.ChannelName)
+		x.Log.Error("上游请求失败", "channel", req.Cand.ChannelName, "status", status, "err", upstream.Redact(err))
+		req.Inbound.WriteError(w, status, msg)
 		return nil, false
 	}
 	// 在写响应头之前取：之后客户端侧的 Header() 里也有同一个值，但从上游的
@@ -155,6 +156,22 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 		obs.Body = io.TeeReader(resp.Body, io.MultiWriter(observers...))
 	}
 	return &Result{Status: resp.StatusCode, Header: resp.Header, ResponseObserver: obs}, true
+}
+
+// transportStatus 把传输层失败分成两档（口径层 v1.16）：等超时回 504，其余回 502。
+//
+// 判据只认 net.Error.Timeout()——拨号超时、TLS 握手超时、ResponseHeaderTimeout，
+// 加客户端 ctx 的 deadline。连不上、TLS 证书错、EOF 这些是「这条链路坏了」，重打
+// 过几次也仍是 502：客户端对这两档的重试策略不一样，混成一个码等于让它猜。
+//
+// 「重试耗尽」不单独成一档：超时本就从不重试（upstream.retriable），所以耗尽预算的
+// 一律是上面那批非超时错误，按链路坏算。文案跟着状态码走——只有码没有话，光看
+// 响应体的人还是分不出这两件事。
+func transportStatus(err error, channel string) (int, string) {
+	if upstream.Timeout(err) {
+		return http.StatusGatewayTimeout, "上游渠道 " + channel + " 响应超时"
+	}
+	return http.StatusBadGateway, "上游渠道 " + channel + " 请求失败"
 }
 
 // writeQueueReject 译写渠道并发闸的三种收场（口径层 v0.50/v0.52）；不是闸的错误

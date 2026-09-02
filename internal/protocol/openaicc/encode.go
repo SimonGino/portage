@@ -75,7 +75,7 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 		// `Messages cannot be empty.` 透出去会让渠道在流水里背「上游拒绝」，归因反了。
 		// dropped 照常交出——丢弃 Warn 与这个 400 对照，才分得出「客户端发空」与
 		// 「我们丢光」。
-		return nil, dropped, protocol.EmptyMessagesRejection()
+		return nil, dropped, protocol.EmptyMessagesRejection(protocol.ParamMessages)
 	}
 	out["messages"] = msgs
 
