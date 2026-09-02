@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -461,5 +462,31 @@ data: {"type":"message_stop"}
 	}
 	if !strings.Contains(body, `"content":"读好了"`) {
 		t.Errorf("正文丢了:\n%s", body)
+	}
+}
+
+// 转换失败口径在 CC 入口的那一面（口径层 v1.14 ⑧，#96）：tool_choice 点名的工具
+// 没声明，Anthropic 出口回 400，错误按 OpenAI 外壳带 code / param，一个字节不打上游。
+func TestCC2ARejectsToolChoiceNamingUndeclaredTool(t *testing.T) {
+	gw, up := newCC2AGateway(t)
+
+	body := `{"model":"` + accessPointModel + `",` +
+		`"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}],` +
+		`"tool_choice":{"type":"function","function":{"name":"ghost"}},` +
+		`"messages":[{"role":"user","content":"hi"}]}`
+	resp := gw.Post(t, "/v1/chat/completions", body, nil)
+	got := gatewaytest.ReadBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d, 期望 400；body=%s", resp.StatusCode, got)
+	}
+	assertOpenAIError(t, got)
+	for _, want := range []string{`"param":"tool_choice"`, `"code":"invalid_value"`, "ghost", "read"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("400 响应里没有 %s: %s", want, got)
+		}
+	}
+	if up.Count() != 0 {
+		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 	}
 }

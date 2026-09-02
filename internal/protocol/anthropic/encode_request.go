@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -27,10 +28,12 @@ import (
 // 对称包装——三件事在 protocol/customtool.go。
 
 // DroppedOnEncode 列出 canonical → Anthropic 必然丢掉的东西，理由同 openaicc 的
-// 同名一节：codec 不持有 logger，谁丢的谁登记，由 relay 读这张表打日志。
+// 同名一节：codec 不持有 logger，谁丢的谁登记，由 relay 读这张表打日志。登记的载体
+// 是 protocol.Drops：工具类三档附被丢的名字（口径层 v1.14 ⑨），其余档位只报种类。
 const (
 	DropServerTool    = "server_tool"    // 入口协议声明的上游服务端工具（Responses 的 web_search 一类）
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），Anthropic 无对应能力
+	DropToolChoice    = "tool_choice"    // auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，名单记 mode
 	DropVendorRequest = "vendor_request" // 入口协议独有的顶层字段
 	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
@@ -57,23 +60,16 @@ func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error
 }
 
 // EncodeRequestReport 与 EncodeRequest 同源，另外交出丢弃清单（protocol.RequestEncodeReporter）。
-func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	return c.encodeRequest(req, stream)
 }
 
-func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("anthropic: canonical 请求为空")
 	}
-	var dropped []string
-	drop := func(what string) {
-		for _, d := range dropped {
-			if d == what {
-				return
-			}
-		}
-		dropped = append(dropped, what)
-	}
+	var dropped protocol.Drops
+	drop := func(what string) { dropped.Add(what) }
 
 	out := map[string]any{"model": req.Model}
 
@@ -93,13 +89,25 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	if len(system) > 0 {
 		out["system"] = encodeBlocks(system)
 	}
-	out["messages"] = encodeMessages(msgs, drop)
+	encoded := encodeMessages(msgs, drop)
+	if len(encoded) == 0 {
+		// 转换后一条消息都不剩：我们自己 400，不交上游裁（口径层 v1.14 ⑦）——上游拒了
+		// 会让渠道在流水里背「上游拒绝」，归因反了。dropped 照常交出，丢弃 Warn 与这个
+		// 400 对照才分得出「客户端发空」与「我们丢光」。system 不算：它在顶层，Anthropic
+		// 对只有 system 没有 messages 的请求同样 400。
+		return nil, dropped, protocol.EmptyMessagesRejection()
+	}
+	out["messages"] = encoded
 
-	tools := encodeTools(req.Tools, drop)
+	tools, declared, droppedTools := encodeTools(req.Tools, &dropped)
 	if len(tools) > 0 {
 		out["tools"] = tools
 	}
-	if choice, ok := encodeToolChoice(req.ToolChoice, tools); ok {
+	choice, ok, err := encodeToolChoice(req.ToolChoice, declared, droppedTools, &dropped)
+	if err != nil {
+		return nil, dropped, err
+	}
+	if ok {
 		out["tool_choice"] = choice
 	}
 
@@ -420,11 +428,14 @@ func encodeToolResult(res *protocol.ToolResult, drop func(string)) map[string]an
 // 什么形状的唯一途径）；两者都没有的给一个空对象 schema。
 //
 // 服务端工具直接丢：它是**上游侧**能力，目标上游既不认这个 type 也变不出这个能力。
-func encodeTools(tools []protocol.Tool, drop func(string)) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
+// 丢时**带名字**登记（口径层 v1.14 ⑨）。另交出声明出去的与被丢的工具名，给
+// encodeToolChoice 做判据与文案。
+func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[string]any, declared, droppedTools []string) {
+	out = make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		if t.Kind == protocol.ToolServer {
-			drop(DropServerTool)
+			dropped.Add(DropServerTool, t.Name)
+			droppedTools = append(droppedTools, t.Name)
 			continue
 		}
 		tool := map[string]any{"name": t.Name}
@@ -436,35 +447,40 @@ func encodeTools(tools []protocol.Tool, drop func(string)) []map[string]any {
 			tool["input_schema"] = json.RawMessage(t.Schema)
 		case t.Kind == protocol.ToolCustom:
 			tool["input_schema"] = protocol.CustomToolSchema()
-			drop(DropToolGrammar)
+			dropped.Add(DropToolGrammar, t.Name)
 		default:
 			tool["input_schema"] = json.RawMessage(`{"type":"object"}`)
 		}
 		out = append(out, tool)
+		declared = append(declared, t.Name)
 	}
-	return out
+	return out, declared, droppedTools
 }
 
 // encodeToolChoice 把 canonical 的选择策略编成 Anthropic 形态。
 //
-// required → any 是 decodeToolChoice 那条归一的反向。没有 tools 就不发
-// tool_choice，指名一个没声明的工具也不发：两者都会被拒（§5 坑清单，与 CC 出口
-// 同一条理由）。
-func encodeToolChoice(choice protocol.ToolChoice, tools []map[string]any) (any, bool) {
-	if choice.Mode == "" || len(tools) == 0 {
-		return nil, false
-	}
+// required → any 是 decodeToolChoice 那条归一的反向。没有 tools 却带 tool_choice、
+// 指名一个没声明的工具，两者都会被拒（§5 坑清单，与 CC 出口同一条理由），处置也与
+// CC 出口同一档（口径层 v1.14 ⑧）：auto / none 落空静默省略但登记 tool_choice 档；
+// required（any）与点名落空回 400，不静默降档。
+func encodeToolChoice(choice protocol.ToolChoice, declared, droppedTools []string, dropped *protocol.Drops) (any, bool, error) {
 	switch choice.Mode {
 	case "auto", "none":
-		return map[string]any{"type": choice.Mode}, true
-	case "required":
-		return map[string]any{"type": "any"}, true
-	case "tool":
-		for _, t := range tools {
-			if t["name"] == choice.Name {
-				return map[string]any{"type": "tool", "name": choice.Name}, true
-			}
+		if len(declared) == 0 {
+			dropped.Add(DropToolChoice, choice.Mode)
+			return nil, false, nil
 		}
+		return map[string]any{"type": choice.Mode}, true, nil
+	case "required":
+		if len(declared) == 0 {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
+		}
+		return map[string]any{"type": "any"}, true, nil
+	case "tool":
+		if !slices.Contains(declared, choice.Name) {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
+		}
+		return map[string]any{"type": "tool", "name": choice.Name}, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }

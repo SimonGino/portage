@@ -17,7 +17,7 @@ import (
 // （server 工具、孤儿结果、thinking 块），样本能证明我们没在纸上谈兵。
 
 // encodeOut 编一次请求并解回 map，省得每个用例都写一遍。
-func encodeOut(t *testing.T, req *protocol.Request, stream bool) (map[string]any, []string) {
+func encodeOut(t *testing.T, req *protocol.Request, stream bool) (map[string]any, protocol.Drops) {
 	t.Helper()
 	body, dropped, err := NewCodec().EncodeRequestReport(req, stream)
 	if err != nil {
@@ -47,9 +47,9 @@ func items(t *testing.T, out map[string]any) []map[string]any {
 	return res
 }
 
-func hasDrop(dropped []string, want string) bool {
+func hasDrop(dropped protocol.Drops, want string) bool {
 	for _, d := range dropped {
-		if d == want {
+		if d.Kind == want {
 			return true
 		}
 	}

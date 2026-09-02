@@ -28,7 +28,7 @@ type effortCodec struct {
 	req func(effort string) string
 	// decode / encode 是这个协议的入口与出口。
 	decode func(t *testing.T, body string) *protocol.Request
-	encode func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, []string)
+	encode func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, protocol.Drops)
 	// effortKey 是出口方向档位应该落到的顶层键。
 	effortKey string
 	// want 是那个键的期望字节（%s 换成档位）。
@@ -49,7 +49,7 @@ func decodeWith(t *testing.T, dec requestDecoder, body string) *protocol.Request
 	return req
 }
 
-func encodeWith(t *testing.T, enc protocol.RequestEncodeReporter, req *protocol.Request) (map[string]json.RawMessage, []string) {
+func encodeWith(t *testing.T, enc protocol.RequestEncodeReporter, req *protocol.Request) (map[string]json.RawMessage, protocol.Drops) {
 	t.Helper()
 	body, dropped, err := enc.EncodeRequestReport(req, false)
 	if err != nil {
@@ -76,7 +76,7 @@ func effortCodecs() []effortCodec {
 			decode: func(t *testing.T, body string) *protocol.Request {
 				return decodeWith(t, anthropic.NewCodec(), body)
 			},
-			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, []string) {
+			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, protocol.Drops) {
 				return encodeWith(t, anthropic.NewCodec(anthropic.Options{DefaultMaxTokens: 8192}), req)
 			},
 			effortKey: "output_config",
@@ -94,7 +94,7 @@ func effortCodecs() []effortCodec {
 			decode: func(t *testing.T, body string) *protocol.Request {
 				return decodeWith(t, openaicc.NewCodec(), body)
 			},
-			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, []string) {
+			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, protocol.Drops) {
 				return encodeWith(t, openaicc.NewCodec(), req)
 			},
 			effortKey: "reasoning_effort",
@@ -112,7 +112,7 @@ func effortCodecs() []effortCodec {
 			decode: func(t *testing.T, body string) *protocol.Request {
 				return decodeWith(t, openairesponses.NewCodec(), body)
 			},
-			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, []string) {
+			encode: func(t *testing.T, req *protocol.Request) (map[string]json.RawMessage, protocol.Drops) {
 				return encodeWith(t, openairesponses.NewCodec(), req)
 			},
 			effortKey: "reasoning",
@@ -206,7 +206,7 @@ func TestEffortAbsentAddsNothing(t *testing.T) {
 					t.Errorf("凭空加了 %s = %s", out.effortKey, keys[out.effortKey])
 				}
 				for _, d := range dropped {
-					if d == "thinking_param" {
+					if d.Kind == "thinking_param" {
 						t.Error("没有思考参数却登记了 thinking_param")
 					}
 				}
@@ -307,9 +307,9 @@ func TestUnliftableEffortStillRegistersAsThinkingParam(t *testing.T) {
 	}
 }
 
-func hasDrop(dropped []string, want string) bool {
+func hasDrop(dropped protocol.Drops, want string) bool {
 	for _, d := range dropped {
-		if d == want {
+		if d.Kind == want {
 			return true
 		}
 	}

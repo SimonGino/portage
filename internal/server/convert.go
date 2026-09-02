@@ -109,16 +109,28 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	}
 
 	outBody, dropped, err := encodeRequest(outCodec, req, stream)
+	if len(dropped) > 0 {
+		// 口径层 §2.6：跨协议丢弃要有日志警告，不做伪映射也不静默。codec 只登记，
+		// 日志在这里打——codec 是纯函数，不持有 logger。工具类三档带名单（v1.14 ⑨，
+		// 渲染在 protocol.Drops.LogValue）。**排在下面的 400 之前**：编码被拒时这条
+		// 照打，两条对照才分得出「客户端发空」与「我们丢光」（v1.14 ⑦）。
+		s.log.Warn("跨协议转换丢弃字段",
+			"inbound", ep.Proto, "channel_protocol", cand.Protocol, "dropped", dropped)
+	}
 	if err != nil {
+		// 转换后请求已不成立（messages 空了、tool_choice 的硬要求落空，口径层 v1.14
+		// ⑦⑧）：我们自己回 400，不交上游——交出去渠道会在流水里背「上游拒绝」，归因
+		// 反了。收场沿用上面入站解码被拒那一档：不 Dialing、不 Failed，早退缺省
+		// rejected，upstream_endpoint 留空（「非空 ⟺ 真的发起过」不变量原样）。
+		if reqErr, ok := errors.AsType[*protocol.RequestError](err); ok {
+			s.log.Warn("转换后的请求被拒", "inbound", ep.Proto, "channel_protocol", cand.Protocol,
+				"code", reqErr.Code, "param", reqErr.Param)
+			ep.Proto.WriteRequestError(c.Writer, reqErr)
+			return
+		}
 		s.log.Error("出口请求编码失败", "channel", cand.ChannelName, "err", err)
 		ep.Proto.WriteError(c.Writer, http.StatusInternalServerError, "请求无法转换为渠道协议")
 		return
-	}
-	if len(dropped) > 0 {
-		// 口径层 §2.6：跨协议丢弃要有日志警告，不做伪映射也不静默。codec 只登记，
-		// 日志在这里打——codec 是纯函数，不持有 logger。
-		s.log.Warn("跨协议转换丢弃字段",
-			"inbound", ep.Proto, "channel_protocol", cand.Protocol, "dropped", dropped)
 	}
 
 	// rawQuery 不带过去：客户端的查询串是**入口协议**的方言（实测 Claude Code 发
@@ -152,7 +164,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 }
 
 // encodeRequest 走 RequestEncodeReporter 拿丢弃清单，拿不到就退回普通编码。
-func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]byte, []string, error) {
+func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	if reporter, ok := codec.(protocol.RequestEncodeReporter); ok {
 		return reporter.EncodeRequestReport(req, stream)
 	}

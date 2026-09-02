@@ -85,7 +85,7 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 			for _, exit := range exits {
 				t.Run(exit.name, func(t *testing.T) {
 					body, dropped := encodeWith(t, exit.enc, req)
-					got := append([]string(nil), dropped...)
+					got := dropped.Kinds()
 					want := append([]string(nil), tc.want[exit.name]...)
 					slices.Sort(got)
 					slices.Sort(want)

@@ -55,28 +55,21 @@ func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error
 }
 
 // EncodeRequestReport 与 EncodeRequest 同源，另外交出丢弃清单（protocol.RequestEncodeReporter）。
-func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	return c.encodeRequest(req, stream)
 }
 
-func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("openairesponses: canonical 请求为空")
 	}
-	var dropped []string
-	drop := func(what string) {
-		for _, d := range dropped {
-			if d == what {
-				return
-			}
-		}
-		dropped = append(dropped, what)
-	}
+	var dropped protocol.Drops
+	drop := func(what string) { dropped.Add(what) }
 
 	out := map[string]any{"model": req.Model}
 	out["input"] = encodeInput(req, drop)
 
-	tools, declared := encodeOutTools(req.Tools, drop)
+	tools, declared := encodeOutTools(req.Tools, &dropped)
 	if len(tools) > 0 {
 		out["tools"] = tools
 	}
@@ -287,13 +280,14 @@ func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) map[string
 //
 // Responses 的工具是扁平形态：`{"type":"function","name":…,"parameters":…}`，没有
 // CC 那层 function 嵌套（九份真实请求样本一致）。
-func encodeOutTools(tools []protocol.Tool, drop func(string)) ([]map[string]any, map[string]bool) {
+func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[string]any, map[string]bool) {
 	out := make([]map[string]any, 0, len(tools))
 	declared := map[string]bool{}
 	for _, t := range tools {
 		if t.Kind == protocol.ToolServer {
 			// 服务端工具是**上游侧**能力，目标上游既不认这个 type 也变不出这个能力。
-			drop(DropServerTool)
+			// 带名字登记（口径层 v1.14 ⑨，三个出口一致）。
+			dropped.Add(DropServerTool, t.Name)
 			continue
 		}
 		fn := map[string]any{"type": "function", "name": t.Name}
@@ -310,7 +304,7 @@ func encodeOutTools(tools []protocol.Tool, drop func(string)) ([]map[string]any,
 			// 声明（protocol.CustomToolSchema），而不是发一个没有 parameters 的
 			// 工具让模型自由发挥。文法约束跨不过去，登记。
 			fn["parameters"] = protocol.CustomToolSchema()
-			drop(DropToolGrammar)
+			dropped.Add(DropToolGrammar, t.Name)
 		}
 		out = append(out, fn)
 		declared[t.Name] = true

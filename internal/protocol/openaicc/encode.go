@@ -3,6 +3,7 @@ package openaicc
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -19,6 +20,9 @@ import (
 // 做成导出的常量表而不是就地静默丢弃：口径层 §2.6 要求跨协议丢弃「+ 日志警告」，
 // 而 codec 这一层刻意不持有 logger（它是纯函数，测试里不该冒日志）。谁丢的谁登记，
 // 由 relay 在转换路径上读这张表打日志。
+//
+// 登记的载体是 protocol.Drops：工具类三档（server_tool / tool_grammar / tool_choice）
+// 附被丢的名字（口径层 v1.14 ⑨），其余档位只报种类。
 const (
 	DropMetadata      = "metadata"       // A 入口的 metadata.user_id：上游据此判定是否官方 Claude Code
 	DropCacheControl  = "cache_control"  // Anthropic 缓存断点，CC 协议无对应概念
@@ -26,6 +30,7 @@ const (
 	DropServerTool    = "server_tool"    // 上游服务端工具声明（advisor_20260301 一类）
 	DropVendorRequest = "vendor_request" // 其余入口协议独有的顶层字段
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
+	DropToolChoice    = "tool_choice"    // auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，名单记 mode
 	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
@@ -48,23 +53,16 @@ func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error
 //
 // 不把清单塞进 Codec 接口：那会让六条转换路径的每个 encode 侧都背一个只有一半
 // 实现用得上的返回值。走一个包级方法，relay 在转换分支上按需类型断言。
-func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) EncodeRequestReport(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	return c.encodeRequest(req, stream)
 }
 
-func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []string, error) {
+func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, protocol.Drops, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("openaicc: canonical 请求为空")
 	}
-	var dropped []string
-	drop := func(what string) {
-		for _, d := range dropped {
-			if d == what {
-				return
-			}
-		}
-		dropped = append(dropped, what)
-	}
+	var dropped protocol.Drops
+	drop := func(what string) { dropped.Add(what) }
 
 	out := map[string]any{"model": req.Model}
 
@@ -72,13 +70,24 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, []str
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(msgs) == 0 {
+		// 转换后一条消息都不剩：我们自己 400，不交上游裁（口径层 v1.14 ⑦）。上游那句
+		// `Messages cannot be empty.` 透出去会让渠道在流水里背「上游拒绝」，归因反了。
+		// dropped 照常交出——丢弃 Warn 与这个 400 对照，才分得出「客户端发空」与
+		// 「我们丢光」。
+		return nil, dropped, protocol.EmptyMessagesRejection()
+	}
 	out["messages"] = msgs
 
-	tools, declared := encodeTools(req.Tools, drop)
+	tools, declared, droppedTools := encodeTools(req.Tools, &dropped)
 	if len(tools) > 0 {
 		out["tools"] = tools
 	}
-	if choice, ok := encodeToolChoice(req.ToolChoice, declared); ok {
+	choice, ok, err := encodeToolChoice(req.ToolChoice, declared, droppedTools, &dropped)
+	if err != nil {
+		return nil, dropped, err
+	}
+	if ok {
 		out["tool_choice"] = choice
 	}
 
@@ -262,16 +271,18 @@ func encodeToolCall(call *protocol.ToolCall) (map[string]any, error) {
 	}, nil
 }
 
-// encodeTools 编工具声明，返回声明出去的工具名集合供 tool_choice 校验用。
+// encodeTools 编工具声明，返回声明出去的工具名（供 tool_choice 校验与点名文案用）
+// 与被丢的工具名（供 tool_choice 落空时说清丢的是谁）。
 //
 // 服务端工具（Anthropic 的 advisor_20260301 一类）直接丢：它是**上游侧**能力，
-// 第三方 CC 上游既不认这个 type 也变不出这个能力，带过去只会被拒。
-func encodeTools(tools []protocol.Tool, drop func(string)) ([]map[string]any, map[string]bool) {
-	out := make([]map[string]any, 0, len(tools))
-	declared := map[string]bool{}
+// 第三方 CC 上游既不认这个 type 也变不出这个能力，带过去只会被拒。丢时**带名字**
+// 登记（口径层 v1.14 ⑨）：55 个工具丢 45 个与丢一个 web_search，日志上得分得开。
+func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[string]any, declared, droppedTools []string) {
+	out = make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		if t.Kind == protocol.ToolServer {
-			drop(DropServerTool)
+			dropped.Add(DropServerTool, t.Name)
+			droppedTools = append(droppedTools, t.Name)
 			continue
 		}
 		fn := map[string]any{"name": t.Name}
@@ -287,33 +298,44 @@ func encodeTools(tools []protocol.Tool, drop func(string)) ([]map[string]any, ma
 			// 告诉模型该回 {"input": …}**，回程拆包就拆了个寂寞。文法约束本身带不
 			// 过去，由 joinTools 之外的 drop 登记（CC 没有对应能力）。
 			fn["parameters"] = protocol.CustomToolSchema()
-			drop(DropToolGrammar)
+			dropped.Add(DropToolGrammar, t.Name)
 		}
 		out = append(out, map[string]any{"type": "function", "function": fn})
-		declared[t.Name] = true
+		declared = append(declared, t.Name)
 	}
-	return out, declared
+	return out, declared, droppedTools
 }
 
-// encodeToolChoice 把 canonical 的选择策略编成 CC 形态，并挡掉两种会被上游拒的组合
+// encodeToolChoice 把 canonical 的选择策略编成 CC 形态，并处置两种会被上游拒的组合
 // （§5 坑清单）：没有 tools 却带 tool_choice、tool_choice 指名一个没声明的工具。
-func encodeToolChoice(choice protocol.ToolChoice, declared map[string]bool) (any, bool) {
-	if choice.Mode == "" || len(declared) == 0 {
-		return nil, false
-	}
+//
+// 处置分两档（口径层 v1.14 ⑧）：auto / none 落空**静默省略但登记** tool_choice 档
+// （上游默认就是 auto，省略不改语义）；required 与点名落空**回 400**——静默降成 auto
+// 会让模型改回文本，客户端按「必有工具调用」写的代码当场崩且查不到因。判据不区分
+// 「客户端没声明」与「我们丢光了」，文案区分：后者点名被丢的工具。
+func encodeToolChoice(choice protocol.ToolChoice, declared, droppedTools []string, dropped *protocol.Drops) (any, bool, error) {
 	switch choice.Mode {
-	case "auto", "none", "required":
-		return choice.Mode, true
+	case "auto", "none":
+		if len(declared) == 0 {
+			dropped.Add(DropToolChoice, choice.Mode)
+			return nil, false, nil
+		}
+		return choice.Mode, true, nil
+	case "required":
+		if len(declared) == 0 {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
+		}
+		return choice.Mode, true, nil
 	case "tool":
-		if !declared[choice.Name] {
-			return nil, false
+		if !slices.Contains(declared, choice.Name) {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
 		}
 		return map[string]any{
 			"type":     "function",
 			"function": map[string]any{"name": choice.Name},
-		}, true
+		}, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // encodeMessageContent 编一条消息的 content。
