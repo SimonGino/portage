@@ -161,8 +161,10 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	}
 
 	srv := &http.Server{
-		Addr:    cfg.Listen,
-		Handler: server.New(cfg, db, log).Engine(),
+		Addr: cfg.Listen,
+		// PORTAGE_DUMP_DIR 是排障采样开关（server/dump.go），与 PORTAGE_CHANNELS 一样只走
+		// env：它是「这几分钟开一下」的东西，不该在 config.yaml 里有个会被忘掉的键。
+		Handler: server.New(cfg, db, log).WithDumpDir(os.Getenv("PORTAGE_DUMP_DIR")).Engine(),
 		// 不设 WriteTimeout：它会掐断长 SSE 流。写超时改由 relay 用
 		// http.NewResponseController(w).SetWriteDeadline 逐次推进。
 		ReadHeaderTimeout: 20 * time.Second,

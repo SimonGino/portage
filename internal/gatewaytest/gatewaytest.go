@@ -384,6 +384,8 @@ type Options struct {
 	// Declarative 模拟挂了声明文件的形态（#48）：管理端业务配置写接口回 409。
 	// 只置旗、不真挂文件——闸看的就是这面旗，文件到库的那半有 declcfg 自己的用例。
 	Declarative bool
+	// DumpDir 开排障采样（PORTAGE_DUMP_DIR，server/dump.go），空即不开。
+	DumpDir string
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -436,7 +438,7 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	}
 	capture := &logCapture{}
 	log := slog.New(&captureHandler{c: capture, text: slog.NewTextHandler(capture, nil)})
-	srv := httptest.NewServer(server.New(cfg, db, log).Engine())
+	srv := httptest.NewServer(server.New(cfg, db, log).WithDumpDir(opts.DumpDir).Engine())
 	t.Cleanup(srv.Close)
 	return &Gateway{Server: srv, DB: db, log: capture}
 }

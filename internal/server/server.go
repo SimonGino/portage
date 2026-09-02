@@ -55,6 +55,19 @@ type Server struct {
 	genLim *rate.Limiter
 	// countTokensLim 是 count_tokens 独占的那只（#16），配置同 genLim。选桶见 pickLimiter。
 	countTokensLim *rate.Limiter
+	// dump 是 PORTAGE_DUMP_DIR 开的排障采样，nil 即没开（dump.go）。
+	dump *dumper
+}
+
+// WithDumpDir 开启排障采样（dump.go），dir 为空即不开。只从环境变量 PORTAGE_DUMP_DIR
+// 进来，不进 config.yaml。
+func (s *Server) WithDumpDir(dir string) *Server {
+	s.dump = newDumper(dir, s.log)
+	if s.dump != nil {
+		s.log.Warn("排障采样已开启：每次转发的请求体、上游请求体与响应字节都会全文落盘，用完请关",
+			"dir", dir)
+	}
+	return s
 }
 
 func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
@@ -219,11 +232,19 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		// 日志逻辑留在这里就等于 401 不落库（portage-legacy#22）。
 		rec := recorderFrom(c)
 
+		// 排障采样（dump.go）：没开时 dr 为 nil，下面每一步都是空操作。响应字节在
+		// writer 上抄，早退的 4xx 也照样落——采到的就是客户端真看见的那份。
+		dr := s.dump.begin(ep)
+		defer dr.close()
+		c.Writer = dr.tee(c.Writer)
+		c.Set(dumpKey, dr)
+
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			ep.Proto.WriteError(c.Writer, http.StatusBadRequest, "读取请求体失败")
 			return
 		}
+		dr.write("in.json", body)
 		if s.cfg.LogBodies {
 			rec.RecordRequestBody(body)
 		}
@@ -337,6 +358,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		// 透传到 anthropic 渠道打的也还是 /v1/messages/count_tokens。RawQuery 整串
 		// 照抄（portage-legacy#20）；错误原文挂旁路占坑（TapErrorBody）——透传路径上
 		// 响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
+		dr.write("out.json", forward)
 		res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
 			Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: ep,
 			RawQuery: c.Request.URL.RawQuery, Body: forward, Header: c.Request.Header,

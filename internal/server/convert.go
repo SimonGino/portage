@@ -139,6 +139,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 这条路非 2xx 的字节由下面的 writeUpstreamError 读全在手（rec.UpstreamRejected）。
 	// Tap 与 body 记录照样挂在**上游原始字节**上：usage 要的是上游自己报的数，
 	// 不是网关重编出来的响应。
+	dumpFrom(c).write("out.json", outBody)
 	res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
 		Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: outEp,
 		Body: outBody, Header: c.Request.Header, Stream: stream,

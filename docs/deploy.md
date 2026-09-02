@@ -134,6 +134,26 @@ Change it on the local instance, export again, redeploy the file, restart. The t
 machines share nothing and there is no file watching — the declarative file is read once,
 at boot.
 
+## Capturing traffic for a bug report (`PORTAGE_DUMP_DIR`)
+
+Set `PORTAGE_DUMP_DIR` to a directory and Portage writes three files per forwarded
+request: the inbound body as received (`.in.json`), the body it sent upstream
+(`.out.json`; on a conversion path this is the re-encoded one), and the bytes it
+returned to the client (`.resp`; for a stream, the whole SSE). Nothing is redacted or
+truncated — that is the point, these become golden samples — but request headers are
+not captured, and upstream keys and base URLs never appear in those bytes anyway.
+
+```bash
+mkdir -p ./dump
+docker run … -e PORTAGE_DUMP_DIR=/dump -v "$PWD/dump:/dump" …
+# or under `environment:` in the compose file: PORTAGE_DUMP_DIR: /dump, plus the volume.
+```
+
+It is an environment variable and not a `config.yaml` key on purpose: it is a switch you
+flip for a few minutes, and a config key would be one more thing left on by accident.
+Portage logs a warning at boot while it is set. The directory holds full conversations —
+unset it as soon as you have the sample, and review the files before sharing them.
+
 ## Upgrade notes
 
 **Migrations on older images may fail with `disk I/O error (6410)`**. The scratch image
