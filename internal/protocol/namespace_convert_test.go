@@ -59,7 +59,7 @@ func TestNamespaceToolsSurviveConversion(t *testing.T) {
 		}
 		// 工具里唯一丢的是 web_search：那是服务端工具，与 namespace 无关，登记照旧
 		// （名单里另有 ADE 请求级厂商字段的 vendor_request，不归本闸）。
-		if !slices.Contains(dropped, openaicc.DropServerTool) {
+		if !dropped.Has(openaicc.DropServerTool) {
 			t.Errorf("dropped = %v, 期望含 %s", dropped, openaicc.DropServerTool)
 		}
 	})
@@ -87,7 +87,7 @@ func TestNamespaceToolsSurviveConversion(t *testing.T) {
 		if !slices.Contains(names, "mcp__ade_asset_knowledge__readKnowledgeIndexFile") {
 			t.Errorf("Anthropic 出口少了摊平名: %v", names)
 		}
-		if !slices.Contains(dropped, anthropic.DropServerTool) {
+		if !dropped.Has(anthropic.DropServerTool) {
 			t.Errorf("dropped = %v, 期望含 %s", dropped, anthropic.DropServerTool)
 		}
 	})
