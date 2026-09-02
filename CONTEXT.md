@@ -93,6 +93,10 @@ _Avoid_: 把它加进 total 或从 output 里减掉；把 NULL 抹成 0（那是
 转换路径（R→A / R→CC）上让 Codex 压缩可用的做法（v0.54）：把压缩 turn 改写成一次纯总结请求打给上游，再把摘要装进自造信封当成**恰好一个** compaction item 发回去，下一轮 Codex 回带时再拆开还原成 user 消息。上游没有 compact 端点可转发，这是唯一路子（与 opencodex 同构）。信封是 `ptg1:` + base64(摘要)，**透明不加密**，且前缀是长期兼容约束。
 _Avoid_: 远程压缩（那是 Codex 侧的叫法，指的是「让服务端压」这件事）、加密摘要（信封谁都解得开）
 
+**命名空间工具**：
+Responses 协议 `type=namespace` 的声明外壳：把若干子工具收在一个名字下，自己不是一种工具能力；子工具是 function 还是 custom，进了外壳还是什么，外壳只贡献名字。`functions` 是**默认命名空间**（与 codex-rs 同：`None`/`""`/`"functions"` 归一），其子工具对外就用裸名；其余命名空间的子工具对外用**摊平名** `<命名空间名>__<子工具名>`（[#86](https://github.com/SimonGino/portage/issues/86)）。
+_Avoid_: 上游自带能力 / server tool（那是 web_search 那类网关变不出的东西，namespace 网关自己就能摊开）、工具组、全部加前缀（`functions` 不加）、全部裸名
+
 **临时闸**：
 某项实现落地前的配置校验限制，非 v1 边界。两半各自独立放开：凭证那半已于 v0.38（M3）放开，单候选那半仍在（M4 放开）。
 

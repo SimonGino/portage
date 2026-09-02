@@ -42,6 +42,8 @@ var opaqueRoots = []string{
 	"input[].tools[].format",
 	"messages[].content[].input",
 	"tools[].function.parameters", // CC 的工具 JSON Schema，同 tools[].input_schema
+	"tools[].parameters",          // Responses 顶层工具的 JSON Schema（ADE 实采）
+	"tools[].tools[].parameters",  // Responses namespace 子工具的 JSON Schema
 }
 
 // coverage 是键路径 → 归宿。改动这张表就得同步改 docs/MVP设计草案.md §4 的对照表。
@@ -175,6 +177,26 @@ var coverage = map[string]disposition{
 	"input[].tools[].parameters":  dOpaque, // Tool.Schema
 	"input[].tools[].strict":      dExtras,
 	"input[].tools[].format":      dOpaque, // lark 文法，无 schema 对应物
+
+	// ---- OpenAI Responses（ADE 2026-09-02 实采，in-responses-namespace-turn1）----
+	//
+	// ADE 走的是**顶层 `tools`**，不是 Codex 的 additional_tools 项。tools[].name /
+	// description / type 与上面 Anthropic 段同名，归宿不再重复列（type 在这一侧是
+	// Tool.Kind 的判别式）。
+	"instructions":                dField,  // → Request.System
+	"tools[].parameters":          dOpaque, // Tool.Schema
+	"tools[].strict":              dExtras,
+	"tools[].external_web_access": dExtras, // web_search 的开关，随 ToolServer 进 Extras
+	// namespace 子工具**今天**落在 Extras 里没人读——这正是口径层 v1.14 要修的
+	// bug（45/55 个工具整体丢弃）。裁决是解码侧摊平成 Tool（`<ns>__<name>`，
+	// functions 免前缀），实现落地后这几行改 dField。
+	"tools[].tools":               dExtras,
+	"tools[].tools[]":             dExtras,
+	"tools[].tools[].type":        dExtras,
+	"tools[].tools[].name":        dExtras,
+	"tools[].tools[].description": dExtras,
+	"tools[].tools[].parameters":  dOpaque,
+	"tools[].tools[].strict":      dExtras,
 
 	// ---- OpenAI Chat Completions（opencode 1.18 实采，portage-legacy#27）----
 	//

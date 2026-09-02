@@ -1,0 +1,11 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "verified": true,
+  "source": "ADE（Codex 系 harness）2026-09-02 首轮实采，PO 从网关侧抓下的原始请求体，不是 cmd/goldenrec 录的。钉的是 Responses namespace 声明形态：顶层 tools 里 10 个 function + 1 个 web_search + 8 个具名 namespace（共 45 个子工具，全是 function，无 custom），namespace 名含 __（mcp__ade_asset_knowledge），request_user_input 在顶层（Codex 里它是 functions 子项）。脱敏：developer/user 长正文与 instructions 整段替换为占位并记原长度，Windows 用户名、内网域名、prompt_cache_key 改定值；工具名、描述、参数 schema 一字未动。本轮网关的实际输出（45 个工具被当服务端工具丢弃、模型无工具可调）是口径层 v1.14 的触发案例。"
+}

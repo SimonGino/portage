@@ -2,6 +2,8 @@
 
 > 状态：草案 v1.24
 
+> v1.25 变更（口径层 v1.14 落地：Responses namespace 工具与转换失败口径，wayfinder [#93](https://github.com/SimonGino/portage/issues/93)，2026-09-02）：**只改文档，代码一行未动**，实现另起。口径与裁决见口径层 v1.14，这里只记实现层落点。①**摊平在 Responses 解码侧**：`decodeTools` 读 `item["tools"]` 展开子项，canonical 里出来的就是摊平名（`functions`/空/缺失免前缀），CC 与 Anthropic 两个编码器天然拿到同一份名字，不加任何路径分支；子项 `custom` 走既有 `ToolCustom` 分支，`customTools` 记的是摊平名。②**映射表挂 `openairesponses.Codec` 每请求状态**，与 `customTools` 并排，`DecodeRequest` 填、`EncodeStream`/`EncodeFullBody` 读，理由同 codec.go 那段注释；值是 `{namespace, 裸名}`，**不许按 `__` 拆串**（namespace 名自身可含 `__`）。③**撞名与名字校验在 `DecodeRequest` 里就地拒**，形态同 v0.97 的 `previous_response_id` 闸（`protocol.RequestError`，可逐字回显的 400），是「decode 必须是全函数」的第二处例外，判据同样不含 codec 之外的输入。④**回带还原是 input 与 tools 都解完之后的一趟后处理**（今天 input 先于 tools 解码）：回放的 `function_call`/`custom_tool_call` item 的 `namespace` 今天落在 `ToolCall.Extras` 无人读，后处理先认它、再唯一查表、再原样。⑤**`tool_choice` 点名的唯一查表同在这趟后处理**，出口侧 `encodeToolChoice` 不改判据。⑥**空 `messages` 与 `required` 落空的 400 拦在编码器**（两个出口各一处），`auto`/`none` 落空登记新档 `tool_choice`；`encodeRequest` 的 `dropped` 从 `[]string` 扩成带名单的结构，`server_tool`/`tool_grammar`/`tool_choice` 三档附工具名，`relayConverted` 的 Warn 一并打出。⑦**golden**：Codex 三份 `responses-*` 样本字节级不变是①的验收线；ADE 形态（顶层 `tools` 里多个具名 namespace、名含 `__`）的入站样本与回带样本仍欠着，见 #85。修改人 jinpenga。
+
 > v1.24 变更（口径层 v1.12 落地：多用户库导出改跳过用户 key，2026-09-01）：口径与裁决见口径层 v1.12，这里只记实现层落点。①**`declcfg.Export`/`Snapshot` 签名加第二返回值**：跳过名单（`[]string`，`名（邮箱）`、按 key 名序）——`exportAPIKeys` 改为 LEFT JOIN users 拿归属，`user_id` 非空且 ≠ 第一个 admin 的 key 不进文件、进名单；无 admin 库 adminID 落 0，用户 key 一律算跳过（与 `firstAdminOrZero` 助手同源，导入闸同一判据）。②**`CheckSingleUser` 收窄为导入闸**：只服务 `POST /panel/api/import` 与 preview 的 409（文案改口「要导入声明文件」），`Snapshot` 不再进门先过它；报错措辞去掉「压平成无主」改「覆盖时静默清光」——压平是导出写入才会发生的事。③**管理端导出**：名单非空逐把记 Info 日志，下载响应不变。④**用例**：`multiuser_test.go` 导出闸条整条重写——多用户库导出成功、跳过名单点名、同名跨用户取第一个 admin 那把、跳过后往返字节相等、同库上 `CheckSingleUser` 仍拒。修改人 jinpenga。
 
 > v1.23 变更（口径层 v1.07 落地：输入上限估算的 base64 大段换算，wayfinder [#77](https://github.com/SimonGino/portage/issues/77)，2026-08-31）：裁决与常数依据见口径层 v1.07 与 [#80](https://github.com/SimonGino/portage/issues/80)，这里只记实现层。估算从 `len(body)/4` 抽成 `server/inputestimate.go` 的 `estimateInputTokens`：单趟字节扫描，连续标准 base64 字符（`A-Za-z0-9+/=`）≥4096 的段按 `max(256, 段长×3/2048)` 计（= 解码字节 ÷512 保底 256），段外 ÷4，多段线性求和；闸的挂点、413 形状、count_tokens 豁免、流水词一概不动。测试分两层：纯函数钉换算与识别（`inputestimate_internal_test.go`：阈值两侧、保底、线性缩放、混合体叠加、base64url 不命中、尾段 flush），闸行为原文件加一条「1MB 假图 ÷4 必拒、换算放行」的起因场景用例（`inputlimit_test.go`，构造 base64 段——真实样本按 #77 裁定不入库）。修改人 jinpenga。
@@ -304,6 +306,8 @@ type Tool struct {
 }
 ```
 
+> Responses 的 `type=namespace` 声明**不是**第四种 Kind（口径层 v1.14）：它是分组外壳，子项摊平成上面这个 `Tool`（`Name` 取 `<ns>__<name>`，`functions` 免前缀），子项该是 function / custom 还是什么。ADE 实采（`in-responses-namespace-turn1`）走顶层 `tools`，与 Codex 的 `additional_tools` 项是同一份声明的两个容器。**今天**子项还落在 `Extras["tools"]` 里没人读，实现见 v1.25 落点；`canonical_coverage_test.go` 的对应行届时由 extras 改 field。
+
 角色映射，三协议对照：
 
 | canonical | Anthropic | CC | Responses |
@@ -480,6 +484,12 @@ type Codec interface {
 | 转换路径不转发原始 query | 客户端打过来的 `?beta=true` 是 Anthropic 方言，原样贴到 CC 上游 URL 上会被严格上游拒。portage-legacy#20 定的「query 整串照抄」只管**同协议透传**；转换路径发空 query |
 | `metadata.user_id` | 上游以此判定「是否官方 Claude Code 请求」，中间层重序列化丢弃会被归入第三方 app。策略：**不可转但须保留**——A 入口的请求体 metadata 原样随请求携带；P0 透传天然不受影响（sub2api 实证坑） |
 | 严格中转的请求校验 | 第三方 OpenAI 兼容上游会拒绝：消息 content 为数组（须拼纯文本）、`tool_choice` 引用未声明的 tool、有 tool_choice 无 tools——编码侧做规整，别指望上游宽容 |
+| Responses `namespace` 不是工具种类（v1.25 记，口径层 v1.14） | `type=namespace` 是声明的分组外壳，子项只能是 `function`/`custom`、不嵌套。解码侧**必须展开子项**，不能落进 `ToolServer` 让两个出口整体丢——ADE 55 个工具丢 45 个、模型幻觉出未声明工具就是这条。摊平名 `<ns>__<name>`，`functions`/空/缺失免前缀（codex-rs `is_default_namespace()`），Codex 主路径字节不变 |
+| namespace 名本身可含 `__` | ADE 实测 `mcp__ade_asset_knowledge`。回程还原**只能查每请求映射表**，任何按分隔符拆串的还原都会拆错；Codex 侧按 `(namespace, name)` 精确匹配，拆错的调用回 `unsupported call` 的 `success:false` 输出，**静默不报错** |
+| 摊平后的撞名与非法名 | 一名两源（`functions` 子项撞顶层、跨命名空间摊平后撞、同名 namespace）与不满足 `^[a-zA-Z0-9_-]{1,64}$` 的摊平名都在 `DecodeRequest` 就地 400，不改名不截断——截断会制造新撞名，改名回程 Codex 认不出。今天 CC 编码侧对顶层同名工具不查重，那条不在本闸内 |
+| 回带 item 与 `tool_choice` 的名字还原 | 客户端回放的调用 item `name` 是裸名、`namespace` 可选；`tool_choice` 点名子工具规范无形态。两者走同一张本轮声明表：先认 `namespace` 字段，再裸名唯一查表补前缀，零中或多中**原样带过去不猜**（回放 item）或走落空闸（`tool_choice`）。查表在 input 与 tools 都解完后的后处理里做 |
+| 转换后空 `messages` / `tool_choice` 落空 | 编码后 `messages` 为空、`required` 而无工具、点名对不上：**我们自己 400**，不交上游——上游的 `Messages cannot be empty.` 透出去会让渠道在流水里背「上游拒绝」，归因反了；`required` 静默降成 `auto` 让模型改回文本，客户端按「必有工具调用」写的代码当场崩。`auto`/`none` 落空维持省略但登记 `tool_choice` 档 |
+| 工具类丢弃日志要带名字 | `dropped` 按种类去重时 55 丢 45 与丢一个 `web_search` 在日志里长得一样。`server_tool`/`tool_grammar`/`tool_choice` 三档附工具名清单；其余种类维持只报档位（明细是正文，既大又涉隐私） |
 | stop_reason 合法性 | Anthropic 非流式响应 stop_reason 不允许 null/空串，映射表必须给出合法默认值 |
 | 工具入参不保证是 JSON | Codex CLI 0.144 code-mode 只声明一个 `custom` 工具 `exec`，入参是 **JavaScript 源码**（`in-responses-tool-turn2` 实测），`ToolCall.ArgsIsJSON` 为 false。编码到 CC 时 `function.arguments` 按契约必须是 JSON 字符串，encode 侧只能自行合成包装对象——**合成规则须与解包侧对称**，否则工具结果对不回去。**（portage-legacy#12 落地包装与拆包，portage-legacy#25 补上缺的第三件并把三件收进 `protocol/customtool.go`）** 这件事有**三个**必须逐字对称的面，不是两个：① 声明侧 `CustomToolSchema()` 告诉上游「收一个叫 `input` 的字符串」，② 出站 `WrapCustomToolArgs` 包成 `{"input":"<原文>"}`，③ 回程 `UnwrapCustomToolArgs` 拆回来。portage-legacy#12 只做了 ②③——**声明侧是空的**：Responses 的 custom 工具用 `format`（lark 文法）描述入参、没有 `parameters`，`openaicc` 照抄就抄了个空，于是上游收到一个不带 `parameters` 的 function 声明。后果不是报错而是更隐蔽的东西：没有任何东西告诉模型该回 `{"input": …}`，模型回个 `{"cmd": …}`，回程拆不动只好原样给出去，Codex 拿到一段 JSON 当 JS 跑。三件散在三个包里各写一份迟早漂，而漂移的症状是**工具结果对不回去且不报错**，所以收进一个文件，往返对称由 `protocol/customtool_test.go` 钉。文法约束本身带不过去（CC 与 Anthropic 都没有对应能力），登记为 `DropToolGrammar`。同规则见 sub2api 的 `extractCustomToolCallInput`。解包**只对请求里声明为 custom 的工具做**——按形状猜会把一个真的只收 `input` 字符串参数的 JSON 工具误拆；这份「谁是 custom」的知识由 codec 实例从 Decode 带到 Encode（见上文实例生命周期）。拆不动就原样返回，不报错：第三方中转会重写 arguments，模型也可能换结构 |
 | custom 工具的入参没法逐片下发 | JSON 字符串的转义没法按分片增量解，所以要**攒满整串再拆包**，上游的分片节奏在这里必然丢。这条路上本来也没有节奏可丢：CC 流没有逐条工具终止符，解码侧早已把分片攒到流末尾一次性冲出（见上一条「CC 工具调用无逐条终止符」）|
