@@ -1,0 +1,76 @@
+{
+  "model": "gpt-5.6-luna",
+  "stream": true,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "问我一个问题"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "request_user_input",
+      "description": "Ask the user a question and wait for the answer.",
+      "strict": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ]
+      }
+    },
+    {
+      "type": "namespace",
+      "name": "functions",
+      "description": "Default namespace.",
+      "tools": [
+        {
+          "type": "function",
+          "name": "request_user_input",
+          "description": "Ask the user a question and wait for the answer.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "question"
+            ]
+          }
+        },
+        {
+          "type": "function",
+          "name": "wait",
+          "description": "Wait for a background job.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

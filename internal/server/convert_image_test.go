@@ -40,11 +40,11 @@ func tinyPNGDataURI(t *testing.T) string {
 	return "data:image/png;base64," + tinyPNGBase64(t)
 }
 
-// imageFixtureBody 读一份构造样本，把 model 换成接入点名。
+// fixtureBody 读一份构造样本，把 model 换成接入点名。图片六格与 #94 的 namespace 闸用例共用。
 //
 // synthetic 闸与 canonical_coverage_test.go / cachehit_fixture_test.go 同一道，方向也
 // 一样是反的：拦的是「构造样本被搬进 golden 冒充转录」。缘由见 testdata/fixtures/README.md。
-func imageFixtureBody(t *testing.T, name string) string {
+func fixtureBody(t *testing.T, name string) string {
 	t.Helper()
 	dir := filepath.Join("..", "..", "testdata", "fixtures", name)
 
@@ -162,7 +162,7 @@ func TestCC2AImageReachesUpstreamAsAnthropicImage(t *testing.T) {
 	gw, up := newCC2AGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, anthropicOKBody)
 
-	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+	gw.Post(t, "/v1/chat/completions", fixtureBody(t, "in-cc-image"), nil)
 
 	var sent sentAnthropicRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -202,7 +202,7 @@ func TestCC2RImageReachesUpstreamAsInputImage(t *testing.T) {
 	gw, up := newCC2RGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
 
-	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+	gw.Post(t, "/v1/chat/completions", fixtureBody(t, "in-cc-image"), nil)
 
 	var sent sentResponsesRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -241,7 +241,7 @@ func TestA2CCImageReachesUpstreamAsImageURL(t *testing.T) {
 			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
 			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 
-	gw.Post(t, "/v1/messages", imageFixtureBody(t, "in-anthropic-image"), nil)
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-image"), nil)
 
 	var sent sentCCRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -297,7 +297,7 @@ func TestA2RImageReachesUpstreamAsInputImage(t *testing.T) {
 	gw, up := newA2RGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
 
-	gw.Post(t, "/v1/messages", imageFixtureBody(t, "in-anthropic-image"), nil)
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-image"), nil)
 
 	var sent sentResponsesRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -326,7 +326,7 @@ func TestR2AImageReachesUpstreamAsAnthropicImage(t *testing.T) {
 			`"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",`+
 			`"usage":{"input_tokens":1,"output_tokens":1}}`)
 
-	gw.Post(t, "/v1/responses", imageFixtureBody(t, "in-responses-image"), nil)
+	gw.Post(t, "/v1/responses", fixtureBody(t, "in-responses-image"), nil)
 
 	var sent sentAnthropicRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -359,7 +359,7 @@ func TestR2CCImageReachesUpstreamAsImageURL(t *testing.T) {
 			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
 			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 
-	gw.Post(t, "/v1/responses", imageFixtureBody(t, "in-responses-image"), nil)
+	gw.Post(t, "/v1/responses", fixtureBody(t, "in-responses-image"), nil)
 
 	var sent sentCCRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -392,7 +392,7 @@ func TestCC2RImageDetailReachesUpstream(t *testing.T) {
 	gw, up := newCC2RGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
 
-	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+	gw.Post(t, "/v1/chat/completions", fixtureBody(t, "in-cc-image"), nil)
 
 	var sent sentResponsesRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -423,7 +423,7 @@ func TestR2CCImageDetailReachesUpstream(t *testing.T) {
 			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
 			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 
-	gw.Post(t, "/v1/responses", imageFixtureBody(t, "in-responses-image"), nil)
+	gw.Post(t, "/v1/responses", fixtureBody(t, "in-responses-image"), nil)
 
 	var sent sentCCRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -452,7 +452,7 @@ func TestCC2AImageDetailIsNotSentToAnthropic(t *testing.T) {
 	gw, up := newCC2AGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, anthropicOKBody)
 
-	gw.Post(t, "/v1/chat/completions", imageFixtureBody(t, "in-cc-image"), nil)
+	gw.Post(t, "/v1/chat/completions", fixtureBody(t, "in-cc-image"), nil)
 
 	body := string(up.Last(t).Body)
 	if strings.Contains(body, "detail") {
@@ -473,7 +473,7 @@ func TestA2CCToolResultImageIsLiftedIntoUserMessage(t *testing.T) {
 			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
 			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 
-	gw.Post(t, "/v1/messages", imageFixtureBody(t, "in-anthropic-toolresult-image"), nil)
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-toolresult-image"), nil)
 
 	var sent sentCCRequest
 	decodeSent(t, up.Last(t).Body, &sent)
@@ -517,7 +517,7 @@ func TestA2RToolResultImageIsLiftedIntoUserMessage(t *testing.T) {
 	gw, up := newA2RGateway(t)
 	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
 
-	gw.Post(t, "/v1/messages", imageFixtureBody(t, "in-anthropic-toolresult-image"), nil)
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-toolresult-image"), nil)
 
 	var sent sentResponsesRequest
 	decodeSent(t, up.Last(t).Body, &sent)

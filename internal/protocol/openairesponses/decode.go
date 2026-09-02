@@ -76,12 +76,13 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		return nil, PreviousResponseRejection()
 	}
 
+	// 工具声明住在两个容器里：ADE 走顶层 tools，Codex 走 input 里的 additional_tools
+	// 项。两处都进同一个 toolDecoder——namespace 展开与撞名查重要跨容器看（namespace.go）。
+	td := &toolDecoder{}
 	if raw, ok := root["tools"]; ok {
-		tools, err := decodeTools(raw)
-		if err != nil {
+		if err := td.decode(raw, "tools"); err != nil {
 			return nil, err
 		}
-		req.Tools = tools
 	}
 	if raw, ok := root["tool_choice"]; ok {
 		choice, err := decodeToolChoice(raw)
@@ -92,9 +93,16 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	}
 	c.compaction, c.compactionDrops = false, nil
 	if raw, ok := root["input"]; ok {
-		if err := c.decodeInput(raw, req); err != nil {
+		if err := c.decodeInput(raw, req, td); err != nil {
 			return nil, err
 		}
+	}
+	req.Tools = td.tools
+	// 两道就地 400（撞名、摊平名不合规）在这里出：判据只含本请求的工具声明，
+	// 不含 codec 之外的输入，与 previous_response_id 那道闸同一类。
+	namespaceTools, err := td.table()
+	if err != nil {
+		return nil, err
 	}
 
 	req.Extras = collectExtras(root, topLevelKnown)
@@ -104,12 +112,15 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 
 	if c.compaction {
 		rewriteAsSummarizer(req)
+		// 工具都剥了，映射表跟着清：summarizer turn 不会有工具调用要还原。
+		namespaceTools = nil
 	}
 
 	// 记下这次请求里哪些工具是 custom 形态。编码响应时要靠它决定发
 	// custom_tool_call 还是 function_call，并把 CC 侧合成的 JSON 包装对称拆回来
-	// （见 encode.go）。这是 Decode 与 Encode 之间唯一的跨调用状态，也是 codec
-	// 实例必须每请求一个的原因（internal/protocol/codecs/codecs.go）。
+	// （见 encode.go）。与 namespaceTools 一起，是 Decode 与 Encode 之间仅有的跨调用
+	// 状态，也是 codec 实例必须每请求一个的原因（internal/protocol/codecs/codecs.go）。
+	// 记的是摊平名：编码侧看到的 function-call 名字就是摊平名。
 	c.customTools = nil
 	for _, t := range req.Tools {
 		if t.Kind == protocol.ToolCustom {
@@ -119,6 +130,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 			c.customTools[t.Name] = true
 		}
 	}
+	c.namespaceTools = namespaceTools
 	return req, nil
 }
 
@@ -126,7 +138,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 // 消息序列。
 //
 // input 可以是纯字符串（协议允许 `"input": "hello"`），退化为一条 user 消息。
-func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
+func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request, td *toolDecoder) error {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		req.Messages = append(req.Messages, protocol.Message{
@@ -179,12 +191,13 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request) error {
 			//
 			// 不 flush：这个 item 不带内容，收口只会把它前后两条同侧 item 劈成两条
 			// 消息，正是下面攒消息要避免的那件事。
+			//
+			// 进同一个 toolDecoder 而不是就地 append 到 req.Tools：Codex 把工具裹在
+			// `functions` 命名空间里放在这儿，展开与撞名查重都在那边（namespace.go）。
 			if raw, ok := item["tools"]; ok {
-				tools, err := decodeTools(raw)
-				if err != nil {
-					return fmt.Errorf("openairesponses: input[%d]: %w", i, err)
+				if err := td.decode(raw, fmt.Sprintf("input[%d].tools", i)); err != nil {
+					return err
 				}
-				req.Tools = append(req.Tools, tools...)
 			}
 
 		case "", "message":
@@ -455,48 +468,40 @@ func decodeToolResult(item map[string]json.RawMessage) (*protocol.ToolResult, er
 	return result, nil
 }
 
-// decodeTools 解工具声明数组。
-func decodeTools(raw json.RawMessage) ([]protocol.Tool, error) {
-	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, fmt.Errorf("openairesponses: tools 不是数组: %w", err)
+// decodeTool 解一条工具声明。kind 是它的 type（调用方已经读出来，namespace 项在
+// toolDecoder.decode 里展开，不会走到这里）。
+//
+// 顶层工具与 namespace 子项走同一个函数：子项种类不变是口径（口径层 v1.14 ②），
+// 两份分类逻辑迟早漂。
+func decodeTool(item map[string]json.RawMessage, kind string) (protocol.Tool, error) {
+	var tool protocol.Tool
+	if err := unmarshalIf(item, "name", &tool.Name); err != nil {
+		return tool, err
 	}
-	tools := make([]protocol.Tool, 0, len(items))
-	for i, item := range items {
-		var tool protocol.Tool
-		var kind string
-		if err := unmarshalIf(item, "type", &kind); err != nil {
-			return nil, fmt.Errorf("openairesponses: tools[%d]: %w", i, err)
-		}
-		if err := unmarshalIf(item, "name", &tool.Name); err != nil {
-			return nil, fmt.Errorf("openairesponses: tools[%d]: %w", i, err)
-		}
-		if err := unmarshalIf(item, "description", &tool.Description); err != nil {
-			return nil, fmt.Errorf("openairesponses: tools[%d]: %w", i, err)
-		}
-		if raw, ok := item["parameters"]; ok {
-			// 原样存字节：JSON Schema 的键序与数值精度都可能影响上游行为，解开再
-			// 合上是白担的失真风险。
-			tool.Schema = append(json.RawMessage(nil), raw...)
-		}
-		switch kind {
-		case "custom":
-			// custom 工具没有 schema，只有一份 lark 文法的 format，它进 Extras
-			// （canonical 没有对应物，转 CC 时丢）。
-			tool.Kind = protocol.ToolCustom
-		case "", "function":
-			tool.Kind = protocol.ToolFunction
-		default:
-			// web_search / file_search 等上游自带能力：网关变不出这个能力，
-			// 只能原样带给认得它的上游，转 CC 时由编码侧丢弃。
-			tool.Kind = protocol.ToolServer
-		}
-		tool.Extras = collectExtras(item, map[string]bool{
-			"name": true, "description": true, "parameters": true,
-		})
-		tools = append(tools, tool)
+	if err := unmarshalIf(item, "description", &tool.Description); err != nil {
+		return tool, err
 	}
-	return tools, nil
+	if raw, ok := item["parameters"]; ok {
+		// 原样存字节：JSON Schema 的键序与数值精度都可能影响上游行为，解开再
+		// 合上是白担的失真风险。
+		tool.Schema = append(json.RawMessage(nil), raw...)
+	}
+	switch kind {
+	case "custom":
+		// custom 工具没有 schema，只有一份 lark 文法的 format，它进 Extras
+		// （canonical 没有对应物，转 CC 时丢）。
+		tool.Kind = protocol.ToolCustom
+	case "", "function":
+		tool.Kind = protocol.ToolFunction
+	default:
+		// web_search / file_search 等上游自带能力：网关变不出这个能力，
+		// 只能原样带给认得它的上游，转 CC 时由编码侧丢弃。
+		tool.Kind = protocol.ToolServer
+	}
+	tool.Extras = collectExtras(item, map[string]bool{
+		"name": true, "description": true, "parameters": true,
+	})
+	return tool, nil
 }
 
 // decodeToolChoice 解 tool_choice：可能是字符串，也可能是 {type,name} 对象。
