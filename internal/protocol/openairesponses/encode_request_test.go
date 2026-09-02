@@ -2,6 +2,7 @@ package openairesponses
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -298,30 +299,64 @@ func TestEncodeToolsAreFlat(t *testing.T) {
 	}
 }
 
-// TestEncodeToolChoice：三种直传 + 指名形态 + 两种该省略的组合。
+// TestEncodeToolChoice：三种直传 + 指名形态 + 落空的两档处置。
+//
+// 处置与 CC / Anthropic 出口同一规则（口径层 v1.14 ⑧、v1.15）：auto / none 落空省略
+// 并登记 tool_choice 档；required 与点名落空回 400。原先「指名一个没声明的工具就不发」
+// 的用例改判 400——三个出口对同一件事说同一句话，不再因上游协议不同而一个 400 一个
+// 静默降档。
 func TestEncodeToolChoice(t *testing.T) {
 	tools := []protocol.Tool{{Kind: protocol.ToolFunction, Name: "f", Schema: json.RawMessage(`{}`)}}
+	server := []protocol.Tool{{Kind: protocol.ToolServer, Name: "web_search"}}
 	cases := []struct {
-		name   string
-		tools  []protocol.Tool
-		choice protocol.ToolChoice
-		want   any // nil 表示该省略
+		name    string
+		tools   []protocol.Tool
+		choice  protocol.ToolChoice
+		want    any    // nil 表示该省略
+		wantErr string // 非空表示该回 400，且文案含这一段
 	}{
-		{"auto", tools, protocol.ToolChoice{Mode: "auto"}, "auto"},
-		{"none", tools, protocol.ToolChoice{Mode: "none"}, "none"},
-		{"required", tools, protocol.ToolChoice{Mode: "required"}, "required"},
-		{"named", tools, protocol.ToolChoice{Mode: "tool", Name: "f"},
-			map[string]any{"type": "function", "name": "f"}},
-		{"没有工具就不发", nil, protocol.ToolChoice{Mode: "auto"}, nil},
-		{"指名一个没声明的工具就不发", tools, protocol.ToolChoice{Mode: "tool", Name: "ghost"}, nil},
+		{name: "auto", tools: tools, choice: protocol.ToolChoice{Mode: "auto"}, want: "auto"},
+		{name: "none", tools: tools, choice: protocol.ToolChoice{Mode: "none"}, want: "none"},
+		{name: "required", tools: tools, choice: protocol.ToolChoice{Mode: "required"}, want: "required"},
+		{name: "named", tools: tools, choice: protocol.ToolChoice{Mode: "tool", Name: "f"},
+			want: map[string]any{"type": "function", "name": "f"}},
+		{name: "没有工具：auto 落空省略并登记", tools: nil, choice: protocol.ToolChoice{Mode: "auto"}},
+		{name: "只剩服务端工具：none 落空省略并登记", tools: server, choice: protocol.ToolChoice{Mode: "none"}},
+		{name: "required 落空：一个工具都没声明", tools: nil, choice: protocol.ToolChoice{Mode: "required"}, wantErr: "没有声明"},
+		{name: "required 落空：只剩服务端工具", tools: server, choice: protocol.ToolChoice{Mode: "required"}, wantErr: "web_search"},
+		{name: "指名一个没声明的工具", tools: tools, choice: protocol.ToolChoice{Mode: "tool", Name: "ghost"}, wantErr: `"ghost"`},
+		{name: "指名被丢的服务端工具", tools: server, choice: protocol.ToolChoice{Mode: "tool", Name: "web_search"}, wantErr: "服务端工具"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := mustOut(t, &protocol.Request{Model: "m", Tools: tc.tools, ToolChoice: tc.choice})
+			req := &protocol.Request{Model: "m", Tools: tc.tools, ToolChoice: tc.choice}
+			if tc.wantErr != "" {
+				_, dropped, err := NewCodec().EncodeRequestReport(req, false)
+				reqErr, ok := errors.AsType[*protocol.RequestError](err)
+				if !ok {
+					t.Fatalf("期望 *protocol.RequestError，得到 %v", err)
+				}
+				if reqErr.Param != protocol.ParamToolChoice || reqErr.Code != protocol.CodeInvalidValue {
+					t.Errorf("param/code = %q/%q", reqErr.Param, reqErr.Code)
+				}
+				if !strings.Contains(reqErr.Message, tc.wantErr) {
+					t.Errorf("文案 %q 没点到 %q", reqErr.Message, tc.wantErr)
+				}
+				// dropped 得跟错误一起回：relay 先打丢弃 Warn 再拒，看日志的人才知道
+				// required 为什么会落空。
+				if len(tc.tools) > 0 && tc.tools[0].Kind == protocol.ToolServer && !dropped.Has(DropServerTool) {
+					t.Errorf("出错时 dropped 没交出来: %v", dropped)
+				}
+				return
+			}
+			out, dropped := encodeOut(t, req, false)
 			got, present := out["tool_choice"]
 			if tc.want == nil {
 				if present {
 					t.Errorf("tool_choice = %v, want 省略", got)
+				}
+				if !dropped.Has(DropToolChoice) {
+					t.Errorf("tool_choice 落空却没登记: %v", dropped)
 				}
 				return
 			}

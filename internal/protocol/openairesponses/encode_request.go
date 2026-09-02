@@ -3,6 +3,7 @@ package openairesponses
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -46,6 +47,9 @@ const (
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
 	// （内容块）不是一档。effort 不在这一档——它现在原样直传成 reasoning.effort。
 	DropThinkingParam = "thinking_param"
+	// DropToolChoice 是 auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，
+	// 名单记 mode（口径层 v1.14 ⑧、v1.15：三个出口同一规则）。
+	DropToolChoice = "tool_choice"
 )
 
 // EncodeRequest 把 canonical 编成 Responses 请求体。
@@ -69,11 +73,15 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	out := map[string]any{"model": req.Model}
 	out["input"] = encodeInput(req, drop)
 
-	tools, declared := encodeOutTools(req.Tools, &dropped)
+	tools, declared, droppedTools := encodeOutTools(req.Tools, &dropped)
 	if len(tools) > 0 {
 		out["tools"] = tools
 	}
-	if choice, ok := encodeOutToolChoice(req.ToolChoice, declared); ok {
+	choice, ok, err := encodeOutToolChoice(req.ToolChoice, declared, droppedTools, &dropped)
+	if err != nil {
+		return nil, dropped, err
+	}
+	if ok {
 		out["tool_choice"] = choice
 	}
 
@@ -280,14 +288,18 @@ func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) map[string
 //
 // Responses 的工具是扁平形态：`{"type":"function","name":…,"parameters":…}`，没有
 // CC 那层 function 嵌套（九份真实请求样本一致）。
-func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[string]any, map[string]bool) {
+//
+// 三个返回值：编好的声明、真发得出去的工具名（tool_choice 判据与 400 文案都用它）、
+// 被丢的服务端工具名（400 文案点名用）。与 openaicc.encodeTools 同构。
+func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[string]any, []string, []string) {
 	out := make([]map[string]any, 0, len(tools))
-	declared := map[string]bool{}
+	var declared, droppedTools []string
 	for _, t := range tools {
 		if t.Kind == protocol.ToolServer {
 			// 服务端工具是**上游侧**能力，目标上游既不认这个 type 也变不出这个能力。
 			// 带名字登记（口径层 v1.14 ⑨，三个出口一致）。
 			dropped.Add(DropServerTool, t.Name)
+			droppedTools = append(droppedTools, t.Name)
 			continue
 		}
 		fn := map[string]any{"type": "function", "name": t.Name}
@@ -307,29 +319,40 @@ func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[strin
 			dropped.Add(DropToolGrammar, t.Name)
 		}
 		out = append(out, fn)
-		declared[t.Name] = true
+		declared = append(declared, t.Name)
 	}
-	return out, declared
+	return out, declared, droppedTools
 }
 
-// encodeOutToolChoice 把 canonical 的选择策略编成 Responses 形态，并挡掉两种会被
+// encodeOutToolChoice 把 canonical 的选择策略编成 Responses 形态，并处置两种会被
 // 上游拒的组合：没有 tools 却带 tool_choice、tool_choice 指名一个没声明的工具。
-func encodeOutToolChoice(choice protocol.ToolChoice, declared map[string]bool) (any, bool) {
-	if choice.Mode == "" || len(declared) == 0 {
-		return nil, false
-	}
+//
+// 处置分两档，与 CC / Anthropic 出口同一规则（口径层 v1.14 ⑧、v1.15）：auto / none
+// 落空**静默省略但登记** tool_choice 档；required 与点名落空**回 400**。原先这个出口
+// 点名落空是静默不发（上游默认 auto），同一条请求换个上游协议就从 400 变静默降档，
+// 客户端查不到因——v1.15 把它拉平。
+func encodeOutToolChoice(choice protocol.ToolChoice, declared, droppedTools []string, dropped *protocol.Drops) (any, bool, error) {
 	switch choice.Mode {
-	case "auto", "none", "required":
-		return choice.Mode, true
+	case "auto", "none":
+		if len(declared) == 0 {
+			dropped.Add(DropToolChoice, choice.Mode)
+			return nil, false, nil
+		}
+		return choice.Mode, true, nil
+	case "required":
+		if len(declared) == 0 {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
+		}
+		return choice.Mode, true, nil
 	case "tool":
-		if !declared[choice.Name] {
-			return nil, false
+		if !slices.Contains(declared, choice.Name) {
+			return nil, false, protocol.ToolChoiceRejection(choice, declared, droppedTools)
 		}
 		// 指名形态是扁平的 {"type":"function","name":X}，与工具声明同构，
 		// 没有 CC 那层 function 嵌套（sub2api anthropic_to_responses.go）。
-		return map[string]any{"type": "function", "name": choice.Name}, true
+		return map[string]any{"type": "function", "name": choice.Name}, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // encodeOutUserParts 编 user / developer 消息的 content 数组（正文部件是 input_text）。
