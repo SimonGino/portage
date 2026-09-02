@@ -1,0 +1,11 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "synthetic": true,
+  "source": "#94 手工构造：口径层 v1.14 ④ 的摊平名超限——命名空间 mcp__ade_asset_knowledge（ADE 实采的真名，含 __）加一个 46 字符的子工具名，摊平后 72 字符，超过 CC 与 Anthropic 共同的 64 上限，DecodeRequest 就地 400 点名那个工具。同壳里另放一个合规的子工具，钉「点名的是超限那一个」。形状照 ADE 实采裁剪，子工具名与 schema 是编的。不是转录——ADE 实采里最长的摊平名是 48 字符，没撞到线。"
+}

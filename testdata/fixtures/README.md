@@ -51,3 +51,20 @@ pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连�
 非流式各一对「建缓存 + 命中」。本目录这两份照首段的规矩**留作形状回归**，不删不搬。
 官方**直连**实测那一格仍归 [#2](https://github.com/SimonGino/portage/issues/2)——中转透明
 证明的是「这条链路没吃 usage 字段」，不是「官方就这么发」。
+
+## in-responses-namespace-collision / in-responses-namespace-badname
+
+[#94](https://github.com/SimonGino/portage/issues/94) Responses `type=namespace` 摊平的两道就地 400
+（口径层 v1.14 ③④），两份都是**手工构造**——ADE 实采 `golden/in-responses-namespace-turn1`
+的 55 个工具既不撞名、最长的摊平名也只有 48 字符，真实发包里撞不到这两条线。
+
+- `collision`：`request_user_input` 既是顶层 function（ADE 的摆法）又是 `functions` 默认命名
+  空间的子项（Codex 的摆法）。摊平后一名两源，`DecodeRequest` 回 400 **点名两个来源**，
+  `param` 指后来的那个（`tools[1].tools[0].name`）。
+- `badname`：命名空间 `mcp__ade_asset_knowledge`（ADE 真名，含 `__`）加一个 46 字符的子工具名，
+  摊平后 72 字符，超过 CC 与 Anthropic 共同的 64 上限；同壳里另放一个合规子项，钉「点名的是
+  超限那一个」（`param` = `tools[0].tools[1].name`）。
+
+形状照 ADE 实采裁剪，工具的描述与 schema 是编的。消费方：
+`internal/protocol/openairesponses/namespace_test.go`（错误对象）、`internal/server/namespace_test.go`
+（HTTP 面：400 信封 + 上游零请求）、`internal/protocol/canonical_coverage_test.go`（覆盖表）。

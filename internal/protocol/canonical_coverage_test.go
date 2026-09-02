@@ -187,15 +187,16 @@ var coverage = map[string]disposition{
 	"tools[].parameters":          dOpaque, // Tool.Schema
 	"tools[].strict":              dExtras,
 	"tools[].external_web_access": dExtras, // web_search 的开关，随 ToolServer 进 Extras
-	// namespace 子工具**今天**落在 Extras 里没人读——这正是口径层 v1.14 要修的
-	// bug（45/55 个工具整体丢弃）。裁决是解码侧摊平成 Tool（`<ns>__<name>`，
-	// functions 免前缀），实现落地后这几行改 dField。
-	"tools[].tools":               dExtras,
-	"tools[].tools[]":             dExtras,
-	"tools[].tools[].type":        dExtras,
-	"tools[].tools[].name":        dExtras,
-	"tools[].tools[].description": dExtras,
-	"tools[].tools[].parameters":  dOpaque,
+	// namespace 子工具在解码侧摊平成一个个 Tool（口径层 v1.14 ①—④，#94）：名字拼成
+	// `<ns>__<name>`（functions / 空 / 缺失免前缀），type 照旧是 Tool.Kind 的判别式，
+	// 摊平名 → 来处记在 openairesponses.Codec.NamespaceTools()。外壳自己的 name /
+	// description 只贡献前缀，不单独落地。
+	"tools[].tools":               dField,
+	"tools[].tools[]":             dField,
+	"tools[].tools[].type":        dField,
+	"tools[].tools[].name":        dField,  // 摊平进 Tool.Name
+	"tools[].tools[].description": dField,  // Tool.Description
+	"tools[].tools[].parameters":  dOpaque, // Tool.Schema
 	"tools[].tools[].strict":      dExtras,
 
 	// ---- OpenAI Chat Completions（opencode 1.18 实采，portage-legacy#27）----

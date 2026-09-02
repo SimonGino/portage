@@ -1,0 +1,59 @@
+{
+  "model": "gpt-5.6-luna",
+  "stream": true,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "读一下知识库索引"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "namespace",
+      "name": "mcp__ade_asset_knowledge",
+      "description": "Tools in the mcp__ade_asset_knowledge namespace.",
+      "tools": [
+        {
+          "type": "function",
+          "name": "searchBusinessAssets",
+          "description": "Search business assets by keyword.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "keyword": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "keyword"
+            ]
+          }
+        },
+        {
+          "type": "function",
+          "name": "readKnowledgeIndexFileFromCorporateSharedDrive",
+          "description": "Read the knowledge index file from the corporate shared drive.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
