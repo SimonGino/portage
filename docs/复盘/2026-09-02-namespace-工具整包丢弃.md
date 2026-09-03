@@ -146,6 +146,8 @@ golden 零改动：六份 `in-cc-*` 样本工具全是 `type:"function"` 且入�
 
 golden 零改动：九份 Responses 转录里没有服务端工具 item、`refusal` 与表外事件名，六份 `in-cc-*` 的 `tool_choice` 只见过 `"auto"`。端到端用例断言搜索词与图片 base64 不进日志。
 
+**审查修正（`d660e78`）**：打 tag 前对 v0.4.9..HEAD 做了一轮 opus 对抗式审查，六条无阻断项，修了五条：残缺入参救治的登记从「`json.Valid` 不过就记」收窄到「非空且解不动才记」——零参工具的 `"arguments":""` 此前每轮刷假警报，正好是本次复盘「丢东西要有声音」的反面：**假警报会把真警报淹掉**；对象形态 `arguments` 此前 CC 入口救成 `{}`、Responses 入口整包 400，现在原样保留（两入口共用 `DecodeToolArgs`）；三份新登记名单补上出口侧早有的 64 条封顶；流内错误后不补 `{}` 帧；一条失效注释。审查确认没问题的：流式登记的 happens-before 路径（提前返回都走 `panic(http.ErrAbortHandler)`，读方不执行）、三条 Warn 无 key / base_url / 正文、透传路径零触碰、每请求归零、golden 零改动。
+
 ## 实采证据
 
 PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请求脱敏后入库为 `testdata/golden/in-responses-namespace-turn2`：72 个工具声明（9 个命名空间 / 61 个子工具 / 10 个顶层 function / 1 个 web_search），17 次回带调用。
