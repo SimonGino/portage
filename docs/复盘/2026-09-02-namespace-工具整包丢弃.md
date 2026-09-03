@@ -42,6 +42,7 @@
 | 余波 | 实采日志里 `server_tool` 裸着没带名字 → 丢弃名单空名退到 `type`（v1.18） |
 | 对照 | PO 好奇 mimo2codex 怎么处理 `web_search`，拉下来进参考名单，逐条对照出三条我们没有的历史修补 |
 | 修补 | 回带残缺入参救治、CC 出口孤儿 tool 消息、两出口缺失结果占位（v1.19），两个 opus 子代理并行落码 |
+| 复查 | PO 问 CC↔Responses 转换有没有同款问题：四路 opus 只读审查，CC 入口工具那块落后一整轮，拉平并顺手修三处响应侧实洞（v1.20），响应解码侧无登记通道立待澄清 14 |
 
 附带发现（与本题独立，各自单修）：Chat Completions 形态的 body 打到 `/v1/responses` 会转成 `messages=[]` 原样转发，上游报 `Messages cannot be empty.`；无 tools 时 `tool_choice=required` 被出口保护静默去掉。两条都归到口径层 v1.14 ⑦⑧ 的「转换后请求已不成立就自己回 400」。
 
@@ -115,6 +116,21 @@
 
 现有 golden 与 fixture 的调用 / 结果全部配平，(b)(c) 在它们身上惰性；真机残缺历史的样本还没有。
 
+### 第七批：CC↔Responses 同款复查（v1.20，`d69b63a`、`550ae85`）
+
+起因：PO 问「CC / Responses 转换是不是也有同样的问题」。四路 opus 只读审查（CC→R 出口请求编码 / CC 入口解码 / Responses 上游响应解码与 CC 响应编码 / 全路径静默丢弃穷举）。主干干净：孤儿 output 丢弃登记、空 input 400、tool_choice 三档、`store=false`、call_id 区分、index 重编、三种收尾、usage 明细、响应 id 都对。病灶在 **CC 入口解码**——工具那块落后 Responses 入口一整轮，与本次复盘同款：
+
+| 改动 | 原因 |
+| --- | --- |
+| (a) CC 回带 `tool_calls[].function.arguments` 残缺（截断 / 空串 / 缺失 / 非字符串对象四档）→ `{}`，`openaicc.Codec.ArgsSalvaged()` 登记；relay 那条 Warn 改断言小接口，两入口共用 | 第六批 (a) 只修了 Responses 入口。CC→A 出口拿它当 `json.RawMessage` Marshal 报错是**我们自己 500**，比上游 400 更难归因 |
+| (b) CC 的 `type:"custom"` 工具声明归 `ToolCustom`，`format` 进 Extras；`collectExtras` 的 known 集去掉 `type` | 官方 SDK 是 `Function \| Custom` union，new-api 由 Responses 转出真会发。此前整包丢且**丢时无名**——`type` 被吃进 known 集，第五批那条空名退 `type` 在 CC 入口是死的。和本次 namespace 整包丢弃是同一类事故 |
+| (c) `tool_calls[].type=="custom"` 从 `custom.name` / `custom.input` 读，`ArgsIsJSON=false` | 只读 `function` 解出空名空参，出口发 `name:""` 的调用 |
+| (d) Responses 出口服务端工具丢弃登记 `t.Name` → `t.Label()` | 第五批漏的一处，三出口从此同规 |
+| Responses 响应解码与出口编码的单槽 `pending` 改 `map[int]` + 首次出现序；`response.incomplete` 在 `done` 前 flush 全部；CC 流式零入参补 `{"arguments":"{}"}` | 三处实洞，不立口径。两个 `custom_tool_call` item 同开时前者分片无声丢光；打断时半截入参连 `EvToolCallEnd` 一起消失；流式与非流式在「入参必是 JSON 串」上不对称。今天上游都串行放工具，线上走不到，是回归闸 |
+| 响应解码侧无登记通道（`web_search_call` 等服务端 item、未列事件名、`refusal` 静默跳过）+ CC 入口 `tool_choice` 的 `custom` / `allowed_tools` 形态静默丢 + Responses 出口非 assistant 消息上的 `tool_calls` 不发却记配对表 → **不在本批修**，立口径层待澄清 14 | 三条都要先有通道再谈明细，形态与占位扩不扩到 Responses 出口是决策，等 PO 与 13 一起拍 |
+
+golden 零改动：六份 `in-cc-*` 样本工具全是 `type:"function"` 且入参合法。
+
 ## 实采证据
 
 PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请求脱敏后入库为 `testdata/golden/in-responses-namespace-turn2`：72 个工具声明（9 个命名空间 / 61 个子工具 / 10 个顶层 function / 1 个 web_search），17 次回带调用。
@@ -148,4 +164,5 @@ PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请�
   - 具名命名空间内 custom 今天**没有任何信号**（不报错、不丢弃、不打日志，与顶层 custom 共用同一条 `decodeTool`）。要判断真机有没有出现只能重开采样 grep。缺的是样本覆盖而非正确性风险，暂不为它常开开关。
 - `PORTAGE_DUMP_DIR` 抓下的 dump 目录是客户完整对话原文，取证完成后即关，不留存。
 - 第六批三条修补只有构造样本。日志里出现 `orphan_result` / `missing_result` 档位或「回带历史里有残缺的工具入参」那条 Warn，就是真机撞上的信号，届时补实采。
+- 第七批 CC 入口三件同样只有构造样本；那条残缺入参 Warn 两入口共用一句，靠 `calls` 里的 id 形态（`call_` 前缀是 CC/Responses 同源，分不出入口）不够，真要区分看同一条调用日志的入口协议。响应解码侧登记通道（待澄清 14）没立之前，上游自带搜索花的钱在日志里仍是零字。
 - 顶层工具与默认命名空间子项同名的撞名（mimo2codex issue #20 证明 Codex 会这么发）今天按第一批规则 400。是否收窄成「同名同 schema 去重」等真机撞上再议，不预设。
