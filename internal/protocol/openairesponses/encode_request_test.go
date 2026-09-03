@@ -817,3 +817,33 @@ func TestEncodeEmptyInputRejects(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeRequestDropNamesNamelessServerToolByType：无名服务端工具按 type 记进
+// 丢弃名单（口径层 v1.18，三个出口一致——R 出口是漏的那第三个）。
+//
+// Responses 的 web_search 声明本来就没有 name，用 Name 登记会被 Drops.Add 当空名
+// 跳过，日志里只剩光秃秃的 server_tool，「丢了 web_search」与「丢了别的没名字的
+// 服务端能力」分不开。
+func TestEncodeRequestDropNamesNamelessServerToolByType(t *testing.T) {
+	_, dropped, err := NewCodec().EncodeRequestReport(&protocol.Request{
+		Model:    "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}},
+		Tools: []protocol.Tool{
+			{Kind: protocol.ToolFunction, Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Kind: protocol.ToolServer, Extras: map[string]any{"type": "web_search", "external_web_access": true}},
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := dropped.Names(DropServerTool)
+	found := false
+	for _, n := range names {
+		if n == "web_search" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("无名服务端工具应按 type 记进名单，得到 %v", names)
+	}
+}

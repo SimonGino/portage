@@ -305,8 +305,11 @@ func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[strin
 		if t.Kind == protocol.ToolServer {
 			// 服务端工具是**上游侧**能力，目标上游既不认这个 type 也变不出这个能力。
 			// 带名字登记（口径层 v1.14 ⑨，三个出口一致）。
-			dropped.Add(DropServerTool, t.Name)
-			droppedTools = append(droppedTools, t.Name)
+			// Label() 而不是 Name：Responses 的 web_search 声明本来就没有 name，
+			// 空名会被 Drops.Add 跳过，日志里只剩光秃秃的 server_tool（口径层 v1.18，
+			// 三个出口一致）。
+			dropped.Add(DropServerTool, t.Label())
+			droppedTools = append(droppedTools, t.Label())
 			continue
 		}
 		fn := map[string]any{"type": "function", "name": t.Name}

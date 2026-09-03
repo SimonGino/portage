@@ -40,6 +40,10 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		return nil, fmt.Errorf("openaicc: 请求体不是 JSON 对象: %w", err)
 	}
 
+	// 每请求状态在这里归零：codec 每请求由 codecs.New 实例化，但归零是显式的，
+	// 免得将来复用实例时把上一轮的登记带进这一轮。
+	c.argsSalvaged = nil
+
 	req := &protocol.Request{Stream: stream}
 
 	if err := unmarshalIf(root, "model", &req.Model); err != nil {
@@ -73,7 +77,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	// anthropic/decode.go：请求体里的 stream 与它不一致时，那是 relay 的判断。
 
 	if raw, ok := root["messages"]; ok {
-		msgs, err := decodeMessages(raw)
+		msgs, err := c.decodeMessages(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -138,14 +142,14 @@ var messageKnown = map[string]bool{
 // role 不做校验：CC 侧 system / developer / user / assistant / tool 都合法，且
 // role=system 允许出现在中段（encodeNonAssistant 原样保留它的位置）。把角色集合
 // 钉死会当场拒收一个合法请求。**归一是另一回事**，见 normalizeRole。
-func decodeMessages(raw json.RawMessage) ([]protocol.Message, error) {
+func (c *Codec) decodeMessages(raw json.RawMessage) ([]protocol.Message, error) {
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, fmt.Errorf("openaicc: messages 不是数组: %w", err)
 	}
 	msgs := make([]protocol.Message, 0, len(items))
 	for i, item := range items {
-		msg, err := decodeMessage(item)
+		msg, err := c.decodeMessage(item)
 		if err != nil {
 			return nil, fmt.Errorf("openaicc: messages[%d]: %w", i, err)
 		}
@@ -167,7 +171,7 @@ func normalizeRole(r protocol.Role) protocol.Role {
 	return r
 }
 
-func decodeMessage(item map[string]json.RawMessage) (protocol.Message, error) {
+func (c *Codec) decodeMessage(item map[string]json.RawMessage) (protocol.Message, error) {
 	var msg protocol.Message
 	if err := unmarshalIf(item, "role", &msg.Role); err != nil {
 		return msg, err
@@ -205,7 +209,7 @@ func decodeMessage(item map[string]json.RawMessage) (protocol.Message, error) {
 	// 消息的两个并列字段，canonical 是单一块序列，正文在前调用在后是唯一无损的铺法
 	// （Anthropic 实采里也是这个次序）。
 	if raw, ok := item["tool_calls"]; ok {
-		calls, err := decodeToolCalls(raw)
+		calls, err := c.decodeToolCalls(raw)
 		if err != nil {
 			return msg, err
 		}
@@ -318,45 +322,104 @@ func omittedImage(b protocol.Block) bool {
 }
 
 // decodeToolCalls 把 assistant 的 tool_calls 数组解成 tool_use 块序列。
-func decodeToolCalls(raw json.RawMessage) ([]protocol.Block, error) {
+//
+// 两种形态都要认（官方 SDK 的 ChatCompletionMessageToolCallUnion）：
+//   - `{"type":"function","id":…,"function":{"name","arguments"}}`，arguments 是 JSON 字符串；
+//   - `{"type":"custom","id":…,"custom":{"name","input"}}`，input 是自由文本
+//     （new-api 的 relayconvert 就这么把 Responses 的 custom_tool_call 发给 CC 上游）。
+//
+// custom 的 input 与 Responses 入口的 custom_tool_call 同规：ArgsIsJSON=false，
+// 一个字节都不碰，更不救治——救治只针对声称是 JSON 的那一种。
+func (c *Codec) decodeToolCalls(raw json.RawMessage) ([]protocol.Block, error) {
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, fmt.Errorf("tool_calls 不是数组: %w", err)
 	}
 	blocks := make([]protocol.Block, 0, len(items))
 	for i, item := range items {
-		call := &protocol.ToolCall{}
-		if err := unmarshalIf(item, "id", &call.ID); err != nil {
+		call, err := c.decodeToolCall(item)
+		if err != nil {
 			return nil, fmt.Errorf("tool_calls[%d]: %w", i, err)
 		}
-		if raw, ok := item["function"]; ok {
-			var fn struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}
-			if err := json.Unmarshal(raw, &fn); err != nil {
-				return nil, fmt.Errorf("tool_calls[%d].function: %w", i, err)
-			}
-			call.Name = fn.Name
-			// arguments 按 CC 契约就是 JSON 字符串，故 ArgsIsJSON 恒 true。它是
-			// **字符串**不是对象，所以这里是解开一层引号，不是取原始字节——与
-			// Anthropic 的 input（本身就是对象）走的路不同。
-			call.Args, call.ArgsIsJSON = fn.Arguments, true
-		}
-		// type 恒 "function"，没有第二种取值，不进 Extras 也不丢信息。
-		call.Extras = collectExtras(item, map[string]bool{
-			"id": true, "type": true, "function": true, "index": true,
-		})
 		blocks = append(blocks, protocol.Block{Kind: protocol.BlockToolUse, ToolCall: call})
 	}
 	return blocks, nil
 }
 
+func (c *Codec) decodeToolCall(item map[string]json.RawMessage) (*protocol.ToolCall, error) {
+	call := &protocol.ToolCall{}
+	if err := unmarshalIf(item, "id", &call.ID); err != nil {
+		return nil, err
+	}
+	var kind string
+	if err := unmarshalIf(item, "type", &kind); err != nil {
+		return nil, err
+	}
+
+	if kind == "custom" {
+		if raw, ok := item["custom"]; ok {
+			var cu struct {
+				Name  string `json:"name"`
+				Input string `json:"input"`
+			}
+			if err := json.Unmarshal(raw, &cu); err != nil {
+				return nil, fmt.Errorf("custom: %w", err)
+			}
+			call.Name, call.Args = cu.Name, cu.Input
+		}
+	} else if raw, ok := item["function"]; ok {
+		var fn struct {
+			Name string `json:"name"`
+			// arguments 按 CC 契约是 JSON **字符串**，但回带历史里它可以是任何东西
+			// （对象、null、缺失），所以先收原始字节再自己判，一律不因它拒整条请求。
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(raw, &fn); err != nil {
+			return nil, fmt.Errorf("function: %w", err)
+		}
+		call.Name, call.ArgsIsJSON = fn.Name, true
+		// 是字符串就解开一层引号（与 Anthropic 的 input 那种本身就是对象的路不同）；
+		// 不是字符串就留空，交给下面的救治归成 `{}`。
+		if len(fn.Arguments) > 0 {
+			_ = json.Unmarshal(fn.Arguments, &call.Args)
+		}
+	}
+
+	// 残缺入参就地救治成 `{}`，与 openairesponses 入口同规（§5 坑清单）。上一轮流被
+	// 截断——finish_reason=length、断网、客户端取消——客户端会把只写了一半的 arguments
+	// 原样存进历史，之后**同一会话每个请求**都带着它：走 CC→R 出口严格上游逐次 400，
+	// 走 CC→A 出口 encodeToolUse 拿它当 json.RawMessage，Marshal 当场报错回自家 500。
+	//
+	// 只清空入参、**不删整条调用**：删了配对的 role=tool 结果就成了孤儿，一样被拒。
+	// 非字符串的 arguments（`{}` 这种对象形态，非规范但真实存在）走同一条路——归 `{}`
+	// 并登记，而不是拒掉整条请求。
+	if call.ArgsIsJSON && !json.Valid([]byte(call.Args)) {
+		call.Args = "{}"
+		c.argsSalvaged = append(c.argsSalvaged, call.Name+"("+call.ID+")")
+	}
+
+	// type 不进 Extras：它已经由 Kind/ArgsIsJSON 表达完了，两种形态各自的载荷对象
+	// （function / custom）也已经解干净。
+	call.Extras = collectExtras(item, map[string]bool{
+		"id": true, "type": true, "function": true, "custom": true, "index": true,
+	})
+	return call, nil
+}
+
 // decodeTools 解 tools 数组。
 //
-// CC 的工具声明只有 {"type":"function","function":{…}} 一种形态；type 是别的值
-// （上游服务端工具，如某些中转自带的 web_search）按 ToolServer 收着，出口侧一律丢。
-// CC 没有 custom 工具——那是 Responses 独有的。
+// CC 的工具声明是个二元 union（官方 SDK 的 ChatCompletionToolUnionParam =
+// Function | Custom），两种都要认：
+//   - `{"type":"function","function":{"name","description","parameters"}}`；
+//   - `{"type":"custom","custom":{"name","description","format":{…}}}`——custom
+//     **不是** Responses 独有的，new-api 的 dto.CustomType 就在 CC 侧定义，它的
+//     relayconvert 真的往 CC 上游发这个形态。归 ToolCustom，三个出口已有分支
+//     （合成 protocol.CustomToolSchema() 并登记 tool_grammar 丢弃）。
+//
+// type 是别的值（上游服务端工具，如某些中转自带的 web_search）按 ToolServer 收着，
+// 出口侧一律丢——但 type 要留在 Extras 里：这类声明本来就可以没有 name，
+// protocol.Tool.Label() 的「空名退 type」全靠它，不然丢弃日志只剩一个光秃秃的
+// server_tool（口径层 v1.18）。
 func decodeTools(raw json.RawMessage) ([]protocol.Tool, error) {
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
@@ -369,13 +432,20 @@ func decodeTools(raw json.RawMessage) ([]protocol.Tool, error) {
 			return nil, fmt.Errorf("openaicc: tools[%d]: %w", i, err)
 		}
 		tool := protocol.Tool{Kind: protocol.ToolFunction}
-		if kind != "" && kind != "function" {
+		// payloadKey 是这条声明的载荷对象键。认不得的 type 按 function 那层找载荷，
+		// 与本次改动之前一致：中转自带的服务端工具也常裹一层 function。
+		payloadKey := "function"
+		switch kind {
+		case "", "function":
+		case "custom":
+			tool.Kind, payloadKey = protocol.ToolCustom, "custom"
+		default:
 			tool.Kind = protocol.ToolServer
 		}
-		if raw, ok := item["function"]; ok {
+		if raw, ok := item[payloadKey]; ok {
 			var fn map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &fn); err != nil {
-				return nil, fmt.Errorf("openaicc: tools[%d].function: %w", i, err)
+				return nil, fmt.Errorf("openaicc: tools[%d].%s: %w", i, payloadKey, err)
 			}
 			if err := unmarshalIf(fn, "name", &tool.Name); err != nil {
 				return nil, fmt.Errorf("openaicc: tools[%d]: %w", i, err)
@@ -384,17 +454,21 @@ func decodeTools(raw json.RawMessage) ([]protocol.Tool, error) {
 				return nil, fmt.Errorf("openaicc: tools[%d]: %w", i, err)
 			}
 			// parameters 按原始字节存：键序与数值精度都可能影响上游行为，解开再
-			// 合上是无谓的失真风险（同 anthropic 的 input_schema）。
+			// 合上是无谓的失真风险（同 anthropic 的 input_schema）。custom 没有
+			// parameters，它的入参靠 format 里的文法描述，那个跟着 strict 一起进
+			// Extras（canonical 没有对应物，出口侧登记 tool_grammar 丢弃）。
 			if schema, ok := fn["parameters"]; ok {
 				tool.Schema = append(json.RawMessage(nil), schema...)
 			}
-			// function 下的其余键（strict 等）与工具级的其余键并到一处：Tool.Extras
-			// 是平的，而这两层在 CC 之外的协议里本来就没有对应嵌套。
+			// 载荷下的其余键（strict / format 等）与工具级的其余键并到一处：
+			// Tool.Extras 是平的，而这两层在 CC 之外的协议里本来就没有对应嵌套。
 			tool.Extras = collectExtras(fn, map[string]bool{
 				"name": true, "description": true, "parameters": true,
 			})
 		}
-		for k, v := range collectExtras(item, map[string]bool{"type": true, "function": true}) {
+		// known 里**没有** type：它是无名服务端工具唯一的身份，见函数头注释。只排掉
+		// 真被解过的那个载荷键，另一个（如果在）照旧原样进 Extras。
+		for k, v := range collectExtras(item, map[string]bool{payloadKey: true}) {
 			if tool.Extras == nil {
 				tool.Extras = map[string]any{}
 			}

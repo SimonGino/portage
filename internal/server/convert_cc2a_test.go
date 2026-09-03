@@ -490,3 +490,44 @@ func TestCC2ARejectsToolChoiceNamingUndeclaredTool(t *testing.T) {
 		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 	}
 }
+
+// TestCC2ATruncatedToolArgsSalvagedAndLogged：CC 入口回带历史里残缺的 tool_calls
+// 入参被救治成 `{}`，请求打得出去，且那行归因日志真的发得出来。
+//
+// 与 R 入口的同名用例（convert_r2a_test.go）对照：CC 入口此前一路无条件
+// ArgsIsJSON=true，半截 arguments 走到 anthropic 出口的 encodeToolUse 被当成
+// json.RawMessage，Marshal 当场报错 → 我们自己回 500「请求无法转换为渠道协议」，
+// 比严格上游 400 还糟：渠道无辜，日志里也看不出因。
+func TestCC2ATruncatedToolArgsSalvagedAndLogged(t *testing.T) {
+	gw, up := newCC2AGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, anthropicOKBody)
+
+	body := `{"model":"` + accessPointModel + `","stream":false,` +
+		`"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object"}}}],` +
+		`"messages":[{"role":"user","content":"北京天气"},` +
+		`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function",` +
+		`"function":{"name":"weather","arguments":"{\"city\":\"北"}}]},` +
+		`{"role":"tool","tool_call_id":"call_1","content":"晴"},` +
+		`{"role":"user","content":"接着做"}]}`
+
+	resp := gw.Post(t, "/v1/chat/completions", body, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("状态码 = %d；body=%s——残缺入参不该让我们自己回 500",
+			resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	got := string(up.Last(t).Body)
+	if strings.Contains(got, `"city"`) {
+		t.Errorf("半截入参原样发给了上游：%s", got)
+	}
+	if !strings.Contains(got, `"input":{}`) {
+		t.Errorf("入参没被救治成 {}：%s", got)
+	}
+	// 整条调用还在：删了配对的 tool_result 就成孤儿，Anthropic 同样拒。
+	if !strings.Contains(got, "call_1") || !strings.Contains(got, "weather") {
+		t.Errorf("调用被整条删掉，配对的结果成了孤儿：%s", got)
+	}
+	if lines := gw.Lines("回带历史里有残缺的工具入参，已替换成 {}，模型看不到那次调用的原始入参，会话得以继续"); len(lines) != 1 {
+		t.Fatalf("救治日志 %d 行, 期望 1 行——入参悄悄没了只能靠它归因；已落日志：%s",
+			len(lines), gw.RawLog())
+	}
+}

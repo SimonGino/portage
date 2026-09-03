@@ -425,3 +425,138 @@ func TestDecodeRequestLeavesOtherRolesAlone(t *testing.T) {
 		}
 	}
 }
+
+// 回带历史里残缺的 tool_calls 入参就地救治成 `{}`，与 Responses 入口同规
+// （§5 坑清单）。上一轮流被截断，客户端把半截 arguments 永久存进历史，之后同一
+// 会话每个请求都带着它：走 CC→R 出口严格上游逐次 400，走 CC→A 出口 encodeToolUse
+// 拿它当 json.RawMessage，Marshal 当场报错，我们自己回 500。
+//
+// 只清空入参、**不删整条调用**：删了配对的 role=tool 结果就成孤儿，一样被拒。
+func TestDecodeRequestSalvagesTruncatedToolCallArgs(t *testing.T) {
+	cases := map[string]string{
+		"截断的 JSON":        `"arguments":"{\"city\":\"北"`,
+		"空串 arguments":    `"arguments":""`,
+		"缺 arguments":     `"name":"weather"`,
+		"arguments 不是字符串": `"arguments":{}`,
+	}
+	for name, frag := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"m","messages":[` +
+				`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function",` +
+				`"function":{"name":"weather",` + frag + `}}]},` +
+				`{"role":"tool","tool_call_id":"call_1","content":"晴"}]}`
+			c := openaicc.NewCodec()
+			req, err := c.DecodeRequest([]byte(body), false)
+			if err != nil {
+				t.Fatalf("解不动: %v——残缺入参不该拒掉整条请求", err)
+			}
+			call := req.Messages[0].Content[0].ToolCall
+			if call.Args != "{}" {
+				t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
+			}
+			// 救治的是入参不是语义：它仍然是一次 JSON 工具调用。
+			if !call.ArgsIsJSON {
+				t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
+			}
+			// 整条调用还在：删了下面那条 role=tool 就成孤儿。
+			if call.ID != "call_1" || call.Name != "weather" {
+				t.Errorf("调用本身被动过：%+v", call)
+			}
+			if got := c.ArgsSalvaged(); len(got) != 1 || got[0] != "weather(call_1)" {
+				t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+			}
+		})
+	}
+}
+
+// 合法 JSON 入参一个字节都不动，也不登记：救治只针对真的解不动的那些。
+func TestDecodeRequestKeepsValidToolCallArgs(t *testing.T) {
+	body := `{"model":"m","messages":[{"role":"assistant","tool_calls":[` +
+		`{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\": \"北京\"}"}}]}]}`
+	c := openaicc.NewCodec()
+	req, err := c.DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Messages[0].Content[0].ToolCall.Args; got != `{"city": "北京"}` {
+		t.Errorf("入参 = %q, 期望原样（连空格都不该规整）", got)
+	}
+	if got := c.ArgsSalvaged(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——没救治过就不该有警告日志", got)
+	}
+}
+
+// type=custom 的调用形态是 {"type":"custom","id","custom":{"name","input"}}，名字与
+// 入参都在 custom 里（new-api 的 relayconvert 就这么把 Responses 的 custom_tool_call
+// 发到 CC 上游）。只读 function 的话解出来是个 name 空、入参空的调用，出口照发。
+//
+// input 是自由文本，与 Responses 入口的 custom_tool_call 同规：ArgsIsJSON=false，
+// 不碰也不登记救治。
+func TestDecodeRequestReadsCustomToolCall(t *testing.T) {
+	body := `{"model":"m","messages":[{"role":"assistant","tool_calls":[` +
+		`{"id":"call_1","type":"custom","custom":{"name":"exec","input":"console.log(1)"}}]}]}`
+	c := openaicc.NewCodec()
+	req, err := c.DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	if call.Name != "exec" {
+		t.Errorf("Name = %q, 期望 exec——名字在 custom 里，不在 function 里", call.Name)
+	}
+	if call.Args != "console.log(1)" || call.ArgsIsJSON {
+		t.Errorf("custom 入参 = %q (isJSON=%v), 期望原样自由文本", call.Args, call.ArgsIsJSON)
+	}
+	if got := c.ArgsSalvaged(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——自由文本不该被当成残缺 JSON", got)
+	}
+}
+
+// CC 的工具声明是 Function | Custom 二元 union（官方 SDK 的
+// ChatCompletionToolUnionParam），custom 不是 Responses 独有的。归 ToolServer 的话
+// 三个出口一律整包丢，客户端声明的工具直接消失（复盘 2026-09-02 的同一类事故）。
+func TestDecodeRequestDecodesCustomToolDeclaration(t *testing.T) {
+	body := `{"model":"m","messages":[],"tools":[{"type":"custom","custom":{"name":"exec",` +
+		`"description":"跑一段脚本","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}}]}`
+	req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("工具数 = %d", len(req.Tools))
+	}
+	tool := req.Tools[0]
+	if tool.Kind != protocol.ToolCustom {
+		t.Errorf("Kind = %q，期望 %q——归 server 的话三个出口都整包丢", tool.Kind, protocol.ToolCustom)
+	}
+	if tool.Name != "exec" || tool.Description != "跑一段脚本" {
+		t.Errorf("名字/描述在 custom 里没取到：%+v", tool)
+	}
+	if tool.Extras["format"] == nil {
+		t.Errorf("format 没进 Extras：%v——出口靠它登记 tool_grammar 丢弃", tool.Extras)
+	}
+	if tool.Extras["type"] != "custom" {
+		t.Errorf("Extras[type] = %v，期望 custom", tool.Extras["type"])
+	}
+}
+
+// 认不得的 type 仍归 ToolServer，但 type 要留在 Extras 里：这类声明本来就可以没有
+// name，protocol.Tool.Label() 的「空名退 type」全靠它，不然丢弃日志只剩光秃秃的
+// server_tool（口径层 v1.18）。
+func TestDecodeRequestKeepsServerToolType(t *testing.T) {
+	body := `{"model":"m","messages":[],"tools":[{"type":"web_search","external_web_access":true}]}`
+	req, err := openaicc.NewCodec().DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := req.Tools[0]
+	if tool.Kind != protocol.ToolServer {
+		t.Errorf("Kind = %q，期望 %q", tool.Kind, protocol.ToolServer)
+	}
+	if tool.Extras["type"] != "web_search" {
+		t.Errorf("Extras[type] = %v，期望 web_search", tool.Extras["type"])
+	}
+	if got := tool.Label(); got != "web_search" {
+		t.Errorf("Label() = %q，期望 web_search——丢弃名单靠它才点得出名", got)
+	}
+}

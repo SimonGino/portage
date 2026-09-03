@@ -106,9 +106,14 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 			s.log.Warn("回带的压缩摘要解不开，已降级为占位",
 				"channel", cand.ChannelName, "items", drops)
 		}
-		// 同理不罩在压缩 turn 里：残缺入参是上一轮流被截断留下的，之后每一轮普通请求
-		// 都带着它。不救治的话严格上游逐次回 400，会话不新开就再也走不通。
-		if salvaged := rc.ArgsSalvaged(); len(salvaged) > 0 {
+	}
+	// 残缺入参的登记**不**限于 Responses 入口：CC 入口同规救治，所以这里断言一个小
+	// 接口而不是具体 codec 类型，两个入口共用同一句文案。同理不罩在压缩 turn 里——
+	// 残缺入参是上一轮流被截断留下的，之后每一轮普通请求都带着它。不救治的话严格
+	// 上游逐次回 400（CC→R 出口）或我们自己 500（CC→A 出口 Marshal 报错），会话
+	// 不新开就再也走不通。
+	if r, ok := inCodec.(interface{ ArgsSalvaged() []string }); ok {
+		if salvaged := r.ArgsSalvaged(); len(salvaged) > 0 {
 			s.log.Warn("回带历史里有残缺的工具入参，已替换成 {}，模型看不到那次调用的原始入参，会话得以继续",
 				"channel", cand.ChannelName, "calls", salvaged)
 		}

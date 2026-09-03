@@ -28,9 +28,17 @@ var _ protocol.StreamReadReporter = (*Codec)(nil)
 type Codec struct {
 	// includeUsage 是本次请求有没有要过流末的 usage 帧，由 DecodeRequest 填。
 	includeUsage bool
+	// argsSalvaged 记回带历史里入参被救治成 `{}` 的 tool_calls（形如 `名字(call_id)`），
+	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 openairesponses.Codec 的同名字段
+	// 同一个形制：codec 是纯函数、不持有 logger，只登记，日志在 server 层打。
+	argsSalvaged []string
 	// StreamReadFlag 记「流式解码途中读上游读断了」，由 DecodeStream 填。
 	protocol.StreamReadFlag
 }
+
+// ArgsSalvaged 列出解码时入参被救治成 `{}` 的回带 tool_calls（形如 `名字(call_id)`），
+// 供调用方打警告日志。server 侧对一个小接口断言，两个入口共用同一句文案。
+func (c *Codec) ArgsSalvaged() []string { return c.argsSalvaged }
 
 func NewCodec() *Codec { return &Codec{} }
 
