@@ -59,6 +59,11 @@ type Codec struct {
 	// 压缩 item。两个都由 DecodeRequest 填，消费方见 CompactionTurn / CompactionDrops。
 	compaction      bool
 	compactionDrops []string
+
+	// argsSalvaged 记回带历史里入参被救治成 `{}` 的 function_call（形如 `名字(call_id)`），
+	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 compactionDrops 同一个形制：codec
+	// 只登记，日志在 server 层打。
+	argsSalvaged []string
 }
 
 func NewCodec() *Codec { return &Codec{} }

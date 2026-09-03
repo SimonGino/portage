@@ -402,3 +402,40 @@ func TestR2AGateIsOpen(t *testing.T) {
 		t.Error("请求没到上游")
 	}
 }
+
+// TestR2ATruncatedToolArgsSalvagedAndLogged：回带历史里残缺的 function_call 入参被
+// 救治成 `{}`，且那行归因日志真的发得出来。
+//
+// 上一轮流被截断后 Codex 把半截 arguments 存进历史，此后同一会话每个请求都带着它。
+// 打给上游的请求里必须只剩 `{}`，而不是那半截——否则严格上游逐次 400，会话不新开
+// 就再也走不通。日志是这条救治唯一的痕迹：入参悄悄没了，看日志的人得知道为什么。
+func TestR2ATruncatedToolArgsSalvagedAndLogged(t *testing.T) {
+	gw, up := newR2AGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"},
+		`{"id":"msg_1","model":"`+anthropicUpstreamModel+`","type":"message","role":"assistant",`+
+			`"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",`+
+			`"usage":{"input_tokens":1,"output_tokens":1}}`)
+
+	body := `{"model":"` + accessPointModel + `","stream":false,` +
+		`"tools":[{"type":"function","name":"weather","parameters":{"type":"object"}}],` +
+		`"input":[{"type":"function_call","call_id":"call_1","name":"weather","arguments":"{\"city\":\"北"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"晴"},` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"接着做"}]}]}`
+
+	resp := gw.Post(t, "/v1/responses", body, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("状态码 = %d；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	got := string(up.Last(t).Body)
+	if strings.Contains(got, `\"city\":\"北`) || strings.Contains(got, "北\"") {
+		t.Errorf("半截入参原样发给了上游，严格上游会当场 400：%s", got)
+	}
+	// 整条调用还在：删了下面那条结果就成孤儿。
+	if !strings.Contains(got, "call_1") || !strings.Contains(got, "weather") {
+		t.Errorf("调用被整条删掉，配对的结果成了孤儿：%s", got)
+	}
+	if lines := gw.Lines("回带历史里有残缺的工具入参，已替换成 {}，模型看不到那次调用的原始入参，会话得以继续"); len(lines) != 1 {
+		t.Fatalf("救治日志 %d 行, 期望 1 行——入参悄悄没了只能靠它归因；已落日志：%s",
+			len(lines), gw.RawLog())
+	}
+}

@@ -425,3 +425,81 @@ func TestDecodeRequestSkipsEmptyInputImage(t *testing.T) {
 		t.Errorf("空 data URI 应跳过，实得 %+v", blocks)
 	}
 }
+
+// TestDecodeRequestSalvagesTruncatedFunctionCallArgs：回带历史里残缺的 function_call
+// 入参要就地救治成 `{}`，且只清入参、不删整条调用。
+//
+// 上一轮流被截断（finish_reason=length、断网、客户端取消、思考预算耗尽）后 Codex 会把
+// 半截 arguments 原样存进历史，此后同一会话每个请求都带着它，严格的 CC 上游逐次回 400
+// JSON parse error——不救治就只能新开会话。删整条调用不行：配对的 function_call_output
+// 会变孤儿。
+func TestDecodeRequestSalvagesTruncatedFunctionCallArgs(t *testing.T) {
+	cases := map[string]string{
+		"截断的 JSON":     `"arguments":"{\"city\":\"北"`,
+		"空串 arguments": `"arguments":""`,
+		"缺 arguments":  `"name":"weather"`,
+	}
+	for name, frag := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"m","input":[` +
+				`{"type":"function_call","call_id":"call_1","name":"weather",` + frag + `},` +
+				`{"type":"function_call_output","call_id":"call_1","output":"晴"}]}`
+			c := NewCodec()
+			req, err := c.DecodeRequest([]byte(body), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := req.Messages[0].Content[0].ToolCall
+			if call.Args != "{}" {
+				t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
+			}
+			// 救治的是入参，不是语义：它仍然是一次 JSON 工具调用，编码侧不该改发包装对象。
+			if !call.ArgsIsJSON {
+				t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
+			}
+			// 整条调用还在：删了下面那条 function_call_output 就成孤儿，严格上游同样拒。
+			if call.ID != "call_1" || call.Name != "weather" {
+				t.Errorf("调用本身被动过：%+v", call)
+			}
+			if got := c.ArgsSalvaged(); len(got) != 1 || got[0] != "weather(call_1)" {
+				t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+			}
+		})
+	}
+}
+
+// TestDecodeRequestKeepsValidFunctionCallArgs：合法 JSON 入参一个字节都不动，也不登记。
+func TestDecodeRequestKeepsValidFunctionCallArgs(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"function_call","call_id":"call_1","name":"weather",` +
+		`"arguments":"{\"city\": \"北京\"}"}]}`
+	c := NewCodec()
+	req, err := c.DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Messages[0].Content[0].ToolCall.Args; got != `{"city": "北京"}` {
+		t.Errorf("入参 = %q, 期望原样（连空格都不该规整）", got)
+	}
+	if got := c.ArgsSalvaged(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——没救治过就不该有警告日志", got)
+	}
+}
+
+// TestDecodeRequestKeepsCustomToolCallInput：custom_tool_call 的 input 是自由文本，
+// 非 JSON 是它的常态（exec 收 JavaScript 源码），一个字节都不许碰、也不登记。
+func TestDecodeRequestKeepsCustomToolCallInput(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"custom_tool_call","call_id":"call_1","name":"exec",` +
+		`"input":"console.log(1)"}]}`
+	c := NewCodec()
+	req, err := c.DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	if call.Args != "console.log(1)" || call.ArgsIsJSON {
+		t.Errorf("custom 入参 = %q (isJSON=%v), 期望原样自由文本", call.Args, call.ArgsIsJSON)
+	}
+	if got := c.ArgsSalvaged(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——自由文本不该被当成残缺 JSON", got)
+	}
+}

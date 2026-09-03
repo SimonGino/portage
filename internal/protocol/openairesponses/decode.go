@@ -91,7 +91,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		}
 		req.ToolChoice = choice
 	}
-	c.compaction, c.compactionDrops = false, nil
+	c.compaction, c.compactionDrops, c.argsSalvaged = false, nil, nil
 	if raw, ok := root["input"]; ok {
 		if err := c.decodeInput(raw, req, td); err != nil {
 			return nil, err
@@ -225,7 +225,7 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request, td *tool
 			})
 
 		case "custom_tool_call", "function_call":
-			call, err := decodeToolCall(item, kind)
+			call, err := c.decodeToolCall(item, kind)
 			if err != nil {
 				return fmt.Errorf("openairesponses: input[%d]: %w", i, err)
 			}
@@ -327,6 +327,10 @@ func (c *Codec) CompactionTurn() bool { return c.compaction }
 // CompactionDrops 列出解码时没能还原的回带压缩 item 的 type，供调用方打丢弃日志
 // （口径层 §2.6：跨协议丢弃要有日志警告，不静默）。codec 是纯函数、不持有 logger。
 func (c *Codec) CompactionDrops() []string { return c.compactionDrops }
+
+// ArgsSalvaged 列出解码时入参被救治成 `{}` 的回带 function_call（形如 `名字(call_id)`），
+// 供调用方打警告日志。同 CompactionDrops：codec 是纯函数、不持有 logger。
+func (c *Codec) ArgsSalvaged() []string { return c.argsSalvaged }
 
 // normalizeRole 把 Responses 的角色归一到 canonical。
 //
@@ -435,7 +439,7 @@ func parseResponsesImage(p map[string]json.RawMessage) *protocol.Image {
 // 差别只在入参：custom 的 input 是自由文本（Codex 的 exec 收 JavaScript 源码），
 // function 的 arguments 是 JSON 字符串。ArgsIsJSON 记的就是这个区别，编码侧靠它
 // 决定要不要合成包装对象（§5 坑清单）。
-func decodeToolCall(item map[string]json.RawMessage, kind string) (*protocol.ToolCall, error) {
+func (c *Codec) decodeToolCall(item map[string]json.RawMessage, kind string) (*protocol.ToolCall, error) {
 	call := &protocol.ToolCall{}
 	if err := unmarshalIf(item, "call_id", &call.ID); err != nil {
 		return nil, err
@@ -449,6 +453,20 @@ func decodeToolCall(item map[string]json.RawMessage, kind string) (*protocol.Too
 	}
 	if err := unmarshalIf(item, argsKey, &call.Args); err != nil {
 		return nil, err
+	}
+	// 残缺入参就地救治成 `{}`（§5 坑清单）。上一轮流被截断——finish_reason=length、
+	// 断网、客户端取消、思考预算耗尽——Codex 会把只写了一半的 arguments 原样存进
+	// 历史，之后**同一会话每个请求**都带着它，严格的 CC 上游（MiMo / DeepSeek /
+	// SenseNova）逐次回 400 JSON parse error，会话不新开就再也走不通。
+	//
+	// 只清空入参、**不删整条调用**：删了配对的 function_call_output 就成了孤儿，
+	// 严格上游同样拒。代价是模型看不到那次调用的原始入参，但它看得见调用发生过、
+	// 也看得见结果，会话得以继续。
+	//
+	// custom_tool_call 的 input 是自由文本（ArgsIsJSON=false），一个字节都不碰。
+	if call.ArgsIsJSON && !json.Valid([]byte(call.Args)) {
+		call.Args = "{}"
+		c.argsSalvaged = append(c.argsSalvaged, call.Name+"("+call.ID+")")
 	}
 	// id（`ctc_…` / `fc_…`）与 call_id 不是一回事：前者是 item 标识，后者才是工具
 	// 结果回指的那个。只有 call_id 进 canonical，item id 随 status 一起进 Extras。
