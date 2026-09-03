@@ -1,6 +1,6 @@
 # 复盘：Responses `namespace` 工具被整包丢弃（GLM-5.2「无法调用已注册工具」）
 
-复盘日期 2026-09-03，记录人 jinpenga。涉及 [#94](https://github.com/SimonGino/portage/issues/94)、[#95](https://github.com/SimonGino/portage/issues/95)，寻路图 [#93](https://github.com/SimonGino/portage/issues/93)。
+复盘日期 2026-09-03，记录人 jinpenga。涉及 [#94](https://github.com/SimonGino/portage/issues/94)、[#95](https://github.com/SimonGino/portage/issues/95)、[#96](https://github.com/SimonGino/portage/issues/96)，寻路图 [#93](https://github.com/SimonGino/portage/issues/93)；余波与对照 mimo2codex 的修补记到口径层 v1.19。
 
 > 本文只记事：现象、归因、过程与教训。**不作实现依据**——口径以 `docs/口径层设计.md` §2.6 为准，实现细节以 `docs/MVP设计草案.md` §4/§5 为准。两者与本文冲突时以它们为准。
 
@@ -39,6 +39,9 @@
 | 实现 | #94 摊平出向、#95 回程还原，随 v0.4.8 发布 |
 | 取证 | 加 `PORTAGE_DUMP_DIR` 全文落盘开关，公网部署跑真实 ADE，两轮抓包 |
 | 收口 | 第二轮实采脱敏进 golden，#95 关票 |
+| 余波 | 实采日志里 `server_tool` 裸着没带名字 → 丢弃名单空名退到 `type`（v1.18） |
+| 对照 | PO 好奇 mimo2codex 怎么处理 `web_search`，拉下来进参考名单，逐条对照出三条我们没有的历史修补 |
+| 修补 | 回带残缺入参救治、CC 出口孤儿 tool 消息、两出口缺失结果占位（v1.19），两个 opus 子代理并行落码 |
 
 附带发现（与本题独立，各自单修）：Chat Completions 形态的 body 打到 `/v1/responses` 会转成 `messages=[]` 原样转发，上游报 `Messages cannot be empty.`；无 tools 时 `tool_choice=required` 被出口保护静默去掉。两条都归到口径层 v1.14 ⑦⑧ 的「转换后请求已不成立就自己回 400」。
 
@@ -52,6 +55,65 @@
 - 回程：出向发 `namespace` 字段 + 裸名；回带先认字段、再本轮声明表唯一查表、对不上原样带过去不 400（历史 item 被拒客户端无法自救）。
 - 命名空间名自身可含 `__`（ADE 实测 `mcp__ade_asset_knowledge`），所以还原**只能查每请求映射表**，任何按分隔符拆串都会拆错。
 - R→Anthropic 同规则，摊平全部在入口 codec 做一次，两出口零差异。
+
+## 修改清单（改了什么、为什么）
+
+按提交顺序。每条只写「改动 → 原因」，口径编号指 `docs/口径层设计.md` §2.6。
+
+### 第一批：把工具找回来（#94，`feec84c`）
+
+| 改动 | 原因 |
+| --- | --- |
+| `openairesponses/namespace.go` 新增 `toolDecoder`，顶层 `tools` 与各个 `additional_tools` 灌进同一个解码器，`namespace` 外壳展开成子项 | 根因本身：外壳被当成 `ToolServer` 整包丢。展开后子项种类不变（`function` / `custom` 同规），外壳只贡献前缀 |
+| 摊平名 `<ns>__<name>`；`functions` / 空 / 缺失是默认命名空间，子项裸名 | 照 codex-rs `is_default_namespace()`。默认命名空间裸名让 Codex 主路径三份 golden 字节不变；全裸名撞名靠运气，全前缀让 Codex 路径也变 |
+| `Codec.namespaceTools` 每请求映射表（摊平名 → 命名空间名 + 裸名） | 命名空间名自身可含 `__`（ADE 的 `mcp__ade_asset_knowledge`），回程按分隔符拆串必错，只能查表 |
+| 摊平名校验 `^[a-zA-Z0-9_-]{1,64}$`，不满足 400，不截断不改名 | CC 与 Anthropic 两家共同上限；这是我们拼出来的名字，拼出必被拒的名字再让上游报错归因是反的；截断会制造新撞名 |
+| 摊平后一名两源 400，点名两个来源 | 不查重照带，回程只能靠覆盖顺序猜；自动改名发明规范没有的名字，回程 Codex 认不出 |
+| 构造样本 `fixtures/in-responses-namespace-{collision,badname}` | 各钉一道闸 |
+
+### 第二批：丢东西要有声音（#96，`01d279a`）
+
+| 改动 | 原因 |
+| --- | --- |
+| `dropped` 从 `[]string` 换成 `protocol.Drops`，`server_tool` / `tool_grammar` / `tool_choice` 三档附工具名清单（上限 64） | 本次归因的另一半：整包丢 45 个工具，日志只有一句 `dropped=[server_tool]`。按种类去重，丢 45 与丢 1 长得一样 |
+| 转换后 `messages` 为空 → 自家 400 `EmptyMessagesRejection` | 此前交上游裁，SGLang 的 `Messages cannot be empty.` 原样透出，渠道无辜却在流水里背「上游拒绝」 |
+| `tool_choice=required` / 点名落空 → 400 `ToolChoiceRejection`；`auto` / `none` 落空静默省略但登记 | 此前 `required` 静默降成 `auto`，模型改回文本，客户端按「必有工具调用」写的代码当场崩且查不到因 |
+| `relayConverted` 对 `*protocol.RequestError` 走入口协议外壳回 400，先打丢弃 Warn 再拒 | 看日志的人才知道 `required` 为什么会落空 |
+| 三条规则扩到 Responses 出口（v1.15，`95e537b` / `6c6dcf0`） | 三个出口同一规则；R 出口原本点名落空降 `auto`、不登记 |
+
+### 第三批：回程还原（#95，`dd16fd9`）
+
+| 改动 | 原因 |
+| --- | --- |
+| 出向：`streamEncoder` 带同源 `namespaceTools`，`flushTool` 对摊平名只查表，命中的在四处事件里发裸名 + `namespace` 字段 | 真 GLM-5.2 实测：回带裸名 + `namespace` 后模型跟着历史叫裸名 `orchestrateTask`，调到声明表里没有的工具 |
+| 回带：`restoreReplayNames` 先认自带 `namespace` 字段，再拿裸名在本轮声明表唯一查表补前缀；零中或多中原样带过去**不 400** | 历史 item 被拒客户端无法自救 |
+| `tool_choice` 点名走同一张表 | 规范没有点名子项的形态，不发明私有扩展 |
+
+### 第四批：取证（`2c16721`、`efd94c1`）
+
+| 改动 | 原因 |
+| --- | --- |
+| `PORTAGE_DUMP_DIR` 排障采样：入站 / 上游请求 / 响应三份字节全文落盘，只走 env，启动 Warn 一次 | 回带形态设想了三种，只有真流量能说明 harness 发哪一种 |
+| ADE 第二轮实采脱敏进 `golden/in-responses-namespace-turn2`，用例钉「17 次回带全部落回本轮声明表」 | 证实真实形态是裸名 + `namespace` 字段；另两种形态代码保留但只有构造样本 |
+
+### 第五批：余波（v1.18，`a1bc61a`）
+
+| 改动 | 原因 |
+| --- | --- |
+| `protocol.Tool.Label()`：名单里的工具名为空时退到 `type`，两个出口丢弃登记改用它 | 实采日志 `dropped=[thinking server_tool …]` 里 `server_tool` 裸着——Responses 的 `web_search` 声明本来就没有 `name`，`Drops.Add` 跳过空名，第二批立的名单在这类声明上失效 |
+
+### 第六批：对照 mimo2codex 补的三条历史修补（v1.19，`99b3e93`、`39708ff`）
+
+起因：PO 问 mimo2codex 怎么处理 `server_tool[web_search]`，把它拉进参考名单（`f297e90`）后逐条对照。它的 namespace 路线（不摊平、同名保留首个）**不采**：多 MCP 服务器同名子工具会静默丢。但它有三条针对「客户端历史已经坏了、客户端自己改不了、严格上游逐次 400 把会话砖死」的修补，我们没有：
+
+| 改动 | 原因 |
+| --- | --- |
+| (a) Responses 回带的 `function_call.arguments` 不是合法 JSON 或为空 → 换成 `{}`，调用保留，`Codec.ArgsSalvaged()` 登记，relay 打 Warn | 上一轮流被截断时 Codex 会把半截入参永久存进历史，严格 CC 上游逐次 400 直到新开会话。**不删整条**：删了配对的 `function_call_output` 变孤儿。`custom_tool_call` 的自由文本入参不碰 |
+| (b) CC 出口丢孤儿 `role=tool` 消息，登记 `orphan_result` | DeepSeek V4 撞到孤儿 tool 消息即 400。Anthropic 出口原本就有，CC 出口漏了 |
+| (c) 两出口对「有调用、没结果」合成占位 `protocol.MissingToolResultPlaceholder`，登记 `missing_result` 记 call id；Anthropic 侧占位块排在下一条 user 消息前部，必要时另插一条 user | DeepSeek V4 与 Anthropic 都硬校验配对。与「不做伪映射」有张力，PO 复裁做：占位明说缺失、不伪装语义，补的是形状不是语义。先丢孤儿再补缺失，两者不互相制造对方要处理的情况 |
+| `web_search` 映射成上游原生能力**不做**，立口径层待澄清 13 | mimo 能做是因为只服务一家上游、方言写死；我们缺渠道能力位与厂商方言表，没有这两样就映射等于对不支持的上游发它看不懂的字段 |
+
+现有 golden 与 fixture 的调用 / 结果全部配平，(b)(c) 在它们身上惰性；真机残缺历史的样本还没有。
 
 ## 实采证据
 
@@ -85,3 +147,5 @@ PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请�
   - 撞名有现成信号，不需要盯：服务端 `入站请求被拒` WARN 带 `code=invalid_value` 与 `param`，调用日志收场为 `rejected`，客户端拿到的 400 正文点名两个来源。
   - 具名命名空间内 custom 今天**没有任何信号**（不报错、不丢弃、不打日志，与顶层 custom 共用同一条 `decodeTool`）。要判断真机有没有出现只能重开采样 grep。缺的是样本覆盖而非正确性风险，暂不为它常开开关。
 - `PORTAGE_DUMP_DIR` 抓下的 dump 目录是客户完整对话原文，取证完成后即关，不留存。
+- 第六批三条修补只有构造样本。日志里出现 `orphan_result` / `missing_result` 档位或「回带历史里有残缺的工具入参」那条 Warn，就是真机撞上的信号，届时补实采。
+- 顶层工具与默认命名空间子项同名的撞名（mimo2codex issue #20 证明 Codex 会这么发）今天按第一批规则 400。是否收窄成「同名同 schema 去重」等真机撞上再议，不预设。
