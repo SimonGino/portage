@@ -43,7 +43,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 
 	// 每请求状态在这里归零：codec 每请求由 codecs.New 实例化，但归零是显式的，
 	// 免得将来复用实例时把上一轮的登记带进这一轮。
-	c.argsSalvaged, c.decodeDrops = nil, nil
+	c.argsSalvaged, c.decodeDrops = protocol.NameList{}, protocol.NameList{}
 
 	req := &protocol.Request{Stream: stream}
 
@@ -379,11 +379,10 @@ func (c *Codec) decodeToolCall(item map[string]json.RawMessage) (*protocol.ToolC
 			return nil, fmt.Errorf("function: %w", err)
 		}
 		call.Name, call.ArgsIsJSON = fn.Name, true
-		// 是字符串就解开一层引号（与 Anthropic 的 input 那种本身就是对象的路不同）；
-		// 不是字符串就留空，交给下面的救治归成 `{}`。
-		if len(fn.Arguments) > 0 {
-			_ = json.Unmarshal(fn.Arguments, &call.Args)
-		}
+		// 字符串形态解开一层引号，对象/数组形态原样收下（`"arguments":{"city":"北京"}`
+		// 这种，new-api 一类中转真会发）——读法与 Responses 入口共用一处，见
+		// protocol.DecodeToolArgs。
+		call.Args = protocol.DecodeToolArgs(fn.Arguments)
 	}
 
 	// 残缺入参就地救治成 `{}`，与 openairesponses 入口同规（§5 坑清单）。上一轮流被
@@ -392,11 +391,17 @@ func (c *Codec) decodeToolCall(item map[string]json.RawMessage) (*protocol.ToolC
 	// 走 CC→A 出口 encodeToolUse 拿它当 json.RawMessage，Marshal 当场报错回自家 500。
 	//
 	// 只清空入参、**不删整条调用**：删了配对的 role=tool 结果就成了孤儿，一样被拒。
-	// 非字符串的 arguments（`{}` 这种对象形态，非规范但真实存在）走同一条路——归 `{}`
-	// 并登记，而不是拒掉整条请求。
+	//
+	// 四档（截断 / 空串 / 缺失 / null）统一归 `{}`，但**只有真丢了内容的那档登记**：
+	// 空串与缺失一个字节都没丢，登记了只会让同一会话每一轮都刷一条「模型看不到那次
+	// 调用的原始入参」的 Warn，把真出事的那次淹掉。参考 mimo2codex 的
+	// sanitizeFunctionCallArguments（只对非空却解不动的字符串 warn）。
 	if call.ArgsIsJSON && !json.Valid([]byte(call.Args)) {
+		lost := call.Args != ""
 		call.Args = "{}"
-		c.argsSalvaged = append(c.argsSalvaged, call.Name+"("+call.ID+")")
+		if lost {
+			c.argsSalvaged.Add(call.Name + "(" + call.ID + ")")
+		}
 	}
 
 	// type 不进 Extras：它已经由 Kind/ArgsIsJSON 表达完了，两种形态各自的载荷对象
@@ -550,8 +555,7 @@ func (c *Codec) decodeToolChoice(raw json.RawMessage) (protocol.ToolChoice, erro
 // 工具名：名单里的工具本来就都在 tools 里声明过，名字对排障没有增量，件数才说明
 // 「收窄了多少」。
 func (c *Codec) decodeAllowedTools(mode string, n int) protocol.ToolChoice {
-	c.decodeDrops = append(c.decodeDrops,
-		"tool_choice.allowed_tools("+strconv.Itoa(n)+" tools)")
+	c.decodeDrops.Add("tool_choice.allowed_tools(" + strconv.Itoa(n) + " tools)")
 	if mode != "required" {
 		// 官方只有 auto / required 两个取值；认不得的当 auto——同上面认不得的字符串
 		// 那一档，宁可少说一句，也不把野值塞进 canonical 的白名单。

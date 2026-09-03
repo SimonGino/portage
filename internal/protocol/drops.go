@@ -21,20 +21,73 @@ type Drops []Drop
 type Drop struct {
 	// Kind 是档位（各 codec 包的 DropXxx 常量）。
 	Kind string
-	// Names 是这一档下被丢的工具名，去重、按登记序、封顶 MaxDropNames 个；
-	// tool_choice 那一档记的是落空的 mode（auto / none）而不是工具名——它落空时
-	// 本来就没有工具可点。非工具类档位恒为 nil。
-	Names []string
-	// Omitted 是名单封顶后没记进 Names 的个数。日志里以 +N 的形式带出，让「封顶了」
-	// 与「就这么多」分得开。
-	Omitted int
+	// 这一档下被丢的工具名，去重、按登记序、封顶 MaxDropNames 个；tool_choice
+	// 那一档记的是落空的 mode（auto / none）而不是工具名——它落空时本来就没有工具
+	// 可点。非工具类档位恒为空名单。
+	NameList
 }
 
-// MaxDropNames 是单档名单的上限。
+// MaxDropNames 是单份名单的上限。
 //
 // 取 64：与 Anthropic / CC 单个工具名的长度上限同数量级，一条 Warn 最多几 KB；
 // ADE 那类 55 个工具的客户端整批丢也装得下，看日志的人不必再猜后面还有谁。
 const MaxDropNames = 64
+
+// NameList 是一份封顶的去重名单：按登记序留名，同名只留一条，超过 MaxDropNames
+// 之后只计数不留名。
+//
+// 抽出来是因为「谁被丢了 / 谁被救治了」这类登记在本项目里有四份形状相同的（出口侧
+// Drops 的工具名、入口侧的残缺入参与折算字段、响应侧放不出去的 item），封顶的理由
+// 也是同一个：它们直接进一行 Warn，而长度由**入站请求或上游响应**说了算——55 个
+// 工具的客户端、一条流里几十种认不得的事件名，无上限等于让对方决定我们的日志有
+// 多大。超出的只计数：「封顶了」与「就这么多」得分得开。
+type NameList struct {
+	names   []string
+	omitted int
+}
+
+// Add 登记若干个名字。空名跳过，同名只留一条，封顶之后的计进 Omitted。
+func (l *NameList) Add(names ...string) {
+	for _, n := range names {
+		if n == "" || hasName(l.names, n) {
+			continue
+		}
+		if len(l.names) >= MaxDropNames {
+			l.omitted++
+			continue
+		}
+		l.names = append(l.names, n)
+	}
+}
+
+// Names 是留住的那些名字，按登记序。调用方只读，不改。
+func (l NameList) Names() []string { return l.names }
+
+// Omitted 是封顶后没能留名的个数。
+func (l NameList) Omitted() int { return l.omitted }
+
+// Empty 报告这份名单一条都没登记过。
+func (l NameList) Empty() bool { return len(l.names) == 0 && l.omitted == 0 }
+
+// String 渲染成 `[a,b,c]`，封顶后尾随 ` +N`。空名单渲染成空串——好让 Drop.String
+// 直接把它接在档位后面。
+func (l NameList) String() string {
+	if len(l.names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	b.WriteString(strings.Join(l.names, ","))
+	if l.omitted > 0 {
+		b.WriteString(" +")
+		b.WriteString(strconv.Itoa(l.omitted))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// LogValue 让 slog 把名单打成一格 `calls="[a,b +6]"`，与 Drops 那份里名单的一截同形。
+func (l NameList) LogValue() slog.Value { return slog.StringValue(l.String()) }
 
 // Add 登记一条丢弃。同一 Kind 只留一条，names 并进那条并去重。
 func (ds *Drops) Add(kind string, names ...string) {
@@ -43,16 +96,7 @@ func (ds *Drops) Add(kind string, names ...string) {
 		*ds = append(*ds, Drop{Kind: kind})
 		d = &(*ds)[len(*ds)-1]
 	}
-	for _, n := range names {
-		if n == "" || hasName(d.Names, n) {
-			continue
-		}
-		if len(d.Names) >= MaxDropNames {
-			d.Omitted++
-			continue
-		}
-		d.Names = append(d.Names, n)
-	}
+	d.NameList.Add(names...)
 }
 
 func (ds Drops) find(kind string) *Drop {
@@ -70,7 +114,7 @@ func (ds Drops) Has(kind string) bool { return ds.find(kind) != nil }
 // Names 取某一档的名单；没登记或没名单即 nil。
 func (ds Drops) Names(kind string) []string {
 	if d := ds.find(kind); d != nil {
-		return d.Names
+		return d.Names()
 	}
 	return nil
 }
@@ -89,21 +133,7 @@ func (ds Drops) Kinds() []string {
 
 // String 把一条登记渲染成日志用的一格：没名单时就是档位本身，有名单时
 // `kind[a,b,c]`，封顶后尾随 ` +N`。
-func (d Drop) String() string {
-	if len(d.Names) == 0 {
-		return d.Kind
-	}
-	var b strings.Builder
-	b.WriteString(d.Kind)
-	b.WriteByte('[')
-	b.WriteString(strings.Join(d.Names, ","))
-	if d.Omitted > 0 {
-		b.WriteString(" +")
-		b.WriteString(strconv.Itoa(d.Omitted))
-	}
-	b.WriteByte(']')
-	return b.String()
-}
+func (d Drop) String() string { return d.Kind + d.NameList.String() }
 
 // Strings 逐条渲染，供日志与测试用。
 func (ds Drops) Strings() []string {

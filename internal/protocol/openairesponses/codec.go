@@ -63,7 +63,10 @@ type Codec struct {
 	// argsSalvaged 记回带历史里入参被救治成 `{}` 的 function_call（形如 `名字(call_id)`），
 	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 compactionDrops 同一个形制：codec
 	// 只登记，日志在 server 层打。
-	argsSalvaged []string
+	//
+	// 用 protocol.NameList 而不是 []string：长度由入站请求说了算，一条会话历史里能有
+	// 上百个残缺调用，无上限就是让客户端决定我们那行 Warn 有多大。
+	argsSalvaged protocol.NameList
 
 	// responseDrops 记**上游响应**里放不出去的东西，由 DecodeStream / DecodeFullBody
 	// 填，消费方见 ResponseDrops。两类登记：认不得的 output item（形如
@@ -76,10 +79,11 @@ type Codec struct {
 	//
 	// 流式下写方是解码 goroutine、读方是 relayConverted 本身。中间的 happens-before
 	// 由事件通道的关闭给出，见 ResponseDrops 的注释。
-	responseDrops []string
-	// responseDropSeen 给 responseDrops 去重：一个 item 的 added 与 done 各来一帧、
-	// 一个认不得的事件名一条流里能来几十帧，逐帧记会把一行 Warn 撑成刷屏。
-	responseDropSeen map[string]bool
+	//
+	// 去重与封顶都在 protocol.NameList 里：一个 item 的 added 与 done 各来一帧、一个
+	// 认不得的事件名一条流里能来几十帧，逐帧记会把一行 Warn 撑成刷屏；种类本身也由
+	// **上游**说了算，同样得封顶。
+	responseDrops protocol.NameList
 }
 
 // ResponseDrops 列出解码上游响应时放不出去的 output item 与事件名，供调用方打警告
@@ -96,28 +100,16 @@ type Codec struct {
 // 返回之后读，而 EncodeStream 只在事件通道关闭后才返回，通道关闭又排在解码
 // goroutine 的最后一次写之后——happens-before 由通道关闭给出，与
 // protocol.StreamReadReporter 那一位同理。
-func (c *Codec) ResponseDrops() []string { return c.responseDrops }
+func (c *Codec) ResponseDrops() protocol.NameList { return c.responseDrops }
 
-// noteResponseDrop 登记一条响应侧丢弃，按整条标签去重。
-func (c *Codec) noteResponseDrop(label string) {
-	if label == "" {
-		return
-	}
-	if c.responseDropSeen == nil {
-		c.responseDropSeen = map[string]bool{}
-	}
-	if c.responseDropSeen[label] {
-		return
-	}
-	c.responseDropSeen[label] = true
-	c.responseDrops = append(c.responseDrops, label)
-}
+// noteResponseDrop 登记一条响应侧丢弃，按整条标签去重（并封顶，见 NameList）。
+func (c *Codec) noteResponseDrop(label string) { c.responseDrops.Add(label) }
 
 // resetResponseDrops 归零响应侧登记。DecodeStream / DecodeFullBody 开头各调一次，
 // 理由同 DecodeRequest 那处：codec 每请求实例化，但归零显式写出来，免得将来复用
 // 实例时把上一轮的登记带进这一轮。
 func (c *Codec) resetResponseDrops() {
-	c.responseDrops, c.responseDropSeen = nil, nil
+	c.responseDrops = protocol.NameList{}
 }
 
 func NewCodec() *Codec { return &Codec{} }

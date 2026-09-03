@@ -91,7 +91,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		}
 		req.ToolChoice = choice
 	}
-	c.compaction, c.compactionDrops, c.argsSalvaged = false, nil, nil
+	c.compaction, c.compactionDrops, c.argsSalvaged = false, nil, protocol.NameList{}
 	if raw, ok := root["input"]; ok {
 		if err := c.decodeInput(raw, req, td); err != nil {
 			return nil, err
@@ -330,7 +330,7 @@ func (c *Codec) CompactionDrops() []string { return c.compactionDrops }
 
 // ArgsSalvaged 列出解码时入参被救治成 `{}` 的回带 function_call（形如 `名字(call_id)`），
 // 供调用方打警告日志。同 CompactionDrops：codec 是纯函数、不持有 logger。
-func (c *Codec) ArgsSalvaged() []string { return c.argsSalvaged }
+func (c *Codec) ArgsSalvaged() protocol.NameList { return c.argsSalvaged }
 
 // normalizeRole 把 Responses 的角色归一到 canonical。
 //
@@ -451,8 +451,17 @@ func (c *Codec) decodeToolCall(item map[string]json.RawMessage, kind string) (*p
 	if kind == "function_call" {
 		argsKey, call.ArgsIsJSON = "arguments", true
 	}
-	if err := unmarshalIf(item, argsKey, &call.Args); err != nil {
-		return nil, err
+	if raw, ok := item[argsKey]; ok {
+		if call.ArgsIsJSON {
+			// 字符串形态解开一层引号，对象/数组形态原样收下——读法与 CC 入口共用一处，
+			// 见 protocol.DecodeToolArgs。此前这里直接往 string 解，`"arguments":{…}`
+			// 这种形态（中转回带真会有）当场报错，整条请求被拒。
+			call.Args = protocol.DecodeToolArgs(raw)
+		} else if err := json.Unmarshal(raw, &call.Args); err != nil {
+			// custom_tool_call 的 input 按契约就是字符串，不是字符串就是形态不对，
+			// 照旧报错——它不像 arguments 那样有「对象形态也合法」的回带历史。
+			return nil, fmt.Errorf("字段 %s: %w", argsKey, err)
+		}
 	}
 	// 残缺入参就地救治成 `{}`（§5 坑清单）。上一轮流被截断——finish_reason=length、
 	// 断网、客户端取消、思考预算耗尽——Codex 会把只写了一半的 arguments 原样存进
@@ -464,9 +473,17 @@ func (c *Codec) decodeToolCall(item map[string]json.RawMessage, kind string) (*p
 	// 也看得见结果，会话得以继续。
 	//
 	// custom_tool_call 的 input 是自由文本（ArgsIsJSON=false），一个字节都不碰。
+	//
+	// 四档（截断 / 空串 / 缺失 / null）统一归 `{}`，但**只有真丢了内容的那档登记**：
+	// 空串与缺失一个字节都没丢，登记了只会让同一会话每一轮都刷一条上面那句 Warn，把
+	// 真出事的那次淹掉。与 CC 入口同规，参考 mimo2codex 的
+	// sanitizeFunctionCallArguments（只对非空却解不动的字符串 warn）。
 	if call.ArgsIsJSON && !json.Valid([]byte(call.Args)) {
+		lost := call.Args != ""
 		call.Args = "{}"
-		c.argsSalvaged = append(c.argsSalvaged, call.Name+"("+call.ID+")")
+		if lost {
+			c.argsSalvaged.Add(call.Name + "(" + call.ID + ")")
+		}
 	}
 	// id（`ctc_…` / `fc_…`）与 call_id 不是一回事：前者是 item 标识，后者才是工具
 	// 结果回指的那个。只有 call_id 进 canonical，item id 随 status 一起进 Extras。

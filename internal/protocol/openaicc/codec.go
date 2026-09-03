@@ -31,25 +31,28 @@ type Codec struct {
 	// argsSalvaged 记回带历史里入参被救治成 `{}` 的 tool_calls（形如 `名字(call_id)`），
 	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 openairesponses.Codec 的同名字段
 	// 同一个形制：codec 是纯函数、不持有 logger，只登记，日志在 server 层打。
-	argsSalvaged []string
+	//
+	// 用 protocol.NameList 而不是 []string：长度由入站请求说了算，一条会话历史里能有
+	// 上百个残缺调用，无上限就是让客户端决定我们那行 Warn 有多大。
+	argsSalvaged protocol.NameList
 	// decodeDrops 记解码入站请求时 canonical 装不下、只能按最近语义折算的字段
 	// （形如 `tool_choice.allowed_tools(3 tools)`），由 DecodeRequest 填，消费方见
 	// DecodeDrops。与 argsSalvaged 同一个形制：codec 只登记，日志在 server 层打。
 	//
 	// 与出口侧的 protocol.Drops 不是一回事：那份是「我们编不出去」，这份是
 	// 「canonical 收不下」，两条 Warn 分开是为了看日志的人知道该改哪一侧。
-	decodeDrops []string
+	decodeDrops protocol.NameList
 	// StreamReadFlag 记「流式解码途中读上游读断了」，由 DecodeStream 填。
 	protocol.StreamReadFlag
 }
 
 // ArgsSalvaged 列出解码时入参被救治成 `{}` 的回带 tool_calls（形如 `名字(call_id)`），
 // 供调用方打警告日志。server 侧对一个小接口断言，两个入口共用同一句文案。
-func (c *Codec) ArgsSalvaged() []string { return c.argsSalvaged }
+func (c *Codec) ArgsSalvaged() protocol.NameList { return c.argsSalvaged }
 
 // DecodeDrops 列出解码时 canonical 收不下、已按最近语义折算的入站字段，供调用方打
 // 警告日志。同 ArgsSalvaged：codec 是纯函数、不持有 logger。
-func (c *Codec) DecodeDrops() []string { return c.decodeDrops }
+func (c *Codec) DecodeDrops() protocol.NameList { return c.decodeDrops }
 
 func NewCodec() *Codec { return &Codec{} }
 

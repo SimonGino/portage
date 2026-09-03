@@ -112,8 +112,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 残缺入参是上一轮流被截断留下的，之后每一轮普通请求都带着它。不救治的话严格
 	// 上游逐次回 400（CC→R 出口）或我们自己 500（CC→A 出口 Marshal 报错），会话
 	// 不新开就再也走不通。
-	if r, ok := inCodec.(interface{ ArgsSalvaged() []string }); ok {
-		if salvaged := r.ArgsSalvaged(); len(salvaged) > 0 {
+	if r, ok := inCodec.(interface{ ArgsSalvaged() protocol.NameList }); ok {
+		if salvaged := r.ArgsSalvaged(); !salvaged.Empty() {
 			s.log.Warn("回带历史里有残缺的工具入参，已替换成 {}，模型看不到那次调用的原始入参，会话得以继续",
 				"channel", cand.ChannelName, "calls", salvaged)
 		}
@@ -122,8 +122,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 同上一条的分工，codec 只登记、日志在这里打。与出口侧的「跨协议转换丢弃字段」
 	// 分成两条是因为归因不同——那条丢的是**我们编不出去**的，这条丢的是**canonical
 	// 装不下**的，看日志的人据此决定该改哪一侧。
-	if r, ok := inCodec.(interface{ DecodeDrops() []string }); ok {
-		if drops := r.DecodeDrops(); len(drops) > 0 {
+	if r, ok := inCodec.(interface{ DecodeDrops() protocol.NameList }); ok {
+		if drops := r.DecodeDrops(); !drops.Empty() {
 			s.log.Warn("入站请求里有转换路径收不下的字段，已按最近语义折算",
 				"inbound", ep.Proto, "channel", cand.ChannelName, "fields", drops)
 		}
@@ -200,12 +200,12 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 // 通道关闭后返回，而通道关闭排在解码 goroutine 最后一次写之后。与
 // protocol.StreamReadReporter 那一位同理，两处靠的是同一条边。
 func (s *Server) warnResponseDrops(cand store.Candidate, outCodec protocol.Codec) {
-	r, ok := outCodec.(interface{ ResponseDrops() []string })
+	r, ok := outCodec.(interface{ ResponseDrops() protocol.NameList })
 	if !ok {
 		return
 	}
 	drops := r.ResponseDrops()
-	if len(drops) == 0 {
+	if drops.Empty() {
 		return
 	}
 	s.log.Warn("上游响应里有转换路径放不出去的项，已丢弃；若是服务端工具，上游成本已经发生",

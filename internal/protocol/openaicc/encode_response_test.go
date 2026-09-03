@@ -387,6 +387,25 @@ func TestEncodeStreamErrorSkipsDone(t *testing.T) {
 	}
 }
 
+// 流内错误之后来的 EvToolCallEnd 不再补 `{}` 帧：客户端已经收到 error 了，再收到
+// 一帧正常的 tool_calls delta 会以为响应还在往下走。与 finish 里那道闸同规。
+func TestEncodeStreamErrorSkipsFillEmptyArgs(t *testing.T) {
+	events := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_1", ToolName: "weather"},
+		{Type: protocol.EvError, Message: "上游断了"},
+		{Type: protocol.EvToolCallEnd, Index: 1},
+	}
+	raw, chunks := encodeStream(t, streamingRequest, events)
+	last := chunks[len(chunks)-1]
+	if last.Error == nil {
+		t.Fatalf("末帧应是 error 帧，实得 %+v——error 之后又补了帧", last)
+	}
+	if strings.Contains(raw, `"arguments":"{}"`) {
+		t.Errorf("error 之后补了 `{}` 入参帧：\n%s", raw)
+	}
+}
+
 // 上游一个 id 都没给：补一个 chatcmpl- 前缀的。前缀本身是排障线索——
 // 有上游 id 时一律原样透传，所以 chatcmpl- 出现即代表「网关补的」。
 func TestEncodeStreamFillsMissingID(t *testing.T) {

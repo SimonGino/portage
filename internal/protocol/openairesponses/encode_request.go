@@ -329,11 +329,13 @@ func encodeOutTools(tools []protocol.Tool, dropped *protocol.Drops) ([]map[strin
 		case len(t.Schema) > 0:
 			fn["parameters"] = json.RawMessage(t.Schema)
 		case t.Kind == protocol.ToolCustom:
-			// canonical 里出现 custom 工具，只可能是 R 入口解出来的；但那条路
-			// （R→R）根本不进 codec，所以这一支实际到不了。留着是为了让「没有
-			// Schema 的工具也发得出去」这件事有定义——合成一份 {"input": string}
-			// 声明（protocol.CustomToolSchema），而不是发一个没有 parameters 的
-			// 工具让模型自由发挥。文法约束跨不过去，登记。
+			// 这一支由 **CC 入口**的 custom 工具声明喂到：自 v1.20 起 CC 入口把
+			// `{"type":"custom","custom":{…}}` 归了 ToolCustom，CC→R 是开的，所以
+			// 它是热路径而不是备而不用的一支（R 入口解出来的那条 R→R 反倒不进
+			// codec）。custom 没有 parameters，入参靠 format 里的文法描述，那个
+			// canonical 装不下：合成一份 {"input": string} 声明
+			// （protocol.CustomToolSchema），而不是发一个没有 parameters 的工具让
+			// 模型自由发挥。文法约束跨不过去，登记。
 			fn["parameters"] = protocol.CustomToolSchema()
 			dropped.Add(DropToolGrammar, t.Name)
 		}

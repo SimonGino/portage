@@ -839,7 +839,7 @@ func TestDecodeStreamRegistersUnknownItemsAndEvents(t *testing.T) {
 	c := NewCodec()
 	events := collectWith(t, c, raw)
 
-	drops := c.ResponseDrops()
+	drops := c.ResponseDrops().Names()
 	want := []string{"web_search_call(ws_abc)", "event:response.gizmo.progress"}
 	if len(drops) != len(want) {
 		t.Fatalf("ResponseDrops = %v, want %v（added/done 与重复事件名各只记一次）", drops, want)
@@ -891,7 +891,7 @@ func TestDecodeStreamKnownStructuralEventsStaySilent(t *testing.T) {
 	)
 	c := NewCodec()
 	collectWith(t, c, raw)
-	if drops := c.ResponseDrops(); len(drops) != 0 {
+	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("ResponseDrops = %v, want 空——结构信号是明知故跳，不该登记", drops)
 	}
 }
@@ -906,7 +906,7 @@ func TestDecodeStreamUnknownItemWithoutIDFallsBackToIndex(t *testing.T) {
 	)
 	c := NewCodec()
 	collectWith(t, c, raw)
-	if got := c.ResponseDrops(); len(got) != 1 || got[0] != "mcp_call(#3)" {
+	if got := c.ResponseDrops().Names(); len(got) != 1 || got[0] != "mcp_call(#3)" {
 		t.Errorf("ResponseDrops = %v, want [mcp_call(#3)]", got)
 	}
 }
@@ -919,15 +919,15 @@ func TestDecodeStreamResetsResponseDrops(t *testing.T) {
 	)
 	c := NewCodec()
 	collectWith(t, c, first)
-	if len(c.ResponseDrops()) != 1 {
-		t.Fatalf("第一轮 ResponseDrops = %v, want 一条", c.ResponseDrops())
+	if len(c.ResponseDrops().Names()) != 1 {
+		t.Fatalf("第一轮 ResponseDrops = %v, want 一条", c.ResponseDrops().Names())
 	}
 	clean := sseFrames(
 		`data: {"type":"response.output_text.delta","output_index":0,"delta":"hi"}`,
 		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
 	)
 	collectWith(t, c, clean)
-	if drops := c.ResponseDrops(); len(drops) != 0 {
+	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("第二轮 ResponseDrops = %v, want 空——上一轮的登记带进来了", drops)
 	}
 }
@@ -945,7 +945,7 @@ func TestDecodeFullBodyRegistersUnknownItems(t *testing.T) {
 		t.Fatalf("DecodeFullBody: %v", err)
 	}
 	want := []string{"web_search_call(ws_abc)", "image_generation_call(ig_1)"}
-	got := c.ResponseDrops()
+	got := c.ResponseDrops().Names()
 	if len(got) != len(want) {
 		t.Fatalf("ResponseDrops = %v, want %v", got, want)
 	}
@@ -1000,7 +1000,7 @@ func TestDecodeStreamRefusalBecomesText(t *testing.T) {
 	if deltas != 2 {
 		t.Errorf("TextDelta 条数 = %d, want 2——.done 带的是全文，收了就发两遍", deltas)
 	}
-	if drops := c.ResponseDrops(); len(drops) != 0 {
+	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("ResponseDrops = %v, want 空——拒答是发出去了的，不是丢弃", drops)
 	}
 }
@@ -1027,7 +1027,7 @@ func TestDecodeFullBodyRefusalPartBecomesText(t *testing.T) {
 	if text != "抱歉，我不能帮这个忙。" {
 		t.Errorf("拒答正文 = %q", text)
 	}
-	if drops := c.ResponseDrops(); len(drops) != 0 {
+	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("ResponseDrops = %v, want 空", drops)
 	}
 }

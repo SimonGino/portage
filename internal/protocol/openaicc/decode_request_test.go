@@ -439,46 +439,93 @@ func TestDecodeRequestLeavesOtherRolesAlone(t *testing.T) {
 	}
 }
 
-// 回带历史里残缺的 tool_calls 入参就地救治成 `{}`，与 Responses 入口同规
-// （§5 坑清单）。上一轮流被截断，客户端把半截 arguments 永久存进历史，之后同一
-// 会话每个请求都带着它：走 CC→R 出口严格上游逐次 400，走 CC→A 出口 encodeToolUse
-// 拿它当 json.RawMessage，Marshal 当场报错，我们自己回 500。
+// ccToolCallReq 拼一条「assistant 调工具 + 配对的 role=tool 结果」的请求，
+// frag 是 function 对象里入参那一截。
+func ccToolCallReq(frag string) string {
+	return `{"model":"m","messages":[` +
+		`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function",` +
+		`"function":{"name":"weather",` + frag + `}}]},` +
+		`{"role":"tool","tool_call_id":"call_1","content":"晴"}]}`
+}
+
+// 回带历史里**真丢了内容**的 tool_calls 入参就地救治成 `{}` 并登记，与 Responses
+// 入口同规（§5 坑清单）。上一轮流被截断，客户端把半截 arguments 永久存进历史，之后
+// 同一会话每个请求都带着它：走 CC→R 出口严格上游逐次 400，走 CC→A 出口
+// encodeToolUse 拿它当 json.RawMessage，Marshal 当场报错，我们自己回 500。
 //
 // 只清空入参、**不删整条调用**：删了配对的 role=tool 结果就成孤儿，一样被拒。
 func TestDecodeRequestSalvagesTruncatedToolCallArgs(t *testing.T) {
+	c := openaicc.NewCodec()
+	req, err := c.DecodeRequest([]byte(ccToolCallReq(`"arguments":"{\"city\":\"北"`)), false)
+	if err != nil {
+		t.Fatalf("解不动: %v——残缺入参不该拒掉整条请求", err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	if call.Args != "{}" {
+		t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
+	}
+	// 救治的是入参不是语义：它仍然是一次 JSON 工具调用。
+	if !call.ArgsIsJSON {
+		t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
+	}
+	// 整条调用还在：删了下面那条 role=tool 就成孤儿。
+	if call.ID != "call_1" || call.Name != "weather" {
+		t.Errorf("调用本身被动过：%+v", call)
+	}
+	if got := c.ArgsSalvaged().Names(); len(got) != 1 || got[0] != "weather(call_1)" {
+		t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+	}
+}
+
+// 空串 / 缺失 / null 的 arguments 照样归 `{}`，但**不登记**：一个字节都没丢，登记了
+// 只会让同一会话每一轮都刷一条「模型看不到那次调用的原始入参」的 Warn，把真出事的
+// 那次淹掉（同 mimo2codex 的 sanitizeFunctionCallArguments，只对非空却解不动的 warn）。
+func TestDecodeRequestFillsEmptyToolCallArgsWithoutNoting(t *testing.T) {
 	cases := map[string]string{
-		"截断的 JSON":        `"arguments":"{\"city\":\"北"`,
-		"空串 arguments":    `"arguments":""`,
-		"缺 arguments":     `"name":"weather"`,
-		"arguments 不是字符串": `"arguments":{}`,
+		"空串 arguments":     `"arguments":""`,
+		"缺 arguments":      `"name":"weather"`,
+		"arguments 是 null": `"arguments":null`,
 	}
 	for name, frag := range cases {
 		t.Run(name, func(t *testing.T) {
-			body := `{"model":"m","messages":[` +
-				`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function",` +
-				`"function":{"name":"weather",` + frag + `}}]},` +
-				`{"role":"tool","tool_call_id":"call_1","content":"晴"}]}`
 			c := openaicc.NewCodec()
-			req, err := c.DecodeRequest([]byte(body), false)
+			req, err := c.DecodeRequest([]byte(ccToolCallReq(frag)), false)
 			if err != nil {
-				t.Fatalf("解不动: %v——残缺入参不该拒掉整条请求", err)
+				t.Fatalf("解不动: %v——空入参不该拒掉整条请求", err)
 			}
 			call := req.Messages[0].Content[0].ToolCall
 			if call.Args != "{}" {
 				t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
 			}
-			// 救治的是入参不是语义：它仍然是一次 JSON 工具调用。
-			if !call.ArgsIsJSON {
-				t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
-			}
-			// 整条调用还在：删了下面那条 role=tool 就成孤儿。
-			if call.ID != "call_1" || call.Name != "weather" {
-				t.Errorf("调用本身被动过：%+v", call)
-			}
-			if got := c.ArgsSalvaged(); len(got) != 1 || got[0] != "weather(call_1)" {
-				t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+			if got := c.ArgsSalvaged().Names(); len(got) != 0 {
+				t.Errorf("救治登记 = %v, 期望空——一个字节都没丢，不该刷警告", got)
 			}
 		})
+	}
+}
+
+// 对象形态的 arguments（`"arguments":{"city":"北京"}`，new-api 一类中转真会发）无损
+// 收下：它本身就是合法 JSON。此前往 string 解失败被吞掉，再被救治成 `{}`，一条入参
+// 整个蒸发。
+func TestDecodeRequestKeepsObjectToolCallArgs(t *testing.T) {
+	c := openaicc.NewCodec()
+	req, err := c.DecodeRequest([]byte(ccToolCallReq(`"arguments":{"city":"北京"}`)), false)
+	if err != nil {
+		t.Fatalf("解不动: %v", err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	var got map[string]string
+	if err := json.Unmarshal([]byte(call.Args), &got); err != nil {
+		t.Fatalf("入参 = %q，解不成 JSON: %v——对象形态的入参被吞了", call.Args, err)
+	}
+	if got["city"] != "北京" {
+		t.Errorf("入参 = %q, 期望等价于 {\"city\":\"北京\"}", call.Args)
+	}
+	if !call.ArgsIsJSON {
+		t.Error("ArgsIsJSON = false，对象形态仍然是一次 JSON 工具调用")
+	}
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——没丢任何东西", got)
 	}
 }
 
@@ -494,7 +541,7 @@ func TestDecodeRequestKeepsValidToolCallArgs(t *testing.T) {
 	if got := req.Messages[0].Content[0].ToolCall.Args; got != `{"city": "北京"}` {
 		t.Errorf("入参 = %q, 期望原样（连空格都不该规整）", got)
 	}
-	if got := c.ArgsSalvaged(); len(got) != 0 {
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
 		t.Errorf("救治登记 = %v, 期望空——没救治过就不该有警告日志", got)
 	}
 }
@@ -520,7 +567,7 @@ func TestDecodeRequestReadsCustomToolCall(t *testing.T) {
 	if call.Args != "console.log(1)" || call.ArgsIsJSON {
 		t.Errorf("custom 入参 = %q (isJSON=%v), 期望原样自由文本", call.Args, call.ArgsIsJSON)
 	}
-	if got := c.ArgsSalvaged(); len(got) != 0 {
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
 		t.Errorf("救治登记 = %v, 期望空——自由文本不该被当成残缺 JSON", got)
 	}
 }
@@ -591,7 +638,7 @@ func TestDecodeRequestAllowedToolsIsRegistered(t *testing.T) {
 		t.Errorf("ToolChoice = %+v，required 蒸发了——出口侧那道 400 闸就再也触发不到", req.ToolChoice)
 	}
 	want := []string{"tool_choice.allowed_tools(3 tools)"}
-	if got := c.DecodeDrops(); len(got) != 1 || got[0] != want[0] {
+	if got := c.DecodeDrops().Names(); len(got) != 1 || got[0] != want[0] {
 		t.Errorf("DecodeDrops = %v, want %v", got, want)
 	}
 }
@@ -603,13 +650,13 @@ func TestDecodeRequestResetsDecodeDrops(t *testing.T) {
 	if _, err := c.DecodeRequest([]byte(first), false); err != nil {
 		t.Fatalf("解不动: %v", err)
 	}
-	if len(c.DecodeDrops()) != 1 {
-		t.Fatalf("第一轮 DecodeDrops = %v, want 一条", c.DecodeDrops())
+	if len(c.DecodeDrops().Names()) != 1 {
+		t.Fatalf("第一轮 DecodeDrops = %v, want 一条", c.DecodeDrops().Names())
 	}
 	if _, err := c.DecodeRequest([]byte(`{"model":"m","messages":[],"tool_choice":"auto"}`), false); err != nil {
 		t.Fatalf("解不动: %v", err)
 	}
-	if got := c.DecodeDrops(); len(got) != 0 {
+	if got := c.DecodeDrops().Names(); len(got) != 0 {
 		t.Errorf("第二轮 DecodeDrops = %v, want 空", got)
 	}
 }

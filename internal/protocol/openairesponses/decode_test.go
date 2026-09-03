@@ -434,18 +434,49 @@ func TestDecodeRequestSkipsEmptyInputImage(t *testing.T) {
 // JSON parse error——不救治就只能新开会话。删整条调用不行：配对的 function_call_output
 // 会变孤儿。
 func TestDecodeRequestSalvagesTruncatedFunctionCallArgs(t *testing.T) {
+	c := NewCodec()
+	req, err := c.DecodeRequest([]byte(rFunctionCallReq(`"arguments":"{\"city\":\"北"`)), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	if call.Args != "{}" {
+		t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
+	}
+	// 救治的是入参，不是语义：它仍然是一次 JSON 工具调用，编码侧不该改发包装对象。
+	if !call.ArgsIsJSON {
+		t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
+	}
+	// 整条调用还在：删了下面那条 function_call_output 就成孤儿，严格上游同样拒。
+	if call.ID != "call_1" || call.Name != "weather" {
+		t.Errorf("调用本身被动过：%+v", call)
+	}
+	if got := c.ArgsSalvaged().Names(); len(got) != 1 || got[0] != "weather(call_1)" {
+		t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+	}
+}
+
+// rFunctionCallReq 拼一条「function_call + 配对的 output」的请求，frag 是入参那一截。
+func rFunctionCallReq(frag string) string {
+	return `{"model":"m","input":[` +
+		`{"type":"function_call","call_id":"call_1","name":"weather",` + frag + `},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"晴"}]}`
+}
+
+// TestDecodeRequestFillsEmptyFunctionCallArgsWithoutNoting：空串 / 缺失 / null 的
+// arguments 照样归 `{}`，但**不登记**——一个字节都没丢，登记了只会让同一会话每一轮
+// 都刷一条「模型看不到那次调用的原始入参」的 Warn，把真出事的那次淹掉。与 CC 入口
+// 同规（参考 mimo2codex 的 sanitizeFunctionCallArguments）。
+func TestDecodeRequestFillsEmptyFunctionCallArgsWithoutNoting(t *testing.T) {
 	cases := map[string]string{
-		"截断的 JSON":     `"arguments":"{\"city\":\"北"`,
-		"空串 arguments": `"arguments":""`,
-		"缺 arguments":  `"name":"weather"`,
+		"空串 arguments":     `"arguments":""`,
+		"缺 arguments":      `"name":"weather"`,
+		"arguments 是 null": `"arguments":null`,
 	}
 	for name, frag := range cases {
 		t.Run(name, func(t *testing.T) {
-			body := `{"model":"m","input":[` +
-				`{"type":"function_call","call_id":"call_1","name":"weather",` + frag + `},` +
-				`{"type":"function_call_output","call_id":"call_1","output":"晴"}]}`
 			c := NewCodec()
-			req, err := c.DecodeRequest([]byte(body), false)
+			req, err := c.DecodeRequest([]byte(rFunctionCallReq(frag)), false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -453,18 +484,31 @@ func TestDecodeRequestSalvagesTruncatedFunctionCallArgs(t *testing.T) {
 			if call.Args != "{}" {
 				t.Errorf("入参 = %q, 期望 {}——严格上游会拿它去 JSON parse", call.Args)
 			}
-			// 救治的是入参，不是语义：它仍然是一次 JSON 工具调用，编码侧不该改发包装对象。
-			if !call.ArgsIsJSON {
-				t.Error("ArgsIsJSON = false，救治不该改掉入参是 JSON 这件事")
-			}
-			// 整条调用还在：删了下面那条 function_call_output 就成孤儿，严格上游同样拒。
-			if call.ID != "call_1" || call.Name != "weather" {
-				t.Errorf("调用本身被动过：%+v", call)
-			}
-			if got := c.ArgsSalvaged(); len(got) != 1 || got[0] != "weather(call_1)" {
-				t.Errorf("救治登记 = %v, 期望 [weather(call_1)]——server 层靠它打警告", got)
+			if got := c.ArgsSalvaged().Names(); len(got) != 0 {
+				t.Errorf("救治登记 = %v, 期望空——一个字节都没丢，不该刷警告", got)
 			}
 		})
+	}
+}
+
+// TestDecodeRequestKeepsObjectFunctionCallArgs：对象形态的 arguments 无损收下，与
+// CC 入口同规。此前它连解都解不动——往 string 解直接报错，整条请求被 400 拒掉。
+func TestDecodeRequestKeepsObjectFunctionCallArgs(t *testing.T) {
+	c := NewCodec()
+	req, err := c.DecodeRequest([]byte(rFunctionCallReq(`"arguments":{"city":"北京"}`)), false)
+	if err != nil {
+		t.Fatalf("解不动: %v——对象形态的入参不该拒掉整条请求", err)
+	}
+	call := req.Messages[0].Content[0].ToolCall
+	var got map[string]string
+	if err := json.Unmarshal([]byte(call.Args), &got); err != nil {
+		t.Fatalf("入参 = %q，解不成 JSON: %v", call.Args, err)
+	}
+	if got["city"] != "北京" {
+		t.Errorf("入参 = %q, 期望等价于 {\"city\":\"北京\"}", call.Args)
+	}
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
+		t.Errorf("救治登记 = %v, 期望空——没丢任何东西", got)
 	}
 }
 
@@ -480,7 +524,7 @@ func TestDecodeRequestKeepsValidFunctionCallArgs(t *testing.T) {
 	if got := req.Messages[0].Content[0].ToolCall.Args; got != `{"city": "北京"}` {
 		t.Errorf("入参 = %q, 期望原样（连空格都不该规整）", got)
 	}
-	if got := c.ArgsSalvaged(); len(got) != 0 {
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
 		t.Errorf("救治登记 = %v, 期望空——没救治过就不该有警告日志", got)
 	}
 }
@@ -499,7 +543,7 @@ func TestDecodeRequestKeepsCustomToolCallInput(t *testing.T) {
 	if call.Args != "console.log(1)" || call.ArgsIsJSON {
 		t.Errorf("custom 入参 = %q (isJSON=%v), 期望原样自由文本", call.Args, call.ArgsIsJSON)
 	}
-	if got := c.ArgsSalvaged(); len(got) != 0 {
+	if got := c.ArgsSalvaged().Names(); len(got) != 0 {
 		t.Errorf("救治登记 = %v, 期望空——自由文本不该被当成残缺 JSON", got)
 	}
 }

@@ -160,7 +160,13 @@ func (e *streamEncoder) markArgsSent(upstream int) {
 // 流式这边原先是空的——同一个因，两条路给同一个解。
 //
 // 只补见过 Start 的 index：孤零零飘来一个 EvToolCallEnd 不能凭空造出一路调用。
+//
+// 流内已经发过 error 帧就一帧都不再补，同 finish 里那道闸：客户端看到 error 之后
+// 又收到一帧正常的 tool_calls delta，会以为响应还在正常往下走。
 func (e *streamEncoder) fillEmptyArgs(upstream int) error {
+	if e.sawErrored {
+		return nil
+	}
 	if e.argsSent[upstream] {
 		return nil
 	}
