@@ -30,6 +30,8 @@ services:
     environment:
       # 镜像 ENTRYPOINT 把 -config 写死了，声明文件路径只能走这个环境变量。
       PORTAGE_CHANNELS: /etc/portage/channels.yaml
+      PORTAGE_DUMP_DIR: /dump
+      SQLITE_TMPDIR: /data
     ports:
       # 发布给所有网卡，供团队内网直连。
       # ⚠ 宿主有公网 IP 时这一行就是把 8317 开到公网——且 Docker 发布端口直接写
@@ -42,6 +44,7 @@ services:
       # 目录属主不是 65532 时启动报 `unable to open database file (14)`——看着像
       # SQLite 坏了，其实是权限。
       - ./data:/data
+      - ./dump:/dump
       - ./config.yaml:/etc/portage/config.yaml:ro
       - ./channels.yaml:/etc/portage/channels.yaml:ro
     healthcheck:

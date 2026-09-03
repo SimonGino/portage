@@ -578,3 +578,27 @@ func hasDrop(dropped protocol.Drops, want string) bool {
 	}
 	return false
 }
+
+// 无名服务端工具（Responses 的 web_search 只有 type，没有 name）在名单里退到 type，
+// 与 CC 出口同规——两个出口的丢弃日志形态零差异。
+func TestEncodeRequestDropNamesNamelessServerToolByType(t *testing.T) {
+	_, dropped, err := NewCodec().EncodeRequestReport(&protocol.Request{
+		Model: "m",
+		Tools: []protocol.Tool{
+			{Kind: protocol.ToolFunction, Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Kind: protocol.ToolServer, Extras: map[string]any{"type": "web_search", "external_web_access": true}},
+		},
+		Messages: []protocol.Message{userMsg("hi")},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := dropped.Names(DropServerTool)
+	found := false
+	for _, n := range got {
+		found = found || n == "web_search"
+	}
+	if !found {
+		t.Errorf("无名服务端工具应按 type 记进名单，得到 %v", got)
+	}
+}

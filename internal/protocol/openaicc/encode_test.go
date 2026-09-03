@@ -793,6 +793,25 @@ func TestEncodeRequestDropNamesEveryServerTool(t *testing.T) {
 	}
 }
 
+// 无名服务端工具（Responses 的 web_search 只有 type，没有 name）在名单里退到 type：
+// 不兜底的话 Drops.Add 跳过空名，日志里只剩一个光秃秃的 server_tool。
+func TestEncodeRequestDropNamesNamelessServerToolByType(t *testing.T) {
+	_, dropped, err := openaicc.NewCodec().EncodeRequestReport(&protocol.Request{
+		Model:    "m",
+		Messages: []protocol.Message{{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "hi"}}}},
+		Tools: []protocol.Tool{
+			{Kind: protocol.ToolFunction, Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)},
+			{Kind: protocol.ToolServer, Extras: map[string]any{"type": "web_search", "external_web_access": true}},
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dropped.Names(openaicc.DropServerTool); !contains(got, "web_search") {
+		t.Errorf("无名服务端工具应按 type 记进名单，得到 %v", got)
+	}
+}
+
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {

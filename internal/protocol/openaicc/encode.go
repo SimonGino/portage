@@ -281,8 +281,8 @@ func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[stri
 	out = make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		if t.Kind == protocol.ToolServer {
-			dropped.Add(DropServerTool, t.Name)
-			droppedTools = append(droppedTools, t.Name)
+			dropped.Add(DropServerTool, t.Label())
+			droppedTools = append(droppedTools, t.Label())
 			continue
 		}
 		fn := map[string]any{"name": t.Name}

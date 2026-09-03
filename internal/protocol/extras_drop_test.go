@@ -103,3 +103,26 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 		})
 	}
 }
+
+// Label 是丢弃名单那一截的名字来源：有 name 用 name，没有就退到 Extras["type"]，
+// 两者都没有返回空串（由 Drops.Add 照旧跳过，不编身份）。
+func TestToolLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		tool protocol.Tool
+		want string
+	}{
+		{"有名字就用名字", protocol.Tool{Name: "Read"}, "Read"},
+		{"名字优先于 type", protocol.Tool{Name: "advisor", Extras: map[string]any{"type": "advisor_20260301"}}, "advisor"},
+		{"无名退到 type", protocol.Tool{Extras: map[string]any{"type": "web_search"}}, "web_search"},
+		{"type 不是字符串", protocol.Tool{Extras: map[string]any{"type": 1}}, ""},
+		{"两者都没有", protocol.Tool{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.tool.Label(); got != tc.want {
+				t.Errorf("Label() = %q, 期望 %q", got, tc.want)
+			}
+		})
+	}
+}

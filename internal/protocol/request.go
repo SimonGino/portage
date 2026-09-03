@@ -160,6 +160,23 @@ type Tool struct {
 	Extras map[string]any
 }
 
+// Label 是这条工具在丢弃日志里的名字（口径层 v1.14 ⑨ 的名单那一截）。
+//
+// 优先用 Name；Name 为空时退到 Extras["type"]。服务端工具的声明本来就可以没有
+// name——Responses 的 web_search 是 {"type":"web_search","external_web_access":true}，
+// 对它来说 type 就是身份。不兜底的话 Drops.Add 会把空名跳过，日志里只剩一个光秃秃
+// 的 server_tool，「丢了 web_search」与「丢了别的没名字的服务端能力」分不开，
+// 这一档的名单机制对它等于失效。
+//
+// 两者都没有就返回空串，由 Drops.Add 照旧跳过：没有身份可报时不编一个。
+func (t Tool) Label() string {
+	if t.Name != "" {
+		return t.Name
+	}
+	kind, _ := t.Extras["type"].(string)
+	return kind
+}
+
 // ToolChoice 是工具选择策略。
 type ToolChoice struct {
 	// Mode: "" | auto | none | required | tool
