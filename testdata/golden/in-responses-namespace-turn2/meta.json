@@ -1,0 +1,11 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "verified": true,
+  "source": "ADE（Codex 系 harness）2026-09-03 实采，PO 在公网部署上开 PORTAGE_DUMP_DIR 抓的原始请求体（口径层 v1.16），不是 cmd/goldenrec 录的。turn1 钉的是声明形态，这一份钉的是**回程形态**（口径层 v1.14 ⑤，#95）：9 个具名 namespace 共 61 个子工具 + 10 个顶层 function + 1 个 web_search；input 里 17 次回带调用，其中 4 次是命名空间子工具，ADE 一律写成**裸子名 + namespace 字段**（如 {\"name\":\"taskProgressUpdated\",\"namespace\":\"ade_task\"}），没有一次写摊平名——三种设想的回带形态里，真实 harness 用的是这一种。脱敏：instructions、各 role 正文、function_call 的 arguments、function_call_output 的 output、reasoning 的 summary/content 全部替换为占位并记原长度，encrypted_content 换定值，prompt_cache_key 改定值，工具名/描述/参数 schema 一字未动（同 turn1），仅一处参数描述里的内网域名改成 example.invalid。"
+}

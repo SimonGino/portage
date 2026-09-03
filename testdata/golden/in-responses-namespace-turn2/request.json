@@ -1,0 +1,3259 @@
+{
+  "include": [],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "[redacted developer text, 363 chars in the original capture]",
+          "type": "input_text"
+        },
+        {
+          "text": "[redacted developer text, 16453 chars in the original capture]",
+          "type": "input_text"
+        },
+        {
+          "text": "[redacted developer text, 10277 chars in the original capture]",
+          "type": "input_text"
+        },
+        {
+          "text": "[redacted developer text, 1014 chars in the original capture]",
+          "type": "input_text"
+        }
+      ],
+      "role": "developer",
+      "type": "message"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted user text, 483 chars in the original capture]",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted user text, 1822 chars in the original capture]",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": null,
+      "encrypted_content": null,
+      "summary": [
+        {
+          "text": "[redacted reasoning summary, 2677 chars in the original capture]",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 87 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"159 chars in the original capture\"}",
+      "call_id": "call_43d1b1bf45de4e93a6c22c9e",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"redacted\": \"238 chars in the original capture\"}",
+      "call_id": "call_2eb0d9c089e846d38b2f3fee",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_43d1b1bf45de4e93a6c22c9e",
+      "output": "[redacted tool output, 5654 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "call_2eb0d9c089e846d38b2f3fee",
+      "output": "[redacted tool output, 50 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "arguments": "{\"redacted\": \"211 chars in the original capture\"}",
+      "call_id": "call_989773058b764e0db1aa585c",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_989773058b764e0db1aa585c",
+      "output": "[redacted tool output, 4537 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "arguments": "{\"redacted\": \"185 chars in the original capture\"}",
+      "call_id": "call_968ea01b9f1e46b98be45dac",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_968ea01b9f1e46b98be45dac",
+      "output": "[redacted tool output, 3248 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": null,
+      "encrypted_content": null,
+      "summary": [
+        {
+          "text": "[redacted reasoning summary, 1039 chars in the original capture]",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 86 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"418 chars in the original capture\"}",
+      "call_id": "call_c2eb3a0d23b0482ebdc9ff57",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"redacted\": \"440 chars in the original capture\"}",
+      "call_id": "call_3885b9a64f11449a87687bfd",
+      "name": "taskProgressUpdated",
+      "namespace": "ade_task",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"redacted\": \"164 chars in the original capture\"}",
+      "call_id": "call_c7a4ad997e374f4bb5224b20",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_c2eb3a0d23b0482ebdc9ff57",
+      "output": "[redacted tool output, 773 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "call_3885b9a64f11449a87687bfd",
+      "output": "[redacted tool output, 360 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "call_c7a4ad997e374f4bb5224b20",
+      "output": "[redacted tool output, 5707 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": null,
+      "encrypted_content": null,
+      "summary": [
+        {
+          "text": "[redacted reasoning summary, 1124 chars in the original capture]",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 144 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"420 chars in the original capture\"}",
+      "call_id": "call_775f08b056c24b9cad29e98d",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_775f08b056c24b9cad29e98d",
+      "output": "[redacted tool output, 4657 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": null,
+      "encrypted_content": null,
+      "summary": [
+        {
+          "text": "[redacted reasoning summary, 1884 chars in the original capture]",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 323 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"1204 chars in the original capture\"}",
+      "call_id": "call_587664cc8be44fd0b349384d",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_587664cc8be44fd0b349384d",
+      "output": "[redacted tool output, 284 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "arguments": "{\"redacted\": \"557 chars in the original capture\"}",
+      "call_id": "call_5fce2c8fbadf4c01b93673ae",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_5fce2c8fbadf4c01b93673ae",
+      "output": "[redacted tool output, 1079 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 53 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"941 chars in the original capture\"}",
+      "call_id": "call_bf3bb576203943638513aa0e",
+      "name": "humanDecisionRequested",
+      "namespace": "ade_task",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_bf3bb576203943638513aa0e",
+      "output": "[redacted tool output, 26 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted user text, 226 chars in the original capture]",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted user text, 1918 chars in the original capture]",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": null,
+      "encrypted_content": null,
+      "summary": [
+        {
+          "text": "[redacted reasoning summary, 742 chars in the original capture]",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 122 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"497 chars in the original capture\"}",
+      "call_id": "call_80320b9bcf2046e4b15d2465",
+      "name": "taskProgressUpdated",
+      "namespace": "ade_task",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"redacted\": \"165 chars in the original capture\"}",
+      "call_id": "call_183a1eeffc394cf5bfe03561",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_80320b9bcf2046e4b15d2465",
+      "output": "[redacted tool output, 360 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "call_183a1eeffc394cf5bfe03561",
+      "output": "[redacted tool output, 600 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 58 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"671 chars in the original capture\"}",
+      "call_id": "call_eb1097c5c8c040f29f6eb925",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_eb1097c5c8c040f29f6eb925",
+      "output": "[redacted tool output, 283 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 83 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"499 chars in the original capture\"}",
+      "call_id": "call_16a2e1523dba470abab591b9",
+      "name": "taskProgressUpdated",
+      "namespace": "ade_task",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"redacted\": \"653 chars in the original capture\"}",
+      "call_id": "call_25e048b982ba42bd8dd123d6",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_16a2e1523dba470abab591b9",
+      "output": "[redacted tool output, 360 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "call_25e048b982ba42bd8dd123d6",
+      "output": "[redacted tool output, 118 chars in the original capture]",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "[redacted assistant text, 50 chars in the original capture]",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"redacted\": \"661 chars in the original capture\"}",
+      "call_id": "call_64fb7e29c4384f17935cee16",
+      "name": "shell_command",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_64fb7e29c4384f17935cee16",
+      "output": "[redacted tool output, 118 chars in the original capture]",
+      "type": "function_call_output"
+    }
+  ],
+  "instructions": "[redacted instructions, 13411 chars in the original capture]",
+  "model": "glm-5.2-ade",
+  "parallel_tool_calls": false,
+  "prompt_cache_key": "cache-key-1",
+  "store": false,
+  "stream": true,
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "description": "Runs a Powershell command (Windows) and returns its output.\n\nExamples of valid command strings:\n\n- ls -a (show hidden): \"Get-ChildItem -Force\"\n- recursive find by name: \"Get-ChildItem -Recurse -Filter *.py\"\n- recursive grep: \"Get-ChildItem -Path C:\\\\myrepo -Recurse | Select-String -Pattern 'TODO' -CaseSensitive\"\n- ps aux | grep python: \"Get-Process | Where-Object { $_.ProcessName -like '*python*' }\"\n- setting an env var: \"$env:FOO='bar'; echo $env:FOO\"\n- running an inline Python script: \"@'\\\\nprint('Hello, world!')\\\\n'@ | python -\"\n\nWindows safety rules:\n- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.\n- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.\n- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
+      "name": "shell_command",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "Shell script to run in the user's default shell.",
+            "type": "string"
+          },
+          "justification": {
+            "description": "User-facing approval question for `require_escalated`; omit otherwise.",
+            "type": "string"
+          },
+          "login": {
+            "description": "True runs with login shell semantics; false disables them. Defaults to true.",
+            "type": "boolean"
+          },
+          "prefix_rule": {
+            "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sandbox_permissions": {
+            "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+            "enum": [
+              "use_default",
+              "require_escalated"
+            ],
+            "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Maximum command runtime. Defaults to 10000 ms.",
+            "type": "number"
+          },
+          "workdir": {
+            "description": "Working directory for the command. Defaults to the turn cwd.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.",
+      "name": "list_mcp_resources",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor from a previous list_mcp_resources call; omit for the first page.",
+            "type": "string"
+          },
+          "server": {
+            "description": "MCP server name. Omit to list resources from every configured server.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.",
+      "name": "list_mcp_resource_templates",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page.",
+            "type": "string"
+          },
+          "server": {
+            "description": "MCP server name. Omit to list resource templates from every configured server.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Read a specific resource from an MCP server given the server name and resource URI.",
+      "name": "read_mcp_resource",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "server": {
+            "description": "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources.",
+            "type": "string"
+          },
+          "uri": {
+            "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Updates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n",
+      "name": "update_plan",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "explanation": {
+            "description": "Optional explanation for this plan update.",
+            "type": "string"
+          },
+          "plan": {
+            "description": "The list of steps",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "description": "Step status.",
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ],
+                  "type": "string"
+                },
+                "step": {
+                  "description": "Task step text.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "step",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Request user input for one to three short questions and wait for the response. Set autoResolutionMs, from 60000 to 240000 milliseconds, only when the question is useful but non-blocking and continuing with best judgment is acceptable if the user does not answer; omit it when explicit user input is required. This tool is only available in Plan mode.",
+      "name": "request_user_input",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "autoResolutionMs": {
+            "description": "Optional auto-resolution window in milliseconds, from 60000 to 240000. Include this only when the question is useful but non-blocking and continuing with best judgment is acceptable if the user does not answer; omit it when explicit user input is required before continuing. Use 60000 for lightly helpful context and up to 240000 when the answer would materially unblock better work.",
+            "type": "number"
+          },
+          "questions": {
+            "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "header": {
+                  "description": "Short header label shown in the UI (12 or fewer chars).",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "Stable identifier for mapping answers (snake_case).",
+                  "type": "string"
+                },
+                "options": {
+                  "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "description": "One short sentence explaining impact/tradeoff if selected.",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "User-facing label (1-5 words).",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "question": {
+                  "description": "Single-sentence prompt shown to the user.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "header",
+                "question",
+                "options"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+      "name": "view_image",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Local filesystem path to an image file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Tools for spawning and managing sub-agents.",
+      "name": "multi_agent_v1",
+      "tools": [
+        {
+          "description": "Close an agent and any open descendants when they are no longer needed, and return the target agent's previous status before shutdown was requested. Completed agents remain open and count toward the concurrency limit until closed. Don't keep agents open for too long if they are not needed anymore.",
+          "name": "close_agent",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "description": "Agent id to close (from spawn_agent).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "Resume a previously closed agent by id so it can receive send_input and wait_agent calls.",
+          "name": "resume_agent",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "description": "Agent id to resume.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "Send a message to an existing agent. Use interrupt=true to redirect work immediately. You should reuse the agent by send_input if you believe your assigned task is highly dependent on the context of a previous task.",
+          "name": "send_input",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "interrupt": {
+                "description": "True interrupts the current task and handles this message immediately; false or omitted queues it.",
+                "type": "boolean"
+              },
+              "items": {
+                "description": "Structured input items. Use this to pass explicit mentions (for example app:// connector paths).",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "image_url": {
+                      "description": "Image URL when type is image.",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Display name when type is skill or mention.",
+                      "type": "string"
+                    },
+                    "path": {
+                      "description": "Path when type is local_image/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention.",
+                      "type": "string"
+                    },
+                    "text": {
+                      "description": "Text content when type is text.",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Input item type: text, image, local_image, skill, or mention.",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message": {
+                "description": "Legacy plain-text message to send to the agent. Use either message or items.",
+                "type": "string"
+              },
+              "target": {
+                "description": "Agent id to message (from spawn_agent).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "\n        \n        Available model overrides (optional; inherited parent model is preferred):\n- `gpt-5.5`: Frontier model for complex coding, research, and real-world work. Reasoning efforts: low, medium (default), high, xhigh. Service tiers: priority.\n- `gpt-5.4`: Strong model for everyday coding. Reasoning efforts: low, medium (default), high, xhigh. Service tiers: priority.\n- `gpt-5.4-mini`: Small, fast, and cost-efficient model for simpler coding tasks. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-5.3-codex`: Coding-optimized model. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-5.2`: Optimized for professional work and long-running agents. Reasoning efforts: low, medium (default), high, xhigh.\n        Spawn a sub-agent for a well-scoped task. Returns the spawned agent id plus the user-facing nickname when available. Spawned agents inherit your current model by default. Omit `model` to use that preferred default; set `model` only when an explicit override is needed.\nThis spawn_agent tool provides you access to sub-agents that inherit your current model by default. Do not set the `model` field unless the user explicitly asks for a different model or there is a clear task-specific reason. You should follow the rules and guidelines below to use this tool.\n\nDo not spawn sub-agents unless the user explicitly asks for sub-agents, delegation, or parallel agent work.\nAgent-role guidance below only helps choose which agent to use after spawning is already authorized; it never authorizes spawning by itself.\n\n### Designing delegated subtasks\n- Subtasks must be concrete, well-defined, and self-contained.\n- Delegated subtasks must materially advance the main task.\n- Do not duplicate work between the main rollout and delegated subtasks.\n- Avoid issuing multiple delegate calls on the same unresolved thread unless the new delegated task is genuinely different and necessary.\n- Narrow the delegated ask to the concrete output you need next.\n- For coding tasks, prefer delegating concrete code-change worker subtasks over read-only explorer analysis when the subagent can make a bounded patch in a clear write scope.\n- When delegating coding work, instruct the submodel to edit files directly in its forked workspace and list the file paths it changed in the final answer.\n- For code-edit subtasks, decompose work so each delegated task has a disjoint write set.\n\n### After you delegate\n- Call wait_agent very sparingly. Only call wait_agent when you need the result immediately for the next critical-path step and you are blocked until it returns.\n- Do not redo delegated subagent tasks yourself; focus on integrating results or tackling non-overlapping work.\n- While the subagent is running in the background, do meaningful non-overlapping work immediately.\n- Do not repeatedly wait by reflex.\n- When a delegated coding task returns, quickly review the uploaded changes, then integrate or refine them.\n\n### Parallel delegation patterns\n- Run multiple independent information-seeking subtasks in parallel when you have distinct questions that can be answered independently.\n- Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.\n- Delegate verification only when it can run in parallel with ongoing implementation and is likely to catch a concrete risk before final integration.\n- The key is to find opportunities to spawn multiple independent subtasks in parallel within the same round, while ensuring each subtask is well-defined, self-contained, and materially advances the main task.",
+          "name": "spawn_agent",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "agent_type": {
+                "description": "Optional type name for the new agent. If omitted, `default` is used.\nAvailable roles:\napi-spec-agent: {\nAPI 规格编排器。按用户意图路由给 3 个 skill（api-clarify / api-spec-builder / api-kb-search），产出可交付的 Markdown 接口规格文档。\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nbcp-prd-mock: {\nPRD生成Agent，当前只是用于mock验证，必须按照下面固定规则执行\n- This role's model is set to `qwen3.7-plus` and cannot be changed.\n}\nconvergence-agent: {\nLoop-SOP 收敛控制代理，接收准出检查 Agent 的判定结果和任务执行轮次，基于 AI 收敛控制、Loop 次数约束、阶段回退和上下文补充四大能力，输出结构化的收敛决策\n}\ndev-decomp-agent: {\n开发任务分析与拆解，分析用户的自然语言和现有代理，将其拆解为可执行的开发任务清单和并梳理依赖关系\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nexit-check-agent: {\n任务准出规则检查代理，拿到执行Agent的产出物（PRD、md文档、任务记录），通过云端获取用户配置的文本规则或脚本规则（支持 typescript/python 多语言），执行校验后输出结构化判定结果\n}\nfield-classifier-agent: {\n字段规则分类子代理，在字段标准化之前，将字段的内容划分到不同的规则\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nfield-standardization-agent: {\n字段规则标准化子代理，顺序处理输入文件中的每个字段，调用field-rule-standardization技能进行标准化，并将结果反写回原文件对应位置\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nform-scheduler-agent: {\n业务能力生成代理，完整执行表单 DSL 生成、Workbench 预览、页面专家保存及后端高码开发交付全流程\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nform-subagent: {\n表单生成子代理，按 form-subagent-skill 执行单个 step\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nprd-generate-agent: {\nPRD生成Agent，使用 prd-generation skill 完成从模型匹配到PRD生成的完整生成全流程\n}\nquality-analyzer-agent: {\n质量分析Agent，负责端到端的测试质量分析闭环。基于 executionTaskId 通过 API 拉取执行结果，产物写入项目根目录下的 test_report_workspacePath。从测试执行平台拉取数据、做字段映射并渲染 HTML 质量分析报告。适用于需要批量查询执行状态、生成可视化报告的任务；不用于查看单个用例详情、手动配置测试环境或编写测试用例代码。\n}\nspec-clarification-agent: {\n需求澄清Agent，兼容PRD转译标准化与API规格生成两大能力。根据用户意图路由到PRD生成流程或API规格编排流程，完成从需求澄清到规格产出的全链路。\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\nt100-dev-team: {\nT100 DevTeam 总控 Agent：开发改动类需求的唯一入口，负责调度、状态、人工闸口与交付汇总。\n}\nt100-req-clarify: {\nT100 需求分析与澄清 Agent：把 Canonical Packet 调研并澄清为字段级《需求确认书 V2》。\n}\ntest-decomp-agent: {\n测试任务分析与拆解，分析用户的自然语言和现有代理，将其拆解为可执行的测试子任务、收集子代理所需输入参数和传递上下文信息\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\ntest-executor-agent: {\n执行表单测试用例，支持新增/存档/开窗/下拉/日期选择/子表输入/表格筛选等操作\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\ntest-planner-agent: {\n当用户请求生成测试用例时，根据PRD编号和文件类型路由到测试用例生成Skill，编排完整生成流程并校验产出。负责参数校验、会话目录创建、路由分发、执行监控和结果校验。不适用于无PRD输入的查阅场景或参数不完整无法识别prdType的场景。\n- This role's model is set to `ep-cl-glm-ade-test` and cannot be changed.\n}\ndefault: {\nDefault agent.\n}\nexplorer: {\nUse `explorer` for specific codebase questions.\nExplorers are fast and authoritative.\nThey must be used to ask specific, well-scoped questions on the codebase.\nRules:\n- In order to avoid redundant work, you should avoid exploring the same problem that explorers have already covered. Typically, you should trust the explorer results without additional verification. You are still allowed to inspect the code yourself to gain the needed context!\n- You are encouraged to spawn up multiple explorers in parallel when you have multiple distinct questions to ask about the codebase that can be answered independently. This allows you to get more information faster without waiting for one question to finish before asking the next. While waiting for the explorer results, you can continue working on other local tasks that do not depend on those results. This parallelism is a key advantage of delegation, so use it whenever you have multiple questions to ask.\n- Reuse existing explorers for related questions.\n}\nworker: {\nUse for execution and production work.\nTypical tasks:\n- Implement part of a feature\n- Fix tests or bugs\n- Split large refactors into independent chunks\nRules:\n- Explicitly assign **ownership** of the task (files / responsibility). When the subtask involves code changes, you should clearly specify which files or modules the worker is responsible for. This helps avoid merge conflicts and ensures accountability. For example, you can say \"Worker 1 is responsible for updating the authentication module, while Worker 2 will handle the database layer.\" By defining clear ownership, you can delegate more effectively and reduce coordination overhead.\n- Always tell workers they are **not alone in the codebase**, and they should not revert the edits made by others, and they should adjust their implementation to accommodate the changes made by others. This is important because there may be multiple workers making changes in parallel, and they need to be aware of each other's work to avoid conflicts and ensure a cohesive final product.\n}",
+                "type": "string"
+              },
+              "fork_context": {
+                "description": "True forks the current thread history into the new agent; false or omitted starts with only the initial prompt.",
+                "type": "boolean"
+              },
+              "items": {
+                "description": "Structured input items. Use this to pass explicit mentions (for example app:// connector paths).",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "image_url": {
+                      "description": "Image URL when type is image.",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Display name when type is skill or mention.",
+                      "type": "string"
+                    },
+                    "path": {
+                      "description": "Path when type is local_image/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention.",
+                      "type": "string"
+                    },
+                    "text": {
+                      "description": "Text content when type is text.",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Input item type: text, image, local_image, skill, or mention.",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message": {
+                "description": "Initial plain-text task for the new agent. Use either message or items.",
+                "type": "string"
+              },
+              "model": {
+                "description": "Model override for the new agent. Omit unless an explicit override is needed.",
+                "type": "string"
+              },
+              "reasoning_effort": {
+                "description": "Reasoning effort override for the new agent. Omit to inherit the parent effort.",
+                "type": "string"
+              },
+              "service_tier": {
+                "description": "Service tier override for the new agent. Omit unless explicitly requested.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns empty status when timed out. Once the agent reaches a final status, a notification message will be received containing the same completed status.",
+          "name": "wait_agent",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "targets": {
+                "description": "Agent ids to wait on. Pass multiple ids to wait for whichever finishes first.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "timeout_ms": {
+                "description": "Timeout in milliseconds. Defaults to 30000, min 10000, max 3600000. Prefer longer waits (minutes) to avoid busy polling.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "targets"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "Tools in the mcp__ade_asset_knowledge namespace.",
+      "name": "mcp__ade_asset_knowledge",
+      "tools": [
+        {
+          "description": "按完整文件路径下载知识库文件。入参为完整中文路径，示例: /知识库A/目录1/文件.md。返回文件内容和元信息，支持 Markdown、文本、PDF 等格式。",
+          "name": "downloadKnowledgeFile",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "filePath": {
+                "description": "完整文件路径，示例: /知识库A/目录1/文件.md",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filePath"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "读取知识库或目录下的 index.md 概览文件，用于了解知识库或目录的内容结构、文档分类和检索指引。当前仅支持访问知识库：/业务知识库。path 为知识库或目录路径，支持多级目录，工具会自动定位对应的 index.md。无需在 path 中填写 index.md；返回文件路径、文件元信息和 Markdown 内容。",
+          "name": "readKnowledgeIndexFile",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "description": "知识库或目录路径，必须以“业务知识库”开头。示例：\"业务知识库\"、\"业务知识库/业务模型\"、\"业务知识库/业务模型/销售订单\"。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "检索业务资产。支持自然语言语义检索和精准条件匹配（code精确匹配、assetName模糊匹配）。query和queryObjJson至少传一个；topK默认10最大50。assetTypes为必填列表，指定检索的资产类型范围。返回资产基本信息和语义匹配分数。资产类型映射：APAAS_BIZ_MODEL=业务模型, APAAS_BIZ_SERVICE=业务服务, APAAS_DQT_MODEL=虚拟模型",
+          "name": "searchBusinessAssets",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "assetTypesJson": {
+                "description": "资产类型列表JSON，如 [\"APAAS_BIZ_MODEL\",\"APAAS_BIZ_SERVICE\"]",
+                "type": "string"
+              },
+              "query": {
+                "description": "自然语言查询，用于语义检索",
+                "type": "string"
+              },
+              "queryObjJson": {
+                "description": "精准条件JSON，格式: {\"logic\":\"AND\",\"conditions\":[{\"field\":\"code\",\"operator\":\"eq\",\"value\":\"xxx\"}]}",
+                "type": "string"
+              },
+              "returnContent": {
+                "description": "是否返回资产完整内容，默认false",
+                "type": "boolean"
+              },
+              "topK": {
+                "description": "返回数量，默认10，最大50",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "query",
+              "queryObjJson",
+              "assetTypesJson",
+              "topK",
+              "returnContent"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "Tools in the mcp__digibcp_dsl_workbench namespace.",
+      "name": "mcp__digibcp_dsl_workbench",
+      "tools": [
+        {
+          "description": "仅应用 status=CONFIRMED 的本地 Workbench 微调任务；表达式任务默认调用后端生成器，默认原子执行。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "apply_fine_tune",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "allowPartial": {
+                "description": "仅作用于全部任务已确认后的执行 issue；确认门始终整批拒绝，默认 false 原子执行",
+                "type": "boolean"
+              },
+              "baseRevision": {
+                "description": "乐观锁 revision",
+                "type": "integer"
+              },
+              "draftPath": {
+                "description": "可选的绝对 JSON 草稿路径",
+                "type": "string"
+              },
+              "expressionContext": {
+                "additionalProperties": false,
+                "description": "表达式生成上下文；token 仅用于后端请求头，不会写入 DSL 或响应。requireDesc/aimFieldInfo 可由对应任务提供。",
+                "properties": {
+                  "aimFieldInfo": {
+                    "type": "string"
+                  },
+                  "pageDesignId": {
+                    "type": "string"
+                  },
+                  "requireDesc": {
+                    "type": "string"
+                  },
+                  "routerKey": {
+                    "type": "string"
+                  },
+                  "tenantId": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pageDesignId",
+                  "token"
+                ],
+                "type": "object"
+              },
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              },
+              "persist": {
+                "description": "允许显式覆盖 sourcePath 时设置为 true",
+                "type": "boolean"
+              },
+              "propCatalog": {},
+              "responseMode": {
+                "description": "默认返回完整 DSL 以兼容已有调用方；仅需变更摘要时显式使用 compact",
+                "enum": [
+                  "compact",
+                  "full"
+                ],
+                "type": "string"
+              },
+              "tasks": {
+                "description": "至少一个已确认的本地微调任务",
+                "items": {
+                  "additionalProperties": {},
+                  "properties": {},
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "jobId",
+              "baseRevision",
+              "tasks"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "应用带乐观锁的结构化 DSL JSON Patch；可选原子写入完整 schema 草稿。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "apply_patch",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "baseRevision": {
+                "description": "乐观锁 revision",
+                "type": "integer"
+              },
+              "draftPath": {
+                "description": "可选的绝对 JSON 草稿路径",
+                "type": "string"
+              },
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              },
+              "operations": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "op": {
+                      "enum": [
+                        "add",
+                        "remove",
+                        "replace",
+                        "move",
+                        "copy",
+                        "test"
+                      ],
+                      "type": "string"
+                    },
+                    "path": {
+                      "description": "JSON Pointer",
+                      "type": "string"
+                    },
+                    "value": {}
+                  },
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "persist": {
+                "description": "允许显式覆盖 sourcePath 时设置为 true",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "jobId",
+              "baseRevision",
+              "operations"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "将调用方提供的 token 临时配置到 Workbench 服务内存，返回短期、可绑定作业的 previewAuthId；open_workbench 会将 token 写入本地预览 URL，但不会写入作业或文件。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "configure_preview_auth",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "applicationCode": {
+                "type": "string"
+              },
+              "jobId": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "ttlSeconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "token",
+              "applicationCode"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "创建绑定 region、tenant、applicationCode 和 job 的短期内存预览上下文，返回 opaque previewContextId；open_workbench 会将 token 写入本地预览 URL。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "configure_preview_context",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "applicationCode": {
+                "type": "string"
+              },
+              "jobIds": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "region": {
+                "type": "string"
+              },
+              "routerKey": {
+                "description": "同一鉴权候选的 routerKey；缺失时使用 tenantId",
+                "type": "string"
+              },
+              "tenantId": {
+                "description": "必须等于本批次统一鉴权候选的 tenantID",
+                "type": "string"
+              },
+              "token": {
+                "description": "本批次统一鉴权候选中已与租户匹配的最终 token",
+                "type": "string"
+              },
+              "tokenExpiresAt": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "ttlSeconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "token",
+              "region",
+              "tenantId",
+              "applicationCode"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "按 region 更新 Workbench 运行配置并原子持久化；不会保存 token。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "configure_runtime_config",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "lowcodeFormUrl": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "region",
+              "lowcodeFormUrl"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "根据 DSL Schema 创建仅供 MCP 离线编辑和校验的会话；不能打开运行时、设计器或发布。需要预览时请将 Schema 写入本地 JSON 后使用 import_job。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "generate_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "dataSourcesResData": {
+                "additionalProperties": {},
+                "description": "数据源响应数据",
+                "properties": {},
+                "type": "object"
+              },
+              "desensitizationFields": {
+                "description": "保密字段",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "extraParams": {
+                "additionalProperties": {},
+                "description": "扩展参数",
+                "properties": {},
+                "type": "object"
+              },
+              "permission": {
+                "description": "权限列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "schema": {
+                "additionalProperties": {},
+                "description": "DSL Schema 对象",
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "获取当前选中的节点上下文。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "get_editor_context",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "获取最新 DSL、revision 和作业状态。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "get_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "Import a runtime DSL job from a local JSON file without passing the full schema through tool arguments. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "import_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "detailDslPath": {
+                "description": "Local absolute path of the detail runtime DSL JSON file",
+                "type": "string"
+              },
+              "dslPath": {
+                "description": "Local absolute path of the runtime DSL JSON file",
+                "type": "string"
+              },
+              "expectedCustomComponentNames": {
+                "description": "本次 DSL 预期包含的自定义组件名称；用于识别尚未完成 ID 回填的占位",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "offlineOnly": {
+                "description": "仅离线检查 DSL；禁用运行时、设计器和发布",
+                "type": "boolean"
+              },
+              "previewAuthId": {
+                "type": "string"
+              },
+              "previewContextId": {
+                "type": "string"
+              },
+              "publishContext": {
+                "additionalProperties": false,
+                "properties": {
+                  "applicationCode": {
+                    "type": "string"
+                  },
+                  "detailPageDesignId": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "listPageDesignId": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "locale": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "patternType": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "region": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "tenantId": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  },
+                  "workItemCode": {
+                    "$ref": "#/properties/publishContext/properties/applicationCode"
+                  }
+                },
+                "required": [
+                  "applicationCode",
+                  "listPageDesignId",
+                  "detailPageDesignId",
+                  "workItemCode",
+                  "patternType",
+                  "tenantId",
+                  "region"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "dslPath"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "返回右侧 Workbench 的本地 URL。请使用 Codex 内置浏览器打开 workbenchUrl。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "open_workbench",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "只读检查双页作业、revision、发布上下文、预览上下文和 DSL 校验状态；不会调用发布端点，也不消耗发布尝试。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "preflight_publish_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "发布已通过 preflight_publish_job 的 DSL 作业。调用前必须得到用户确认，且只允许调用一次。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "publish_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "使用乐观锁替换本地 Job 的完整 DSL Schema；校验通过后 revision + 1，并可原子写入指定 JSON 草稿。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "replace_job_schema",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "baseRevision": {
+                "description": "乐观锁 revision",
+                "type": "integer"
+              },
+              "draftPath": {
+                "description": "可选的绝对 JSON 草稿路径",
+                "type": "string"
+              },
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              },
+              "persist": {
+                "description": "允许显式覆盖 sourcePath 时设置为 true",
+                "type": "boolean"
+              },
+              "schema": {
+                "additionalProperties": {},
+                "description": "完整 DSL Schema 对象",
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "required": [
+              "jobId",
+              "baseRevision",
+              "schema"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "请求当前已打开 Workbench 在原页签内按新 revision 交给运行时 SDK 对账；不导航、不新开页签、不刷新浏览器。定制组件源码重新发布后使用 scope=custom-components。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "request_runtime_reconcile",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "baseRevision": {
+                "description": "乐观锁 revision",
+                "type": "integer"
+              },
+              "jobId": {
+                "description": "当前已打开的 Workbench 作业 ID",
+                "type": "string"
+              },
+              "reason": {
+                "description": "本次对账原因，仅用于诊断",
+                "type": "string"
+              },
+              "scope": {
+                "description": "定制组件源码重新发布后使用 custom-components，其余 DSL 对账使用 dsl",
+                "enum": [
+                  "dsl",
+                  "custom-components"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId",
+              "baseRevision"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "保存前端当前选中的组件信息。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "set_selection",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "componentName": {
+                "description": "组件名称",
+                "type": "string"
+              },
+              "fieldKey": {
+                "description": "字段路径",
+                "type": "string"
+              },
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              },
+              "jsonPointer": {
+                "description": "节点对应的 JSON Pointer",
+                "type": "string"
+              },
+              "nodeId": {
+                "description": "被选中组件的节点 ID",
+                "type": "string"
+              },
+              "revision": {
+                "description": "当前 DSL revision",
+                "type": "number"
+              }
+            },
+            "required": [
+              "jobId",
+              "revision",
+              "nodeId",
+              "jsonPointer"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "校验 DSL Schema 和业务规则。. This tool is part of plugin `DigiBCP DSL Workbench`.",
+          "name": "validate_job",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "jobId": {
+                "description": "作业 ID",
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+      "name": "get_goal",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+      "name": "create_goal",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "objective": {
+            "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete.",
+            "type": "string"
+          },
+          "token_budget": {
+            "description": "Positive token budget for the new goal. Omit unless explicitly requested.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "objective"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "Update the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+      "name": "update_goal",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "description": "Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+            "enum": [
+              "complete",
+              "blocked"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    },
+    {
+      "description": "DigiADE task management tools.",
+      "name": "ade_task",
+      "tools": [
+        {
+          "description": "当 Agent 需要向用户展示资产预览卡片时调用。生成一张 assetPreview 类型卡片，包含资产元信息和设计器预览链接，用户可点击打开预览。",
+          "name": "assetPreview",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "additionalProperties": false,
+                "properties": {
+                  "asset": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assetType": {
+                        "description": "资产类型名称，如\"表单页面\"。",
+                        "type": "string"
+                      },
+                      "designerName": {
+                        "description": "设计器名称，如\"表单设计器\"。",
+                        "type": "string"
+                      },
+                      "id": {
+                        "description": "资产 ID。",
+                        "type": "string"
+                      },
+                      "name": {
+                        "description": "资产名称。",
+                        "type": "string"
+                      },
+                      "previewUrl": {
+                        "description": "设计器预览地址。例如 `https://lowcode.example.invalid/lowcode?applicationCode=ArjUNUEcpk&applicationVersion=1.0.0&workItemCode=HQlTX6LskBWN&pageCode=HQlTX6LskBWN-detail&dwLang=zh_CN&token=218dfb74-a3ec-4418-97c0-a252dc18a3da`。",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "assetType",
+                      "designerName",
+                      "previewUrl"
+                    ],
+                    "type": "object"
+                  },
+                  "description": {
+                    "description": "卡片说明，如\"表单设计器资产预览。\"",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "资产卡片唯一标识。",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "description": "卡片类型，固定传 \"assetPreview\"。",
+                    "enum": [
+                      "assetPreview"
+                    ],
+                    "type": "string"
+                  },
+                  "schema": {
+                    "description": "卡片协议标识，固定传 \"workbench.agent-card\"。",
+                    "enum": [
+                      "workbench.agent-card"
+                    ],
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "卡片标题，如\"销售订单表单\"。",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "schema",
+                  "kind",
+                  "id",
+                  "title",
+                  "asset"
+                ],
+                "type": "object"
+              },
+              "content": {
+                "description": "Agent 伴随卡片发出的消息文本，说明预览内容。示例：\"已为您生成销售订单表单，点击预览查看。\"",
+                "type": "string"
+              },
+              "role": {
+                "description": "角色标识，固定传 \"assistant\"。",
+                "enum": [
+                  "assistant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "content",
+              "card"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "取消 ADE 任务。当用户指定任务编号时传 task_no；未指定任务编号时不传 task_no，Main 会根据当前 threadId 从会话管理中读取绑定任务 ID。工具成功后必须将返回的 userVisibleMessage 原样回复给用户。",
+          "name": "cancelTasks",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "description": "可选。用户取消任务的原因或原始取消意图摘要。",
+                "type": "string"
+              },
+              "task_no": {
+                "description": "可选。要取消的任务编号；不传则取消当前会话绑定的任务。",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "执行准出检查的脚本规则。支持 typescript/python 两种语言。脚本接收产出物文件路径作为输入，返回 JSON 格式的校验结果。",
+          "name": "execute_exit_check_script",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "file_paths": {
+                "description": "产出物文件路径列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "description": "脚本语言。决定使用哪个执行引擎运行脚本。",
+                "enum": [
+                  "typescript",
+                  "python"
+                ],
+                "type": "string"
+              },
+              "script_content": {
+                "description": "脚本内容。Python 以 #!/usr/bin/env python3 开头；TypeScript 无需 shebang。",
+                "type": "string"
+              },
+              "task_info": {
+                "additionalProperties": true,
+                "description": "任务信息（标题、描述、验收标准等）",
+                "properties": {
+                  "acceptance_criteria": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "script_content",
+              "file_paths",
+              "language"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "当主 Agent 判断用户输入需要进入一级任务流程时，创建或更新一级任务。该工具不要求模型生成任务主键、任务编号、租户、负责人、会话或解决方案字段；Main 根据当前登录用户、来源会话和任务编号规则补齐 ade_tasks 主表字段。",
+          "name": "firstLevelTaskCreatedOrUpdated",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "clientRequestId": {
+                "description": "可选幂等请求 ID。首选使用 Codex 回调包络中的 rpcId/itemId 做幂等；模型不确定时不要编造。",
+                "type": "string"
+              },
+              "dependencies": {
+                "description": "依赖的同批次任务标题列表，用于标识依赖任务之间的DAG关系，以输入为准",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": {
+                "description": "任务详细描述，当前任务类型的任务详细描述，包括了任务概要、描述等信息，以输入为准",
+                "type": "string"
+              },
+              "executorAgentId": {
+                "description": "任务执行 agent 标识，以输入参数内容为准，可传空字符串。",
+                "type": "string"
+              },
+              "level": {
+                "description": "任务等级，1 表示一级任务，2 表示二级任务。",
+                "enum": [
+                  1,
+                  2
+                ],
+                "type": "integer"
+              },
+              "main_thread_id": {
+                "description": "当前任务所在主会话的thread id",
+                "type": "string"
+              },
+              "originalUserInput": {
+                "description": "用户原始需求文本。",
+                "type": "string"
+              },
+              "parent_task_id": {
+                "description": "父任务 ID，以输入为准",
+                "type": "string"
+              },
+              "product_type": {
+                "description": "产品画像类型，代表当前任务所归属的用户画像，以输入为准",
+                "type": "string"
+              },
+              "resources": {
+                "description": "用户上传或引用的需求资料。用户消息中包含本地文件附件时必须传入，创建为需求子任务的相关资料。",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "fileType": {
+                      "description": "资料文件类型或扩展名，例如 md、pdf、docx。",
+                      "type": "string"
+                    },
+                    "fileUuid": {
+                      "description": "外部资料文件 UUID。",
+                      "type": "string"
+                    },
+                    "localPath": {
+                      "description": "本地文件路径，例如用户上传附件在消息中显示的文件路径。",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "资料名称。",
+                      "type": "string"
+                    },
+                    "resourceType": {
+                      "description": "资源类型，一级任务输入资料固定为 attachment。",
+                      "enum": [
+                        "attachment"
+                      ],
+                      "type": "string"
+                    },
+                    "size": {
+                      "description": "资料大小。",
+                      "type": "number"
+                    },
+                    "source": {
+                      "description": "资料来源，例如 local 或 dmc，如果为本地上传的内容则为local",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "resourceType"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "result": {
+                "description": "任务输出文件列表。仅存放需求分析产出的文件，资源类型固定为 output_doc。",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "fileType": {
+                      "description": "输出文件类型或扩展名，例如 md、pdf、docx。",
+                      "type": "string"
+                    },
+                    "fileUuid": {
+                      "description": "外部输出文件 UUID。",
+                      "type": "string"
+                    },
+                    "localPath": {
+                      "description": "输出文件本地路径。",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "输出文件名称。",
+                      "type": "string"
+                    },
+                    "resourceType": {
+                      "description": "输出资源类型，固定为 output_doc。",
+                      "enum": [
+                        "output_doc"
+                      ],
+                      "type": "string"
+                    },
+                    "size": {
+                      "description": "输出文件大小。",
+                      "type": "number"
+                    },
+                    "source": {
+                      "description": "输出文件来源，例如 local 或 dmc。",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "resourceType"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "source_codex_thread_id": {
+                "description": "当前任务上级任务的底层codex thread id",
+                "type": "string"
+              },
+              "status": {
+                "description": "任务初始状态，以输入为准；不要自行补充或改写状态值。",
+                "type": "string"
+              },
+              "task_type": {
+                "description": "任务类型，只允许 REQUIREMENT_TASK、DEVELOPMENT_TASK、TESTING_TASK、QUALITY_TASK，按输入原值传递。",
+                "enum": [
+                  "REQUIREMENT_TASK",
+                  "DEVELOPMENT_TASK",
+                  "TESTING_TASK",
+                  "QUALITY_TASK"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "description": "任务标题，用于任务看板展示，以输入为准。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "task_type",
+              "product_type",
+              "level",
+              "description",
+              "executorAgentId",
+              "dependencies"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "当 Agent 需要用户进行决策时调用。支持一次提交 1 到多个决策问题，每个问题有唯一选项。",
+          "name": "humanDecisionRequested",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "description": "问题提交卡片载荷列表。每张卡片包含 1~N 个问题，所有问题同屏展示，全部作答后才能提交。",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "description": "问题描述。",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "卡片类型，固定传 \"question\"。",
+                      "enum": [
+                        "question"
+                      ],
+                      "type": "string"
+                    },
+                    "options": {
+                      "description": "答案选项列表。",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "description": {
+                            "description": "选项说明（可选）。",
+                            "type": "string"
+                          },
+                          "id": {
+                            "description": "选项唯一标识。",
+                            "type": "string"
+                          },
+                          "requiresInput": {
+                            "description": "是否需要用户输入（可选）。",
+                            "type": "boolean"
+                          },
+                          "selected": {
+                            "description": "是否默认选中（可选）。",
+                            "type": "boolean"
+                          },
+                          "title": {
+                            "description": "选项显示标题。",
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "选项值，通常与 id 一致。",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "value",
+                          "title"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "schema": {
+                      "description": "卡片协议标识，固定传 \"workbench.agent-card\"。",
+                      "enum": [
+                        "workbench.agent-card"
+                      ],
+                      "type": "string"
+                    },
+                    "selectionMode": {
+                      "description": "选择模式，固定传 \"single\"。",
+                      "enum": [
+                        "single"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "description": "问题标题。",
+                      "type": "string"
+                    },
+                    "version": {
+                      "description": "协议版本，固定传 \"1.0\"。",
+                      "enum": [
+                        "1.0"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "schema",
+                    "version",
+                    "kind",
+                    "title",
+                    "options",
+                    "selectionMode"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "content": {
+                "description": "Agent 伴随卡片发出的消息文本，解释为什么需要用户做决策。示例：\"我需要确认以下几个信息才能继续：\"。",
+                "type": "string"
+              },
+              "role": {
+                "description": "角色标识，固定传 \"assistant\"。",
+                "enum": [
+                  "assistant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "content",
+              "card"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "当 Agent 需要用户从列表中勾选 1 到多个条目时调用。选项可带超链接（设计器预览或外部链接）。用户选择后提交，结果返回给会话。",
+          "name": "multiSelectRequested",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "description": "卡片说明（可选）。",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "description": "卡片类型，固定传 \"question\"。",
+                    "enum": [
+                      "question"
+                    ],
+                    "type": "string"
+                  },
+                  "maxSelections": {
+                    "description": "最多选择数量，0 表示不限。",
+                    "type": "integer"
+                  },
+                  "minSelections": {
+                    "description": "最少选择数量，默认 1。",
+                    "type": "integer"
+                  },
+                  "options": {
+                    "description": "选项列表。",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "description": {
+                          "description": "选项说明（可选）。",
+                          "type": "string"
+                        },
+                        "label": {
+                          "description": "选项显示标题。",
+                          "type": "string"
+                        },
+                        "link": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "target": {
+                              "description": "目标地址。designer_preview 时为资产的设计器预览地址；external_url 时为完整 URL。",
+                              "type": "string"
+                            },
+                            "type": {
+                              "description": "超链接类型：designer_preview 设计器预览；external_url 外部链接。",
+                              "enum": [
+                                "designer_preview",
+                                "external_url"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "target"
+                          ],
+                          "type": "object"
+                        },
+                        "optionId": {
+                          "description": "选项唯一标识，语义化ID。",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "optionId",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "schema": {
+                    "description": "卡片协议标识，固定传 \"workbench.agent-card\"。",
+                    "enum": [
+                      "workbench.agent-card"
+                    ],
+                    "type": "string"
+                  },
+                  "selectionMode": {
+                    "description": "选择模式，固定传 \"multiple\"。",
+                    "enum": [
+                      "multiple"
+                    ],
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "卡片标题。",
+                    "type": "string"
+                  },
+                  "version": {
+                    "description": "协议版本，固定传 \"1.0\"。",
+                    "enum": [
+                      "1.0"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "schema",
+                  "version",
+                  "kind",
+                  "selectionMode",
+                  "title",
+                  "options"
+                ],
+                "type": "object"
+              },
+              "content": {
+                "description": "Agent 伴随卡片发出的消息文本，说明为什么需要用户做选择。",
+                "type": "string"
+              },
+              "role": {
+                "description": "角色标识，固定传 \"assistant\"。",
+                "enum": [
+                  "assistant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "content",
+              "card"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "任务编排器：根据 codex thread id 反查会话关联的任务。startLevel=1 时更新匹配的一级任务；startLevel=2 时先查询一级任务，再更新其 parentTaskId 关联的二级任务，状态统一变更为 status 指定的值。",
+          "name": "orchestrateTask",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "codex_thread_id": {
+                "description": "Codex 线程 ID，用于反查会话关联的任务。",
+                "type": "string"
+              },
+              "level": {
+                "description": "任务级别：1 一级任务、2 二级任务。",
+                "enum": [
+                  "1",
+                  "2"
+                ],
+                "type": "string"
+              },
+              "product_type": {
+                "description": "产品画像类型，根据当前匹配的产品画像中的产品标识。",
+                "type": "string"
+              },
+              "startLevel": {
+                "description": "代表需要开始编排具体的是哪个级别任务",
+                "enum": [
+                  "1",
+                  "2"
+                ],
+                "type": "string"
+              },
+              "status": {
+                "description": "任务状态，指定目标任务要变更为的状态。",
+                "enum": [
+                  "draft",
+                  "todo",
+                  "running",
+                  "unconfirmed",
+                  "confirmed",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "task_no": {
+                "description": "父任务编号（taskNo），用于直接定位父任务，不再依赖会话表反查。",
+                "type": "string"
+              },
+              "task_type": {
+                "description": "任务类型，用于筛选目标任务。",
+                "enum": [
+                  "REQUIREMENT_TASK",
+                  "DEVELOPMENT_TASK",
+                  "TESTING_TASK",
+                  "QUALITY_TASK"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_no",
+              "task_type",
+              "level",
+              "product_type",
+              "status",
+              "startLevel"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "提交任务准出审批结果。根据 taskNo 定位任务，Main 侧记录 agent_completed 观测点，并触发准出检查与后续收敛控制。",
+          "name": "outboundApproval",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "codex_thread_id": {
+                "description": "当前任务执行所在的 Codex thread ID。",
+                "type": "string"
+              },
+              "resources": {
+                "additionalProperties": true,
+                "description": "agent 产出的结果文件",
+                "properties": {},
+                "type": "object"
+              },
+              "status": {
+                "description": "根据当前任务执行结果自动识别成功或失败，必须为 success 或 fail。",
+                "enum": [
+                  "success",
+                  "fail"
+                ],
+                "type": "string"
+              },
+              "taskNo": {
+                "description": "任务编号，用于定位需要准出的任务。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "taskNo",
+              "codex_thread_id",
+              "resources"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "触发任务收敛控制检查。基于最近一次准出检查结果和执行轮次，决定任务应通过、退回重试还是终止。调用前需先执行准出检查（run_exit_check）。",
+          "name": "run_convergence_check",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "task_id": {
+                "description": "被检查的任务 ID。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "触发任务准出检查。创建准出检查 Agent 在临时线程中执行规则校验，返回结构化判定结果。调用此工具后需等待返回结果。调用前确保任务已产生产出物。",
+          "name": "run_exit_check",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "task_id": {
+                "description": "被检查的任务 ID。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "提交收敛控制决策结果。收敛控制 Agent 分析准出检查结果后，决定是否收敛、回退或终止任务。调用此工具后，收敛控制 Agent 的任务即视为完成。",
+          "name": "submit_convergence_decision",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "context_supplement": {
+                "description": "上下文补充信息，为决策提供额外背景。",
+                "type": "string"
+              },
+              "convergence_analysis": {
+                "description": "收敛分析详情，包含对准出检查结果的评估过程。",
+                "type": "string"
+              },
+              "decision": {
+                "description": "收敛决策：converge 收敛通过，进入下一阶段；return 回退到指定阶段重新执行；terminate 终止任务。",
+                "enum": [
+                  "converge",
+                  "return",
+                  "terminate"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "description": "决策理由，说明为何做出此决策。",
+                "type": "string"
+              },
+              "return_stage": {
+                "description": "回退阶段。仅当 decision 为 return 时有效：requirement 回退到需求阶段；development 回退到开发阶段；testing 回退到测试阶段；quality 回退到质量阶段。",
+                "enum": [
+                  "requirement",
+                  "development",
+                  "testing",
+                  "quality"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "提交准出检查的判定结果。调用此工具后，准出检查 Agent 的任务即视为完成。",
+          "name": "submit_exit_check_verdict",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "rule_results": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidence": {
+                      "description": "判定依据（引用产出物内容片段）",
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "判定说明",
+                      "type": "string"
+                    },
+                    "passed": {
+                      "description": "是否通过",
+                      "type": "boolean"
+                    },
+                    "rule_id": {
+                      "description": "规则 ID",
+                      "type": "string"
+                    },
+                    "rule_name": {
+                      "description": "规则名称",
+                      "type": "string"
+                    },
+                    "rule_type": {
+                      "description": "规则类型",
+                      "enum": [
+                        "text",
+                        "script"
+                      ],
+                      "type": "string"
+                    },
+                    "script_output": {
+                      "description": "脚本执行输出（仅 script 类型）",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "rule_id",
+                    "rule_name",
+                    "rule_type",
+                    "passed",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "suggestions": {
+                "description": "改进建议",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "description": "总体说明",
+                "type": "string"
+              },
+              "verdict": {
+                "description": "总体判定结果",
+                "enum": [
+                  "passed",
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "summary",
+              "rule_results"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "生成子任务。当 Agent 基于当前父任务拆分完具体的子任务后调用：通过 parentTaskNo 定位父任务，删除该父任务下全部旧子任务（含非草稿态）后重新创建，不做增量更新。子任务实际父子关系统一挂在 parentTaskNo 指定的父任务下，协议传入的 parent_task_id 仅作回显。",
+          "name": "subtasksCreated",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "clientRequestId": {
+                "description": "可选幂等请求 ID。首选使用 Codex 回调包络中的 rpcId/itemId；模型不确定时不要编造。",
+                "type": "string"
+              },
+              "main_thread_id": {
+                "description": "主会话的 Codex 线程 ID，用于子任务来源回溯",
+                "type": "string"
+              },
+              "parentTaskNo": {
+                "description": "父任务编号（taskNo），用于直接定位父任务，不再依赖会话表反查。",
+                "type": "string"
+              },
+              "repositoryUrl": {
+                "description": "当前任务的代码仓地址",
+                "type": "string"
+              },
+              "source_codex_thread_id": {
+                "description": "来源 Codex 线程 ID，用于子任务来源回溯；",
+                "type": "string"
+              },
+              "tasks": {
+                "description": "开发子任务列表。每次调用会先删除 parentTaskNo 指定父任务下全部旧子任务，再按本数组重新创建。",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dependencies": {
+                      "description": "依赖的同批次开发子任务标题。无依赖时必须传 []；元素必须严格等于 tasks 中已存在任务的 title。",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "description": {
+                      "description": "开发子任务描述，以输入为准，不做任何总结、删减、裁剪操作",
+                      "type": "string"
+                    },
+                    "executorAgentId": {
+                      "description": "执行该开发子任务的开发 Agent ID",
+                      "type": "string"
+                    },
+                    "level": {
+                      "description": "任务等级，1 一级任务、2 二级任务，缺省按 2 处理。",
+                      "enum": [
+                        1,
+                        2
+                      ],
+                      "type": "integer"
+                    },
+                    "parent_task_id": {
+                      "description": "父任务 ID，仅作协议回显，实际父子关系由会话一级任务决定。",
+                      "type": "string"
+                    },
+                    "productType": {
+                      "description": "产品画像类型，代表当前任务所归属的用户画像，以输入为准。",
+                      "type": "string"
+                    },
+                    "resources": {
+                      "description": "任务资源，即当前开发任务所依赖的相关资料，可以是用户上传的文件或者分析过程中产生的文件资料。外部资料资源需保留 source、fileUuid、name、fileType、size 等原始字段。",
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "fileType": {
+                            "description": "资源文件类型，例如 md。",
+                            "type": "string"
+                          },
+                          "fileUuid": {
+                            "description": "外部资料文件 UUID。",
+                            "type": "string"
+                          },
+                          "localPath": {
+                            "description": "本地资源路径，即相关资料文件在磁盘存储的全路径地址。",
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "资源名称。",
+                            "type": "string"
+                          },
+                          "size": {
+                            "description": "资源大小，单位由来源系统定义。",
+                            "type": "number"
+                          },
+                          "source": {
+                            "description": "外部资料来源，例如 dmc。",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "task_type": {
+                      "description": "任务类型，缺省按 DEVELOPMENT_TASK 处理。",
+                      "enum": [
+                        "REQUIREMENT_TASK",
+                        "DEVELOPMENT_TASK",
+                        "TESTING_TASK",
+                        "QUALITY_TASK"
+                      ],
+                      "type": "string"
+                    },
+                    "title": {
+                      "description": "开发子任务标题，也是 dependencies 引用的唯一标题。",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "description",
+                    "executorAgentId",
+                    "dependencies",
+                    "resources"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "parentTaskNo",
+              "tasks",
+              "source_codex_thread_id"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "当多步骤任务执行过程中需要向用户同步阶段性进度时调用。首次调用创建进度卡片，后续每完成一个步骤再次调用更新同一条卡片。不阻塞，调用后立即继续执行。",
+          "name": "taskProgressUpdated",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "cardId": {
+                "description": "进度卡片 ID。首次创建时不传，后续更新时传入上次返回的 cardId。",
+                "type": "string"
+              },
+              "items": {
+                "description": "进度项列表。",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "children": {
+                      "description": "子进度项（可选，支持层级）。",
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {},
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "itemId": {
+                      "description": "进度项唯一标识。",
+                      "type": "string"
+                    },
+                    "label": {
+                      "description": "进度项标题。",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "进度项状态。",
+                      "enum": [
+                        "pending",
+                        "in_progress",
+                        "completed",
+                        "failed",
+                        "skipped"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "itemId",
+                    "label",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "taskId": {
+                "description": "关联任务 ID（可选）。",
+                "type": "string"
+              },
+              "title": {
+                "description": "进度卡片标题。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "items"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "按任务编号批量更新任务状态。入参为 { tasks: [{ task_no: \"任务编号\", status: \"目标状态\" }] }；任务不存在时跳过，status 完全按传入值更新。",
+          "name": "updateTaskStatus",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "tasks": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "description": "目标任务状态，按传入值使用，不做转换。",
+                      "type": "string"
+                    },
+                    "task_no": {
+                      "description": "任务编号。",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_no",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "tasks"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "DigiADE runtime context tools.",
+      "name": "ade_context",
+      "tools": [
+        {
+          "description": "获取当前会话所属解决方案信息。返回 solutionId、solutionName、codeRepositories（代码仓库信息列表）；未找到时返回空对象。",
+          "name": "get_current_solution",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "获取当前登录用户和租户上下文。返回 sid、userId、userName、tenantId、tenantName、tenantSid、iamToken、appId；未登录时返回空对象。",
+          "name": "get_current_user_session",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "DigiADE temporary Agent question-answering tools.",
+      "name": "harness_extension_engine",
+      "tools": [
+        {
+          "description": "根据给定上下文回答问题。Main 会创建临时 Codex Agent，等待其回答完成后返回最终文本，并自动删除临时会话。",
+          "name": "agent",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "agentName": {
+                "description": "可选的 Codex Agent 名称；不传时使用默认 Agent。",
+                "type": "string"
+              },
+              "context": {},
+              "question": {
+                "description": "需要临时 Agent 回答的问题。",
+                "type": "string"
+              }
+            },
+            "required": [
+              "context",
+              "question"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "Codex host-provided workspace tools.",
+      "name": "codex_app",
+      "tools": [
+        {
+          "description": "Load bundled workspace dependency paths for documents, PDFs, spreadsheets, slides, images, browser automation, and local scripts.",
+          "name": "load_workspace_dependencies",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "DigiADE host business tools.",
+      "name": "digiade",
+      "tools": [
+        {
+          "description": "Create an MVP DigiADE task from analyzed requirement information and return task details for chat display.",
+          "name": "create_task",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "acceptanceCriteria": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": {
+                "type": "string"
+              },
+              "source": {
+                "additionalProperties": false,
+                "properties": {
+                  "filePath": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "taskType": {
+                "enum": [
+                  "REQUIREMENT_TASK",
+                  "DEVELOPMENT_TASK",
+                  "TESTING_TASK",
+                  "QUALITY_TASK"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "description",
+              "taskType"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "description": "DigiADE git workflow tools for branch management, commits, and task integration.",
+      "name": "ade_git",
+      "tools": [
+        {
+          "description": "列出所有本地分支（和可选远程分支）。",
+          "name": "branch_list",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "remote": {
+                "description": "是否包含远程分支，默认 false",
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "克隆远程仓库到本地指定路径。如果远程仓库需要认证，会使用已配置的 git 凭证。",
+          "name": "clone",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "指定克隆的分支，默认为远程默认分支",
+                "type": "string"
+              },
+              "remote_url": {
+                "description": "远程仓库地址，如 https://gitea.example.com/user/repo.git",
+                "type": "string"
+              },
+              "target_path": {
+                "description": "本地目标路径，必须为空目录",
+                "type": "string"
+              }
+            },
+            "required": [
+              "remote_url",
+              "target_path"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "提交暂存区的更改。使用 Conventional Commits 格式。",
+          "name": "commit",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "files": {
+                "description": "要暂存的文件路径列表，为空则暂存所有更改",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "message": {
+                "description": "提交消息，格式如 \"feat(auth): add OAuth2 login support\"",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "配置用户的 git 凭证（Gitea 帐号和 Token/密码），凭证会安全加密存储在本地。",
+          "name": "configure_credentials",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "password_or_token": {
+                "description": "Gitea 访问 Token 或密码",
+                "type": "string"
+              },
+              "server_url": {
+                "description": "Gitea 服务器地址，如 https://gitea.example.com",
+                "type": "string"
+              },
+              "username": {
+                "description": "Gitea 用户名",
+                "type": "string"
+              }
+            },
+            "required": [
+              "username",
+              "password_or_token"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "基于当前 HEAD 创建新分支。分支名必须以 feature/、bugfix/、hotfix/ 或 release/ 开头。",
+          "name": "create_branch",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "基于哪个分支创建，默认为当前分支",
+                "type": "string"
+              },
+              "name": {
+                "description": "分支名称，如 feature/TICKET-001-login",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "检查系统中是否安装了 git，返回版本和配置信息。如果未安装，返回 installGuide 安装引导。commit 时会自动从 ADE_GIT_USER 兜底。",
+          "name": "detect",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "查询当前用户的 git 凭证配置状态（不返回密码）。",
+          "name": "get_credential_status",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "获取当前分支的提交历史。",
+          "name": "log",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "max_count": {
+                "description": "最大返回数量，默认 20",
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "从远程仓库拉取最新代码。",
+          "name": "pull",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "分支名称，默认为当前分支",
+                "type": "string"
+              },
+              "remote": {
+                "description": "远程名称，默认 origin",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "推送当前分支到远程仓库。不允许对 protected 分支（main/master/develop/release）执行 force push。",
+          "name": "push",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "分支名称，默认为当前分支",
+                "type": "string"
+              },
+              "remote": {
+                "description": "远程名称，默认 origin",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "获取当前代码仓的 git 状态，包括当前分支、领先/落后提交数、文件变更列表。",
+          "name": "status",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "智能提交（自动生成 Conventional Commits 格式的提交消息）。可选自动暂存所有文件。",
+          "name": "task_commit",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "auto_add": {
+                "description": "是否自动暂存所有更改，默认 false",
+                "type": "boolean"
+              },
+              "description": {
+                "description": "提交描述",
+                "type": "string"
+              },
+              "ticket_code": {
+                "description": "任务编号",
+                "type": "string"
+              },
+              "type": {
+                "description": "提交类型",
+                "enum": [
+                  "feat",
+                  "fix",
+                  "docs",
+                  "style",
+                  "refactor",
+                  "perf",
+                  "test",
+                  "chore"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ticket_code",
+              "type",
+              "description"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "完成任务并准备合并。确保所有更改已提交，汇总所有提交记录，可选推送到远程。",
+          "name": "task_complete",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "push": {
+                "description": "是否推送到远程，默认 false",
+                "type": "boolean"
+              },
+              "ticket_code": {
+                "description": "任务编号",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ticket_code"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "初始化开发任务的 git 环境。自动检测 git 安装状态、凭证配置，并创建规范的 feature 分支。",
+          "name": "task_init",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "ticket_code": {
+                "description": "任务编号，如 TICKET-001",
+                "type": "string"
+              },
+              "title": {
+                "description": "任务标题，用于生成分支名",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ticket_code",
+              "title"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "为指定分支创建 linked worktree，用于并行开发多个任务。支持检出已有分支或创建新分支。",
+          "name": "worktree_create",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "分支名称",
+                "type": "string"
+              },
+              "from": {
+                "description": "新分支的起点（仅在 new_branch 为 true 时生效），如 develop、main 或某个 commit hash",
+                "type": "string"
+              },
+              "new_branch": {
+                "description": "是否创建新分支（而非检出已有分支），默认 false",
+                "type": "boolean"
+              },
+              "path": {
+                "description": "worktree 路径，默认为 ./.worktree/<branch-name>（分支名中的 / 会替换为 -）。高码任务请传 ./.worktree/adeTask-<任务编号>",
+                "type": "string"
+              }
+            },
+            "required": [
+              "branch"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "列出当前仓库的所有 worktree。",
+          "name": "worktree_list",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        },
+        {
+          "description": "移除指定的 worktree。",
+          "name": "worktree_remove",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "description": "worktree 路径",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
+          "strict": false,
+          "type": "function"
+        }
+      ],
+      "type": "namespace"
+    },
+    {
+      "external_web_access": true,
+      "type": "web_search"
+    }
+  ]
+}

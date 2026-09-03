@@ -507,3 +507,60 @@ func TestDecodeRequestRestoresReplayNames(t *testing.T) {
 		}
 	}
 }
+
+// ADE 实采第二轮（in-responses-namespace-turn2）：**回程形态的真实证据**（口径层
+// v1.14 ⑤，#95）。真实 harness 把命名空间子工具的历史调用写成裸子名 + `namespace`
+// 字段，17 次回带里 4 次如此，一次摊平名都没有——三种设想的形态里它用的是这一种。
+//
+// 钉住的是「历史里的名字必须与模型眼前的声明名一致」：不还原的话这 4 次回带就成了
+// 声明表里没有的裸名，模型跟着历史改口（真 GLM-5.2 实测会调出 orchestrateTask）。
+func TestDecodeRequestRestoresRealADEReplay(t *testing.T) {
+	c := NewCodec()
+	req, err := c.DecodeRequest(loadSample(t, "in-responses-namespace-turn2"), true)
+	if err != nil {
+		t.Fatalf("ADE 第二轮样本解不动: %v", err)
+	}
+
+	declared := make(map[string]bool, len(req.Tools))
+	for _, tool := range req.Tools {
+		declared[tool.Name] = true
+	}
+	if len(req.Tools) != 72 || len(c.NamespaceTools()) != 61 {
+		t.Fatalf("解出 %d 个工具 / 映射表 %d 项, 期望 72 / 61", len(req.Tools), len(c.NamespaceTools()))
+	}
+
+	var names []string
+	for _, m := range req.Messages {
+		for _, b := range m.Content {
+			if b.Kind != protocol.BlockToolUse || b.ToolCall == nil {
+				continue
+			}
+			names = append(names, b.ToolCall.Name)
+			// 每一次回带都必须落回本轮声明表里的某个名字，一个都不能漏。
+			if !declared[b.ToolCall.Name] {
+				t.Errorf("回带调用 %q 不在本轮声明的工具里——模型会跟着历史改口", b.ToolCall.Name)
+			}
+			if _, left := b.ToolCall.Extras["namespace"]; left {
+				t.Errorf("%q 的 namespace 读完该从 Extras 删掉", b.ToolCall.Name)
+			}
+		}
+	}
+	if len(names) != 17 {
+		t.Fatalf("解出 %d 次回带调用, 期望 17", len(names))
+	}
+	// 4 次命名空间子工具全部补上了前缀；其余 13 次是顶层 shell_command，原样。
+	got := map[string]int{}
+	for _, n := range names {
+		got[n]++
+	}
+	want := map[string]int{
+		"ade_task__taskProgressUpdated":    3,
+		"ade_task__humanDecisionRequested": 1,
+		"shell_command":                    13,
+	}
+	for name, n := range want {
+		if got[name] != n {
+			t.Errorf("回带名 %q 出现 %d 次, 期望 %d 次（全部计数: %v）", name, got[name], n, got)
+		}
+	}
+}

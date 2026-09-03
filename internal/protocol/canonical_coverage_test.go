@@ -153,9 +153,14 @@ var coverage = map[string]disposition{
 	"input[].content[].image_url": dField, // Responses 上是字符串，不是对象
 	"input[].content[].detail":    dField, // → Image.Detail；顶层，不在 image_url 里
 
-	"input[].call_id":       dField, // ToolCall.ID / ToolResult.ToolCallID
-	"input[].name":          dField, // ToolCall.Name
-	"input[].input":         dField, // ToolCall.Args（自由文本，不是 JSON）
+	"input[].call_id":   dField, // ToolCall.ID / ToolResult.ToolCallID
+	"input[].name":      dField, // ToolCall.Name
+	"input[].input":     dField, // ToolCall.Args（自由文本，不是 JSON）
+	"input[].arguments": dField, // 同上，function_call 那一支的入参（JSON 串）
+	// namespace 不落成独立字段：它与裸名一起被折进 ToolCall.Name（摊平名，#95）。
+	// 归 dField 是因为它确实被读、被消费、且决定了 canonical 里的名字——不是丢弃，
+	// 也不是原样带着走的 Extras（读完即从 Extras 删）。
+	"input[].namespace":     dField,
 	"input[].status":        dExtras,
 	"input[].output":        dField, // ToolResult.Content
 	"input[].output[]":      dField,
@@ -164,7 +169,9 @@ var coverage = map[string]disposition{
 
 	"input[].encrypted_content": dExtras, // 上游侧密文，跨协议必然作废（§5 坑清单）
 	"input[].summary":           dExtras,
-	"input[].summary[]":         dExtras, // 实采里恒为空数组，但空数组也是结构
+	"input[].summary[]":         dExtras, // Codex 实采里恒为空数组，ADE 会填（turn2）
+	"input[].summary[].type":    dExtras, // summary_text
+	"input[].summary[].text":    dExtras,
 
 	// additional_tools 是个 input 项，decode 时提升到 Request.Tools。
 	// 「它原本是条 developer 消息」这个位置信息随之丢失——回编 Responses 时按

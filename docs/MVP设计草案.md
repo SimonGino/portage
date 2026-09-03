@@ -2,6 +2,8 @@
 
 > 状态：草案 v1.24
 
+> vNEXT 变更（#95 收口：ADE 第二轮实采进 golden，2026-09-03）：`testdata/golden/in-responses-namespace-turn2`（PO 开 `PORTAGE_DUMP_DIR` 在公网部署抓的原始请求体，口径层 v1.16）。它证实了三种设想的回带形态里真实 harness 用的是**裸子名 + `namespace` 字段**那一种，另两种（摊平名、裸名无字段）在实采里一次都没出现——代码三种都收，但只有这一种有真实证据，另两种的用例仍是构造样本。用例 `TestDecodeRequestRestoresRealADEReplay` 钉住「17 次回带全部落回本轮声明表」。coverage 表补 4 项（见 §4 的 namespace 段）。脱敏口径记在样本 `meta.json`。修改人 jinpenga。
+
 > vNEXT 变更（v1.25 ④⑤ 落地：namespace 回程还原 + 回带/tool_choice 对回声明表，[#95](https://github.com/SimonGino/portage/issues/95)，2026-09-03）：口径见口径层 v1.14 ⑤⑥，这里只记落点。①**出向**：`streamEncoder` 多带一份同源的 `namespaceTools`，`flushTool` 对模型调的摊平名**只查表不拆串**（命名空间名自身可含 `__`），命中的在 `output_item.added` / `*_arguments.done` / `*_input.done` / `output_item.done` 四处都发裸名 + `namespace` 字段；表里没有的（顶层、默认命名空间）照旧裸名且不带键。`EncodeFullBody` 复用流编码器，非流式同源。②**回带**：`decode.go` 在 input 与 tools 都解完、查表能用完整声明表之后跑一趟 `restoreReplayNames`（`namespace.go`）：自带 `namespace` 字段的套声明侧同一条摊平规则、不看声明表（默认命名空间裸名，其余加前缀，撞了顶层名也信客户端）；没带的名字恰是本轮声明名就原样，否则当裸名在映射表里唯一查表，零中或多中原样带过去、**不 400**（历史 item 被拒客户端无法自救）。`namespace` 键读完从 `ToolCall.Extras` 删掉。③**`tool_choice` 点名**走同一条（不带 namespace 那支）；多中原样交给出口，由出口按 v1.15 的规则判。④触发案例是真 GLM-5.2 实测：回带裸名 + `namespace` 后模型下一轮跟着历史叫裸名 `orchestrateTask`，调到声明表里没有的工具。用例：`TestEncodeStreamRestoresNamespaceToolCall`（ADE 实采 turn1 + 流式/非流式）、`TestDecodeRequestRestoresReplayNames`（三种回带形态 × 撞名/多中/未声明 + tool_choice 四例）；ADE 第二轮真实样本尚未采到，采到后补 golden。Codex 六份 golden 零改动。修改人 jinpenga。
 
 > vNEXT 变更（口径层 v1.15 落地：`tool_choice` 落空 400 扩到 Responses 出口，2026-09-02）：把 #96 那条 vNEXT 的 ④ 收掉。`openairesponses.encodeOutToolChoice` 改成与 `openaicc.encodeToolChoice` 同构：`encodeOutTools` 多交出被丢的服务端工具名，`auto`/`none` 落空登记新档 `DropToolChoice`（名单记 mode），`required` 与点名落空回 `protocol.ToolChoiceRejection`，三个出口共用同一份文案；`relayConverted` 不改——它对 `*protocol.RequestError` 的处置本就不看 codec。用例改判一处：「指名一个没声明的工具就不发」改为 400，另补 required 落空两种、点名被丢的服务端工具一种；golden 样本零改动。转换后空 `input` 同样 400：`protocol.EmptyMessagesRejection` 改收 param（`ParamMessages` / 新增 `ParamInput`），文案里的字段名跟着 param 走，CC / Anthropic 两处调用改传 `ParamMessages`；R 出口 `encodeRequest` 在 `encodeInput` 之后判空。四个原本不带消息的 R 出口用例补一条 user 消息。修改人 jinpenga。
@@ -314,7 +316,7 @@ type Tool struct {
 }
 ```
 
-> Responses 的 `type=namespace` 声明**不是**第四种 Kind（口径层 v1.14）：它是分组外壳，子项摊平成上面这个 `Tool`（`Name` 取 `<ns>__<name>`，`functions` 免前缀），子项该是 function / custom 还是什么。ADE 实采（`in-responses-namespace-turn1`）走顶层 `tools`，与 Codex 的 `additional_tools` 项是同一份声明的两个容器。摊平在 Responses 解码侧（`openairesponses/namespace.go`，#94）：两个容器灌同一个 `toolDecoder`，摊平名 → `{namespace, 裸名}` 记在 `Codec.NamespaceTools()`（**不许按 `__` 拆串**，namespace 名自身可含 `__`）；一名两源与摊平名不满足 `^[a-zA-Z0-9_-]{1,64}$` 在 `DecodeRequest` 里就地 400（`invalid_value`）。回程还原与回带查表见 v1.25 落点 ②，尚未落地（#95/#96）。
+> Responses 的 `type=namespace` 声明**不是**第四种 Kind（口径层 v1.14）：它是分组外壳，子项摊平成上面这个 `Tool`（`Name` 取 `<ns>__<name>`，`functions` 免前缀），子项该是 function / custom 还是什么。ADE 实采（`in-responses-namespace-turn1`）走顶层 `tools`，与 Codex 的 `additional_tools` 项是同一份声明的两个容器。摊平在 Responses 解码侧（`openairesponses/namespace.go`，#94）：两个容器灌同一个 `toolDecoder`，摊平名 → `{namespace, 裸名}` 记在 `Codec.NamespaceTools()`（**不许按 `__` 拆串**，namespace 名自身可含 `__`）；一名两源与摊平名不满足 `^[a-zA-Z0-9_-]{1,64}$` 在 `DecodeRequest` 里就地 400（`invalid_value`）。回程还原与回带查表见 v1.25 落点 ②，已落地（#95）：真实 harness 的回带形态由 ADE 实采第二轮（`in-responses-namespace-turn2`）钉死——**裸子名 + `namespace` 字段**，17 次回带里 4 次如此，一次摊平名都没有。`input[].namespace` 归 `dField`：它被读、被消费、并决定 canonical 里的名字（折进 `ToolCall.Name`），读完即从 Extras 删；`input[].arguments` 与 `input[].summary[].{type,text}` 同批进 coverage 表（前者是 `function_call` 那一支的入参，后两者 Codex 实采里恒空、ADE 会填）。
 
 角色映射，三协议对照：
 
