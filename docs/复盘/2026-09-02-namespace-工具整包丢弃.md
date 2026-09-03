@@ -43,6 +43,7 @@
 | 对照 | PO 好奇 mimo2codex 怎么处理 `web_search`，拉下来进参考名单，逐条对照出三条我们没有的历史修补 |
 | 修补 | 回带残缺入参救治、CC 出口孤儿 tool 消息、两出口缺失结果占位（v1.19），两个 opus 子代理并行落码 |
 | 复查 | PO 问 CC↔Responses 转换有没有同款问题：四路 opus 只读审查，CC 入口工具那块落后一整轮，拉平并顺手修三处响应侧实洞（v1.20），响应解码侧无登记通道立待澄清 14 |
+| 第八批 | 待澄清 14 拍板：对照六仓响应侧（没有一家打日志；sub2api / CLIProxyAPI 合成 `server_tool_use`，litellm 按次计费）给 PO 三档，PO 取最小档「只登记 + 日志」（v1.21）。响应解码侧登记通道落地，顺带 `refusal` 转文本、CC 入口 `tool_choice` 两形态、出口配对表只认 assistant |
 
 附带发现（与本题独立，各自单修）：Chat Completions 形态的 body 打到 `/v1/responses` 会转成 `messages=[]` 原样转发，上游报 `Messages cannot be empty.`；无 tools 时 `tool_choice=required` 被出口保护静默去掉。两条都归到口径层 v1.14 ⑦⑧ 的「转换后请求已不成立就自己回 400」。
 
@@ -131,6 +132,20 @@
 
 golden 零改动：六份 `in-cc-*` 样本工具全是 `type:"function"` 且入参合法。
 
+---
+### 第八批：响应解码侧的丢弃有了声音（v1.21，`d74c831`）
+
+起因：第七批立的待澄清 14。拍板前对照了六个参考仓库的 Responses 响应侧：**没有一家打日志**——sub2api（R→CC）与 new-api 整包静默吞（sub2api 注释原话「silently consumed」）；sub2api（R→A）与 CLIProxyAPI 各自把 `web_search_call` 合成 Anthropic 原生 `server_tool_use` + `web_search_tool_result`；litellm 不转不记但见 item 即计一次网搜费；mimo2codex 原生 Responses 是 raw 透传不解码；opencodex 是产这个 item 的一方。给 PO 三档（只登记 / 登记 + 合成 / 登记 + 计费），PO 取最小档：纯日志是本项目自己的发明，但便宜、v0.65 要求它，且另两档都能在通道之上追加。
+
+| 改动 | 原因 |
+| --- | --- |
+| `openairesponses.Codec.ResponseDrops()`：认不得的 output item 登记 `类型(item id)`、表外事件名登记 `event:名字`，按标签去重、不存内容；relay 收场 `warnResponseDrops` 打一条 Warn 点明「若是服务端工具，上游成本已经发生」 | 形态照 `ArgsSalvaged()`：codec 只登记不持 logger。known 事件表逐条对照四个仓库的事件常量，`response.done` / `response.error` 故意留在表外（我们不认，真来了是语义损失），`code_interpreter_call.*` 查不到确切名字不凭记忆写 |
+| `response.refusal.delta` 与非流式 `type:"refusal"` 部件转普通文本下发 | 拒答也是一句话，跳过等于让客户端看着空回复干等。非流式正文在 `refusal` 键不在 `text`，字段不共用 |
+| CC 入口 `tool_choice` 认 `{"type":"custom"}`（归指名）与 `{"type":"allowed_tools"}`（`mode` 折 auto / required，名单登记件数由 relay 打 Warn） | 此前解出零值，`required` 无声降成 auto，⑧ 那道 400 在 CC 入口触发不到。形状对 openai-python 2.24.0，new-api 该字段是 `any` 读不出形状 |
+| Responses 与 CC 出口的 `seen` 预扫只认 assistant 消息上的 `BlockToolUse`；Anthropic 出口不动 | 发射侧只在 assistant 分支发调用，预扫多认会让配对的 output 以孤儿身份出去，正是配对表要挡的那种 400。Anthropic 出口对任何角色都发 `tool_use`，本就对齐 |
+
+golden 零改动：九份 Responses 转录里没有服务端工具 item、`refusal` 与表外事件名，六份 `in-cc-*` 的 `tool_choice` 只见过 `"auto"`。端到端用例断言搜索词与图片 base64 不进日志。
+
 ## 实采证据
 
 PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请求脱敏后入库为 `testdata/golden/in-responses-namespace-turn2`：72 个工具声明（9 个命名空间 / 61 个子工具 / 10 个顶层 function / 1 个 web_search），17 次回带调用。
@@ -164,5 +179,5 @@ PO 开 `PORTAGE_DUMP_DIR` 在公网部署上抓真实 ADE 流量，第二轮请�
   - 具名命名空间内 custom 今天**没有任何信号**（不报错、不丢弃、不打日志，与顶层 custom 共用同一条 `decodeTool`）。要判断真机有没有出现只能重开采样 grep。缺的是样本覆盖而非正确性风险，暂不为它常开开关。
 - `PORTAGE_DUMP_DIR` 抓下的 dump 目录是客户完整对话原文，取证完成后即关，不留存。
 - 第六批三条修补只有构造样本。日志里出现 `orphan_result` / `missing_result` 档位或「回带历史里有残缺的工具入参」那条 Warn，就是真机撞上的信号，届时补实采。
-- 第七批 CC 入口三件同样只有构造样本；那条残缺入参 Warn 两入口共用一句，靠 `calls` 里的 id 形态（`call_` 前缀是 CC/Responses 同源，分不出入口）不够，真要区分看同一条调用日志的入口协议。响应解码侧登记通道（待澄清 14）没立之前，上游自带搜索花的钱在日志里仍是零字。
+- 第七批 CC 入口三件同样只有构造样本；那条残缺入参 Warn 两入口共用一句，靠 `calls` 里的 id 形态（`call_` 前缀是 CC/Responses 同源，分不出入口）不够，真要区分看同一条调用日志的入口协议。响应解码侧登记通道第八批已立（v1.21）：日志里出现「上游响应里有转换路径放不出去的项」那条 Warn 且 `items` 带 `web_search_call(…)` 之类，就是真机撞上服务端工具的信号，届时再议合成 `server_tool_use` 与按次计费两档（后者并进待澄清 13）。
 - 顶层工具与默认命名空间子项同名的撞名（mimo2codex issue #20 证明 Codex 会这么发）今天按第一批规则 400。是否收窄成「同名同 schema 去重」等真机撞上再议，不预设。
