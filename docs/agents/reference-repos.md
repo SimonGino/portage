@@ -24,6 +24,22 @@ TS/Bun 本地代理，把 Codex 的 Responses API 转译到任意 provider。**C
 
 PO 于 2026-08-13 裁定加入参考名单。
 
+## `mimo2codex`（7as0nch/mimo2codex，MIT）
+
+TS/Node 本地代理，把 Codex 的 Responses 翻译成上游的 Chat Completions（或原生 Responses）。转换层集中在 `src/translate/`：`reqToChat.ts`（入向）、`respToResponses.ts` + `streamToSse.ts`（回向）、`autoCompact.ts`（压缩）。
+
+**`namespace` 工具的另一条路线**，这是它的首要参考价值——它与本项目的裁定**正面不同**：
+
+- **不摊平**。`reqToChat.ts` 第 4 支把 `namespace` 壳递归展平，**子工具名保持裸名**，靠 `buildNamespaceMap`（`server.ts:783`）建一张「裸名 → 命名空间名」的表，在回向侧（`respToResponses.ts:145-158`、`streamToSse.ts:211/350`）给 `function_call` item 贴回 `namespace` 字段。本项目取摊平（`<ns>__<name>`，口径层 v1.14 ①），差别与代价见那一条。
+- **撞名不 400，去重保留第一个**。`dedupeToolsByName`（`reqToChat.ts:585`）键取 `fn:<function.name>` / `builtin:<type>`，重复的丢掉并一次性 warn。它的注释是一份**一手证据**：Codex CLI / Desktop（尤其新版 / DeX）确实会同时发顶层 `function` 工具 `_fetch` 与 `namespace` 里同名的 `_fetch`，上游因此回 `400 Param Incorrect: tools contains duplicate names`（其 issue #20）。本项目撞名取 400（口径层 v1.14 ③）。
+- **去重键 `builtin:<type>` 与本项目 `Tool.Label()` 的兜底同构**：无名的内建/服务端工具用它的 `type` 当身份，且 function 名与 builtin type 不共用命名空间、不互撞（口径层 v1.18）。
+
+其余可参考的点：`web_search` / `web_search_preview` 不丢而是映射成上游原生 `web_search`（`reqToChat.ts:329-345`）——只有认这个能力的上游才有得映，本项目两个出口都没有，仍按 `SERVER_SIDE_TOOLS`（`reqToChat.ts:246`）那批丢并记 type；`sanitizeFunctionCallArguments`（`reqToChat.ts:628`）是 Codex 回带 `function_call.arguments` 的清洗坑。
+
+MIT，义务同 CLIProxyAPI / opencodex：阅读借鉴零义务，复制代码需在分发物保留版权声明与许可全文。
+
+PO 于 2026-09-03 裁定加入参考名单。
+
 ## `CLIProxyAPI`（router-for-me/CLIProxyAPI，MIT）
 
 Go 本地代理。**「thinking/reasoning 跨协议保真与 signature 处置」这一主题的首要参考**（主题之外不参考）：出向合成见 `internal/translator/openai/claude/`，回带按 signature provenance 整块丢弃的决策表见 `internal/signature/provider_compatibility.go`，「思考多少 / 展示与否」正交两维见 `internal/thinking/`。

@@ -1488,6 +1488,8 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 | `new-api` 的 `validateResponsesRequestChatUnsupportedFields`（Responses→CC 转换器共用） | `previous_response_id` / `conversation` / `prompt` / `context_management` 撞到即 400 + SkipRetry——「转换路径上有状态字段一律拒」的同构先例（口径层 v0.88 ①）；它也是「粘连键取 `prompt_cache_key`」的两个独立出处之一 |
 | `sub2api/backend/internal/service/openai_previous_response_id.go` | ID 形态分类诊断与 `RemovePreviousResponseIDFromBody`。**v0.88 起只作对照**：portage 不取「删字段重建」，而 sub2api 自己的 HTTP `/v1/responses` 入口也是直接 400（它强制 `store=false`，续链在那条路上物理不可能，只有 Responses WebSocket v2 那条路支持）；其 `apicompat` 转换库整个不读这个字段，与 portage 的原状一致 |
 | `CLIProxyAPI` 的 Codex HTTP 路径（删 `previous_response_id` + 强制 `store=false`）与 WS 冷启动 409 分支 | 「上游名义支持 Responses ≠ 有状态语义可用」的一手证据：上游就是 ChatGPT Codex 后端却照样不能续链，因为它不持久化 item。WS 带锚点冷启动回 409 + `previous_response_not_found` + 可执行指引，是 §7.8 那条错误的 code 与文案形制的出处 |
+| `mimo2codex/src/translate/reqToChat.ts`（第 4 支 `namespace` 展平、`dedupeToolsByName:585`、`SERVER_SIDE_TOOLS:246`、`web_search` 映射 329-345） | **`namespace` 工具的另一条路线**（MIT，PO 2026-09-03 裁定加入名单）：子工具**不摊平**、保持裸名，撞名**不 400** 而是按 `fn:<name>` / `builtin:<type>` 去重保留第一个。其注释是「Codex CLI/Desktop 会同时发顶层与 namespace 内同名工具」的一手证据（其 issue #20），与口径层 v1.14 ①③ 的裁定正面不同，作对照 |
+| `mimo2codex/src/translate/respToResponses.ts:145-158`、`streamToSse.ts:211/350`、`server.ts:783` | 回向贴回 `namespace` 字段：`buildNamespaceMap` 建「裸名 → 命名空间名」表，两条回向路径各自给 `function_call` item 补字段——与本项目「摊平名查每请求映射表」的同构对照（口径层 v1.14 ⑤，#95） |
 | `opencodex` 的 forward 展开分支 / `litellm` 的 session 重放 | 本地展开的两种成本形态（**均不取**，口径层 v0.88 ③）：前者以本地展开为主路线，但上游展开未命中时提前 400 失败关闭、不静默转发一段失去上下文的 delta；后者是五家里唯一在转换路径做展开的，依赖一张记完整请求体的日志表 + session 串联字段 + 按 session 全量重放 + 冷存储回捞，且默认关闭 |
 
 ## 附录：开放问题记录
