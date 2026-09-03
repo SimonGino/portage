@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -600,5 +601,192 @@ func TestEncodeRequestDropNamesNamelessServerToolByType(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("无名服务端工具应按 type 记进名单，得到 %v", got)
+	}
+}
+
+// ——— 缺失结果补占位（与 CC 出口同规，占位文案逐字相同）———
+//
+// 不变量：assistant 发出的每个 tool_use，紧接着的 user 消息里必须有配对的
+// tool_result，否则 Anthropic 400。客户端历史缺结果（取消的轮次、丢掉的 output）时
+// 上游会拒、客户端又改不了自己的历史，只能由出口侧补一条明说结果缺失的占位。
+
+// encodeReport 与 encodeReq 同源，另外交出丢弃清单（要看名单的用例用它）。
+func encodeReport(t *testing.T, req *protocol.Request) (map[string]any, protocol.Drops) {
+	t.Helper()
+	body, dropped, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequestReport(req, false)
+	if err != nil {
+		t.Fatalf("编码失败: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("编出来的不是 JSON: %v\n%s", err, body)
+	}
+	return out, dropped
+}
+
+// msgShape 把编出来的消息压成 `role:块类型[标识]` 的序列，位置断言用。
+func msgShape(t *testing.T, out map[string]any) []string {
+	t.Helper()
+	msgs, _ := out["messages"].([]any)
+	shape := make([]string, 0, len(msgs))
+	for _, raw := range msgs {
+		m := raw.(map[string]any)
+		var kinds []string
+		for _, b := range m["content"].([]any) {
+			block := b.(map[string]any)
+			kind, _ := block["type"].(string)
+			if id, ok := block["tool_use_id"].(string); ok {
+				kind += "[" + id + "]"
+			}
+			if id, ok := block["id"].(string); ok {
+				kind += "[" + id + "]"
+			}
+			kinds = append(kinds, kind)
+		}
+		shape = append(shape, m["role"].(string)+":"+strings.Join(kinds, ","))
+	}
+	return shape
+}
+
+// toolResultText 取某条消息里某个 tool_use_id 的结果正文。
+func toolResultText(t *testing.T, out map[string]any, at int, id string) string {
+	t.Helper()
+	msgs := out["messages"].([]any)
+	for _, b := range msgs[at].(map[string]any)["content"].([]any) {
+		block := b.(map[string]any)
+		if block["type"] == "tool_result" && block["tool_use_id"] == id {
+			text, _ := block["content"].(string)
+			return text
+		}
+	}
+	t.Fatalf("第 %d 条消息里没有 %s 的结果: %v", at, id, msgs[at])
+	return ""
+}
+
+// 有调用、没结果：占位 tool_result 合成进**紧随其后的那条 user 消息**，且排在该消息
+// 其余块之前——Anthropic 要求 tool_result 站在 user 消息最前面，插在正文后面就白补了。
+func TestEncodeRequestFillsMissingToolResult(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			userMsg("跑一下"),
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+			userMsg("算了"),
+		},
+	})
+	want := []string{"user:text", "assistant:tool_use[call_1]", "user:tool_result[call_1],text"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+	if got := toolResultText(t, out, 2, "call_1"); got != protocol.MissingToolResultPlaceholder {
+		t.Errorf("占位文案 = %q", got)
+	}
+	if got := dropped.Names(DropMissingResult); !reflect.DeepEqual(got, []string{"call_1"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_1]", got)
+	}
+}
+
+// 并行轮里只缺一个：只补那一个，真回来的结果原样排在前面。
+func TestEncodeRequestFillsOnlyTheMissingCallInParallelTurn(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_a", Name: "f", Args: "{}", ArgsIsJSON: true}},
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_b", Name: "g", Args: "{}", ArgsIsJSON: true}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_a",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "A 的结果"}},
+				}},
+				{Kind: protocol.BlockText, Text: "接着说"},
+			}},
+		},
+	})
+	want := []string{
+		"assistant:tool_use[call_a],tool_use[call_b]",
+		"user:tool_result[call_a],tool_result[call_b],text",
+	}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v——占位没排在正文之前，或者补多了", got, want)
+	}
+	if got := toolResultText(t, out, 1, "call_a"); got != "A 的结果" {
+		t.Errorf("真结果被改写了: %q", got)
+	}
+	if got := dropped.Names(DropMissingResult); !reflect.DeepEqual(got, []string{"call_b"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_b]", got)
+	}
+}
+
+// 紧随其后不是 user：单插一条只含占位结果的 user 消息。这会打断相邻 assistant 的
+// 合并，但那正是不变量要的——合并会让两轮调用挤在一起、中间一个结果都没有。
+func TestEncodeRequestInsertsUserMessageForMissingToolResult(t *testing.T) {
+	out, _ := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "那我直说"}}},
+		},
+	})
+	want := []string{"assistant:tool_use[call_1]", "user:tool_result[call_1]", "assistant:text"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+}
+
+// 带调用的 assistant 就是最后一条：补一条 user 消息收尾。
+func TestEncodeRequestFillsMissingToolResultAtTail(t *testing.T) {
+	out, _ := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			userMsg("跑"),
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+		},
+	})
+	want := []string{"user:text", "assistant:tool_use[call_1]", "user:tool_result[call_1]"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+}
+
+// 孤儿与缺失同时出现：先丢孤儿、再补缺失。两者互不制造对方要处理的情况——孤儿引用的
+// 调用不存在，进不了「有没有结果」的分母；补出来的占位挂的是真实存在的 tool_use，
+// 绝不会变成下一轮的孤儿。
+func TestEncodeRequestDropsOrphanThenFillsMissing(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_没见过",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "孤儿"}},
+				}},
+				{Kind: protocol.BlockText, Text: "继续"},
+			}},
+		},
+	})
+	want := []string{"assistant:tool_use[call_1]", "user:tool_result[call_1],text"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+	if !hasDrop(dropped, DropOrphanResult) {
+		t.Errorf("孤儿没登记: %v", dropped)
+	}
+	if got := dropped.Names(DropMissingResult); !reflect.DeepEqual(got, []string{"call_1"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_1]", got)
 	}
 }

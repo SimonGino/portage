@@ -37,6 +37,10 @@ const (
 	DropVendorRequest = "vendor_request" // 入口协议独有的顶层字段
 	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
+	// DropMissingResult 记的是**合成**而不是丢弃：有调用没结果时补了一个占位
+	// tool_result。出口侧只有 protocol.Drops 这一条上报通道，借它把这件事带进 relay
+	// 那条 Warn 里。名单记 call id——补了哪几路，日志上得看得见。
+	DropMissingResult = "missing_result" // 缺失的工具结果，已合成占位；名单记 call id
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
 	// DropImageDetail 只此一家：CC 与 Responses 都原生有 detail 这一格，那两个出口
 	// 没有「丢弃」这回事，不必像 image_file_id 那样在三个 codec 里各镜像一份。
@@ -89,7 +93,7 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	if len(system) > 0 {
 		out["system"] = encodeBlocks(system)
 	}
-	encoded := encodeMessages(msgs, drop)
+	encoded := encodeMessages(msgs, &dropped)
 	if len(encoded) == 0 {
 		// 转换后一条消息都不剩：我们自己 400，不交上游裁（口径层 v1.14 ⑦）——上游拒了
 		// 会让渠道在流水里背「上游拒绝」，归因反了。dropped 照常交出，丢弃 Warn 与这个
@@ -205,7 +209,7 @@ func splitSystem(req *protocol.Request) ([]protocol.Block, []protocol.Message) {
 	return system, msgs
 }
 
-// encodeMessages 铺 messages，顺带做两件 Anthropic 特有的规整。
+// encodeMessages 铺 messages，顺带做三件 Anthropic 特有的规整。
 //
 // 一是**相邻同角色合并**：canonical 允许连发同角色（CC 那边合法，in-cc-consecutive-user
 // 实采就是连着两条 user），Anthropic 要求交替。
@@ -219,22 +223,66 @@ func splitSystem(req *protocol.Request) ([]protocol.Block, []protocol.Message) {
 // Responses 入口解出来的则本就是 Anthropic 摆法（结果在 user 消息的块里），按序编
 // 出去即可。两条入口路径殊途同归。
 //
+// 三是**缺失结果补占位**：Anthropic 要求每个 tool_use 在紧接着的 user 消息里有对应
+// 的 tool_result，没有就 400（同一条不变量在 sub2api 的 normalizeAnthropicToolPairing
+// 里也点了名）。客户端历史缺结果时（取消的轮次、丢掉的 output）我们补一条明说结果
+// 缺失的占位，不伪装语义——理由见 protocol.MissingToolResultPlaceholder。
+//
 // 空内容的消息剔除：纯 thinking 的 assistant 消息在丢掉 thinking 之后就空了，而
 // Anthropic 不收 content 为空数组的消息。
-func encodeMessages(msgs []protocol.Message, drop func(string)) []map[string]any {
-	// 先扫一遍收集真实出现过的 tool_use id：孤儿 tool_result（引用一个本次请求里
-	// 不存在的调用）会被 Anthropic 直接拒，而它确实会出现——入口侧历史被截断、
-	// 或者上一轮的调用没能编过来。
+func encodeMessages(msgs []protocol.Message, dropped *protocol.Drops) []map[string]any {
+	drop := func(what string) { dropped.Add(what) }
+
+	// 先扫一遍收集两张表。seen 是真实出现过的 tool_use id：孤儿 tool_result（引用一个
+	// 本次请求里不存在的调用）会被 Anthropic 直接拒，而它确实会出现——入口侧历史被
+	// 截断、或者上一轮的调用没能编过来。answered 是真配上了结果的 id：没进这张表的
+	// tool_use 就是「有调用没结果」，得补占位。
+	//
+	// 两件事的先后是定死的：**先丢孤儿、再补缺失**。孤儿引用的是不存在的调用，永远
+	// 进不了 answered 的分母；补出来的占位挂的是真实存在的 tool_use，永远不会变成
+	// 下一轮的孤儿。两者互不制造对方要处理的情况。
 	seen := map[string]bool{}
+	answered := map[string]bool{}
 	for _, m := range msgs {
 		for _, b := range m.Content {
-			if b.Kind == protocol.BlockToolUse && b.ToolCall != nil {
+			switch {
+			case b.Kind == protocol.BlockToolUse && b.ToolCall != nil:
 				seen[b.ToolCall.ID] = true
+			case b.Kind == protocol.BlockToolResult && b.ToolResult != nil:
+				answered[b.ToolResult.ToolCallID] = true
 			}
 		}
 	}
 
 	out := make([]map[string]any, 0, len(msgs))
+	// appendMsg 落一条消息，顺带做相邻同角色合并。
+	appendMsg := func(role string, blocks []map[string]any) {
+		if n := len(out); n > 0 && out[n-1]["role"] == role {
+			prev := out[n-1]["content"].([]map[string]any)
+			out[n-1]["content"] = append(prev, blocks...)
+			return
+		}
+		out = append(out, map[string]any{"role": role, "content": blocks})
+	}
+
+	// pending 是刚落地的那条 assistant 里还没配上结果的 tool_use id，等着在紧随其后
+	// 的 user 消息里补占位。
+	var pending []string
+	flushPending := func(role string, blocks []map[string]any) []map[string]any {
+		if len(pending) > 0 {
+			if role == string(protocol.RoleUser) {
+				blocks = insertPlaceholderResults(blocks, pending, dropped)
+			} else {
+				// 紧随其后不是 user：单插一条只含占位结果的 user 消息，否则调用与
+				// 结果就不相邻了，Anthropic 照样拒。这会打断相邻 assistant 的合并，
+				// 但那正是不变量要的——合并让两轮调用挤在一起、中间一个结果都没有。
+				appendMsg(string(protocol.RoleUser), placeholderResults(pending, dropped))
+			}
+			pending = nil
+		}
+		return blocks
+	}
+
 	for _, m := range msgs {
 		role := string(m.Role)
 		if role != string(protocol.RoleAssistant) {
@@ -246,12 +294,62 @@ func encodeMessages(msgs []protocol.Message, drop func(string)) []map[string]any
 		if len(blocks) == 0 {
 			continue
 		}
-		if n := len(out); n > 0 && out[n-1]["role"] == role {
-			prev := out[n-1]["content"].([]map[string]any)
-			out[n-1]["content"] = append(prev, blocks...)
+		blocks = flushPending(role, blocks)
+		appendMsg(role, blocks)
+		if role == string(protocol.RoleAssistant) {
+			pending = unansweredCalls(m, answered)
+		}
+	}
+	if len(pending) > 0 {
+		// 整个序列以一条带调用的 assistant 收尾：补一条 user 消息兜底。
+		appendMsg(string(protocol.RoleUser), placeholderResults(pending, dropped))
+	}
+	return out
+}
+
+// unansweredCalls 挑出一条 assistant 消息里没配上结果的 tool_use id，按调用序。
+//
+// 顺手把挑中的 id 记进 answered：同一个 id 在历史里被重复发出时（并行轮里客户端偶尔
+// 会把同一个调用发两遍）只补一次占位，补两次就成了「一个调用两个结果」，同样被拒。
+func unansweredCalls(m protocol.Message, answered map[string]bool) []string {
+	var ids []string
+	for _, b := range m.Content {
+		if b.Kind != protocol.BlockToolUse || b.ToolCall == nil || b.ToolCall.ID == "" {
 			continue
 		}
-		out = append(out, map[string]any{"role": role, "content": blocks})
+		if answered[b.ToolCall.ID] {
+			continue
+		}
+		answered[b.ToolCall.ID] = true
+		ids = append(ids, b.ToolCall.ID)
+	}
+	return ids
+}
+
+// insertPlaceholderResults 把占位结果插进一条 user 消息的块序列。
+//
+// 位置是**开头那批 tool_result 之后、其余块之前**：Anthropic 要求 tool_result 排在
+// user 消息最前面，占位块跟真结果受同一条约束，插在正文后面就白补了。排在真结果之后
+// 只是让顺序读起来顺——真回来的在前，补出来的在后。
+func insertPlaceholderResults(blocks []map[string]any, ids []string, dropped *protocol.Drops) []map[string]any {
+	at := 0
+	for at < len(blocks) && blocks[at]["type"] == "tool_result" {
+		at++
+	}
+	return slices.Insert(blocks, at, placeholderResults(ids, dropped)...)
+}
+
+// placeholderResults 给一批没配上结果的 tool_use id 各合成一个 tool_result 块，
+// 并登记进 missing_result 档（名单记 call id）。
+func placeholderResults(ids []string, dropped *protocol.Drops) []map[string]any {
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		dropped.Add(DropMissingResult, id)
+		out = append(out, map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": id,
+			"content":     protocol.MissingToolResultPlaceholder,
+		})
 	}
 	return out
 }

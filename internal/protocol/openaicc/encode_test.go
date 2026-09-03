@@ -882,3 +882,173 @@ func TestEncodeRequestLiftsImagesAfterAllToolMessages(t *testing.T) {
 		t.Errorf("抬出来的图丢了 detail: %v", obj)
 	}
 }
+
+// ——— 孤儿丢弃与缺失补齐（CC 出口，与 anthropic 出口同规）———
+//
+// 两条不变量，症状都是**会话砖死**：孤儿 role=tool 消息让 DeepSeek V4 回
+// `Messages with role 'tool' must be a response to a preceding message with
+// 'tool_calls'`；「有调用没结果」它同样拒。上游拒了、客户端又改不了自己的历史，
+// 只能由出口侧规整。
+
+// encodeReport 与 encode 同源，另外交出完整的丢弃清单（要看名单的用例用它）。
+func encodeReport(t *testing.T, req *protocol.Request) (ccRequest, protocol.Drops) {
+	t.Helper()
+	body, dropped, err := openaicc.NewCodec().EncodeRequestReport(req, false)
+	if err != nil {
+		t.Fatalf("编码失败: %v", err)
+	}
+	var out ccRequest
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("编出来的不是合法 JSON: %v\n%s", err, body)
+	}
+	return out, dropped
+}
+
+// msgShape 把编出来的消息压成 `role[tool_call_id]=content` 的序列，形态断言用。
+func msgShape(t *testing.T, out ccRequest) []string {
+	t.Helper()
+	var shape []string
+	for _, m := range out.Messages {
+		s := m.Role
+		if m.ToolCallID != "" {
+			s += "[" + m.ToolCallID + "]"
+		}
+		if m.Role == "tool" {
+			var text string
+			if err := json.Unmarshal(m.Content, &text); err != nil {
+				t.Fatalf("tool 消息的 content 应是字符串: %s", m.Content)
+			}
+			s += "=" + text
+		}
+		shape = append(shape, s)
+	}
+	return shape
+}
+
+// 引用一个本次请求里不存在的调用的 tool_result：整条 tool 消息丢掉并登记，同一条
+// canonical 消息里的正文不能跟着一起没了。
+func TestEncodeRequestDropsOrphanToolResult(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockText, Text: "继续"},
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_没见过",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "结果"}},
+				}},
+			}},
+		},
+	})
+	if got, want := msgShape(t, out), []string{"user"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v——孤儿 tool 消息没丢掉", got, want)
+	}
+	if !contains(dropped.Kinds(), openaicc.DropOrphanResult) {
+		t.Errorf("丢了孤儿结果却没登记: %v", dropped)
+	}
+	var text string
+	if err := json.Unmarshal(out.Messages[0].Content, &text); err != nil || text != "继续" {
+		t.Errorf("正文被误伤: %s", out.Messages[0].Content)
+	}
+}
+
+// 有调用、没结果：紧跟着补一条占位 tool 消息，文案明说结果缺失，名单记 call id。
+func TestEncodeRequestFillsMissingToolResult(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "跑一下"}}},
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "算了"}}},
+		},
+	})
+	want := []string{"user", "assistant", "tool[call_1]=" + protocol.MissingToolResultPlaceholder, "user"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+	if got := dropped.Names(openaicc.DropMissingResult); !reflect.DeepEqual(got, []string{"call_1"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_1]", got)
+	}
+}
+
+// 并行轮里只缺一个：只补那一个，真回来的结果原样留在前面。
+func TestEncodeRequestFillsOnlyTheMissingCallInParallelTurn(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_a", Name: "f", Args: "{}", ArgsIsJSON: true}},
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_b", Name: "g", Args: "{}", ArgsIsJSON: true}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_a",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "A 的结果"}},
+				}},
+			}},
+		},
+	})
+	want := []string{
+		"assistant",
+		"tool[call_a]=A 的结果",
+		"tool[call_b]=" + protocol.MissingToolResultPlaceholder,
+	}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+	if got := dropped.Names(openaicc.DropMissingResult); !reflect.DeepEqual(got, []string{"call_b"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_b]", got)
+	}
+}
+
+// 带调用的 assistant 就是最后一条消息：占位补在序列末尾，不然上游同样拒。
+func TestEncodeRequestFillsMissingToolResultAtTail(t *testing.T) {
+	out, _ := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{{Kind: protocol.BlockText, Text: "跑"}}},
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+		},
+	})
+	want := []string{"user", "assistant", "tool[call_1]=" + protocol.MissingToolResultPlaceholder}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+}
+
+// 孤儿与缺失同时出现：先丢孤儿、再补缺失，两者互不制造对方要处理的情况——补出来的
+// 占位挂的是真实存在的调用，绝不会变成下一轮的孤儿。
+func TestEncodeRequestDropsOrphanThenFillsMissing(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{{
+				Kind:     protocol.BlockToolUse,
+				ToolCall: &protocol.ToolCall{ID: "call_1", Name: "exec", Args: "{}", ArgsIsJSON: true},
+			}}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_没见过",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "孤儿"}},
+				}},
+				{Kind: protocol.BlockText, Text: "继续"},
+			}},
+		},
+	})
+	want := []string{"assistant", "tool[call_1]=" + protocol.MissingToolResultPlaceholder, "user"}
+	if got := msgShape(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v", got, want)
+	}
+	if !contains(dropped.Kinds(), openaicc.DropOrphanResult) {
+		t.Errorf("孤儿没登记: %v", dropped)
+	}
+	if got := dropped.Names(openaicc.DropMissingResult); !reflect.DeepEqual(got, []string{"call_1"}) {
+		t.Errorf("missing_result 名单 = %v，期望 [call_1]", got)
+	}
+}

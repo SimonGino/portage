@@ -33,6 +33,11 @@ const (
 	DropToolChoice    = "tool_choice"    // auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，名单记 mode
 	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
+	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_call 的 tool_result（与 anthropic 出口同名同规）
+	// DropMissingResult 记的是**合成**而不是丢弃：有调用没结果时补了一条占位。出口侧
+	// 只有 protocol.Drops 这一条上报通道，借它把这件事带进 relay 那条 Warn 里。
+	// 名单记 call id——补了哪几路，日志上得看得见。
+	DropMissingResult = "missing_result" // 缺失的工具结果，已合成占位；名单记 call id
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
 	// （内容块）不是一档：住户是思考开关本身（thinking.type / budget_tokens /
 	// display）、reasoning.summary、各家的数值预算。effort 不在这一档——它现在原样
@@ -70,6 +75,10 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	if err != nil {
 		return nil, nil, err
 	}
+	// 先丢孤儿（encodeMessages 里做）、再补缺失，顺序不能反：补出来的占位一定挂在
+	// 本次请求真实存在的 tool_call 上，绝不会变成下一轮要丢的孤儿；反过来先补的话，
+	// 孤儿那一遍会把刚补的占位当成待判对象白跑一趟。
+	msgs = fillMissingToolResults(msgs, &dropped)
 	if len(msgs) == 0 {
 		// 转换后一条消息都不剩：我们自己 400，不交上游裁（口径层 v1.14 ⑦）。上游那句
 		// `Messages cannot be empty.` 透出去会让渠道在流水里背「上游拒绝」，归因反了。
@@ -144,6 +153,21 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 //     即可，不需要重排
 //   - thinking 块 → 丢弃。跨协议不做伪映射（口径层 §2.6）
 func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any, error) {
+	// 先扫一遍收集本次请求里真实出现过的 tool_call id。孤儿 tool_result（引用一个
+	// 本次请求里不存在的调用）编出去就是一条没有 tool_calls 兜着的 role=tool 消息，
+	// DeepSeek V4 一类的严格上游当场 400 `Messages with role 'tool' must be a
+	// response to a preceding message with 'tool_calls'`，整个会话砖死
+	// （mimo2codex#8 同症）。判据与 anthropic 出口同规：id 在本次请求里出现过就留，
+	// 没出现过就丢并登记。
+	seen := map[string]bool{}
+	for _, m := range req.Messages {
+		for _, b := range m.Content {
+			if b.Kind == protocol.BlockToolUse && b.ToolCall != nil {
+				seen[b.ToolCall.ID] = true
+			}
+		}
+	}
+
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 
 	if content, ok := encodeMessageContent(req.System, drop); ok {
@@ -161,7 +185,7 @@ func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any,
 				msgs = append(msgs, msg)
 			}
 		default:
-			msgs = append(msgs, encodeNonAssistant(m, drop)...)
+			msgs = append(msgs, encodeNonAssistant(m, seen, drop)...)
 		}
 	}
 	return msgs, nil
@@ -202,7 +226,7 @@ func encodeAssistant(m protocol.Message, drop func(string)) (map[string]any, err
 //
 // 一条 canonical 消息可能展开成多条 CC 消息：Anthropic 把若干 tool_result 与正文
 // 塞在同一条 user 消息里，CC 那边每个工具结果都得是独立的 role=tool 消息。
-func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any {
+func encodeNonAssistant(m protocol.Message, seen map[string]bool, drop func(string)) []map[string]any {
 	var out []map[string]any
 	// 抬出来的图**攒到所有 tool 消息发完再发**，不是每个结果发一条。Anthropic 的并行
 	// 工具轮把多个 tool_result 挤在同一条 user 消息里（in-anthropic-parallel-* 实采
@@ -211,6 +235,12 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 	var lifted []map[string]any
 	for _, b := range m.Content {
 		if b.Kind != protocol.BlockToolResult || b.ToolResult == nil {
+			continue
+		}
+		if !seen[b.ToolResult.ToolCallID] {
+			// 孤儿结果：整块丢掉，连带它抬图那一份也不抬——图是这条结果的正文，
+			// 结果都不该存在了，图留下来只会变成一段没有出处的内容。
+			drop(DropOrphanResult)
 			continue
 		}
 		if _, ok := b.Extras["cache_control"]; ok {
@@ -245,6 +275,60 @@ func encodeNonAssistant(m protocol.Message, drop func(string)) []map[string]any 
 		out = append(out, map[string]any{"role": role, "content": content})
 	}
 	return out
+}
+
+// fillMissingToolResults 给「有调用、没结果」的 tool_calls 各补一条占位 role=tool 消息。
+//
+// 不变量：一条带 tool_calls 的 assistant 之后、下一条非 tool 消息之前，每个
+// tool_call_id 都要有一条配对的 role=tool 消息。DeepSeek V4 严格校验，缺了就 400，
+// 而客户端历史确实会缺——取消的轮次、丢掉的 output、Codex 的 bug。上游会拒、客户端
+// 又改不了自己的历史，于是只能由我们补：合成一条明说结果缺失的占位
+// （protocol.MissingToolResultPlaceholder），不伪装语义。
+//
+// 做在**编好的 CC 消息序列**上而不是 canonical 上：这条不变量是位置性的（「紧随其
+// 后」），而一条 canonical 消息会展开成多条 CC 消息，位置只有在这一侧才数得准。
+//
+// 出处：mimo2codex `src/translate/reqToChat.ts` 的 ensureToolCallsHaveOutputs。
+func fillMissingToolResults(msgs []map[string]any, dropped *protocol.Drops) []map[string]any {
+	for i := 0; i < len(msgs); i++ {
+		calls, ok := msgs[i]["tool_calls"].([]map[string]any)
+		if !ok || len(calls) == 0 {
+			continue
+		}
+		// 配对窗口只到紧随其后那串连续的 role=tool 为止：窗口之外的结果不算数——
+		// CC 要求 role=tool 紧跟带 tool_calls 的 assistant，隔了别的消息就已经违规。
+		answered := map[string]bool{}
+		j := i + 1
+		for j < len(msgs) && msgs[j]["role"] == "tool" {
+			if id, _ := msgs[j]["tool_call_id"].(string); id != "" {
+				answered[id] = true
+			}
+			j++
+		}
+		var fill []map[string]any
+		for _, c := range calls {
+			id, _ := c["id"].(string)
+			if id == "" || answered[id] {
+				continue
+			}
+			// 同一 id 只补一次：并行轮里客户端偶尔会把同一个调用发两遍。
+			answered[id] = true
+			dropped.Add(DropMissingResult, id)
+			fill = append(fill, map[string]any{
+				"role":         "tool",
+				"tool_call_id": id,
+				"content":      protocol.MissingToolResultPlaceholder,
+			})
+		}
+		if len(fill) == 0 {
+			continue
+		}
+		// 补在这串 tool 消息的末尾，真结果的顺序不动。
+		msgs = slices.Insert(msgs, j, fill...)
+		// 跳过刚插进去的那几条，别再扫一遍。
+		i = j + len(fill) - 1
+	}
+	return msgs
 }
 
 func encodeToolCall(call *protocol.ToolCall) (map[string]any, error) {
