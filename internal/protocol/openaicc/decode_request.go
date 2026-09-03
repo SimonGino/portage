@@ -3,6 +3,7 @@ package openaicc
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -42,7 +43,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 
 	// 每请求状态在这里归零：codec 每请求由 codecs.New 实例化，但归零是显式的，
 	// 免得将来复用实例时把上一轮的登记带进这一轮。
-	c.argsSalvaged = nil
+	c.argsSalvaged, c.decodeDrops = nil, nil
 
 	req := &protocol.Request{Stream: stream}
 
@@ -91,7 +92,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		req.Tools = tools
 	}
 	if raw, ok := root["tool_choice"]; ok {
-		choice, err := decodeToolChoice(raw)
+		choice, err := c.decodeToolChoice(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -479,9 +480,21 @@ func decodeTools(raw json.RawMessage) ([]protocol.Tool, error) {
 	return tools, nil
 }
 
-// decodeToolChoice 解 tool_choice：CC 用字符串 "auto"/"none"/"required"，或
-// {"type":"function","function":{"name":…}} 指名。
-func decodeToolChoice(raw json.RawMessage) (protocol.ToolChoice, error) {
+// decodeToolChoice 解 tool_choice。CC 侧共四种形态，逐条对照 openai-python 2.24.0
+// 的 types/chat/（new-api 那边 tool_choice 是 `any`，读不出形状）：
+//
+//   - 字符串 "auto" / "none" / "required"；
+//   - {"type":"function","function":{"name":…}} 指名 function 工具；
+//   - {"type":"custom","custom":{"name":…}} 指名 custom 工具
+//     （ChatCompletionNamedToolChoiceCustomParam）；
+//   - {"type":"allowed_tools","allowed_tools":{"mode":"auto"|"required","tools":[…]}}
+//     把可选范围收窄到一张白名单（ChatCompletionAllowedToolChoiceParam +
+//     ChatCompletionAllowedToolsParam）。
+//
+// 后两种此前解出来是零值，等于**静默丢**：allowed_tools 的 `required` 就此蒸发，
+// 出口侧那道「tool_choice 落空回 400」的闸在 CC 入口根本触发不到，客户端得到一个
+// 悄悄降成 auto 的请求。
+func (c *Codec) decodeToolChoice(raw json.RawMessage) (protocol.ToolChoice, error) {
 	var mode string
 	if err := json.Unmarshal(raw, &mode); err == nil {
 		switch mode {
@@ -498,14 +511,53 @@ func decodeToolChoice(raw json.RawMessage) (protocol.ToolChoice, error) {
 		Function struct {
 			Name string `json:"name"`
 		} `json:"function"`
+		Custom struct {
+			Name string `json:"name"`
+		} `json:"custom"`
+		AllowedTools *struct {
+			Mode  string            `json:"mode"`
+			Tools []json.RawMessage `json:"tools"`
+		} `json:"allowed_tools"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return protocol.ToolChoice{}, fmt.Errorf("openaicc: tool_choice: %w", err)
 	}
-	if obj.Type == "function" && obj.Function.Name != "" {
-		return protocol.ToolChoice{Mode: "tool", Name: obj.Function.Name}, nil
+	switch obj.Type {
+	case "function":
+		if obj.Function.Name != "" {
+			return protocol.ToolChoice{Mode: "tool", Name: obj.Function.Name}, nil
+		}
+	case "custom":
+		// custom 工具的指名与 function 的指名在 canonical 里是同一件事（Mode:"tool"）：
+		// 「点名叫这个工具」与工具是怎么声明的正交，出口侧按自己的形态发。
+		if obj.Custom.Name != "" {
+			return protocol.ToolChoice{Mode: "tool", Name: obj.Custom.Name}, nil
+		}
+	case "allowed_tools":
+		if obj.AllowedTools != nil {
+			return c.decodeAllowedTools(obj.AllowedTools.Mode, len(obj.AllowedTools.Tools)), nil
+		}
 	}
 	return protocol.ToolChoice{}, nil
+}
+
+// decodeAllowedTools 把 allowed_tools 折算成 canonical 的 Mode，并登记收不下的白名单。
+//
+// canonical 没有「可选工具白名单」这个形态（三个出口也都没有对应字段），名单只能丢。
+// 但 mode 收得下、且必须收：`required` 是硬要求，蒸发掉就成了静默降档。
+//
+// 名单丢而 mode 留，语义上是**放宽**（模型可以点到白名单外的工具）。登记的是件数不是
+// 工具名：名单里的工具本来就都在 tools 里声明过，名字对排障没有增量，件数才说明
+// 「收窄了多少」。
+func (c *Codec) decodeAllowedTools(mode string, n int) protocol.ToolChoice {
+	c.decodeDrops = append(c.decodeDrops,
+		"tool_choice.allowed_tools("+strconv.Itoa(n)+" tools)")
+	if mode != "required" {
+		// 官方只有 auto / required 两个取值；认不得的当 auto——同上面认不得的字符串
+		// 那一档，宁可少说一句，也不把野值塞进 canonical 的白名单。
+		mode = "auto"
+	}
+	return protocol.ToolChoice{Mode: mode}
 }
 
 // collectExtras 把 known 之外的键解成 any 存进 Extras。值走 any 而非

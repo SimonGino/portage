@@ -118,6 +118,16 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 				"channel", cand.ChannelName, "calls", salvaged)
 		}
 	}
+	// 入站请求里 canonical 收不下的形态（CC 的 tool_choice.allowed_tools 白名单）：
+	// 同上一条的分工，codec 只登记、日志在这里打。与出口侧的「跨协议转换丢弃字段」
+	// 分成两条是因为归因不同——那条丢的是**我们编不出去**的，这条丢的是**canonical
+	// 装不下**的，看日志的人据此决定该改哪一侧。
+	if r, ok := inCodec.(interface{ DecodeDrops() []string }); ok {
+		if drops := r.DecodeDrops(); len(drops) > 0 {
+			s.log.Warn("入站请求里有转换路径收不下的字段，已按最近语义折算",
+				"inbound", ep.Proto, "channel", cand.ChannelName, "fields", drops)
+		}
+	}
 
 	outBody, dropped, err := encodeRequest(outCodec, req, stream)
 	if len(dropped) > 0 {
@@ -170,9 +180,36 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 
 	if stream {
 		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, res)
+		s.warnResponseDrops(cand, outCodec)
 		return
 	}
 	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, res.Body)
+	s.warnResponseDrops(cand, outCodec)
+}
+
+// warnResponseDrops 打「上游响应里有转换路径放不出去的项」这一条。
+//
+// 与请求侧那两条同一个分工：codec 是纯函数、不持有 logger，只登记，日志在 server
+// 层打。登记内容只有类型与 id，不含 item 正文——搜索结果原文是内容，不该进日志。
+//
+// **只登记不合成、不计费**（PO 2026-09-03 裁定）：上游自带搜索时钱已经花了，客户端
+// 那边什么也看不到，这行 Warn 是唯一的留痕。
+//
+// 并发：流式下这份登记由 DecodeStream 的解码 goroutine 写，本函数在 streamConverted
+// 返回之后读。中间的 happens-before 由**事件通道的关闭**给出——EncodeStream 只在
+// 通道关闭后返回，而通道关闭排在解码 goroutine 最后一次写之后。与
+// protocol.StreamReadReporter 那一位同理，两处靠的是同一条边。
+func (s *Server) warnResponseDrops(cand store.Candidate, outCodec protocol.Codec) {
+	r, ok := outCodec.(interface{ ResponseDrops() []string })
+	if !ok {
+		return
+	}
+	drops := r.ResponseDrops()
+	if len(drops) == 0 {
+		return
+	}
+	s.log.Warn("上游响应里有转换路径放不出去的项，已丢弃；若是服务端工具，上游成本已经发生",
+		"channel", cand.ChannelName, "items", drops)
 }
 
 // encodeRequest 走 RequestEncodeReporter 拿丢弃清单，拿不到就退回普通编码。

@@ -153,10 +153,19 @@ func encodeInput(req *protocol.Request, drop func(string)) []map[string]any {
 		items = append(items, developerItem(parts))
 	}
 
-	// 先扫一遍真实出现过的工具调用 id：孤儿结果（引用一个本次请求里不存在的调用）
+	// 先扫一遍真实**发得出去**的工具调用 id：孤儿结果（引用一个本次请求里不存在的调用）
 	// 会被上游拒，理由与 anthropic 出口那一处相同。
+	//
+	// 只数 assistant 消息上的：下面 encodeOutMessage 也只在 assistant 那一支发
+	// encodeOutToolCall，非 assistant 消息上的 BlockToolUse 一个 item 都不产。两处
+	// 不对齐时，那种调用配对的结果会被判成「有调用」而照发 function_call_output，
+	// 到了上游却找不着 call_id——正是本表要挡的那种孤儿，只是换成我们亲手造的。
+	// 对齐之后它走既有的 DropOrphanResult 那一档，有日志。
 	seen := map[string]bool{}
 	for _, m := range req.Messages {
+		if m.Role != protocol.RoleAssistant {
+			continue
+		}
 		for _, b := range m.Content {
 			if b.Kind == protocol.BlockToolUse && b.ToolCall != nil {
 				seen[b.ToolCall.ID] = true

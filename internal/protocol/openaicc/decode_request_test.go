@@ -215,8 +215,15 @@ func TestDecodeRequestFlattensToolDeclarations(t *testing.T) {
 	}
 }
 
-// tool_choice 的两种线上形态都要认，且认不得的取值当没说——塞个野值进 canonical
+// tool_choice 的四种线上形态都要认，且认不得的取值当没说——塞个野值进 canonical
 // 只会让出口侧原样发出一个上游不认的取值。
+//
+// 形状逐条对照 openai-python 2.24.0 的 types/chat/：字符串、
+// ChatCompletionNamedToolChoiceParam（function）、
+// ChatCompletionNamedToolChoiceCustomParam（custom）、
+// ChatCompletionAllowedToolChoiceParam（allowed_tools）。后两种此前解出来是零值，
+// 等于静默丢：allowed_tools 的 required 就此蒸发，出口侧那道「tool_choice 落空回
+// 400」的闸在 CC 入口根本触发不到。
 func TestDecodeRequestToolChoiceForms(t *testing.T) {
 	cases := []struct {
 		raw      string
@@ -226,8 +233,14 @@ func TestDecodeRequestToolChoiceForms(t *testing.T) {
 		{`"required"`, "required", ""},
 		{`"none"`, "none", ""},
 		{`{"type":"function","function":{"name":"read"}}`, "tool", "read"},
+		{`{"type":"custom","custom":{"name":"exec"}}`, "tool", "exec"},
+		{`{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"read"}}]}}`, "required", ""},
+		{`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"read"}}]}}`, "auto", ""},
+		// 官方只有 auto / required 两个 mode；认不得的当 auto，同认不得的字符串那一档。
+		{`{"type":"allowed_tools","allowed_tools":{"mode":"whatever","tools":[]}}`, "auto", ""},
 		{`"totally_new_mode"`, "", ""},
 		{`{"type":"function"}`, "", ""},
+		{`{"type":"custom"}`, "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.raw, func(t *testing.T) {
@@ -558,5 +571,45 @@ func TestDecodeRequestKeepsServerToolType(t *testing.T) {
 	}
 	if got := tool.Label(); got != "web_search" {
 		t.Errorf("Label() = %q，期望 web_search——丢弃名单靠它才点得出名", got)
+	}
+}
+
+// allowed_tools 的白名单 canonical 收不下（没有这个形态），但**必须留痕**：
+// mode 折算成最近语义，名单登记件数交给 server 层打 Warn。
+func TestDecodeRequestAllowedToolsIsRegistered(t *testing.T) {
+	body := `{"model":"m","messages":[],"tool_choice":{"type":"allowed_tools",` +
+		`"allowed_tools":{"mode":"required","tools":[` +
+		`{"type":"function","function":{"name":"read"}},` +
+		`{"type":"function","function":{"name":"write"}},` +
+		`{"type":"custom","custom":{"name":"exec"}}]}}}`
+	c := openaicc.NewCodec()
+	req, err := c.DecodeRequest([]byte(body), false)
+	if err != nil {
+		t.Fatalf("解不动: %v", err)
+	}
+	if req.ToolChoice.Mode != "required" {
+		t.Errorf("ToolChoice = %+v，required 蒸发了——出口侧那道 400 闸就再也触发不到", req.ToolChoice)
+	}
+	want := []string{"tool_choice.allowed_tools(3 tools)"}
+	if got := c.DecodeDrops(); len(got) != 1 || got[0] != want[0] {
+		t.Errorf("DecodeDrops = %v, want %v", got, want)
+	}
+}
+
+// 每请求状态要真的归零：上一轮的登记不许带进这一轮。
+func TestDecodeRequestResetsDecodeDrops(t *testing.T) {
+	c := openaicc.NewCodec()
+	first := `{"model":"m","messages":[],"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[]}}}`
+	if _, err := c.DecodeRequest([]byte(first), false); err != nil {
+		t.Fatalf("解不动: %v", err)
+	}
+	if len(c.DecodeDrops()) != 1 {
+		t.Fatalf("第一轮 DecodeDrops = %v, want 一条", c.DecodeDrops())
+	}
+	if _, err := c.DecodeRequest([]byte(`{"model":"m","messages":[],"tool_choice":"auto"}`), false); err != nil {
+		t.Fatalf("解不动: %v", err)
+	}
+	if got := c.DecodeDrops(); len(got) != 0 {
+		t.Errorf("第二轮 DecodeDrops = %v, want 空", got)
 	}
 }

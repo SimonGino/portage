@@ -847,3 +847,43 @@ func TestEncodeRequestDropNamesNamelessServerToolByType(t *testing.T) {
 		t.Errorf("无名服务端工具应按 type 记进名单，得到 %v", names)
 	}
 }
+
+// TestEncodeToolUseOnNonAssistantMessageIsNotPaired：非 assistant 消息上的调用不进
+// 配对表。
+//
+// 预扫此前把**所有**角色上的 BlockToolUse 都记进 seen，而 encodeOutMessage 只在
+// assistant 那一支发 encodeOutToolCall——于是这种调用一个 item 都不产，它配对的
+// function_call_output 却因为「seen 里有」照发不误，到上游那边 call_id 找不着人，
+// 正是 DropOrphanResult 本来要挡的那种孤儿，只是换成我们亲手造的。
+//
+// 对齐之后：调用不发（本来就发不出去），结果按孤儿丢并登记，有日志可归因。
+func TestEncodeToolUseOnNonAssistantMessageIsNotPaired(t *testing.T) {
+	req := &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				textBlock("q"),
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_x", Name: "ghost_tool", Args: "{}", ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleTool, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_x", Content: []protocol.Block{textBlock("x")},
+				}},
+			}},
+		},
+	}
+	out, dropped := encodeOut(t, req, false)
+	for _, it := range items(t, out) {
+		if it["type"] == "function_call" {
+			t.Errorf("非 assistant 消息上的调用被发了出去: %v", it)
+		}
+		if it["type"] == "function_call_output" {
+			t.Errorf("配对的结果没按孤儿丢: %v", it)
+		}
+	}
+	if !dropped.Has(DropOrphanResult) {
+		t.Errorf("dropped = %v, want 含 %s", dropped, DropOrphanResult)
+	}
+}

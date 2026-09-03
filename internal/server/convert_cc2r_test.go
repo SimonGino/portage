@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -414,5 +416,174 @@ func TestCC2RGateIsOpen(t *testing.T) {
 	}
 	if up.Count() == 0 {
 		t.Error("上游一次都没被打到")
+	}
+}
+
+// attrsText 把一行日志的属性摊平成一个字符串，好整体断言「点名了什么、没带上什么」
+// ——登记项是 []string，slog 的 JSON handler 出来是 []any，逐个断言反而看不清。
+func attrsText(l gatewaytest.LogLine) string { return fmt.Sprint(l.Attrs) }
+
+// dropStream 是手搭的上游 SSE：九份真实转录里**没有**服务端工具的样本（全是纯文本
+// 与函数调用），而这条链要验的恰恰是「上游发了我们放不出去的 item」。形状照
+// openai-python 2.24.0 的 ResponseWebSearchCallInProgressEvent / output_item.added
+// 与 litellm types/llms/openai.py 的事件名表搭。
+//
+// 里头有三样东西：认得的 web_search_call 结构事件（不该登记）、认不得的 item
+// （web_search_call 本身，该登记一次而不是 added/done 各一次）、认不得的事件名
+// （response.gizmo.progress，该登记一次而不是逐帧）。
+const dropStream = "event: response.created\n" +
+	`data: {"type":"response.created","response":{"id":"resp_drop","model":"` + cc2rUpstreamModel + `","status":"in_progress"}}` + "\n\n" +
+	"event: response.output_item.added\n" +
+	`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call","id":"ws_abc","status":"in_progress","action":{"type":"search","query":"绝密关键词"}}}` + "\n\n" +
+	"event: response.web_search_call.in_progress\n" +
+	`data: {"type":"response.web_search_call.in_progress","output_index":0,"item_id":"ws_abc"}` + "\n\n" +
+	"event: response.web_search_call.completed\n" +
+	`data: {"type":"response.web_search_call.completed","output_index":0,"item_id":"ws_abc"}` + "\n\n" +
+	"event: response.output_item.done\n" +
+	`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_abc","status":"completed"}}` + "\n\n" +
+	"event: response.gizmo.progress\n" +
+	`data: {"type":"response.gizmo.progress","output_index":0,"pct":10}` + "\n\n" +
+	"event: response.gizmo.progress\n" +
+	`data: {"type":"response.gizmo.progress","output_index":0,"pct":90}` + "\n\n" +
+	"event: response.output_item.added\n" +
+	`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}` + "\n\n" +
+	"event: response.output_text.delta\n" +
+	`data: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_1","delta":"查完了"}` + "\n\n" +
+	"event: response.completed\n" +
+	`data: {"type":"response.completed","response":{"id":"resp_drop","status":"completed","usage":{"input_tokens":3,"output_tokens":2}}}` + "\n\n"
+
+// 上游发来的服务端工具项我们放不出去，只登记 + 一行 Warn：不合成 server_tool_use、
+// 不计费（PO 2026-09-02）。日志必须点名是什么项，否则「回答里凭空提到搜索结果」
+// 这类现象查不到因；同时**不许带 item 内容**（搜索词是用户数据）。
+func TestCC2RStreamUnknownUpstreamItemsAreLogged(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "text/event-stream"}, dropStream)
+
+	resp := gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", true), nil)
+	body := gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("状态码 = %d\n%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "查完了") {
+		t.Errorf("认得的正文也没出来:\n%s", body)
+	}
+
+	lines := gw.Lines("上游响应里有转换路径放不出去的项，已丢弃；若是服务端工具，上游成本已经发生")
+	if len(lines) != 1 {
+		t.Fatalf("丢弃日志 %d 行, 期望 1 行；已落日志：%s", len(lines), gw.RawLog())
+	}
+	one := attrsText(lines[0])
+	for _, want := range []string{"web_search_call(ws_abc)", "event:response.gizmo.progress"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("日志没点名 %q: %s", want, one)
+		}
+	}
+	// 认得的结构事件不该混进来，item 内容更不该。
+	for _, leak := range []string{"web_search_call.in_progress", "绝密关键词"} {
+		if strings.Contains(one, leak) {
+			t.Errorf("日志里混进了 %q: %s", leak, one)
+		}
+	}
+}
+
+// 非流式同一条链：output 数组里认不得的项照样登记，照样一行 Warn。
+func TestCC2RBufferedUnknownUpstreamItemsAreLogged(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	body := `{"id":"resp_drop","object":"response","model":"` + cc2rUpstreamModel +
+		`","status":"completed","output":[` +
+		`{"type":"web_search_call","id":"ws_abc","status":"completed","action":{"type":"search","query":"绝密关键词"}},` +
+		`{"type":"image_generation_call","id":"ig_1","result":"iVBORw0KGgo"},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"查完了"}]}],` +
+		`"usage":{"input_tokens":3,"output_tokens":2}}`
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, body)
+
+	resp := gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", false), nil)
+	got := gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("状态码 = %d\n%s", resp.StatusCode, got)
+	}
+	if !strings.Contains(got, "查完了") {
+		t.Errorf("认得的正文也没出来:\n%s", got)
+	}
+
+	lines := gw.Lines("上游响应里有转换路径放不出去的项，已丢弃；若是服务端工具，上游成本已经发生")
+	if len(lines) != 1 {
+		t.Fatalf("丢弃日志 %d 行, 期望 1 行；已落日志：%s", len(lines), gw.RawLog())
+	}
+	one := attrsText(lines[0])
+	for _, want := range []string{"web_search_call(ws_abc)", "image_generation_call(ig_1)"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("日志没点名 %q: %s", want, one)
+		}
+	}
+	if strings.Contains(one, "绝密关键词") || strings.Contains(one, "iVBORw0KGgo") {
+		t.Errorf("日志里带上了 item 内容: %s", one)
+	}
+}
+
+// 干净的回话不许无中生有一行 Warn——不然这行日志会被当噪音无视。
+func TestCC2RNoDropLogOnCleanResponse(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
+
+	gw.Post(t, "/v1/chat/completions", ccSampleBody(t, "in-cc-text", false), nil)
+
+	if lines := gw.Lines("上游响应里有转换路径放不出去的项"); len(lines) != 0 {
+		t.Errorf("干净回话也打了 %d 行丢弃日志：%s", len(lines), gw.RawLog())
+	}
+}
+
+// C：allowed_tools 的 required 必须活着走到出口。此前 CC 入口解不出这个形态，
+// ToolChoice 是零值 → 出口既不发 tool_choice 也不触发那道 400，客户端「必须调工具」
+// 的要求整条蒸发。名单本身 canonical 收不下，折算 + 登记 + 一行 Warn。
+func TestCC2RAllowedToolsRequiredSurvivesToUpstream(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
+
+	body := `{"model":"` + accessPointModel + `","stream":false,` +
+		`"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}},` +
+		`{"type":"function","function":{"name":"write","parameters":{"type":"object"}}}],` +
+		`"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"required",` +
+		`"tools":[{"type":"function","function":{"name":"read"}}]}},` +
+		`"messages":[{"role":"user","content":"读一下"}]}`
+
+	resp := gw.Post(t, "/v1/chat/completions", body, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("状态码 = %d\n%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	var sent struct {
+		ToolChoice any `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(up.Last(t).Body, &sent); err != nil {
+		t.Fatalf("上游收到的不是 JSON: %v", err)
+	}
+	if sent.ToolChoice != "required" {
+		t.Errorf("上游 tool_choice = %v, 期望 required（白名单折算成最近语义）", sent.ToolChoice)
+	}
+	lines := gw.Lines("入站请求里有转换路径收不下的字段，已按最近语义折算")
+	if len(lines) != 1 {
+		t.Fatalf("折算日志 %d 行, 期望 1 行；已落日志：%s", len(lines), gw.RawLog())
+	}
+	if one := attrsText(lines[0]); !strings.Contains(one, "tool_choice.allowed_tools(1 tools)") {
+		t.Errorf("日志没点名折算了什么: %s", one)
+	}
+}
+
+// 折算出来的 required 落空，照样撞既有那道 400 闸——这正是「解出来」的意义。
+func TestCC2RAllowedToolsRequiredWithoutToolsIs400(t *testing.T) {
+	gw, up := newCC2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
+
+	body := `{"model":"` + accessPointModel + `","stream":false,` +
+		`"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[]}},` +
+		`"messages":[{"role":"user","content":"读一下"}]}`
+
+	resp := gw.Post(t, "/v1/chat/completions", body, nil)
+	got := gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d, 期望 400；body=%s", resp.StatusCode, got)
+	}
+	if up.Count() != 0 {
+		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 	}
 }

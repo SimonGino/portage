@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -61,6 +62,11 @@ type respItem struct {
 	Content   []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
+		// Refusal 是 type:"refusal" 部件的正文（openai-python 2.24.0
+		// types/llms 侧的 ContentPartDonePartRefusal：{type:"refusal", refusal:str}，
+		// litellm types/llms/openai.py 同形）。**不与 Text 共用字段**：上游把拒答
+		// 写在另一个键上，共用一个字段解不出来。
+		Refusal string `json:"refusal"`
 	} `json:"content"`
 	// Summary 是 reasoning 项的摘要段落。非流式只有这一处能拿到推理文本（流式那边
 	// 走 reasoning_summary_text.delta）。**不解 encrypted_content**：解出来也只能丢，
@@ -128,10 +134,15 @@ func (u *respUsage) canonical() protocol.Usage {
 // 结构与 openaicc.DecodeStream 一致（读—喂 FrameScanner—收摊）：两条解码路径的
 // 读取错误处置必须一样，各写一版必然漂。
 func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
+	c.resetResponseDrops()
 	out := make(chan protocol.Event, 32)
 	go func() {
 		defer close(out)
-		st := &respStreamState{}
+		// state 拿着 codec 指针，因为响应侧的丢弃登记要写回**每请求状态**（codec 实例），
+		// 而状态机是每条流现开的：登记留在 state 里，DecodeStream 返回后就没人读得到。
+		// 写在解码 goroutine 里、读在 EncodeStream 返回之后，见 Codec.ResponseDrops
+		// 的并发注释。
+		st := &respStreamState{codec: c}
 		scanner := &protocol.FrameScanner{}
 		buf := make([]byte, 32<<10)
 		for {
@@ -164,6 +175,11 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 
 // respStreamState 是流式解码的状态机。
 type respStreamState struct {
+	// codec 是本次请求的 Codec 实例，只用来写响应侧丢弃登记（noteDrop）。
+	// 非流式那条路不建状态机，直接往 Codec 上登记。可为 nil：单测里手搭 state 时
+	// 不给也不该崩（noteDrop 自己挡）。
+	codec *Codec
+
 	started  bool
 	id       string
 	model    string
@@ -209,6 +225,98 @@ func (st *respStreamState) frame(frame []byte, out chan<- protocol.Event) {
 	st.event(&f, out)
 }
 
+// knownRespEvents 是**明知故跳**的事件名：canonical 里没有对应概念的结构信号，或者
+// 同一段内容的第二份拷贝。不在这张表、也不在下面 switch 里的事件名一律登记成
+// `event:名字`（口径层 §2.6：不静默）。
+//
+// 表的内容逐条对照参考仓库的事件常量，不凭记忆：
+//   - litellm `litellm/types/llms/openai.py` 的 ResponsesAPIStreamEvents 枚举——
+//     四十来个取值最全的一份，服务端工具那几族（web_search_call / file_search_call /
+//     mcp_call / mcp_list_tools / shell_call）只有这里列全。
+//   - new-api `relaykit/relayconvert/internal/oai_responses/to_oai_chat_resp.go` 的
+//     responsesEvent* 常量，与 `relaykit/dto/openai_response.go`
+//     （image_generation_call）。
+//   - sub2api `backend/internal/pkg/apicompat/responses_to_chatcompletions.go`。
+//   - opencodex `src/server/responses-snapshot-repair.ts` 的
+//     RESPONSE_EVENT_STATUSES（response.queued 只有这一处有）。
+//
+// **不进表**的两个近邻，故意的：`response.done` 与 `response.error`（new-api /
+// sub2api 分别当终帧与错误帧处理）我们两个都不认，它们真来了就是一次实打实的语义
+// 丢失，登记出来才看得见。
+var knownRespEvents = map[string]bool{
+	// 生命周期信号：canonical 的 EvMessageStart / EvDone 由 created 与终帧带，
+	// 中间态没有落点。
+	"response.in_progress": true,
+	"response.queued":      true,
+
+	// 同一段内容的第二份拷贝（done 帧带全文，delta 已经逐片放过了），以及部件开合。
+	"response.content_part.added":           true,
+	"response.content_part.done":            true,
+	"response.output_text.done":             true,
+	"response.output_text.annotation.added": true,
+	"response.refusal.done":                 true,
+	"response.reasoning_summary_part.added": true,
+	"response.reasoning_summary_part.done":  true,
+	"response.reasoning_summary_text.done":  true,
+	"response.reasoning_text.done":          true,
+	"response.function_call_arguments.done": true,
+
+	// 服务端工具项的**子事件**：item 本身已经在 output_item.added 上登记过一次，
+	// 子事件再登记只是把同一件事说四遍。
+	"response.web_search_call.in_progress":         true,
+	"response.web_search_call.searching":           true,
+	"response.web_search_call.completed":           true,
+	"response.file_search_call.in_progress":        true,
+	"response.file_search_call.searching":          true,
+	"response.file_search_call.completed":          true,
+	"response.image_generation_call.partial_image": true,
+	"image_generation.partial_image":               true,
+	"response.mcp_call.in_progress":                true,
+	"response.mcp_call.completed":                  true,
+	"response.mcp_call.failed":                     true,
+	"response.mcp_call_arguments.delta":            true,
+	"response.mcp_call_arguments.done":             true,
+	"response.mcp_list_tools.in_progress":          true,
+	"response.mcp_list_tools.completed":            true,
+	"response.mcp_list_tools.failed":               true,
+	"response.shell_call.in_progress":              true,
+	"response.shell_call.completed":                true,
+	"response.shell_call_output.done":              true,
+}
+
+// knownRespItems 是解码侧真的转得出去的 output item 类型。其余（web_search_call /
+// file_search_call / computer_call / image_generation_call / code_interpreter_call /
+// mcp_call / mcp_list_tools / local_shell_call …）一律登记。
+//
+// 名单来处：mimo2codex `src/translate/reqToChat.ts` 的 SERVER_SIDE_TOOLS、
+// new-api `relaykit/dto/openai_response.go`、litellm 的 Responses item 类型。
+var knownRespItems = map[string]bool{
+	"message": true, "function_call": true, "custom_tool_call": true, "reasoning": true,
+}
+
+// noteDrop 把一条响应侧登记写回 codec。codec 为 nil（手搭 state 的单测）时静默跳过。
+func (st *respStreamState) noteDrop(label string) {
+	if st.codec == nil {
+		return
+	}
+	st.codec.noteResponseDrop(label)
+}
+
+// noteItem 登记一个转不出去的 output item：`类型(id)`。
+//
+// id 用 item 自己的 id（去重键也是它：同一个 item 的 added 与 done 各来一帧，
+// 登记两次没有信息量）。上游没给 id 时退回 output_index——同一条流里它同样唯一，
+// 只是跨流对不上，而这行日志本来就只服务于一次调用。
+func noteItemLabel(itemType, id string, outputIndex int) string {
+	if itemType == "" || knownRespItems[itemType] {
+		return ""
+	}
+	if id == "" {
+		id = "#" + strconv.Itoa(outputIndex)
+	}
+	return itemType + "(" + id + ")"
+}
+
 func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 	switch f.Type {
 	case "response.created":
@@ -221,6 +329,19 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		st.itemAdded(f, out)
 
 	case "response.output_text.delta":
+		if f.Delta != "" {
+			st.start(out)
+			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
+		}
+
+	case "response.refusal.delta":
+		// 模型拒答走**正文**放出去，不是丢掉：客户端等的是一句话，拒答也是一句话，
+		// 静默跳过等于让它看着一个空回复干等。形状是 {type, item_id, output_index,
+		// content_index, delta}（openai-python 2.24.0 的 RefusalDeltaEvent，
+		// litellm types/llms/openai.py 同形）。
+		//
+		// 只认 .delta 不认 .done：done 帧带的是这一段的全文（字段名 refusal），
+		// 两个都收会把拒答发两遍——与 output_text 同一条理由。
 		if f.Delta != "" {
 			st.start(out)
 			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
@@ -281,10 +402,18 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 			msg = f.Error.Message
 		}
 		st.emitError(msg, out)
+
+	default:
+		// knownRespEvents 里的（in_progress / content_part.added|done /
+		// output_text.done / reasoning_summary_part.added|done / 服务端工具子事件 …）
+		// 是明知故跳，不登记；表外的事件名登记一次。
+		//
+		// 类型为空的帧不登记：那是一帧连 type 也没有、event: 行也没有的噪声，
+		// 记出来只是一条 `event:` 空标签。
+		if f.Type != "" && !knownRespEvents[f.Type] {
+			st.noteDrop("event:" + f.Type)
+		}
 	}
-	// 其余帧（in_progress / content_part.added|done / output_text.done /
-	// reasoning_summary_part.added|done / reasoning_summary_text.done / …）一律跳过：
-	// 要么是 canonical 里没有的结构信号，要么是上面说的「同一段文本的第二份拷贝」。
 }
 
 // start 放出 EvMessageStart，幂等。
@@ -300,6 +429,9 @@ func (st *respStreamState) itemAdded(f *respFrame, out chan<- protocol.Event) {
 	if f.Item == nil {
 		return
 	}
+	// 转不出去的 item 在这里留痕。登记（不是伪造成 server_tool_use、也不计费）是
+	// PO 2026-09-03 的裁定：上游自带搜索时钱已经花了，日志是唯一看得见的地方。
+	st.noteDrop(noteItemLabel(f.Item.Type, f.Item.ID, f.OutputIndex))
 	switch f.Item.Type {
 	case "function_call":
 		st.start(out)
@@ -330,6 +462,10 @@ func (st *respStreamState) itemDone(f *respFrame, out chan<- protocol.Event) {
 	if f.Item == nil {
 		return
 	}
+	// done 上照样调一次，但**不会**重复登记：去重键是 `类型(id)` 整条，added 已经记过
+	// 的这里原地返回。留着是为了兜住只发 done 不发 added 的上游（中转常见），那种
+	// 情况下 added 那次根本没来过。
+	st.noteDrop(noteItemLabel(f.Item.Type, f.Item.ID, f.OutputIndex))
 	switch f.Item.Type {
 	case "function_call":
 		out <- protocol.Event{Type: protocol.EvToolCallEnd, Index: f.OutputIndex}
@@ -512,6 +648,7 @@ func (st *respStreamState) finish(out chan<- protocol.Event) {
 // output 数组是中转侧的降级重建（tool-turn1 里 custom_tool_call 被重建成了没有入参的
 // function_call），不能当线格真值用。所以这条路径由手搭 fixture 覆盖，缺口记在 §9.4②。
 func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
+	c.resetResponseDrops()
 	var payload respPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("openairesponses: 上游响应不是 JSON: %w", err)
@@ -534,9 +671,15 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
-				if part.Text != "" {
+				text := part.Text
+				if part.Type == "refusal" {
+					// 拒答部件的正文在 refusal 键上，不在 text 上。走**正文**出去，
+					// 同流式 response.refusal.delta：跳过等于让客户端看着空回复干等。
+					text = part.Refusal
+				}
+				if text != "" {
 					events = append(events, protocol.Event{
-						Type: protocol.EvTextDelta, Text: part.Text, Index: i,
+						Type: protocol.EvTextDelta, Text: text, Index: i,
 					})
 				}
 			}
@@ -575,6 +718,9 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 					})
 				}
 			}
+		default:
+			// 转不出去的 item（服务端工具那批）留痕，同流式 itemAdded。
+			c.noteResponseDrop(noteItemLabel(item.Type, item.ID, i))
 		}
 	}
 

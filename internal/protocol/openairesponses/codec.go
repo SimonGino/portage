@@ -64,6 +64,60 @@ type Codec struct {
 	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 compactionDrops 同一个形制：codec
 	// 只登记，日志在 server 层打。
 	argsSalvaged []string
+
+	// responseDrops 记**上游响应**里放不出去的东西，由 DecodeStream / DecodeFullBody
+	// 填，消费方见 ResponseDrops。两类登记：认不得的 output item（形如
+	// `web_search_call(ws_abc)`）与不在 knownRespEvents 表里的事件名（形如
+	// `event:response.foo`）。
+	//
+	// 与另外三份状态方向相反——那三份是**入口侧** DecodeRequest 填的，这一份是**出口侧**
+	// 的响应解码填的，两组互不相干（同一个实例上不会两组都有：一个 Codec 要么当入口
+	// 要么当出口）。形制照旧：codec 只登记，日志在 server 层打（relayConverted）。
+	//
+	// 流式下写方是解码 goroutine、读方是 relayConverted 本身。中间的 happens-before
+	// 由事件通道的关闭给出，见 ResponseDrops 的注释。
+	responseDrops []string
+	// responseDropSeen 给 responseDrops 去重：一个 item 的 added 与 done 各来一帧、
+	// 一个认不得的事件名一条流里能来几十帧，逐帧记会把一行 Warn 撑成刷屏。
+	responseDropSeen map[string]bool
+}
+
+// ResponseDrops 列出解码上游响应时放不出去的 output item 与事件名，供调用方打警告
+// 日志（口径层 §2.6：跨协议丢弃要有日志警告，不静默）。同 CompactionDrops：codec
+// 是纯函数、不持有 logger。
+//
+// **只登记不合成**（PO 2026-09-03 裁定）：认不得的 item 一律不伪造成 server_tool_use
+// 发给客户端，也不进计费——我们既拿不到它的入参与结果语义，也无从判断上游怎么计的
+// 数。日志是唯一的留痕：上游自带搜索时钱花了，至少不能一个字都没有。
+//
+// **不存 item 内容**：只记类型与 id。搜索结果原文是正文内容，日志里不该有。
+//
+// 并发：流式下这份状态由 DecodeStream 的解码 goroutine 写。调用方在 EncodeStream
+// 返回之后读，而 EncodeStream 只在事件通道关闭后才返回，通道关闭又排在解码
+// goroutine 的最后一次写之后——happens-before 由通道关闭给出，与
+// protocol.StreamReadReporter 那一位同理。
+func (c *Codec) ResponseDrops() []string { return c.responseDrops }
+
+// noteResponseDrop 登记一条响应侧丢弃，按整条标签去重。
+func (c *Codec) noteResponseDrop(label string) {
+	if label == "" {
+		return
+	}
+	if c.responseDropSeen == nil {
+		c.responseDropSeen = map[string]bool{}
+	}
+	if c.responseDropSeen[label] {
+		return
+	}
+	c.responseDropSeen[label] = true
+	c.responseDrops = append(c.responseDrops, label)
+}
+
+// resetResponseDrops 归零响应侧登记。DecodeStream / DecodeFullBody 开头各调一次，
+// 理由同 DecodeRequest 那处：codec 每请求实例化，但归零显式写出来，免得将来复用
+// 实例时把上一轮的登记带进这一轮。
+func (c *Codec) resetResponseDrops() {
+	c.responseDrops, c.responseDropSeen = nil, nil
 }
 
 func NewCodec() *Codec { return &Codec{} }

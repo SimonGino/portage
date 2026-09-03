@@ -799,3 +799,235 @@ func TestDecodeFullBodyNotJSON(t *testing.T) {
 }
 
 var _ io.Reader = (*errReader)(nil)
+
+// collectWith 同 collect，但由调用方持有 codec——响应侧的丢弃登记挂在 codec 实例上
+// （ResponseDrops），collect 那个版本把实例扔了就读不到。
+func collectWith(t *testing.T, c *Codec, raw []byte) []protocol.Event {
+	t.Helper()
+	ch, err := c.DecodeStream(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("DecodeStream: %v", err)
+	}
+	var events []protocol.Event
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	return events
+}
+
+// TestDecodeStreamRegistersUnknownItemsAndEvents：上游自带服务端工具时要留痕。
+//
+// 认不得的 output item（web_search_call 这批）与不在 known 表里的事件名此前一律跳过
+// 不留痕——上游搜了一圈、钱花了，我们的日志一个字都没有。只登记不合成
+// server_tool_use、不计费（PO 2026-09-02）。
+//
+// 一并钉住两条去重：item 的 added 与 done 只记一次，同一个事件名来两帧也只记一次。
+func TestDecodeStreamRegistersUnknownItemsAndEvents(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"resp_ws","model":"gpt-5.6"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ws_abc","type":"web_search_call","status":"in_progress"}}`,
+		`data: {"type":"response.web_search_call.searching","item_id":"ws_abc","output_index":0}`,
+		`data: {"type":"response.web_search_call.completed","item_id":"ws_abc","output_index":0}`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"ws_abc","type":"web_search_call","status":"completed"}}`,
+		`data: {"type":"response.gizmo.progress","output_index":0}`,
+		`data: {"type":"response.gizmo.progress","output_index":0}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant"}}`,
+		`data: {"type":"response.output_text.delta","output_index":1,"delta":"查到了"}`,
+		`data: {"type":"response.output_text.done","output_index":1,"text":"查到了"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_ws","model":"gpt-5.6","status":"completed","usage":{"input_tokens":9,"output_tokens":2}}}`,
+	)
+	c := NewCodec()
+	events := collectWith(t, c, raw)
+
+	drops := c.ResponseDrops()
+	want := []string{"web_search_call(ws_abc)", "event:response.gizmo.progress"}
+	if len(drops) != len(want) {
+		t.Fatalf("ResponseDrops = %v, want %v（added/done 与重复事件名各只记一次）", drops, want)
+	}
+	for i, w := range want {
+		if drops[i] != w {
+			t.Errorf("ResponseDrops[%d] = %q, want %q", i, drops[i], w)
+		}
+	}
+	// 搜索结果原文不进日志：登记里只该有类型与 id。
+	for _, d := range drops {
+		if strings.Contains(d, "查到了") || strings.Contains(d, "in_progress") {
+			t.Errorf("登记里带上了 item 内容: %q", d)
+		}
+	}
+
+	// 正文事件一个不少：登记是旁路，不许改动事件流。
+	var text string
+	for _, ev := range events {
+		if ev.Type == protocol.EvTextDelta {
+			text += ev.Text
+		}
+	}
+	if text != "查到了" {
+		t.Errorf("正文 = %q, want 查到了——登记不该动正文", text)
+	}
+	if last := events[len(events)-1]; last.Type != protocol.EvDone || last.StopReason != "stop" {
+		t.Errorf("终事件 = %+v，want EvDone{stop}——服务端工具不算 tool_calls 收尾", last)
+	}
+}
+
+// TestDecodeStreamKnownStructuralEventsStaySilent：明知故跳的结构信号不许刷屏。
+//
+// knownRespEvents 那张表存在的理由就是这个：in_progress / content_part.* /
+// *.done 每条流都来一堆，逐个登记会把「上游自带搜索」这条真信号淹掉。
+func TestDecodeStreamKnownStructuralEventsStaySilent(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"r"}}`,
+		`data: {"type":"response.queued","response":{"id":"r"}}`,
+		`data: {"type":"response.content_part.added","output_index":0}`,
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"hi"}`,
+		`data: {"type":"response.output_text.done","output_index":0,"text":"hi"}`,
+		`data: {"type":"response.content_part.done","output_index":0}`,
+		`data: {"type":"response.reasoning_summary_part.added","output_index":0}`,
+		`data: {"type":"response.reasoning_summary_part.done","output_index":0}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	c := NewCodec()
+	collectWith(t, c, raw)
+	if drops := c.ResponseDrops(); len(drops) != 0 {
+		t.Errorf("ResponseDrops = %v, want 空——结构信号是明知故跳，不该登记", drops)
+	}
+}
+
+// TestDecodeStreamUnknownItemWithoutIDFallsBackToIndex：上游没给 item id 时用
+// output_index 兜底，不能记成一个光秃秃的类型名。
+func TestDecodeStreamUnknownItemWithoutIDFallsBackToIndex(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_item.added","output_index":3,"item":{"type":"mcp_call","name":"search"}}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	c := NewCodec()
+	collectWith(t, c, raw)
+	if got := c.ResponseDrops(); len(got) != 1 || got[0] != "mcp_call(#3)" {
+		t.Errorf("ResponseDrops = %v, want [mcp_call(#3)]", got)
+	}
+}
+
+// TestDecodeStreamResetsResponseDropsPerRequest：每请求状态要真的归零。
+func TestDecodeStreamResetsResponseDrops(t *testing.T) {
+	first := sseFrames(
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ws_1","type":"web_search_call"}}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	c := NewCodec()
+	collectWith(t, c, first)
+	if len(c.ResponseDrops()) != 1 {
+		t.Fatalf("第一轮 ResponseDrops = %v, want 一条", c.ResponseDrops())
+	}
+	clean := sseFrames(
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"hi"}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	collectWith(t, c, clean)
+	if drops := c.ResponseDrops(); len(drops) != 0 {
+		t.Errorf("第二轮 ResponseDrops = %v, want 空——上一轮的登记带进来了", drops)
+	}
+}
+
+// TestDecodeFullBodyRegistersUnknownItems：非流式同款登记。
+func TestDecodeFullBodyRegistersUnknownItems(t *testing.T) {
+	body := []byte(`{"id":"resp_full","model":"m","status":"completed","output":[
+	  {"type":"web_search_call","id":"ws_abc","status":"completed","action":{"type":"search","query":"portage 网关"}},
+	  {"type":"image_generation_call","id":"ig_1"},
+	  {"type":"message","role":"assistant","content":[{"type":"output_text","text":"查到了"}]}
+	]}`)
+	c := NewCodec()
+	events, err := c.DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+	want := []string{"web_search_call(ws_abc)", "image_generation_call(ig_1)"}
+	got := c.ResponseDrops()
+	if len(got) != len(want) {
+		t.Fatalf("ResponseDrops = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ResponseDrops[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	for _, d := range got {
+		if strings.Contains(d, "portage 网关") {
+			t.Errorf("搜索词进了登记: %q", d)
+		}
+	}
+	var text string
+	for _, ev := range events {
+		if ev.Type == protocol.EvTextDelta {
+			text += ev.Text
+		}
+	}
+	if text != "查到了" {
+		t.Errorf("正文 = %q，want 查到了", text)
+	}
+}
+
+// TestDecodeStreamRefusalBecomesText：模型拒答走正文放出去。
+//
+// 此前 response.refusal.delta 整个跳过，客户端看到的是一个空回复——它不知道模型
+// 拒答了，只当网关坏了。只认 .delta 不认 .done（done 带全文，收两遍就发两遍）。
+func TestDecodeStreamRefusalBecomesText(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant"}}`,
+		`data: {"type":"response.refusal.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"抱歉，"}`,
+		`data: {"type":"response.refusal.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"我不能帮这个忙。"}`,
+		`data: {"type":"response.refusal.done","item_id":"msg_1","output_index":0,"content_index":0,"refusal":"抱歉，我不能帮这个忙。"}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	c := NewCodec()
+	events := collectWith(t, c, raw)
+
+	var text string
+	var deltas int
+	for _, ev := range events {
+		if ev.Type == protocol.EvTextDelta {
+			text += ev.Text
+			deltas++
+		}
+	}
+	if text != "抱歉，我不能帮这个忙。" {
+		t.Errorf("拒答正文 = %q", text)
+	}
+	if deltas != 2 {
+		t.Errorf("TextDelta 条数 = %d, want 2——.done 带的是全文，收了就发两遍", deltas)
+	}
+	if drops := c.ResponseDrops(); len(drops) != 0 {
+		t.Errorf("ResponseDrops = %v, want 空——拒答是发出去了的，不是丢弃", drops)
+	}
+}
+
+// TestDecodeFullBodyRefusalPartBecomesText：非流式的 refusal 部件同样走正文。
+//
+// 形状是 {"type":"refusal","refusal":"…"}，正文在 refusal 键上不在 text 上
+// （openai-python 2.24.0 / litellm types 一致）。
+func TestDecodeFullBodyRefusalPartBecomesText(t *testing.T) {
+	body := []byte(`{"id":"r","model":"m","status":"completed","output":[
+	  {"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"抱歉，我不能帮这个忙。"}]}
+	]}`)
+	c := NewCodec()
+	events, err := c.DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+	var text string
+	for _, ev := range events {
+		if ev.Type == protocol.EvTextDelta {
+			text += ev.Text
+		}
+	}
+	if text != "抱歉，我不能帮这个忙。" {
+		t.Errorf("拒答正文 = %q", text)
+	}
+	if drops := c.ResponseDrops(); len(drops) != 0 {
+		t.Errorf("ResponseDrops = %v, want 空", drops)
+	}
+}

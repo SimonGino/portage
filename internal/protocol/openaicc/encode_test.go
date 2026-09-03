@@ -1052,3 +1052,39 @@ func TestEncodeRequestDropsOrphanThenFillsMissing(t *testing.T) {
 		t.Errorf("missing_result 名单 = %v，期望 [call_1]", got)
 	}
 }
+
+// 非 assistant 消息上的 BlockToolUse 不进配对表。
+//
+// 与 Responses 出口那处同一个不对齐（#82 复查）：预扫此前不看角色，而 tool_calls
+// 只有 encodeAssistant 发得出来——encodeNonAssistant 走的 encodeMessageContent 把
+// BlockToolUse 整块跳过。于是这种调用配对的结果会被判成「有调用」而照发一条
+// role=tool，前面却没有带 tool_calls 的 assistant 兜着，DeepSeek V4 一类的严格上游
+// 当场 400，正是本表存在的理由。对齐之后它走既有的 DropOrphanResult 那一档。
+//
+// （anthropic 出口不需要这一刀：那边 encodeBlocksFiltered 对每个角色都发 tool_use，
+// 预扫与发送本来就一致，动它反而会把发得出去的调用判成不存在。）
+func TestEncodeRequestIgnoresToolUseOnNonAssistantMessage(t *testing.T) {
+	out, dropped := encodeReport(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockText, Text: "继续"},
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_x", Name: "ghost_tool", Args: "{}", ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleTool, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_x",
+					Content:    []protocol.Block{{Kind: protocol.BlockText, Text: "结果"}},
+				}},
+			}},
+		},
+	})
+	if got, want := msgShape(t, out), []string{"user"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("消息序列 = %v，期望 %v——没有 tool_calls 兜着的 role=tool 会被严格上游 400", got, want)
+	}
+	if !contains(dropped.Kinds(), openaicc.DropOrphanResult) {
+		t.Errorf("丢了孤儿结果却没登记: %v", dropped)
+	}
+}

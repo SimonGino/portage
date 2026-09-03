@@ -159,8 +159,18 @@ func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any,
 	// response to a preceding message with 'tool_calls'`，整个会话砖死
 	// （mimo2codex#8 同症）。判据与 anthropic 出口同规：id 在本次请求里出现过就留，
 	// 没出现过就丢并登记。
+	//
+	// 只数 assistant 消息上的，与下面的分派对齐：tool_calls 只有 encodeAssistant 发，
+	// encodeNonAssistant 走的 encodeMessageContent 把 BlockToolUse 整块跳过。两处不
+	// 对齐时，非 assistant 消息上的调用配对的结果会被判成「有调用」而照发一条
+	// role=tool，前面却没有带 tool_calls 的 assistant 兜着——正好是本表要挡的那种 400。
+	// （anthropic 出口不需要这一刀：那边 encodeBlocksFiltered 对**每个角色**都发
+	// tool_use，预扫与发送本来就一致。）
 	seen := map[string]bool{}
 	for _, m := range req.Messages {
+		if m.Role != protocol.RoleAssistant {
+			continue
+		}
 		for _, b := range m.Content {
 			if b.Kind == protocol.BlockToolUse && b.ToolCall != nil {
 				seen[b.ToolCall.ID] = true
