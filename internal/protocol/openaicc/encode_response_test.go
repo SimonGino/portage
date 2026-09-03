@@ -310,6 +310,61 @@ func TestEncodeStreamRenumbersToolCallIndexes(t *testing.T) {
 	}
 }
 
+// 流式的「有调用、零入参」补 `{}`：非流式早就补了（EncodeFullBody），流式这边原先
+// 是 no-op，客户端拿着 arguments 那个空串直接 JSON.parse 就抛。同一个因，同一个解。
+//
+// 一并钉住反面：有入参的那一路一个字节都不许多补，否则拼出来的就不是合法 JSON 了。
+func TestEncodeStreamFillsEmptyToolArgs(t *testing.T) {
+	events := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "now", ArgsIsJSON: true},
+		{Type: protocol.EvToolCallEnd, Index: 0},
+		{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "read", ArgsIsJSON: true},
+		{Type: protocol.EvToolArgsDelta, Index: 1, Text: `{"filePath":"notes.md"}`},
+		{Type: protocol.EvToolCallEnd, Index: 1},
+		{Type: protocol.EvDone, StopReason: "tool_calls"},
+	}
+	_, chunks := encodeStream(t, streamingRequest, events)
+
+	args := map[int]string{}
+	for _, c := range chunks {
+		if c.delta() == nil {
+			continue
+		}
+		for _, tc := range c.delta().ToolCalls {
+			args[tc.Index] += tc.Function.Arguments
+		}
+	}
+	if args[0] != "{}" {
+		t.Errorf("零入参那一路的 arguments = %q，want {}——空串客户端 JSON.parse 直接抛", args[0])
+	}
+	if args[1] != `{"filePath":"notes.md"}` {
+		t.Errorf("有入参那一路被多补了: %q", args[1])
+	}
+}
+
+// 上游没发 EvToolCallEnd 就断了：收尾时同样得把空 arguments 补上，理由同上一条。
+func TestEncodeStreamFillsEmptyToolArgsAtFinish(t *testing.T) {
+	events := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "now", ArgsIsJSON: true},
+	}
+	_, chunks := encodeStream(t, streamingRequest, events)
+
+	var args string
+	for _, c := range chunks {
+		if c.delta() == nil {
+			continue
+		}
+		for _, tc := range c.delta().ToolCalls {
+			args += tc.Function.Arguments
+		}
+	}
+	if args != "{}" {
+		t.Errorf("断流收尾时的 arguments = %q，want {}", args)
+	}
+}
+
 // 流内错误：发 error 帧，且**不补 [DONE]**——那是「正常收完」的记号。
 func TestEncodeStreamErrorSkipsDone(t *testing.T) {
 	events := []protocol.Event{

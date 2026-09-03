@@ -173,15 +173,22 @@ type respStreamState struct {
 	doneSent bool
 	errSent  bool
 
-	// pending 是当前正开着的 custom_tool_call：它的入参要攒满再一次性放出，理由见
-	// flushCustom。function_call 不进这里，分片当场转发。
-	pending *customPending
+	// pending 是正开着的 custom_tool_call，**按 output_index 分槽**：它们的入参要攒
+	// 满再一次性放出，理由见 flushCustom。function_call 不进这里，分片当场转发。
+	//
+	// 必须是 map 不能是单槽：canonical 契约明写并行调用的分片按 index 交错到达
+	// （protocol/event.go），两个 custom item 同时开着时，后一个 output_item.added
+	// 会把前一个连同它攒了一半的分片一起覆盖掉，而前者的 flushCustom 又因 index
+	// 对不上直接返回——客户端看到的是一个只有 Start+End、零入参的调用，无声。
+	pending map[int]*customPending
+	// pendingOrder 记 index 的首次出现次序。收尾时按它冲缓冲，不按 index 数值排：
+	// index 不保证从 0 起、也不保证连续（§5 坑清单第一条）。
+	pendingOrder []int
 }
 
 // customPending 攒一个 custom_tool_call 的入参。
 type customPending struct {
-	index int
-	args  []string
+	args []string
 }
 
 func (st *respStreamState) frame(frame []byte, out chan<- protocol.Event) {
@@ -245,8 +252,8 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 
 	case "response.custom_tool_call_input.delta":
 		// 只进缓冲，不上线。为什么见 flushCustom。
-		if st.pending != nil && st.pending.index == f.OutputIndex && f.Delta != "" {
-			st.pending.args = append(st.pending.args, f.Delta)
+		if p := st.pending[f.OutputIndex]; p != nil && f.Delta != "" {
+			p.args = append(p.args, f.Delta)
 		}
 
 	case "response.custom_tool_call_input.done":
@@ -307,7 +314,7 @@ func (st *respStreamState) itemAdded(f *respFrame, out chan<- protocol.Event) {
 	case "custom_tool_call":
 		st.start(out)
 		st.sawTool = true
-		st.pending = &customPending{index: f.OutputIndex}
+		st.openPending(f.OutputIndex)
 		out <- protocol.Event{
 			Type: protocol.EvToolCallStart, Index: f.OutputIndex,
 			ToolID: f.Item.CallID, ToolName: f.Item.Name,
@@ -346,21 +353,48 @@ func (st *respStreamState) itemDone(f *respFrame, out chan<- protocol.Event) {
 // function 工具，上游回 custom_tool_call 的情形实际不会发生——这里存在是为了让形态
 // 完备，不是为了跑热路径。
 func (st *respStreamState) flushCustom(index int, complete string, out chan<- protocol.Event) {
-	if st.pending == nil || st.pending.index != index {
+	p := st.pending[index]
+	if p == nil {
 		return
 	}
 	args := complete
 	if args == "" {
-		for _, frag := range st.pending.args {
+		for _, frag := range p.args {
 			args += frag
 		}
 	}
-	st.pending = nil
+	delete(st.pending, index)
 	out <- protocol.Event{
 		Type:  protocol.EvToolArgsDelta,
 		Index: index,
 		Text:  wrapCustomArgs(args),
 	}
+}
+
+// openPending 给一路 custom_tool_call 开缓冲槽，并登记首次出现次序。
+func (st *respStreamState) openPending(index int) {
+	if st.pending == nil {
+		st.pending = map[int]*customPending{}
+	}
+	if _, ok := st.pending[index]; ok {
+		return
+	}
+	st.pending[index] = &customPending{}
+	st.pendingOrder = append(st.pendingOrder, index)
+}
+
+// flushAllPending 把还攒着的每一路 custom 入参连同 EvToolCallEnd 一起放出去，按
+// **首次出现**次序（§5 坑清单第一条）。用在两处收尾：上游把流断在半截，以及
+// response.incomplete 打断。
+func (st *respStreamState) flushAllPending(out chan<- protocol.Event) {
+	for _, index := range st.pendingOrder {
+		if st.pending[index] == nil {
+			continue
+		}
+		st.flushCustom(index, "", out)
+		out <- protocol.Event{Type: protocol.EvToolCallEnd, Index: index}
+	}
+	st.pendingOrder = nil
 }
 
 // wrapCustomArgs 是 protocol.WrapCustomToolArgs 的不返错版本。
@@ -380,6 +414,11 @@ func wrapCustomArgs(args string) string {
 // terminal 处理 response.completed / response.incomplete：先 usage 后 EvDone。
 func (st *respStreamState) terminal(f *respFrame, out chan<- protocol.Event) {
 	st.start(out)
+	// 先冲掉还攒着的 custom 入参。response.incomplete 打断时上游不会再补
+	// custom_tool_call_input.done，而这里一旦 done 过，finish 那条兜底路径就被
+	// doneSent 挡死了——不 flush 等于让那一路调用只剩 Start，入参与 End 双双消失。
+	// completed 的正常序里缓冲早已空，这一句是空转。
+	st.flushAllPending(out)
 	if f.Response != nil {
 		st.observeUsage(f.Response.Usage, out)
 		st.stop = st.stopReason(f.Response)
@@ -457,13 +496,9 @@ func (st *respStreamState) finish(out chan<- protocol.Event) {
 		return
 	}
 	st.start(out)
-	if st.pending != nil {
-		// 流断在 custom 入参收尾之前：攒着的照样放出去，半个调用也比凭空消失强
-		// （同 encode.go finish 里那条 flushTool）。
-		idx := st.pending.index
-		st.flushCustom(idx, "", out)
-		out <- protocol.Event{Type: protocol.EvToolCallEnd, Index: idx}
-	}
+	// 流断在 custom 入参收尾之前：攒着的照样放出去，半个调用也比凭空消失强
+	// （同 encode.go finish 里那条 flushTool）。
+	st.flushAllPending(out)
 	st.done(out)
 }
 

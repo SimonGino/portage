@@ -481,6 +481,50 @@ func TestEncodeStreamSurfacesMidStreamError(t *testing.T) {
 
 // 上游流断在半截（没等到 EvToolCallEnd）：攒着的调用照样放出去。半个工具调用比
 // 凭空消失强——客户端至少看得见调用意图。
+// TestEncodeStreamInterleavedToolCallsKeepOwnArgs：两路 EvToolCallStart 交错到来，
+// 各自的入参不许串台。
+//
+// canonical 契约明写并行调用的分片按 index 交错到达（protocol/event.go）。单槽
+// pending 时后一路的 Start 直接覆盖前一路且不 flush——前一路攒的入参凭空消失，
+// 客户端拿到一个入参为 `{}` 的调用，无声。
+func TestEncodeStreamInterleavedToolCallsKeepOwnArgs(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "chatcmpl-abc", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "write"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{"path":`},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 1, Text: `{"path":"b"}`},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `"a"}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 1},
+		protocol.Event{Type: protocol.EvDone, StopReason: "tool_calls"},
+	)
+
+	args := map[string]string{}
+	var order []string
+	for _, f := range frames {
+		if f.event != "response.output_item.done" {
+			continue
+		}
+		item := f.data["item"].(map[string]any)
+		callID := item["call_id"].(string)
+		args[callID], _ = item["arguments"].(string)
+		order = append(order, callID)
+	}
+	if len(order) != 2 {
+		t.Fatalf("output_item.done 数 = %d, want 2: %v", len(order), eventNames(frames))
+	}
+	if order[0] != "call_a" || order[1] != "call_b" {
+		t.Errorf("item 次序 = %v，期望按首次出现 call_a→call_b", order)
+	}
+	if args["call_a"] != `{"path":"a"}` {
+		t.Errorf("call_a 的入参 = %q，被后一路覆盖了", args["call_a"])
+	}
+	if args["call_b"] != `{"path":"b"}` {
+		t.Errorf("call_b 的入参 = %q", args["call_b"])
+	}
+}
+
 func TestEncodeStreamFlushesTruncatedToolCall(t *testing.T) {
 	c := NewCodec()
 	if _, err := c.DecodeRequest([]byte(`{"model":"m","tools":[{"type":"custom","name":"exec"}]}`), true); err != nil {

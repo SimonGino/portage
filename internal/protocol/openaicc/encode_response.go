@@ -58,6 +58,9 @@ type streamEncoder struct {
 	// 下标（正文占了 0，第一个工具调用就是 1），CC 客户端拿 index 当 tool_calls 数组
 	// 的下标用，跳号会在数组里留一个空洞。按首次出现次序编号，顺序与客户端看到的一致。
 	ccIndex map[int]int
+	// argsSent 记每路调用发过入参分片没有（键同 ccIndex，是上游 index）。
+	// 用它在收口时给「有调用、零入参」的那一路补 `{}`，见 fillEmptyArgs。
+	argsSent map[int]bool
 }
 
 func (e *streamEncoder) event(ev protocol.Event) error {
@@ -111,14 +114,17 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		if err := e.ensureStarted(); err != nil {
 			return err
 		}
+		e.markArgsSent(ev.Index)
 		return e.chunk(map[string]any{"tool_calls": []map[string]any{{
 			"index":    e.indexOf(ev.Index),
 			"function": map[string]any{"arguments": ev.Text},
 		}}}, nil)
 
 	case protocol.EvToolCallEnd:
-		// CC 没有「这个调用说完了」的信号，收尾靠整条流的 finish_reason。无事可做。
-		return nil
+		// CC 没有「这个调用说完了」的信号（§5 坑清单），收尾靠整条流的
+		// finish_reason，所以这里不发终止帧。要做的只有一件：这一路一片入参都没
+		// 来过的话，趁着还知道是哪一路把 `{}` 补上。
+		return e.fillEmptyArgs(ev.Index)
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
@@ -134,6 +140,54 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 
 	case protocol.EvError:
 		return e.writeError(ev)
+	}
+	return nil
+}
+
+// markArgsSent 记下这一路已经有入参下发过。
+func (e *streamEncoder) markArgsSent(upstream int) {
+	if e.argsSent == nil {
+		e.argsSent = map[int]bool{}
+	}
+	e.argsSent[upstream] = true
+}
+
+// fillEmptyArgs 给「有调用、一片入参都没发过」的那一路补一帧 `{"arguments":"{}"}`。
+//
+// function.arguments 按 CC 契约是一段能解的 JSON 字符串，客户端把它直接
+// JSON.parse 成参数对象；调用起帧里那个 `""` 只是槽位初值，就这么留到收尾，
+// 客户端当场抛。非流式那边早就补了（EncodeFullBody 里入参全空白就写 "{}"），
+// 流式这边原先是空的——同一个因，两条路给同一个解。
+//
+// 只补见过 Start 的 index：孤零零飘来一个 EvToolCallEnd 不能凭空造出一路调用。
+func (e *streamEncoder) fillEmptyArgs(upstream int) error {
+	if e.argsSent[upstream] {
+		return nil
+	}
+	if _, ok := e.ccIndex[upstream]; !ok {
+		return nil
+	}
+	if err := e.ensureStarted(); err != nil {
+		return err
+	}
+	e.markArgsSent(upstream)
+	return e.chunk(map[string]any{"tool_calls": []map[string]any{{
+		"index":    e.indexOf(upstream),
+		"function": map[string]any{"arguments": "{}"},
+	}}}, nil)
+}
+
+// fillAllEmptyArgs 是收尾兜底：上游没发 EvToolCallEnd 就断了的那些调用，同样不能
+// 留着空 arguments 交出去。按 CC 侧下标序补，那就是首次出现次序（见 ccIndex）。
+func (e *streamEncoder) fillAllEmptyArgs() error {
+	order := make([]int, len(e.ccIndex))
+	for upstream, idx := range e.ccIndex {
+		order[idx] = upstream
+	}
+	for _, upstream := range order {
+		if err := e.fillEmptyArgs(upstream); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -171,6 +225,9 @@ func (e *streamEncoder) finish() error {
 	}
 	e.finished = true
 	if err := e.ensureStarted(); err != nil {
+		return err
+	}
+	if err := e.fillAllEmptyArgs(); err != nil {
 		return err
 	}
 	// finish_reason 帧的 delta 是 `{"content":""}` 而不是空对象：实采两份转录都如此，

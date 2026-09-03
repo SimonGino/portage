@@ -117,8 +117,14 @@ type streamEncoder struct {
 	reasoningItem string
 	reasoningBuf  strings.Builder
 
-	// pending 是正在攒的工具调用。攒而不是逐片转发，理由见 flushTool。
-	pending *toolPending
+	// pending 是正在攒的工具调用，**按 canonical Index 分槽**。攒而不是逐片转发，
+	// 理由见 flushTool；分槽而不是单槽，是因为并行调用的分片按 index 交错到达
+	// （protocol/event.go 明写），单槽会被后一路的 EvToolCallStart 直接覆盖，前一路
+	// 攒着的入参连同它自己一起消失。
+	pending map[int]*toolPending
+	// pendingOrder 记 index 的首次出现次序，收尾冲缓冲时按它走——不按 index 数值排，
+	// index 不保证从 0 起、也不保证连续（§5 坑清单第一条）。
+	pendingOrder []int
 	// done 是已经收口的 output item，终帧的 response.output 要照原样列一遍。
 	done []any
 
@@ -135,10 +141,9 @@ type streamEncoder struct {
 }
 
 type toolPending struct {
-	index int
-	id    string
-	name  string
-	args  []string
+	id   string
+	name string
+	args []string
 }
 
 func (e *streamEncoder) event(ev protocol.Event) error {
@@ -251,22 +256,23 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 }
 
 func (e *streamEncoder) bufferTool(ev protocol.Event) error {
-	if e.pending == nil || e.pending.index != ev.Index {
-		if ev.Type != protocol.EvToolCallStart {
-			// 没见过 Start 的 index 冒出来了：补空壳而不是丢弃，同 anthropic 侧的
-			// 理由——半个调用也比凭空消失强。
-			e.pending = &toolPending{index: ev.Index}
-		} else {
-			e.pending = &toolPending{index: ev.Index, id: ev.ToolID, name: ev.ToolName}
-			return nil
+	pending := e.pending[ev.Index]
+	if pending == nil {
+		// 没见过 Start 的 index 冒出来也开槽而不是丢弃，同 anthropic 侧的理由——
+		// 半个调用也比凭空消失强。
+		pending = &toolPending{}
+		if e.pending == nil {
+			e.pending = map[int]*toolPending{}
 		}
+		e.pending[ev.Index] = pending
+		e.pendingOrder = append(e.pendingOrder, ev.Index)
 	}
 	if ev.Type == protocol.EvToolCallStart {
-		e.pending.id, e.pending.name = ev.ToolID, ev.ToolName
+		pending.id, pending.name = ev.ToolID, ev.ToolName
 		return nil
 	}
 	if ev.Text != "" {
-		e.pending.args = append(e.pending.args, ev.Text)
+		pending.args = append(pending.args, ev.Text)
 	}
 	return nil
 }
@@ -279,11 +285,11 @@ func (e *streamEncoder) bufferTool(ev protocol.Event) error {
 // 本来就没有节奏可丢：CC 流里没有逐条工具终止符，解码侧已经把分片攒到流末尾一次性
 // 冲出（§5 坑清单）。
 func (e *streamEncoder) flushTool(index int) error {
-	if e.pending == nil || e.pending.index != index {
+	pending := e.pending[index]
+	if pending == nil {
 		return nil
 	}
-	pending := e.pending
-	e.pending = nil
+	delete(e.pending, index)
 
 	if err := e.ensureStarted(); err != nil {
 		return err
@@ -539,9 +545,13 @@ func (e *streamEncoder) finish() error {
 	if e.compaction {
 		return e.finishCompaction()
 	}
-	// 上游流断在半截（没等到 EvToolCallEnd）时，攒着的那个调用照样放出去。
-	if e.pending != nil {
-		if err := e.flushTool(e.pending.index); err != nil {
+	// 上游流断在半截（没等到 EvToolCallEnd）时，攒着的那些调用照样放出去，
+	// 按首次出现次序而不是 index 数值序（§5 坑清单第一条）。
+	for _, index := range e.pendingOrder {
+		if e.pending[index] == nil {
+			continue
+		}
+		if err := e.flushTool(index); err != nil {
 			return err
 		}
 	}

@@ -609,6 +609,97 @@ func TestDecodeCustomToolTruncatedStillFlushes(t *testing.T) {
 	}
 }
 
+// TestDecodeInterleavedCustomToolCalls：两路 custom_tool_call 同时开着、分片交错到达。
+//
+// 单槽 pending 时这条必挂：后一个 output_item.added 把前一个连同它攒了一半的分片
+// 一起覆盖，前者的 flushCustom 因 index 对不上直接返回，客户端拿到的是一个
+// Start+End、零入参的调用——而且不报错。canonical 契约（protocol/event.go）明写
+// 并行调用的分片按 index 交错到达，形态参考 CLIProxyAPI 的同款用例（两 item 同开）。
+func TestDecodeInterleavedCustomToolCalls(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","call_id":"call_a","name":"exec","input":""}}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"id":"ctc_2","type":"custom_tool_call","call_id":"call_b","name":"apply","input":""}}`,
+		`data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_1","output_index":0,"delta":"aa"}`,
+		`data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_2","output_index":1,"delta":"bb"}`,
+		`data: {"type":"response.custom_tool_call_input.done","item_id":"ctc_1","output_index":0}`,
+		`data: {"type":"response.custom_tool_call_input.done","item_id":"ctc_2","output_index":1}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	events := collect(t, raw)
+
+	args := map[int]string{}
+	starts := map[int]string{}
+	var order []int
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvToolCallStart:
+			starts[ev.Index] = ev.ToolID
+			order = append(order, ev.Index)
+		case protocol.EvToolArgsDelta:
+			args[ev.Index] += ev.Text
+		}
+	}
+	if starts[0] != "call_a" || starts[1] != "call_b" {
+		t.Fatalf("两路 Start 没都放出来: %+v", starts)
+	}
+	if len(order) != 2 || order[0] != 0 || order[1] != 1 {
+		t.Errorf("Start 次序 = %v，期望按首次出现 0→1", order)
+	}
+	for index, want := range map[int]string{0: "aa", 1: "bb"} {
+		var wrapped map[string]string
+		if json.Unmarshal([]byte(args[index]), &wrapped) != nil {
+			t.Fatalf("index %d 的入参不是 JSON: %q", index, args[index])
+		}
+		if got := wrapped[protocol.CustomToolArgsKey]; got != want {
+			t.Errorf("index %d 的入参 = %q，want %q（交错的分片各归各路）", index, got, want)
+		}
+	}
+}
+
+// TestDecodeIncompleteFlushesPendingCustomArgs：response.incomplete 把流打断时，攒着
+// 的 custom 分片照样以 EvToolArgsDelta + EvToolCallEnd 放出去。
+//
+// 打断意味着上游不会再补 custom_tool_call_input.done 与 output_item.done，而终帧一旦
+// 发过 EvDone，finish 里那条「半个调用也比凭空消失强」的兜底就被 doneSent 挡死了。
+func TestDecodeIncompleteFlushesPendingCustomArgs(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","call_id":"call_a","name":"exec","input":""}}`,
+		`data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_1","output_index":0,"delta":"console.log(1"}`,
+		`data: {"type":"response.incomplete","response":{"id":"r","model":"m","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`,
+	)
+	events := collect(t, raw)
+
+	var args string
+	var ends int
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvToolArgsDelta:
+			args = ev.Text
+		case protocol.EvToolCallEnd:
+			ends++
+		}
+	}
+	if ends != 1 {
+		t.Errorf("ToolCallEnd = %d, want 1（打断也要把这一路收口）", ends)
+	}
+	var wrapped map[string]string
+	if json.Unmarshal([]byte(args), &wrapped) != nil || wrapped[protocol.CustomToolArgsKey] != "console.log(1" {
+		t.Errorf("放出的入参 = %q，want 包装过的半截分片", args)
+	}
+	last := events[len(events)-1]
+	if last.Type != protocol.EvDone || last.StopReason != "length" {
+		t.Errorf("终事件 = %+v, want EvDone{length}——冲缓冲不许动 incomplete 的停因映射", last)
+	}
+	// 次序：入参与收口都排在 EvDone 之前，客户端才拼得完整。
+	for i, ev := range events {
+		if ev.Type == protocol.EvDone && i != len(events)-1 {
+			t.Errorf("EvDone 不在末位（下标 %d/%d）", i, len(events)-1)
+		}
+	}
+}
+
 // TestDecodeFullBodySynthetic：非流式路径。
 //
 // **没有真实样本**：九份 Responses 转录全是 stream:true，golden 终帧里那个 output
