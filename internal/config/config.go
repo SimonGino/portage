@@ -79,12 +79,13 @@ type Queue struct {
 	RetryAfter time.Duration `yaml:"retry_after"`
 }
 
-// Default binds to loopback only as the conservative default; deployments that
-// want LAN access opt in with listen: "0.0.0.0:8317" (relay has key auth and
-// the admin UI has session auth, so exposing it is a deliberate choice, not a leak).
+// Default binds to all interfaces so LAN devices can reach the gateway out of
+// the box (relay has key auth and the admin UI has session auth, so exposing
+// it is a deliberate choice, not a leak); loopback-only deployments opt in with
+// listen: "127.0.0.1:8317".
 func Default() Config {
 	return Config{
-		Listen:           "127.0.0.1:8317",
+		Listen:           "0.0.0.0:8317",
 		DBPath:           "./gateway.db",
 		DefaultMaxTokens: 8192,
 		RateLimitQPS:     10,
