@@ -10,7 +10,7 @@ Go 网关主参考。读 `relay/` 协议适配层、SSE 流式转发、`controll
 
 ## `sub2api`（Wei-Shaw/sub2api）
 
-**协议转换的 Go 实现首要参考。** `backend/internal/pkg/apicompat/` 是自包含转换库（Responses↔ChatCompletions、Responses↔Anthropic、CC↔Anthropic bridge、Responses SSE 事件线格式，含 Codex 事件流测试）；`previous_response_id` 处理见 `internal/service/openai_previous_response_id.go` 与 `RemovePreviousResponseIDFromBody`。
+**协议转换的 Go 实现首要参考。** `backend/internal/pkg/apicompat/` 是自包含转换库（Responses↔ChatCompletions、Responses↔Anthropic、CC↔Anthropic bridge、Responses SSE 事件线格式，含 Codex 事件流测试）；`previous_response_id` 处理见 `internal/service/openai_previous_response_id.go`（ID 形态分类）与 `internal/service/channel_service.go` 的 `RemovePreviousResponseIDFromBody`（2026-06-06 起挪到此处）。
 
 **LGPL-3.0**：参考思路与字段语义可以，整包复制需评估义务（Go 静态链接下约等于整项目跟随）。订阅池、计费不在本项目范围。
 
