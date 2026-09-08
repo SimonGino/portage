@@ -216,6 +216,15 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 -- 改后配置项失效」，改到哪儿就得存到哪儿，而配置文件在容器里是只读挂载的。
 -- #62 决议 7 把 SMTP 与 OAuth 配置也钉在这里（config.yaml 不加新键、改完即生效），
 -- 是同一条理由的延伸。
+-- 纯数据迁移的登记表（#10）。schema 变更**不登记**：加没加过列问 pragma_table_info 就
+-- 知道，那是天然探针；只有「没有自然探针、且不自幂等」的数据 UPDATE 才走这张表，
+-- 见 store.runOnce。name 是步骤名（自然键），登记与数据改动在同一事务里落下——
+-- 改了一半崩掉，登记也一起回滚，下次重启接着跑。
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name TEXT PRIMARY KEY,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

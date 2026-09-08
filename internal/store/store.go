@@ -52,9 +52,16 @@ func Open(path string) (*sql.DB, error) {
 
 // migrate 补 `CREATE TABLE IF NOT EXISTS` 覆盖不到的形状变化。
 //
-// schema.sql 对已存在的表是空操作，所以列的增删改一律得在这儿补一手。不建版本表：
-// 迁移是不是已经跑过，直接问库里的列长什么样就知道，比维护一个会和实际形状漂移的
-// schema_version 更可信。
+// schema.sql 对已存在的表是空操作，所以列的增删改一律得在这儿补一手。两套守卫并存
+// （#10）：
+//
+//   - schema 变更**不登记版本**：迁移是不是已经跑过，直接问库里的列长什么样就知道
+//     （hasColumn），比维护一个会和实际形状漂移的版本号更可信。
+//   - 自幂等的数据 UPDATE 也不登记：改完就零命中（renameOpenAICC）、只补空串
+//     （addCredentialNames），幂等本身就是守卫。
+//   - 只有**没有自然探针、且不自幂等**的数据迁移（累加型 UPDATE 那种，重启一次翻一
+//     倍）才走 runOnce，按步骤名登记进 schema_migrations。v0.71 ④ 的毛值补算是第一个
+//     这种用例，当时已由人工 SQL 跑过，**不回填**进来——回填就是在同一个库上再翻一倍。
 func migrate(db *sql.DB) error {
 	// v0.33：单值 protocol → 支持协议集 protocols。只改列名，值不用动——旧的单值
 	// 在新语义下就是一元集合，含义一字不变。
@@ -681,7 +688,41 @@ func addPricingColumns(db *sql.DB) error {
 	return nil
 }
 
-// hasColumn 问库里某张表有没有这一列。迁移是否已跑过全靠它判断。
+// runOnce 跑一个**没有自然探针**的数据迁移步骤，恰好一次（#10）。
+//
+// 判据是 schema_migrations 里有没有 name。fn 与登记在同一事务里落下：fn 改到一半
+// 报错，登记跟着回滚，下次启动重跑；fn 成功但登记失败同样整体回滚，不会出现
+// 「数据改了、登记没有」这种下次重启再改一遍的状态。
+//
+// 只给不自幂等的步骤用。加列走 hasColumn，改完零命中的 UPDATE 直接跑——它们自带
+// 守卫，多登记一层只是多一处会与实际形状漂移的状态。
+func runOnce(db *sql.DB, name string, fn func(tx *sql.Tx) error) error {
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, name).Scan(&n); err != nil {
+		return fmt.Errorf("查迁移登记 %s: %w", name, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("开迁移事务 %s: %w", name, err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return fmt.Errorf("迁移 %s: %w", name, err)
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, name); err != nil {
+		return fmt.Errorf("登记迁移 %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交迁移 %s: %w", name, err)
+	}
+	return nil
+}
+
+// hasColumn 问库里某张表有没有这一列。schema 变更是否已跑过全靠它判断。
 func hasColumn(db *sql.DB, table, col string) (bool, error) {
 	var n int
 	err := db.QueryRow(
