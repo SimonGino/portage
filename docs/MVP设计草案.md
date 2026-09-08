@@ -2,6 +2,8 @@
 
 > 状态：草案 v1.24
 
+> vNEXT 变更（[#46](https://github.com/SimonGino/portage/issues/46) 落地：`count_tokens` 本地估算的第二条理由入档，2026-09-08）：**只改文档与包注释，口径不变，代码逻辑一行未动。**§6.1 实证块加一条「转发上游会污染健康度」——sub2api v0.1.179 与 CLIProxyAPI 两家独立佐证、portage 与 CLIProxyAPI 同构、v0.95 与 v0.80 两条决策的关联、Anthropic 协议渠道指向国产供应商时 404 透传不改、Kimi coding 端点有无 count_tokens 记待查；`internal/tokencount` 包注释同步。修改人 jinpenga。
+
 > vNEXT 变更（口径层 v1.23 落地：Anthropic 出口补 `metadata` 档、OpenAI 顶层 `user` 同档，[#19](https://github.com/SimonGino/portage/issues/19)，2026-09-08）：只记落点。①`protocol.ClassifyExtrasKey` 的 `metadata` 分支加 `user`，三个出口同规。②`anthropic/encode_request.go` 加 `DropMetadata = "metadata"`，Extras 循环接 `ExtrasDropMetadata` 分支；此前落 default 记 `vendor_request`。③CC / Responses 出口只改常量注释。④`extras_drop_test.go`：anthropic 三行期望由 `vendor_request` 改 `metadata`，加「只有 user」「metadata + user 同档去重」两例，外带检查加 `user`。golden 零改动。修改人 jinpenga。
 
 > vNEXT 变更（[#10](https://github.com/SimonGino/portage/issues/10) 落地：纯数据迁移的登记表，2026-09-08）：推翻 v0.31 ①「不建版本表」的**一半**——schema 变更照旧靠 `pragma_table_info` 探测，不登记；新增 `schema_migrations(name, applied_at)` 与 `store.runOnce(db, name, fn)`，**只给没有自然探针、且不自幂等的数据迁移用**（累加型 UPDATE 那种，放进 `migrate()` 就是重启一次翻一倍）。fn 与登记在同一事务里落下：fn 报错整体回滚、下次启动重跑，不会出现「数据改了、登记没有」。判据写在 `migrate()` 头注释：加列走 `hasColumn`，改完零命中的 UPDATE（`renameOpenAICC`）与只补空串的（`addCredentialNames`）直接跑，两者都不登记。v0.71 ④ 的毛值补算**不回填**——已人工跑过，回填就是再翻一倍。目前没有任何步骤走 `runOnce`，它是给下一张改存量数据的票备的。用例 `runonce_internal_test.go`：跑三次只翻一次倍、登记恰一行；fn 报错数据与登记一起回滚、修好后能重跑。修改人 jinpenga。
@@ -634,6 +636,8 @@ logging：无论成败异步落 call_logs
 > - 顶层 `model` 被翻译成纳管模型名，其余字节未动。
 >
 > **`metadata.user_id` 原样到达上游**，内含 `device_id`（稳定机器指纹）、`account_uuid`、`session_id`。这不是白名单漏了，而是两条既有口径的**合成结果**：v0.24 定的是请求体除顶层 `model` 外逐字节相等，而白名单管的只是请求头。**不动它**——要拦就得改写请求体，那等于承认网关会按自己的判断删客户端的字段，比泄露一个 device_id 危险得多（今天删指纹，明天删的就是某个没建模的厂商参数）。记在这里是为了下次有人问「白名单挡住指纹了吗」时，答案是「头挡住了，体没挡也不该挡」。
+>
+> **`count_tokens` 转发上游会污染健康度，是「本地估算」的第二条理由**（[#46](https://github.com/SimonGino/portage/issues/46)，2026-09-08）：口径层 v0.80 只写了「非 Anthropic 出口没有端点可转发」这一半。两家参考仓库各自独立补上了另一半——①sub2api v0.1.179（commit `10c8b7020`，`openai_gateway_count_tokens.go`）把国产三家（Kimi / 智谱 GLM / DeepSeek）**全部协议含 Anthropic 兼容层**一律改本地估算：三家的 Anthropic 兼容层均无 `/v1/messages/count_tokens`（DeepSeek 文档无此端点、OpenModel 标注 "Anthropic only"、Kimi/GLM 无文档承诺），Claude Code 高频打它，转发只会常态 404，且 404 会流入账号处置逻辑误伤整账号调度。它是自己推翻自己的：v0.1.178 还写着「国产 Anthropic 层有原生 count_tokens，转发」。②CLIProxyAPI（`claude_executor_tokens.go`）只有「API key + base URL 严格等于 `https://api.anthropic.com`」才打上游，其余一律本地估算；调度侧（`conductor_execution.go`）再把 count_tokens 的 404 记为「可用性中性」，进 hooks 与指标但不冷却不停用凭证。**portage 与 CLIProxyAPI 同构**：非 Anthropic 出口本地估算（`internal/tokencount`），Anthropic 出口转发，口径层 v0.95「任何状态码都不改凭证状态」让调度侧那道修补结构上已存在——两条决策此前各自独立，这里把它们连起来。**仍开着的一条路**：Anthropic 协议渠道指向国产供应商时 portage 照转发，404 原样回客户端，Claude Code 对此的应对是自己本地估算（sub2api 的 Bedrock / Antigravity 分支依赖的正是这个行为），不改。**待查**：Kimi coding 端点是否有 count_tokens 两家说法相反——CLIProxyAPI 的 `KimiExecutor` 恒打 `api.kimi.com/coding` 的 count_tokens，与 sub2api「无文档承诺」冲突；#43 的端点分布表里 Kimi 这格不作定论。
 >
 > **`count_tokens` 的调用时机随 harness 版本变**：`testdata/golden/README.md` 记的 2026-08-07 那版 Claude Code 是每轮先打一次，而 08-11 这版跑完一整轮工具调用一次都没打。两条都是当时的实测，都不作废——网关这侧的结论是它**不能被当作启动必经的一步**（M0 起就实现了该端点，两种时机都跑得通）。
 

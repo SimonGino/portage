@@ -1,6 +1,22 @@
 // Package tokencount 是 count_tokens 的本地估算器（#18，口径层 v0.80）：非 Anthropic
 // 出口没有原生 count_tokens 端点可转发，网关自己算一个数回 200。
 //
+// 第二条理由（#46，两家参考仓库各自独立得出）：**转发上游的 count_tokens 常态 404，
+// 而常态 404 会污染上游健康度判定。** sub2api v0.1.179（commit 10c8b7020，
+// openai_gateway_count_tokens.go）把国产三家（Kimi / 智谱 GLM / DeepSeek）的全部协议
+// 含 Anthropic 兼容层一律改本地估算，理由是三家的 Anthropic 兼容层均无
+// /v1/messages/count_tokens（DeepSeek 文档无此端点、OpenModel 标注 "Anthropic only"、
+// Kimi/GLM 无文档承诺），Claude Code 高频打它，转发只会常态 404，且 404 会流入账号
+// 处置逻辑误伤整账号调度。CLIProxyAPI 的解法与本包同构（claude_executor_tokens.go）：
+// 只有「API key + base URL 严格等于 https://api.anthropic.com」才打上游，其余一律本地
+// 估算；调度侧再把 count_tokens 的 404 记为「可用性中性」（conductor_execution.go），
+// 不冷却不停用凭证。portage 这一头不受污染靠的是口径层 v0.95「任何状态码都不改凭证
+// 状态」——两条决策此前各自独立，合起来才把这个坑盖死。注意本包只管非 Anthropic 出口：
+// Anthropic 协议渠道若指向国产供应商，count_tokens 仍是透传，404 原样回客户端，
+// Claude Code 对此的应对就是自己本地估算（sub2api 的 Bedrock / Antigravity 分支
+// 依赖的正是这个行为）。Kimi coding 端点是否有 count_tokens 两家参考说法相反
+// （CLIProxyAPI 的 KimiExecutor 恒打 api.kimi.com/coding 的 count_tokens），记待查。
+//
 // 承诺边界三条，一条都不能越（口径层 v0.80）：**不承诺与上游一致**（分词器不同、
 // 系统提示注入不同、工具序列化不同，偏差必然存在，用途只是让 harness 判断何时该
 // 压缩）；**不进计费、不写 call_logs 的 usage 列**（它不是一次上游调用）；**边界
