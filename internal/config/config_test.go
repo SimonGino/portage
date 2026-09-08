@@ -16,8 +16,8 @@ func TestLoadFallsBackToDefaultsWhenFileMissing(t *testing.T) {
 	if cfg != config.Default() {
 		t.Errorf("cfg = %+v, 期望全默认值 %+v", cfg, config.Default())
 	}
-	if cfg.Listen != "127.0.0.1:8317" {
-		t.Errorf("默认 listen = %q, 期望绑回环（M1 前没有网关 key 鉴权）", cfg.Listen)
+	if cfg.Listen != "0.0.0.0:8317" {
+		t.Errorf("默认 listen = %q, 期望监听全部网卡（4396262：局域网设备直接接入；网关 key 鉴权早已落地，绑回环的前提不在了）", cfg.Listen)
 	}
 }
 
