@@ -35,6 +35,11 @@ const (
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），Anthropic 无对应能力
 	DropToolChoice    = "tool_choice"    // auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，名单记 mode
 	DropVendorRequest = "vendor_request" // 入口协议独有的顶层字段
+	// DropMetadata：CC / Responses 入口带来的 `metadata` 与顶层 `user`（#19）。Anthropic
+	// 原生认 `metadata.user_id`，但 OpenAI 侧 `metadata` 是自由 KV、`user` 是裸字符串，
+	// 形状不对等，参考仓库无一家转发（litellm 只映 `user` 且先拒邮箱/电话）。不映、
+	// 不裁剪，丢在明处；记成 vendor_request 是错档——日志会说客户端发了个我们不认得的字段。
+	DropMetadata      = "metadata"
 	DropVendorContent = "vendor_content" // Anthropic 认不得的内容块（多模态等）
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_use 的 tool_result
 	// DropMissingResult 记的是**合成**而不是丢弃：有调用没结果时补了一个占位
@@ -139,13 +144,12 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	// 之类，Anthropic 一个都不认。丢在明处，且**按档分类**——思考参数与「不认识的字段」
 	// 混成一条日志的话，「客户端点了思考被丢掉」这件事就看不见了。
 	// 分档规则与另两个出口共用 protocol.ClassifyExtrasKey，形状也保持一样——下一个
-	// 「先在循环外单独登记、循环里忘了排除」的键就是 #15 的重演。
-	//
-	// 本出口没有 metadata 那一档（Anthropic 原生认这个字段），它落进 default 记
-	// vendor_request，与分档收口前的行为一致。CC / R 入口带来的 metadata 该转发还是
-	// 该另开一档，是 #15 之外的事，见 #19。
+	// 「先在循环外单独登记、循环里忘了排除」的键就是 #15 的重演。metadata 档见
+	// DropMetadata 的注释（#19）。
 	for k := range req.Extras {
 		switch protocol.ClassifyExtrasKey(k) {
+		case protocol.ExtrasDropMetadata:
+			drop(DropMetadata)
 		case protocol.ExtrasDropThinkingParam:
 			drop(DropThinkingParam)
 		default:

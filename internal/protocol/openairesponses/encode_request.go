@@ -34,7 +34,7 @@ import (
 // DroppedOnEncode 列出 canonical → Responses 必然丢掉的东西，理由同另外两个 codec
 // 的同名一节：codec 不持有 logger，谁丢的谁登记，由 relay 读这张表打日志。
 const (
-	DropMetadata      = "metadata"        // A 入口的 metadata.user_id 等
+	DropMetadata      = "metadata"        // A 入口的 metadata.user_id、CC 入口的 metadata / user（#19）
 	DropCacheControl  = "cache_control"   // Anthropic 缓存断点，Responses 无对应概念
 	DropThinking      = "thinking"        // thinking 块正文与 signature
 	DropServerTool    = "server_tool"     // 入口协议声明的上游服务端工具

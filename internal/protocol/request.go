@@ -286,7 +286,8 @@ const (
 	ExtrasDropVendor ExtrasDropKind = iota
 	// ExtrasDropThinkingParam：思考参数，各出口记 DropThinkingParam。表见 thinkingParamKeys。
 	ExtrasDropThinkingParam
-	// ExtrasDropMetadata：客户端身份元数据，有这一档的出口记 DropMetadata。
+	// ExtrasDropMetadata：客户端身份元数据（Anthropic 的 `metadata`、OpenAI 两协议的
+	// `metadata` 与顶层 `user`），三个出口都记 DropMetadata（#15、#19）。
 	ExtrasDropMetadata
 )
 
@@ -298,10 +299,14 @@ const (
 //
 // metadata 单列一档而不是让出口在循环外单独判一次：单独判过还得记得在循环里排除它，
 // 而 #15 正是两个出口都没排除，同一个键既记 metadata 又记了一次幻影 vendor_request。
-// 没有这一档的出口（anthropic）让它落进 ExtrasDropVendor 即可，行为与分档前一致。
+//
+// OpenAI 两协议的顶层 `user` 与它同档（#19）：都是客户端身份元数据，litellm 正是把
+// `user` 映成 Anthropic 的 `metadata.user_id`。本项目**不映**（形状裁剪与「网关替客户端
+// 向上游声明身份」另开票裁），只登记；记进 vendor_request 是错档——那一档说的是
+// 「我们认不得的字段」，而这两个字段三个协议都认。
 func ClassifyExtrasKey(key string) ExtrasDropKind {
 	switch {
-	case key == "metadata":
+	case key == "metadata", key == "user":
 		return ExtrasDropMetadata
 	case IsThinkingParamKey(key):
 		return ExtrasDropThinkingParam

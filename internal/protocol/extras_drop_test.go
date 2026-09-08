@@ -31,11 +31,13 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 		metaOnly     = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"}` + tail
 		metaUnknown  = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"},"没见过的键":1` + tail
 		metaThinking = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"},"thinking":{"type":"enabled","budget_tokens":1024}` + tail
+		userOnly     = `{"model":"m","max_tokens":16,"user":"u"` + tail
+		metaUser     = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"},"user":"u"` + tail
 	)
 
-	// anthropic 出口没有 metadata 这一档（Anthropic 原生认这个字段），于是 metadata 落进
-	// vendor_request——**错档，但不是重复登记**，与分档收口前的行为一致。改这个口径是
-	// #19 的事，改的时候这几行会红，是有意的。
+	// 三个出口都有 metadata 这一档（#19 补齐 anthropic 出口：此前落 vendor_request，
+	// 日志说客户端发了个我们不认得的字段，而 Anthropic 原生认它）。OpenAI 顶层 `user`
+	// 与 metadata 同档：两个键一档，登记去重。
 	cases := []struct {
 		name string
 		body string
@@ -47,7 +49,25 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 			want: map[string][]string{
 				"openaicc":        {"metadata"},
 				"openairesponses": {"metadata"},
-				"anthropic":       {"vendor_request"},
+				"anthropic":       {"metadata"},
+			},
+		},
+		{
+			name: "只有 user",
+			body: userOnly,
+			want: map[string][]string{
+				"openaicc":        {"metadata"},
+				"openairesponses": {"metadata"},
+				"anthropic":       {"metadata"},
+			},
+		},
+		{
+			name: "metadata + user 同档去重",
+			body: metaUser,
+			want: map[string][]string{
+				"openaicc":        {"metadata"},
+				"openairesponses": {"metadata"},
+				"anthropic":       {"metadata"},
 			},
 		},
 		{
@@ -56,7 +76,7 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 			want: map[string][]string{
 				"openaicc":        {"metadata", "vendor_request"},
 				"openairesponses": {"metadata", "vendor_request"},
-				"anthropic":       {"vendor_request"}, // 两个键同档，登记去重
+				"anthropic":       {"metadata", "vendor_request"},
 			},
 		},
 		{
@@ -65,7 +85,7 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 			want: map[string][]string{
 				"openaicc":        {"metadata", "thinking_param"},
 				"openairesponses": {"metadata", "thinking_param"},
-				"anthropic":       {"thinking_param", "vendor_request"},
+				"anthropic":       {"metadata", "thinking_param"},
 			},
 		},
 	}
@@ -93,7 +113,7 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 						t.Errorf("dropped = %v, want %v", got, want)
 					}
 					// 登记归登记，Extras 一个字节都不许外带（三个出口一致）。
-					for _, k := range []string{"metadata", "没见过的键", "thinking"} {
+					for _, k := range []string{"metadata", "user", "没见过的键", "thinking"} {
 						if _, ok := body[k]; ok {
 							t.Errorf("Extras 外带了 %q: %s", k, body[k])
 						}

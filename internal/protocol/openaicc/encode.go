@@ -24,7 +24,7 @@ import (
 // 登记的载体是 protocol.Drops：工具类三档（server_tool / tool_grammar / tool_choice）
 // 附被丢的名字（口径层 v1.14 ⑨），其余档位只报种类。
 const (
-	DropMetadata      = "metadata"       // A 入口的 metadata.user_id：上游据此判定是否官方 Claude Code
+	DropMetadata      = "metadata"       // A 入口的 metadata.user_id（上游据此判定是否官方 Claude Code）与 R 入口的 metadata / user（#19）
 	DropCacheControl  = "cache_control"  // Anthropic 缓存断点，CC 协议无对应概念
 	DropThinking      = "thinking"       // thinking 块正文与 signature
 	DropServerTool    = "server_tool"    // 上游服务端工具声明（advisor_20260301 一类）
