@@ -176,13 +176,12 @@ func TestProbeChannelFanOut(t *testing.T) {
 }
 
 // 保密规则：矩阵序列化出去的每个字节都不带凭证值与 base_url——连不上的传输错误
-// 里内嵌的 URL 也要被摘掉（与 call_logs.error 同一条纪律）。
-//
-// 已知边界（Redact 的现状，非本票范围）：url.Error 外壳被摘掉，但内层 net.OpError
-// 的 `dial tcp ip:port` 仍带地址，这里只钉「完整 base_url 字符串不出现」。
+// 里内嵌的 URL 也要被摘掉（与 call_logs.error 同一条纪律）。#53 之后内层
+// net.OpError 的 `dial tcp ip:port` 也被摘，所以 host:port 同样钉住。
 func TestProbeChannelSecrecy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
+	addr := srv.Listener.Addr().String()
 	srv.Close() // 立刻关掉：让每格都拿到内嵌 URL 的传输错误
 
 	target := probeTarget(store.BaseURLs{OpenAI: url})
@@ -201,6 +200,9 @@ func TestProbeChannelSecrecy(t *testing.T) {
 	}
 	if strings.Contains(string(raw), url) {
 		t.Errorf("矩阵里出现了 base_url：%s", raw)
+	}
+	if strings.Contains(string(raw), addr) {
+		t.Errorf("矩阵里出现了上游 host:port（#53）：%s", raw)
 	}
 	if m.Credential != "主力" {
 		t.Errorf("矩阵该带凭证名 %q，得到 %q", "主力", m.Credential)

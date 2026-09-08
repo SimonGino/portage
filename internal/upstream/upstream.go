@@ -5,6 +5,8 @@ package upstream
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -281,13 +283,57 @@ func Timeout(err error) bool {
 	return ok && netErr.Timeout()
 }
 
-// Redact strips the request URL out of a transport error so the 渠道 base_url does
-// not reach a log line or, later, call_logs.error.
+// Redact 把传输错误里内嵌的上游地址摘干净，文案才能进日志、call_logs.error_detail
+// 与管理端探测摘要（硬约束：错误回显不带 base_url）。
+//
+// 只剥 url.Error 外壳是不够的（#53）：内层 net.OpError 的 `dial tcp ip:port`、DNS
+// 错误的 `lookup host`、证书名不匹配的 x509 文案都各自带着主机名。所以这里沿错误链
+// 找到第一个认得的类型，从那一层起**重组**文案——保留是哪一步（dial / lookup / 证书
+// 校验）与底层原因（connection refused / no such host），只把地址那一格丢掉。
+//
+// 认不出的类型原样透过：超时那支（context.DeadlineExceeded、TLS handshake timeout）
+// 本来就不带地址，且 exchange.transportStatus 拿的是原错误，这里不必保类型。
+//
+// 出口只有文案：返回值只承诺 Error()，不承诺能 errors.As 回原类型——那正是要遮的东西。
 func Redact(err error) error {
-	if urlErr, ok := errors.AsType[*url.Error](err); ok {
-		return urlErr.Err
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if msg, ok := redactedText(e); ok {
+			return errors.New(msg)
+		}
 	}
 	return err
+}
+
+// redactedText 认得的几层各自怎么重组。每一层的内层递归走 Redact，所以
+// url.Error → net.OpError → net.DNSError 这种三层套娃逐层都干净。
+func redactedText(e error) (string, bool) {
+	switch t := e.(type) {
+	case *url.Error:
+		// 外壳带完整请求 URL，只要内层。
+		if t.Err == nil {
+			return t.Op + " 失败", true
+		}
+		return Redact(t.Err).Error(), true
+	case *net.OpError:
+		// 丢 Source 与 Addr，留 "dial tcp" / "read tcp" 这一步与底层原因。
+		msg := t.Op
+		if t.Net != "" {
+			msg += " " + t.Net
+		}
+		if t.Err != nil {
+			msg += ": " + Redact(t.Err).Error()
+		}
+		return msg, true
+	case *net.DNSError:
+		// 丢 Name 与 Server；t.Err 是 "no such host" 一类的原因字符串。
+		return "lookup: " + t.Err, true
+	case *tls.CertificateVerificationError:
+		return "tls: failed to verify certificate: " + Redact(t.Err).Error(), true
+	case x509.HostnameError:
+		// 原文是「证书对 a, b 有效、不对 <host> 有效」——两头都是地址。
+		return "x509: certificate is not valid for the channel host", true
+	}
+	return "", false
 }
 
 // applyHeaders rebuilds the upstream headers from a whitelist rather than

@@ -73,7 +73,7 @@ func TestProbeModelTransportFailureWording(t *testing.T) {
 	if !strings.HasPrefix(res.Detail, "本次检测失败：") {
 		t.Errorf("传输失败的措辞该以「本次检测失败：」开头（口径层 v0.96 ③）：%q", res.Detail)
 	}
-	if strings.Contains(res.Detail, "secret-path") {
+	if strings.Contains(res.Detail, "secret-path") || strings.Contains(res.Detail, "127.0.0.1") {
 		t.Errorf("传输错误摘要泄露了上游地址：%q", res.Detail)
 	}
 }
