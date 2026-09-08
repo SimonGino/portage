@@ -253,6 +253,10 @@ func (r *Recorder) FirstByte() {
 
 // Succeeded 把收场记成一次干净的成功。在写出响应头之后调：那一刻格式承诺已经
 // 生效，之后再断只能记 stream_aborted，不能退回别的词。
+//
+// 唯一调用方是 exchange.Writer.WriteHeader（#52）：写头与记成功在那里是同一步，
+// relay 层拿不到这个动词，「先记成功再写头」这种错序在类型上就做不出来。首字节
+// （FirstByte）与 stream_aborted（Failed 的那一档）同样只由 Writer 记。
 func (r *Recorder) Succeeded() { r.outcome = OK }
 
 // Refused 记一次**网关自己回绝**的收场：鉴权不过、白名单挡下、限流、转换闸、
@@ -304,8 +308,8 @@ func (r *Recorder) Failed(o Outcome, detail string) {
 //
 // 与 TapUpstreamErrorBody 是同一件事在两条链路上的两个名字，区别只是谁先拿到
 // 字节：透传那边要占坑边收边转，这边可以一口气读完。#9 之后两条链路的编排已经
-// 长得一样（差异收进 exchange.Request 的 TapErrorBody 参数），两个动词合并进
-// 阶段对象是 #52 的活，不在这一层做。
+// 长得一样（差异收进 exchange.Request 的 TapErrorBody 参数）；两个名字保留
+// （#52 收窄后只收了收场三词，不再动这一对）。
 func (r *Recorder) UpstreamRejected(body io.Reader) []byte {
 	// 读错误不额外处理：读到多少算多少，那段字节本来就只是给人看的排障材料。
 	raw, _ := io.ReadAll(io.LimitReader(body, upstreamErrorLimit))

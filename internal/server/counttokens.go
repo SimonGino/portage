@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/SimonGino/portage/internal/calllog"
+	"github.com/SimonGino/portage/internal/exchange"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/codecs"
 	"github.com/SimonGino/portage/internal/store"
@@ -45,11 +46,12 @@ func (s *Server) countTokensLocal(c *gin.Context, rec *calllog.Recorder, ep prot
 	}
 
 	c.Writer.Header().Set("Content-Type", "application/json")
-	c.Writer.WriteHeader(http.StatusOK)
-	rec.Succeeded()
-	rec.FirstByte()
-	if _, err := c.Writer.Write([]byte(`{"input_tokens":` + strconv.Itoa(n) + `}`)); err != nil {
-		rec.Failed(calllog.StreamAborted, "")
+	w := exchange.NewWriter(c.Writer, rec)
+	if err := w.WriteHeader(http.StatusOK); err != nil {
+		s.log.Warn("count_tokens 估算响应写出失败", "err", err)
+		return
+	}
+	if _, err := w.Write([]byte(`{"input_tokens":` + strconv.Itoa(n) + `}`)); err != nil {
 		s.log.Warn("count_tokens 估算响应写出失败", "err", err)
 	}
 }

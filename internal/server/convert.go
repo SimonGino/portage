@@ -278,12 +278,9 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	setNoBuffering(h)
-	c.Writer.WriteHeader(http.StatusOK)
-	rec.Succeeded()
-
-	w := exchange.NewWriter(c.Writer, rec.FirstByte)
-	if err := w.Advance(); err != nil {
-		rec.Failed(calllog.StreamAborted, "")
+	// 收场记账（Succeeded / 首字节 / stream_aborted）在 Writer 里按构造走，这里只管断连。
+	w := exchange.NewWriter(c.Writer, rec)
+	if err := w.WriteHeader(http.StatusOK); err != nil {
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", err)
 		// 收场序在 panic 展开里：relayConverted defer 的 res.Close()（#8）。
 		panic(http.ErrAbortHandler)
@@ -291,7 +288,8 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 
 	if err := inCodec.EncodeStream(w, events); err != nil {
 		// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
-		rec.Failed(calllog.StreamAborted, "")
+		// 断在 Writer 自己的写失败上时它已经记过，这一句是给编码器出错兜底的。
+		w.Abort(err)
 		s.log.Warn("转换流写出失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		panic(http.ErrAbortHandler)
 	}
@@ -303,7 +301,7 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	if r, ok := outCodec.(protocol.StreamReadReporter); ok {
 		if err := r.StreamReadError(); err != nil {
 			// 与上游传输错误那一支同源：落库的原文就是脱敏后的错误本身（v0.53）。
-			rec.Failed(calllog.StreamAborted, upstream.Redact(err).Error())
+			w.Abort(err)
 			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		}
 	}
@@ -334,13 +332,14 @@ func (s *Server) bufferConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 	}
 
 	c.Writer.Header().Set("Content-Type", "application/json")
-	c.Writer.WriteHeader(http.StatusOK)
-	rec.Succeeded()
-	rec.FirstByte()
 	// 也走 exchange.Writer：此前这条缓冲路是三份写盘纪律里唯一丢了写超时的那份
-	//（#9 点名的病），收成一份之后按构造齐全。首字节上面已亲手记过，回调传 nil。
-	if _, err := exchange.NewWriter(c.Writer, nil).Write(out); err != nil {
-		rec.Failed(calllog.StreamAborted, "")
+	//（#9 点名的病），收成一份之后按构造齐全；收场记账同样在 Writer 里。
+	w := exchange.NewWriter(c.Writer, rec)
+	if err := w.WriteHeader(http.StatusOK); err != nil {
+		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
+		return
+	}
+	if _, err := w.Write(out); err != nil {
 		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
 	}
 }

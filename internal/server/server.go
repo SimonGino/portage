@@ -375,11 +375,14 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		if isEventStream(c.Writer.Header().Get("Content-Type")) {
 			setNoBuffering(c.Writer.Header())
 		}
-		c.Writer.WriteHeader(res.Status)
-		rec.Succeeded()
-		if err := exchange.NewWriter(c.Writer, rec.FirstByte).Copy(res.Body); err != nil {
+		// 收场记账（Succeeded / 首字节 / stream_aborted）在 Writer 里按构造走，这里只管断连。
+		w := exchange.NewWriter(c.Writer, rec)
+		if err := w.WriteHeader(res.Status); err != nil {
+			s.log.Warn("响应头写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
+			panic(http.ErrAbortHandler)
+		}
+		if err := w.Copy(res.Body); err != nil {
 			// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
-			rec.Failed(calllog.StreamAborted, "")
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 			panic(http.ErrAbortHandler)
 		}
