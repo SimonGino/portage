@@ -423,7 +423,7 @@ func TestEncodeCompactionHeartbeat(t *testing.T) {
 
 // ---- 透传闸判据 ----
 //
-// HasCompactionTrigger 只服务透传那半边（server 的 rejectCompaction）：转换路径靠
+// HasCompactionTrigger 只服务透传那半边（InspectPassthrough，server 的 rejectPassthrough 调）：转换路径靠
 // DecodeRequest 认 trigger，不扫字节。判据本身记在展开层 §7.6。
 func TestHasCompactionTrigger(t *testing.T) {
 	cases := []struct {

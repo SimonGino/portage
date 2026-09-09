@@ -309,17 +309,12 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
-		// Codex 压缩闸（口径层 v0.54）：拦在选完渠道之后、分岔之前——判据要同时
-		// 用到「渠道说哪个协议」与「它认不认 compaction_trigger」，而两条路的收场是
-		// 同一句拒绝，没有理由在分岔两侧各写一遍。见 compaction.go。
-		if s.rejectCompaction(c, rec, ep, cand, body) {
-			return
-		}
-
-		// Responses 有状态续链闸（口径层 v0.88），位置同上：它只管**透传**那半边，
-		// 转换那半边由 codec 在 DecodeRequest 里无条件拒。这两条闸与下面的 RewriteModel
-		// 400 一样都在 rec.Dialing 之前——它们一个字节都没打上游。见 stateful.go。
-		if s.rejectStatefulResponses(c, rec, ep, cand, body) {
+		// 透传请求检查闸（Codex 压缩闸，口径层 v0.54；Responses 有状态续链闸，口径层
+		// v0.88）：拦在选完渠道之后、分岔之前——判据要同时用到「渠道说哪个协议」与渠道
+		// 能力位。它只管**透传**那半边，转换那半边由 codec 在 DecodeRequest 里就地处置。
+		// 与下面的 RewriteModel 400 一样都在 rec.Dialing 之前——一个字节都没打上游。
+		// 判据本身在入口协议 codec 的 RequestInspector 里，见 inspect.go。
+		if s.rejectPassthrough(c, rec, ep, cand, body) {
 			return
 		}
 

@@ -10,7 +10,6 @@ import (
 	"github.com/SimonGino/portage/internal/exchange"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/codecs"
-	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
 
@@ -92,14 +91,16 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 
 	// Codex 压缩 turn 走本地合成（portage-legacy#74）。日志在这里打而不是在 codec 里：codec 是纯
 	// 函数、不持有 logger，同「跨协议转换丢弃字段」那条的分工。
-	if rc, ok := inCodec.(*openairesponses.Codec); ok {
-		if rc.CompactionTurn() {
-			s.log.Info("Codex 压缩 turn 本地合成",
-				"channel", cand.ChannelName, "channel_protocol", cand.Protocol)
-		}
-		// 丢弃日志**不能**罩在压缩 turn 里面：回带解不开发生在压缩之后的**普通**请求上
-		// （那一轮没有 trigger，CompactionTurn 为假——见 decode 侧的还原用例），而混路
-		// 场景恰恰是它要诊断的头一次。罩着的话最该归因的那次静默无声。
+	// 断言小接口而不是具体 codec 类型（同下面 ArgsSalvaged 那条，#54）：server 不认
+	// 任何具体协议包，「协议 → Codec 只有一张表」在 codecs.New。
+	if rc, ok := inCodec.(interface{ CompactionTurn() bool }); ok && rc.CompactionTurn() {
+		s.log.Info("Codex 压缩 turn 本地合成",
+			"channel", cand.ChannelName, "channel_protocol", cand.Protocol)
+	}
+	// 丢弃日志**不能**罩在压缩 turn 里面：回带解不开发生在压缩之后的**普通**请求上
+	// （那一轮没有 trigger，CompactionTurn 为假——见 decode 侧的还原用例），而混路
+	// 场景恰恰是它要诊断的头一次。罩着的话最该归因的那次静默无声。
+	if rc, ok := inCodec.(interface{ CompactionDrops() []string }); ok {
 		if drops := rc.CompactionDrops(); len(drops) > 0 {
 			// 回带的压缩摘要解不开、降级成了占位：这一段历史对上游是失忆的，
 			// 「模型好像忘了前半段」这类反馈只能靠这行日志归因。
