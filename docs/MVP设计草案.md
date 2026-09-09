@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.39
+> 状态：草案 v1.40
+
+> v1.40 变更（[#43](https://github.com/SimonGino/portage/issues/43) 落地：国产供应商原生端点分布表入档，2026-09-09）：**只改文档，口径与代码零改动。**落点取 §12 新开 12.1（PO 开票时倾向 §12，不另起「上游供应商事实」一节）。表转录自 sub2api `270eac697`（2026-09-08）的 `SupportsNativeCNResponses` / `defaultCNProtocolBaseURL`，**比开票时的 v0.1.179 多两条**：Kimi 已有原生 Responses（`e377c4358`，2026-09-01，按量付费与 Coding Plan 同为 `/v1/responses`），MiniMax 新入名单（`19382f275`，2026-09-07）。按 #46 的要求加 `count_tokens` 一列：GLM / DeepSeek 记无，Kimi 记待查（sub2api 与 CLIProxyAPI 冲突，未实测不定论），MiniMax 记未核。顺带记下三条对 portage 的含义，其中 DeepSeek 官方 Responses 路径无 `/v1` 与本项目固定后缀不合一条**只记事实不预设特判**，通不通待实测后另裁。修改人 jinpenga。
 
 > v1.39 变更（[#53](https://github.com/SimonGino/portage/issues/53) 落地：`upstream.Redact` 沿错误链重组文案，2026-09-08）：此前只剥 `url.Error` 外壳，实测内层 `net.OpError` 的 `dial tcp ip:port`、`net.DNSError` 的 `lookup host`、`x509.HostnameError` 的证书名文案都原样带出上游地址，落到 slog、`call_logs.error_detail` 与渠道探测摘要三处；#75 之后「我的」空间把 error_detail 露给普通用户，撞硬约束「错误回显不带 base_url」（开票时只有管理员看得到，管理员本就知道 base_url）。API 客户端那一侧本来就干净（`transportStatus` 只报渠道名）。落点：①`Redact` 改为沿 `errors.Unwrap` 链找到第一个认得的类型，从那一层起重组——`url.Error` 只要内层；`net.OpError` 丢 Source/Addr 留 `dial tcp: <原因>`；`net.DNSError` 丢 Name/Server 留 `lookup: <原因>`；`tls.CertificateVerificationError` 递归内层；`x509.HostnameError` 换固定词。认不出的原样透过（超时那支保住 `errors.Is`）。返回值只承诺文案，不承诺 `errors.As` 回原类型。②`upstream/redact_test.go` 四条：真实拨号失败不含 host/ip/port 且留得住「dial tcp: connection refused」、DNS 三层套娃、证书名不匹配、未知类型透过；`TestProbeChannelSecrecy` 的「已知边界」注记删除，改钉 host:port。修改人 jinpenga。
 
@@ -1530,6 +1532,25 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 | `mimo2codex/src/translate/reqToChat.ts`（第 4 支 `namespace` 展平、`dedupeToolsByName:585`、`SERVER_SIDE_TOOLS:246`、`web_search` 映射 329-345） | **`namespace` 工具的另一条路线**（MIT，PO 2026-09-03 裁定加入名单）：子工具**不摊平**、保持裸名，撞名**不 400** 而是按 `fn:<name>` / `builtin:<type>` 去重保留第一个。其注释是「Codex CLI/Desktop 会同时发顶层与 namespace 内同名工具」的一手证据（其 issue #20），与口径层 v1.14 ①③ 的裁定正面不同，作对照 |
 | `mimo2codex/src/translate/respToResponses.ts:145-158`、`streamToSse.ts:211/350`、`server.ts:783` | 回向贴回 `namespace` 字段：`buildNamespaceMap` 建「裸名 → 命名空间名」表，两条回向路径各自给 `function_call` item 补字段——与本项目「摊平名查每请求映射表」的同构对照（口径层 v1.14 ⑤，#95） |
 | `opencodex` 的 forward 展开分支 / `litellm` 的 session 重放 | 本地展开的两种成本形态（**均不取**，口径层 v0.88 ③）：前者以本地展开为主路线，但上游展开未命中时提前 400 失败关闭、不静默转发一段失去上下文的 delta；后者是五家里唯一在转换路径做展开的，依赖一张记完整请求体的日志表 + session 串联字段 + 按 session 全量重放 + 冷存储回捞，且默认关闭 |
+
+### 12.1 国产供应商原生端点分布（sub2api 对照，[#43](https://github.com/SimonGino/portage/issues/43)）
+
+portage 的渠道是「每协议一份出站根地址」（口径层 v0.96），结构上装得下「同一账号承接三协议」，但**哪家上游实际有哪几条原生端点**此前没有落在任何地方，每接一家都要重查。sub2api 把这份事实硬编码进 `Account.defaultCNProtocolBaseURL` / `SupportsNativeCNResponses`（`backend/internal/service/account.go`、默认地址在 `domain_constants.go`），下表是它 **2026-09-08 快照（`270eac697`）**的转录，portage **不硬编码默认地址**，表只给建渠道的人对照用。
+
+| 供应商 | Chat Completions | Anthropic Messages | `count_tokens` | OpenAI Responses | 根地址备注（sub2api 默认值） |
+|---|---|---|---|---|---|
+| Kimi（Moonshot） | 有 | 有 | **待查**（见下） | **有**（`e377c4358`，2026-09-01；开票时 v0.1.179 记「无」，已过时） | **两组地址随接入模式变，连 Anthropic 地址也变**：按量付费 `https://api.moonshot.cn/v1` + `https://api.moonshot.cn/anthropic`；Coding Plan `https://api.kimi.com/coding/v1` + `https://api.kimi.com/coding`。Responses 与 CC 同根 |
+| 智谱 GLM | 有 | 有 | 无 | **无**（sub2api adaptive 下回退 CC） | CC 随模式变：按量付费 `https://open.bigmodel.cn/api/paas/v4`，Coding Plan `https://open.bigmodel.cn/api/coding/paas/v4`；Anthropic 只有一个 `https://open.bigmodel.cn/api/anthropic` |
+| DeepSeek | 有 | 有 | 无 | **有**，但官方路径是 **`/responses`，没有 `/v1`**（sub2api `buildOpenAIResponsesURLForPlatform` 单独特判） | 单一根：`https://api.deepseek.com`，Anthropic `https://api.deepseek.com/anthropic`。请求体三处改写坑见 §5 坑清单（#44） |
+| MiniMax（`19382f275`，2026-09-07 新增，开票时不在名单） | 有 | 有 | 未核（sub2api 按 `IsCNProvider` 一并本地估算，无单独佐证） | 有（`/v1/responses`） | 单一根 `https://api.minimaxi.com/v1`，Anthropic `https://api.minimaxi.com/anthropic`；套餐靠 API Key 区分，不分地址 |
+
+**对 portage 的三条含义**：
+
+1. **GLM 填 Responses 那格没有意义**——填了 portage 就会按 `Set.Choose` 把 Responses 入站透传过去，得到的是上游 404 而非转换。管理端不拦（每协议地址由人填，v0.96），这一行是唯一的提醒。
+2. **Kimi / GLM 的 Coding Plan 与按量付费是两组地址、两把 key**，同一家要两个渠道；Kimi 的 Anthropic 地址也跟着模式走，不能只换 CC 那格。
+3. **DeepSeek 的 Responses 格与 portage 的固定后缀不合**：出站 = 根地址 + `/v1/responses`（§6「上游 URL 拼接」，`protocol.EndpointResponses`），而 sub2api 记官方只认 `/responses`。`https://api.deepseek.com/v1/responses` 通不通**未实测**；不通的话要么上游也认 `/v1`（DeepSeek 的 CC 端点认 `/v1/chat/completions`——sub2api 就是拿 `https://api.deepseek.com` 拼 `/v1/chat/completions` 打的；Responses 未必），要么这是「固定后缀拼不出来」的第一个反例，届时另立票裁，**不在这里预设特判**。
+
+**`count_tokens` 那列**：GLM / DeepSeek 记「无」是 sub2api `openai_gateway_count_tokens.go` 的注释（DeepSeek 官方 anthropic_api 文档无此端点、OpenModel 标注 "Anthropic only"、GLM 无文档承诺，§6.1 已引）。**Kimi 记「待查」是因为两家参考仓库冲突**：sub2api 说三家 Anthropic 兼容层均无，CLIProxyAPI 的 `KimiExecutor` 却恒打 `https://api.kimi.com/coding/v1/messages/count_tokens?beta=true`（`kimi_executor_test.go:206`）。两家都没给出一手实测，未打真机前不作定论；对 portage 的影响也只有一格——Anthropic 协议渠道指向 Kimi 时 `count_tokens` 是原样转发（v0.80），404 就 404，不改行为。
 
 ## 附录：开放问题记录
 
