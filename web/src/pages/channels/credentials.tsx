@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
-import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, useList } from '../../ui'
+import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle } from '../../ui'
 import { IconEye, IconEyeOff, IconKey, IconPulse, IconRows } from '../../icons/acts'
 import { Segmented } from '../../fields'
 import { ProbeDialog } from './probe'
+import { useChannel } from './useChannel'
+import { cascadesToChannel, credentialLines, primaryCredential } from './derive'
 
 /**
  * CredentialBlock 是渠道凭证在模型页上的区块（PO 2026-08-20 裁决从「上游设置」井
@@ -16,18 +18,10 @@ import { ProbeDialog } from './probe'
  * （口径层 v0.96 ③）：这里的入口预选当前在用的那把；「管理」弹框每行的检测预选
  * 那一把（含已停用）。两处开的是同一个弹层。
  */
-export function CredentialBlock({
-  channel,
-  onChanged,
-}: {
-  channel: Channel
-  /** 池子变了就通知外面重拉渠道——「缺凭证」那个标记挂在渠道对象上。 */
-  onChanged: () => void
-}) {
-  const { data, error, reload, setError } = useList(() =>
-    api.get<Credential[] | null>(`/channels/${channel.id}/credentials`),
-  )
-  const list = data ?? []
+export function CredentialBlock({ channel }: { channel: Channel }) {
+  // 池子在 store 里（#56）：写走同一把 mutate，成了连渠道行一起重拉——「缺凭证」
+  // 那个标记挂在渠道对象上，此前靠 onChanged 手工对齐两份缓存。
+  const { credentials: list, credentialsError } = useChannel(channel.id)
   const [managing, setManaging] = useState(false)
   // 检测弹层预选的那把凭证；null = 没开弹层。从「管理」进来时把管理框关掉——
   // 两个弹框叠着，Esc 会把两层一起带走。
@@ -35,19 +29,7 @@ export function CredentialBlock({
   const enabled = list.filter((c) => !c.disabled)
   // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表——
   // 完整的池子在弹框里，行尾的计数提醒着「不止这一把」。
-  const primary = enabled[0] ?? null
-
-  async function mutate(fn: () => Promise<unknown>) {
-    try {
-      await fn()
-      setError('')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      return
-    }
-    await reload()
-    onChanged()
-  }
+  const primary = primaryCredential(list)
 
   return (
     <DetailBlock
@@ -76,10 +58,10 @@ export function CredentialBlock({
         )
       }
     >
-      <ErrorBar message={error} />
+      <ErrorBar message={credentialsError} />
       {list.length === 0 ? (
         /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
-        <AddCredentials channelID={channel.id} mutate={mutate} />
+        <AddCredentials channelID={channel.id} />
       ) : (
         <div className="cred-inline">
           {primary ? (
@@ -96,7 +78,6 @@ export function CredentialBlock({
         <CredentialsDialog
           channel={channel}
           list={list}
-          mutate={mutate}
           onClose={() => setManaging(false)}
           onProbe={(c) => {
             setManaging(false)
@@ -127,17 +108,16 @@ export function CredentialBlock({
 function CredentialsDialog({
   channel,
   list,
-  mutate,
   onClose,
   onProbe,
 }: {
   channel: Channel
   list: Credential[]
-  mutate: (fn: () => Promise<unknown>) => Promise<void>
   onClose: () => void
   /** 这一行的检测：关掉管理框、开检测弹层并预选这把（含已停用的）。 */
   onProbe: (c: Credential) => void
 }) {
+  const { mutate } = useChannel(channel.id)
   const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
   const enabled = list.filter((c) => !c.disabled).length
 
@@ -168,14 +148,13 @@ function CredentialsDialog({
                 cred={c}
                 channel={channel}
                 enabledCount={enabled}
-                mutate={mutate}
                 onProbe={() => onProbe(c)}
               />
             ))}
           </div>
         )}
 
-        <AddCredentials channelID={channel.id} mutate={mutate} />
+        <AddCredentials channelID={channel.id} />
 
         {/* 选取模式只在 ≥2 把（含停用）时出现（v0.44 修订 v0.38 ⑨ 的位置）：它描述
             的是「多把 key 之间怎么轮」，单 key 渠道从头到尾不该看到这个概念；含停用
@@ -205,16 +184,15 @@ function CredentialRow({
   cred,
   channel,
   enabledCount,
-  mutate,
   onProbe,
 }: {
   cred: Credential
   channel: Channel
   /** 池子里启用凭证的总数——判断「这是最后一把」要看全池，不是看这一行。 */
   enabledCount: number
-  mutate: (fn: () => Promise<unknown>) => Promise<void>
   onProbe: () => void
 }) {
+  const { mutate } = useChannel(channel.id)
   const [name, setName] = useState(cred.name)
   // 停用最后一把的举起态：同 Confirm 的两击，3 秒不按第二下自动放下。
   const [armedOff, setArmedOff] = useState(false)
@@ -225,11 +203,10 @@ function CredentialRow({
     return () => clearTimeout(t)
   }, [armedOff])
 
-  // 这是启用渠道的最后一把启用凭证：删掉或停掉它都会撞上「能保存的配置一定能启动」
-  // 的写后校验（启用渠道零可用凭证过不去）。失效的 key 必须删得掉（PO 2026-08-28
-  // 裁决），出路是把后果摆进确认文案、确认后先停用渠道再动凭证——校验不放宽，
-  // 提示给足，但不拦人。
-  const cascade = !cred.disabled && enabledCount === 1 && !channel.disabled
+  // 启用渠道的最后一把启用凭证：删掉或停掉它都会撞上「能保存的配置一定能启动」的
+  // 写后校验。出路是把后果摆进确认文案、确认后先停用渠道再动凭证——判据与立论在
+  // derive.cascadesToChannel。
+  const cascade = cascadesToChannel(cred, enabledCount, channel)
 
   /** 先停渠道再动凭证：顺序反过来第一笔就被校验打回。两笔各自成事务，第二笔
    *  失败时渠道已停——状态照实摆在页面上，不藏。 */
@@ -332,22 +309,14 @@ function CredentialRow({
  * 名字框曾经并排在 key 旁边，代价是这一段多一个同等分量的框、而它只在少数时候被填
  * ——而改名这件事列表里本来就能做，只是换个时机。
  */
-function AddCredentials({
-  channelID,
-  mutate,
-}: {
-  channelID: number
-  mutate: (fn: () => Promise<unknown>) => Promise<void>
-}) {
+function AddCredentials({ channelID }: { channelID: number }) {
+  const { mutate } = useChannel(channelID)
   const [credential, setCredential] = useState('')
   const [bulk, setBulk] = useState('')
   const [batch, setBatch] = useState(false)
   const [reveal, setReveal] = useState(false)
 
-  const lines = bulk
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
+  const lines = credentialLines(bulk)
   const ready = batch ? lines.length > 0 : credential.trim().length > 0
 
   return (

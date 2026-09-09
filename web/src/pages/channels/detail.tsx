@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   api,
   PROTOCOL_LABEL,
@@ -13,7 +14,6 @@ import type {
   BaseURLs,
   Channel,
   ChannelModel,
-  ModelListResult,
   PricingModelPrice,
   PricingModels,
   PricingProvider,
@@ -27,6 +27,21 @@ import { ChannelForm, joinURL } from './form'
 import { BaseURLFields } from './baseurl'
 import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
+import { useChannel } from './useChannel'
+import {
+  fmtTokens,
+  limitToSave,
+  listComplete as deriveListComplete,
+  listedOn as deriveListedOn,
+  managedNames,
+  normalizeProtocols,
+  protocolsToAdd,
+  sameBaseURLs,
+  sameProtocols,
+  splitModelNames,
+  staleProtocols,
+  suggestProtocols,
+} from './derive'
 
 /**
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
@@ -51,30 +66,11 @@ function fetchProvidersOnce() {
   return providersOnce
 }
 
-export function ChannelDetail({
-  ch,
-  fetched,
-  onFetchModelsDone,
-  onCredentialsChanged,
-  onDelete,
-  onSaved,
-  mutate,
-}: {
-  ch: Channel
-  /**
-   * 上游拉到的模型列表（裁决 1A——保留 fetched state）。拉取本身已收进弹框，
-   * 这一份是弹框 onResults 回吐回来、写进上层 state 的成果，供模型格子里的
-   * listedOn/listComplete 建议位用。仍是只进内存、刷新即失（口径层 v0.40）。
-   */
-  fetched?: ModelListResult[]
-  /** 弹框拉到模型列表后回吐结果，调用方写回自己的 fetched state。 */
-  onFetchModelsDone: (results: ModelListResult[]) => void
-  onCredentialsChanged: () => void
-  onDelete: () => void
-  onSaved: (id: number) => void
-  /** 回 false 表示这次写没成——挑选面板据此决定关不关框，别的调用方不看。 */
-  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
-}) {
+export function ChannelDetail({ id }: { id: number }) {
+  const nav = useNavigate()
+  // 状态全从 store 拿（#56）：渠道行、那一把 mutate、拉到的上游列表（裁决 1A——
+  // 保留 fetched state：只进内存、刷新即失，口径层 v0.40）。
+  const { ch, mutate, reload, listed, setFetched } = useChannel(id)
   const [picking, setPicking] = useState(false)
   const [adding, setAdding] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -83,12 +79,13 @@ export function ChannelDetail({
   // 只做填表助手——建议不落库、不参与计价，人点「采纳」写进去的才算数。拉失败就当
   // 没有建议（快照是发版内置资产，失败多半是版本不齐），不为它挂错误条。
   const [suggested, setSuggested] = useState<Record<string, PricingModelPrice> | null>(null)
+  const provider = ch?.provider ?? ''
   useEffect(() => {
     setSuggested(null)
-    if (!ch.provider) return
+    if (!provider) return
     let gone = false
     api
-      .get<PricingModels>(`/pricing/models?provider=${encodeURIComponent(ch.provider)}`)
+      .get<PricingModels>(`/pricing/models?provider=${encodeURIComponent(provider)}`)
       .then((r) => {
         if (!gone) setSuggested(r.models)
       })
@@ -96,43 +93,32 @@ export function ChannelDetail({
     return () => {
       gone = true
     }
-  }, [ch.provider])
+  }, [provider])
   // 厂商标注设了才在身份条上体现（v0.58，PO「设置了要在外面就能体现，没设置就算了」）。
   const [providerName, setProviderName] = useState('')
   useEffect(() => {
     setProviderName('')
-    if (!ch.provider) return
+    if (!provider) return
     let gone = false
     void fetchProvidersOnce().then((list) => {
-      if (!gone) setProviderName(list.find((p) => p.id === ch.provider)?.name ?? ch.provider)
+      if (!gone) setProviderName(list.find((p) => p.id === provider)?.name ?? provider)
     })
     return () => {
       gone = true
     }
-  }, [ch.provider])
+  }, [provider])
   // 设置表单有没有未保存的改动——只喂给 Dialog 的 guard：改到一半时遮罩误点不关框。
   // Esc 仍照 Dialog 的通则丢弃，弹框关了编辑就没了，不再有「收起还留着」的中间态。
   const [settingsDirty, setSettingsDirty] = useState(false)
+  // 刚删掉、或清单还没拉到：调用方下一次渲染就会换掉这个 id，这里空渲染一帧。
+  if (!ch) return null
   const models = ch.models ?? []
   const protos = ch.protocols ?? []
-  const listed = Array.isArray(fetched) ? fetched : null
 
-  // 上游在哪些协议侧列出了这个模型。**只用于给建议**，不自动改配置——拉回来的列表
-  // 可能是中转站写死的（口径层 v0.40），采信它等于把探测做成了闸。
-  function listedOn(model: string): Protocol[] {
-    if (!listed) return []
-    return listed
-      .filter((r) => (r.models ?? []).includes(model))
-      .flatMap((r) => r.protocols)
-      .filter((p) => protos.includes(p))
-  }
-  // 渠道的每一个协议侧都真拉到了一份列表。**证据不全就不推断子集**：`models` 为 null
-  // 是「这一侧没拉到」（401、超时、回的不是 JSON），与「拉到了但没列出它」在证据上是
-  // 两回事，而 listedOn 把两者压成了同一个「不在里面」。按后者写库，等于凭零证据砍掉
-  // 一条本来可能原生可走的协议路径，把请求推去做有损转换——比没推断坏得多。
-  const listComplete =
-    listed !== null &&
-    protos.every((p) => listed.some((r) => r.models !== null && r.protocols.includes(p)))
+  // 上游列表给的证据（derive.ts）：listedOn 只用于给建议，listComplete 证据不全
+  // 不推断——两条规则的立论见那边的注释。
+  const listedOn = (model: string) => deriveListedOn(listed, protos, model)
+  const listComplete = deriveListComplete(listed, protos)
 
   return (
     <>
@@ -194,35 +180,38 @@ export function ChannelDetail({
           {/* 不要再挂 key={ch.id}：调用方已经在 ChannelDetail 上挂了。 */}
           <ChannelForm
             channel={ch}
-            onSaved={(id) => {
+            onSaved={() => {
               setSettingsOpen(false)
               setSettingsDirty(false)
-              onSaved(id)
+              void reload()
             }}
             onDirtyChange={setSettingsDirty}
-            onDelete={onDelete}
+            onDelete={() => {
+              void mutate(() => api.del(`/channels/${ch.id}`)).then((ok) => {
+                if (ok) nav('/channels', { replace: true })
+              })
+            }}
           />
         </Dialog>
       )}
 
-      <BaseURLBlock ch={ch} mutate={mutate} />
+      <BaseURLBlock ch={ch} />
 
-      <CredentialBlock channel={ch} onChanged={onCredentialsChanged} />
+      <CredentialBlock channel={ch} />
 
       {picking && (
         <ModelPicker
           channel={ch}
           initial={listed ?? undefined}
-          existing={new Set(models.map((m) => m.upstream_model))}
+          existing={managedNames(models)}
           onClose={() => setPicking(false)}
-          onResults={(r) => onFetchModelsDone(r)}
+          onResults={setFetched}
           onAdd={async (names) => {
             const ok = await mutate(async () => {
               for (const name of names) {
-                const on = listedOn(name)
                 await api.post(`/channels/${ch.id}/models`, {
                   upstream_model: name,
-                  protocols: listComplete && on.length < protos.length ? on : [],
+                  protocols: protocolsToAdd(listedOn(name), listComplete, protos),
                 })
               }
             })
@@ -272,14 +261,10 @@ export function ChannelDetail({
         }
       >
         {bulkOpen && (
-          <BulkPriceDialog channel={ch} mutate={mutate} onClose={() => setBulkOpen(false)} />
+          <BulkPriceDialog channel={ch} onClose={() => setBulkOpen(false)} />
         )}
         {adding && (
-          <AddModels
-            channel={ch}
-            mutate={mutate}
-            onClose={() => setAdding(false)}
-          />
+          <AddModels channel={ch} onClose={() => setAdding(false)} />
         )}
         {models.length === 0 ? (
           <div className="muted models-empty">还没有纳管模型。点「获取模型列表」，或手填上游那边真实的模型名。</div>
@@ -322,17 +307,17 @@ export function ChannelDetail({
                 {(protos.length > 1 || (m.protocols ?? []).length > 0) && (
                   <ModelProtocols
                     model={m}
+                    channelID={ch.id}
                     channelProtocols={protos}
                     listedOn={listedOn(m.upstream_model)}
                     listComplete={listComplete}
-                    mutate={mutate}
                   />
                 )}
                 {/* 上限与定价并排一行（PO 2026-08-30：「合并成一行不好吗，减少高度」）：
                     两颗收起态都是芯片，各占一整行白耗一倍高度。各自仍是独立组件
                     （编辑态原地展开），容器只负责排成一行，放不下时折行。 */}
                 <div className="model-meta">
-                  <ModelInputLimit model={m} mutate={mutate} />
+                  <ModelInputLimit model={m} channelID={ch.id} />
                   <ModelPrices
                     model={m}
                     suggest={suggested?.[m.upstream_model] ?? null}
@@ -362,13 +347,8 @@ export function ChannelDetail({
  * 面板不提交。落库走 base-url 那一笔意图写（#48 批2），整张 map 一次写掉，
  * 别的渠道字段碰不到。
  */
-function BaseURLBlock({
-  ch,
-  mutate,
-}: {
-  ch: Channel
-  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
-}) {
+function BaseURLBlock({ ch }: { ch: Channel }) {
+  const { mutate } = useChannel(ch.id)
   // 库里那份 map 拆成共用前缀 + 覆盖当草稿（splitBaseURLs），落库时 join 回
   // 整张 map 一次写。声明语义不变：哪些协议填了地址，协议集就是哪些——勾选
   // 只是写 map 的手势，不是独立字段。
@@ -386,14 +366,11 @@ function BaseURLBlock({
     return mutate(() => api.put(`/channels/${ch.id}/base-url`, { base_url: next }))
   }
 
-  /** onCommit 落库：草稿合回 map，与库里逐协议比对（两侧都 trim，输入框里
-      的尾随空格不该触发多余的 PUT），没变就不打网络。 */
+  /** onCommit 落库：草稿合回 map，与库里逐协议比对（sameBaseURLs，两侧都 trim），
+      没变就不打网络。 */
   function persist(next: BaseURLDraft) {
     const urls = joinBaseURLs(next)
-    const same = PROTOCOL_ORDER.every(
-      (p) => (urls[p] ?? '').trim() === (ch.base_url[p] ?? '').trim(),
-    )
-    if (same) return
+    if (sameBaseURLs(urls, ch.base_url)) return
     void put(urls).then((ok) => {
       if (ok) setSaved(true)
     })
@@ -475,34 +452,33 @@ function BaseURLBlock({
  */
 function ModelProtocols({
   model,
+  channelID,
   channelProtocols,
   listedOn,
   listComplete,
-  mutate,
 }: {
   model: ChannelModel
+  channelID: number
   channelProtocols: Protocol[]
   /** 上游在哪些协议侧列出了这个模型。空数组 = 没拉过，或哪一侧都没列。 */
   listedOn: Protocol[]
   /** 渠道的每一侧都真拉到了列表。为假时 listedOn 的空缺分不清「没列出」和「没拉到」。 */
   listComplete: boolean
-  mutate: (fn: () => Promise<unknown>) => Promise<unknown>
 }) {
+  const { mutate } = useChannel(channelID)
   const current = model.protocols ?? []
   const inherit = current.length === 0
-  // 渠道协议集缩小之后，模型上没跟着改的那些值会留在这儿（宽松存，见口径层 v0.40）。
-  // 照实显示而不是悄悄滤掉：它们此刻确实让这个模型不可用，藏起来只会让人对着一个
-  // 「看上去哪都没问题」的配置查 503。
-  const stale = current.filter((p) => !channelProtocols.includes(p))
+  // 失效项照实显示而不是悄悄滤掉（staleProtocols）：它们此刻确实让这个模型不可用，
+  // 藏起来只会让人对着一个「看上去哪都没问题」的配置查 503。
+  const stale = staleProtocols(current, channelProtocols)
 
   function save(next: Protocol[]) {
-    const inChannel = channelProtocols.filter((p) => next.includes(p))
-    const rest = next.filter((p) => !channelProtocols.includes(p))
-    // 勾满且没有失效项才归一成继承——还留着失效项时归零会把它们一并抹掉，
-    // 而那是人没点过的东西。
-    const norm = inChannel.length === channelProtocols.length && rest.length === 0 ? [] : [...inChannel, ...rest]
+    // 勾满归一成继承、留着失效项时不归零——规则与立论在 derive.normalizeProtocols。
     void mutate(() =>
-      api.put(`/channel-models/${model.id}`, { disabled: model.disabled, protocols: norm }),
+      api.put(`/channel-models/${model.id}`, {
+        disabled: model.disabled,
+        protocols: normalizeProtocols(next, channelProtocols),
+      }),
     )
   }
 
@@ -512,14 +488,8 @@ function ModelProtocols({
 
   // 建议只在「上游确实只列出了一部分」时给，且不自动应用——拉回来的列表可能是中转站
   // 写死的，采信它等于把探测做成了闸（口径层 v0.33 立论）。
-  const suggest =
-    listComplete && listedOn.length > 0 && listedOn.length < channelProtocols.length
-      ? listedOn
-      : null
-  const same =
-    suggest !== null &&
-    suggest.length === current.length &&
-    suggest.every((p) => current.includes(p))
+  const suggest = suggestProtocols(listedOn, listComplete, channelProtocols)
+  const same = suggest !== null && sameProtocols(suggest, current)
 
   return (
     <div className="model-protocols">
@@ -568,20 +538,6 @@ function ModelProtocols({
   )
 }
 
-/** 输入上限显示成 200k 这种紧凑形；不整千的照原样带分隔符摆。 */
-function fmtTokens(n: number): string {
-  return n >= 1000 && n % 1000 === 0 ? `${n / 1000}k` : n.toLocaleString('en-US')
-}
-
-/** 解析上限输入：裸数字，或 `200k` / `1m` 这种紧凑写法（显示用的正是这种形，
- *  输入也就该认它）。解析不出回 null。 */
-function parseTokens(raw: string): number | null {
-  const m = /^(\d+)([km]?)$/i.exec(raw.trim())
-  if (!m) return null
-  const n = Number(m[1]) * (m[2].toLowerCase() === 'k' ? 1000 : m[2].toLowerCase() === 'm' ? 1000000 : 1)
-  return Number.isFinite(n) ? n : null
-}
-
 /**
  * ModelInputLimit 是模型行上的「输入上限（估算）」（口径层 v0.99；DESIGN v0.38
  * 收进芯片家族，推翻 v0.36 的文字动作）。与协议芯片同行同族：未设 = 虚线空位芯片
@@ -589,23 +545,17 @@ function parseTokens(raw: string): number | null {
  * 输入组（数字 + 单位一体），失焦或回车即存，空/0 = 清成不限，认 `200k`/`1m`
  * 紧凑写法。文案一律带「估算」——判据是请求体字节数 ÷4，不是真分词。
  */
-function ModelInputLimit({
-  model,
-  mutate,
-}: {
-  model: ChannelModel
-  mutate: (fn: () => Promise<unknown>) => Promise<unknown>
-}) {
+function ModelInputLimit({ model, channelID }: { model: ChannelModel; channelID: number }) {
+  const { mutate } = useChannel(channelID)
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState('')
   const limit = model.max_input_tokens ?? 0
 
   function save() {
     setEditing(false)
-    const raw = val.trim()
-    const n = raw === '' ? 0 : parseTokens(raw)
-    if (n === null || n < 0) return
-    if (n === limit) return
+    // 清空 = 清成不限，不是没改；同值与解析不出都不写——规则在 derive.limitToSave。
+    const n = limitToSave(val, limit)
+    if (n === null) return
     void mutate(() =>
       api.put(`/channel-models/${model.id}`, { disabled: model.disabled, max_input_tokens: n }),
     )
@@ -684,15 +634,8 @@ function ModelInputLimit({
  * 价的跳过并计数。系数不落库——没有持久折扣字段，落完这就是普通的四价。
  * 完成态就地回报计数，别闪一下就关框：人要看见「跳过了几条、为什么」。
  */
-function BulkPriceDialog({
-  channel,
-  mutate,
-  onClose,
-}: {
-  channel: Channel
-  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
-  onClose: () => void
-}) {
+function BulkPriceDialog({ channel, onClose }: { channel: Channel; onClose: () => void }) {
+  const { mutate } = useChannel(channel.id)
   const [factor, setFactor] = useState('1')
   const [overwrite, setOverwrite] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -802,33 +745,16 @@ function IconPlus() {
  * 这种形状，逐个敲进去要来回十几趟。已经纳管过的自动跳过而不是报错：粘一份完整清单
  * 进来「把新的加上」是最常见的用法，为几个重复项整批失败没有道理。
  */
-function AddModels({
-  channel,
-  mutate,
-  onClose,
-}: {
-  channel: Channel
-  mutate: (fn: () => Promise<unknown>) => Promise<boolean>
-  onClose: () => void
-}) {
+function AddModels({ channel, onClose }: { channel: Channel; onClose: () => void }) {
+  const { mutate } = useChannel(channel.id)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const existing = new Set((channel.models ?? []).map((m) => m.upstream_model))
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  const parsed = Array.from(
-    new Set(
-      draft
-        .split(/[\s,，、]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  )
-  const fresh = parsed.filter((m) => !existing.has(m))
-  const dupes = parsed.length - fresh.length
+  const { fresh, dupes } = splitModelNames(draft, managedNames(channel.models))
 
   return (
     <form

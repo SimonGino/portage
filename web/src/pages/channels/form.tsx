@@ -6,6 +6,7 @@ import { Picker, Segmented } from '../../fields'
 import type { Option } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
+import { maxConcurrencyOf, settingsDirty } from './derive'
 
 /**
  * joinURL 复刻服务端 `upstream.buildURL` 的拼法：右侧去尾斜杠，直接接子路径。
@@ -93,7 +94,7 @@ export function ChannelForm({
   }, [providers, provider])
 
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
-  const maxConcValue = Number.parseInt(maxConc, 10) > 0 ? Number.parseInt(maxConc, 10) : 0
+  const maxConcValue = maxConcurrencyOf(maxConc)
 
   const declared = channel ? (channel.protocols ?? []) : declaredProtocols(urls)
 
@@ -106,12 +107,11 @@ export function ChannelForm({
 
   const dirty =
     channel !== null &&
-    (name !== channel.name ||
-      maxConcValue !== channel.max_concurrency ||
-      provider !== channel.provider ||
-      authScheme !== channel.auth_scheme ||
-      (showCompaction && compaction !== channel.supports_compaction) ||
-      (showStateful && stateful !== channel.supports_stateful_responses))
+    settingsDirty(
+      channel,
+      { name, maxConcurrency: maxConcValue, provider, authScheme, compaction, stateful },
+      showCompaction,
+    )
 
   useEffect(() => {
     onDirtyChange?.(dirty)

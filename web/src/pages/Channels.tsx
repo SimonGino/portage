@@ -1,60 +1,40 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
-import type { Channel, ModelListResult } from '../api'
-import { Empty, ErrorBar, useList } from '../ui'
+import { Empty, ErrorBar } from '../ui'
 import { ChannelIcon } from '../icons'
 import { ChannelDetail } from './channels/detail'
 import { ChannelForm } from './channels/form'
+import { channelMark, filterChannels } from './channels/derive'
+import { ChannelsProvider, useChannels } from './channels/useChannel'
 
 /**
  * 模型页（路由仍是 /channels）：页内主从两栏——左列渠道清单（sticky），右栏是
  * 选中渠道的纳管模型（口径层 v0.75；v0.54 左栏退役后清单从壳搬回页内）。
  * 新建时右栏整个是表单，没有模型列表。
+ *
+ * 状态全在 ChannelsProvider（#56）：清单、当前渠道、凭证池、拉到的上游列表与
+ * 那一把 mutate，右栏各组件用 useChannel(id) 直接拿。
  */
 export default function Channels() {
+  return (
+    <ChannelsProvider>
+      <ChannelsPage />
+    </ChannelsProvider>
+  )
+}
+
+function ChannelsPage() {
   const { id } = useParams()
   const nav = useNavigate()
-  const { data, error, loading, reload, setError } = useList(() =>
-    api.get<Channel[] | null>('/channels'),
-  )
+  const { channels, loading, error, creating, current, reload } = useChannels()
   const [query, setQuery] = useState('')
-  const [fetched, setFetched] = useState<Record<number, ModelListResult[]>>({})
 
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [id])
 
-  async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
-    try {
-      await fn()
-      setError('')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      return false
-    }
-    await reload()
-    return true
-  }
-
-  if (loading && data === null) return <div className="boot">加载中…</div>
-  // 停用的沉底，其余按 id（即接入先后）排：左栏是天天扫的清单，停用项混在中间
-  // 每次都要跳读。组内都按 id，稳定不随改名跳位。
-  const channels = [...(data ?? [])].sort(
-    (a, b) => Number(a.disabled) - Number(b.disabled) || a.id - b.id,
-  )
-  const creating = id === 'new'
-  const current = creating ? null : channels.find((c) => String(c.id) === id) ?? channels[0] ?? null
-  const q = query.trim().toLowerCase()
-  // 搜索匹配任意一个协议的地址（口径层 v0.96）：同一家上游可能只有某一协议挂在
-  // 特征域名下，只搜第一份会漏。
-  const visible = q
-    ? channels.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          Object.values(c.base_url ?? {}).some((u) => (u ?? '').toLowerCase().includes(q)),
-      )
-    : channels
+  if (loading) return <div className="boot">加载中…</div>
+  const visible = filterChannels(channels, query)
 
   return (
     <div className="split">
@@ -85,15 +65,7 @@ export default function Channels() {
                   <ChannelIcon channel={ch} size={18} />
                   {ch.name}
                 </span>
-                <span className="mark">
-                  {ch.disabled
-                    ? '停用'
-                    : ch.enabled_keys === 0
-                      ? '缺凭证'
-                      : (ch.protocols ?? []).length === 0
-                        ? '无协议'
-                        : ''}
-                </span>
+                <span className="mark">{channelMark(ch)}</span>
               </button>
             ))
           )}
@@ -126,22 +98,7 @@ export default function Channels() {
             />
           </>
         ) : current ? (
-          <ChannelDetail
-            key={current.id}
-            ch={current}
-            fetched={fetched[current.id]}
-            onFetchModelsDone={(results) =>
-              setFetched((p) => ({ ...p, [current.id]: results }))
-            }
-            onCredentialsChanged={() => void reload()}
-            onDelete={() => {
-              void mutate(() => api.del(`/channels/${current.id}`)).then((ok) => {
-                if (ok) nav('/channels', { replace: true })
-              })
-            }}
-            onSaved={() => void reload()}
-            mutate={mutate}
-          />
+          <ChannelDetail key={current.id} id={current.id} />
         ) : (
           <>
             <header className="page-head">
