@@ -163,7 +163,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 不是网关重编出来的响应。
 	dumpFrom(c).write("out.json", outBody)
 	res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
-		Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: outEp,
+		Rec: rec, Inbound: ep.Proto, Route: routeOf(cand), Endpoint: outEp,
 		Body: outBody, Header: c.Request.Header, Stream: stream,
 	})
 	if !ok {

@@ -18,7 +18,6 @@ import (
 	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/protocol/taps"
-	"github.com/SimonGino/portage/internal/store"
 	"github.com/SimonGino/portage/internal/upstream"
 )
 
@@ -39,8 +38,10 @@ type Client struct {
 type Request struct {
 	Rec *calllog.Recorder
 	// Inbound 是入站协议：闸拒与传输错误都按它的原生形态回给客户端。
-	Inbound  protocol.Protocol
-	Cand     store.Candidate
+	Inbound protocol.Protocol
+	// Route 是渠道侧的全部输入（根地址、协议、凭证池、上限），由 server 从解析出的
+	// 候选映射而来（#55）：本包与 upstream 都不再认 store。
+	Route    upstream.Route
 	Endpoint protocol.Endpoint
 	RawQuery string
 	Body     []byte
@@ -116,7 +117,7 @@ func (o *ResponseObserver) Close() {
 func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*Result, bool) {
 	rec := req.Rec
 	rec.Dialing(req.Endpoint.Path)
-	resp, at, err := x.Up.Do(ctx, req.Cand, req.Endpoint, req.RawQuery, req.Body, req.Header, req.Stream)
+	resp, at, err := x.Up.Do(ctx, req.Route, req.Endpoint, req.RawQuery, req.Body, req.Header, req.Stream)
 	rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
 	if err != nil {
 		if x.writeQueueReject(w, req, err) {
@@ -126,8 +127,8 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 		// 这一支没有响应体可截，落库的原文就是这条传输错误本身（口径层 v0.53）。
 		// 不落的话，最想看细节的那半边——连不上、握手失败、读超时——恰好永远是空。
 		rec.Failed(calllog.UpstreamError, upstream.Redact(err).Error())
-		status, msg := transportStatus(err, req.Cand.ChannelName)
-		x.Log.Error("上游请求失败", "channel", req.Cand.ChannelName, "status", status, "err", upstream.Redact(err))
+		status, msg := transportStatus(err, req.Route.ChannelName)
+		x.Log.Error("上游请求失败", "channel", req.Route.ChannelName, "status", status, "err", upstream.Redact(err))
 		req.Inbound.WriteError(w, status, msg)
 		return nil, false
 	}
@@ -138,7 +139,7 @@ func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*R
 
 	obs := &ResponseObserver{upstream: resp.Body, rec: rec}
 	var observers []io.Writer
-	if tap := taps.New(req.Cand.Protocol, req.Stream); tap != nil {
+	if tap := taps.New(req.Route.Protocol, req.Stream); tap != nil {
 		observers = append(observers, tap)
 		obs.tap = tap
 	}
@@ -182,7 +183,7 @@ func transportStatus(err error, channel string) (int, string) {
 // 同 401 / 429 / 501 那批。返回 false 那档不走它，那是真打过上游之后的失败
 // （拨不通、读超时）。
 func (x *Client) writeQueueReject(w http.ResponseWriter, req Request, err error) bool {
-	rec, channel := req.Rec, req.Cand.ChannelName
+	rec, channel := req.Rec, req.Route.ChannelName
 	var word calllog.Outcome
 	var msg string
 	switch {

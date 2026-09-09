@@ -355,7 +355,7 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		// 响应字节属于客户端，不能为了记一份错误体把它先攒进内存。
 		dr.write("out.json", forward)
 		res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
-			Rec: rec, Inbound: ep.Proto, Cand: cand, Endpoint: ep,
+			Rec: rec, Inbound: ep.Proto, Route: routeOf(cand), Endpoint: ep,
 			RawQuery: c.Request.URL.RawQuery, Body: forward, Header: c.Request.Header,
 			Stream: head.Stream, TapErrorBody: true,
 		})

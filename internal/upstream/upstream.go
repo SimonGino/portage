@@ -92,7 +92,7 @@ func (a Attempt) Retries() int {
 	return a.Sends - 1
 }
 
-// Do 把 body 原样透传给候选所在渠道，返回实时响应与这次的尝试过程。
+// Do 把 body 原样透传给 Route 指向的渠道，返回实时响应与这次的尝试过程。
 // 调用方负责 Close resp.Body。
 //
 // 两层重试（口径层 v0.19 + v0.38，v0.95 去掉 401 自动摘除）：内层对**同一份凭证**按
@@ -112,16 +112,16 @@ func (a Attempt) Retries() int {
 // 排队，队满/等超时返回 ErrQueueFull / ErrQueueTimeout（不带响应，由 server 译成
 // 429）。**一次 Do 只占一个坑**——里面的退避重试与换凭证全在同一个坑里发生，坑
 // 一直占到响应体读完（Close）才还，上游还在生成流时并发就是还占着的。
-func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
-	if cand.MaxConcurrency <= 0 {
-		return c.do(ctx, cand, ep, rawQuery, body, clientHdr, stream)
+func (c *Client) Do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
+	if rt.MaxConcurrency <= 0 {
+		return c.do(ctx, rt, ep, rawQuery, body, clientHdr, stream)
 	}
-	g, limit := c.gateFor(cand.ChannelID), cand.MaxConcurrency
+	g, limit := c.gateFor(rt.ChannelID), rt.MaxConcurrency
 	waited, err := g.acquire(ctx, limit, limit*c.Queue.Factor, c.Queue.Wait)
 	if err != nil {
 		return nil, Attempt{QueueWait: waited}, err
 	}
-	resp, at, err := c.do(ctx, cand, ep, rawQuery, body, clientHdr, stream)
+	resp, at, err := c.do(ctx, rt, ep, rawQuery, body, clientHdr, stream)
 	at.QueueWait = waited
 	if resp == nil {
 		// 没有响应体可挂，坑当场还掉——包括 err != nil 与「凭证为空」两种收场。
@@ -133,31 +133,31 @@ func (c *Client) Do(ctx context.Context, cand store.Candidate, ep protocol.Endpo
 }
 
 // do 是闸内的主体：凭证外环 + 同凭证退避内环。
-func (c *Client) do(ctx context.Context, cand store.Candidate, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
-	creds := c.order(cand)
+func (c *Client) do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
+	creds := c.order(rt)
 	var at Attempt
 	for i, cred := range creds {
 		at.Credential = cred.Name
-		resp, err := c.send(ctx, cand, cred, ep, rawQuery, body, clientHdr, stream, &at)
+		resp, err := c.send(ctx, rt, cred, ep, rawQuery, body, clientHdr, stream, &at)
 		if !switchCredential(err, resp) || i == len(creds)-1 || c.budgetOut(at) {
 			return resp, at, err
 		}
 		drain(resp)
 	}
 	// creds 为空。Resolve 保证不会（零凭证在那一层就报 ErrNoUsableCandidate），
-	// 真走到这儿说明调用方自己拼了个候选，报错比发一个不带凭证的请求强。
+	// 真走到这儿说明调用方自己拼了条 Route，报错比发一个不带凭证的请求强。
 	return nil, at, errors.New("候选没有可用凭证")
 }
 
 // send 在**同一份凭证**上跑退避重试（口径层 v0.19），并把每次真实发送记进 at。
-func (c *Client) send(ctx context.Context, cand store.Candidate, cred store.Credential, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool, at *Attempt) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, rt Route, cred Credential, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool, at *Attempt) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cand.BaseURL, ep, rawQuery), bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(rt.BaseURL, ep, rawQuery), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
 		req.ContentLength = int64(len(body))
-		applyHeaders(req.Header, clientHdr, cand.Protocol, cand.AuthScheme, cred.Value, stream)
+		applyHeaders(req.Header, clientHdr, rt.Protocol, rt.AuthScheme, cred.Value, stream)
 
 		resp, err := c.http.Do(req)
 		at.Sends++
@@ -208,18 +208,18 @@ func (c *Client) budgetOut(at Attempt) bool {
 //
 // polling 是轮转而不是「永远从第一把开始」：多凭证的意义之一就是把量摊开，每次都
 // 从头开始等于第一把跑满、其余当备胎。random 直接洗牌。
-func (c *Client) order(cand store.Candidate) []store.Credential {
-	if len(cand.Credentials) < 2 {
-		return cand.Credentials
+func (c *Client) order(rt Route) []Credential {
+	if len(rt.Credentials) < 2 {
+		return rt.Credentials
 	}
-	out := make([]store.Credential, len(cand.Credentials))
-	copy(out, cand.Credentials)
-	if cand.KeyMode == store.KeyModeRandom {
+	out := make([]Credential, len(rt.Credentials))
+	copy(out, rt.Credentials)
+	if rt.KeyMode == store.KeyModeRandom {
 		rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 		return out
 	}
-	start := c.nextCursor(cand.ChannelName, len(out))
-	rotated := make([]store.Credential, 0, len(out))
+	start := c.nextCursor(rt.ChannelName, len(out))
+	rotated := make([]Credential, 0, len(out))
 	rotated = append(rotated, out[start:]...)
 	return append(rotated, out[:start]...)
 }
@@ -342,7 +342,7 @@ func redactedText(e error) (string, bool) {
 // carries the gateway key.
 //
 // credential 是**这次尝试**用的那份凭证值（key 层内环会在同一次请求里换，所以它
-// 是参数而不是从候选上读）。
+// 是参数而不是从 Route 上读）。
 //
 // scheme 是渠道级的认证头写法（口径层 v1.13，#82）：bearer / raw 改写认证头本身，
 // 协议头（anthropic-version 等）与认证档位无关照发；default 与认不得的取值都走按
