@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.40
+> 状态：草案 v1.41
+
+> v1.41 变更（[#44](https://github.com/SimonGino/portage/issues/44) 落地：国产原生 Responses 的请求体改写坑入 §5 坑清单，2026-09-09）：**只改文档，口径与代码零改动。**票面三条按 sub2api 当前快照（`270eac697`）核过后全部落 §5，不另安置：第 1 条（无状态：`store=false` + 剥 `previous_response_id`）票面问「与 §7.8 拒绝闸是不是同一件事」，答案是**不是**——闸拒客户端、这条洗出站字节，portage 转换路径由 R 出口恒发 `store:false` 构造性满足，透传路径不洗、靠 `supports_stateful_responses` 能力位，接这三家时该位必须关。第 2 条（不注入 Codex 合成 instructions）portage 两条路本就不注入，记下防将来加错。第 3 条（`max_output_tokens`）记下 sub2api 白名单只有 OpenAI / DeepSeek，Kimi / MiniMax 认不认未知。**开票之后 sub2api 又多出一条**一并补：DeepSeek 原生 Responses 只认 function 工具，custom / `tool_search` / `namespace` 要降级（`cef18b4ad`）——portage 透传不降，实测后另裁。三家范围随 #43（v1.40）扩成 DeepSeek / Kimi / MiniMax。修改人 jinpenga。
 
 > v1.40 变更（[#43](https://github.com/SimonGino/portage/issues/43) 落地：国产供应商原生端点分布表入档，2026-09-09）：**只改文档，口径与代码零改动。**落点取 §12 新开 12.1（PO 开票时倾向 §12，不另起「上游供应商事实」一节）。表转录自 sub2api `270eac697`（2026-09-08）的 `SupportsNativeCNResponses` / `defaultCNProtocolBaseURL`，**比开票时的 v0.1.179 多两条**：Kimi 已有原生 Responses（`e377c4358`，2026-09-01，按量付费与 Coding Plan 同为 `/v1/responses`），MiniMax 新入名单（`19382f275`，2026-09-07）。按 #46 的要求加 `count_tokens` 一列：GLM / DeepSeek 记无，Kimi 记待查（sub2api 与 CLIProxyAPI 冲突，未实测不定论），MiniMax 记未核。顺带记下三条对 portage 的含义，其中 DeepSeek 官方 Responses 路径无 `/v1` 与本项目固定后缀不合一条**只记事实不预设特判**，通不通待实测后另裁。修改人 jinpenga。
 
@@ -555,6 +557,10 @@ type Codec interface {
 | 压缩 turn 不得入 previous_response_id 展开缓存（v0.47 记，v0.97 拆条） | 若将来重开 `previous_response_id` 本地展开（按 id 拼回前缀），压缩 turn 必须显式排除在缓存外——它的原始 body 还带着完整的**前压缩**历史，入了缓存就是把刚被替换掉的旧长历史重新灌回来（opencodex 实测坑） |
 | 展开失败的那一轮同样不得入缓存（v0.97 记，opencodex 显式修过） | 与上条同一个缓存、另一种脏数据：`previous_response_id` 展开未命中的那一轮，input 是个 **delta**（客户端以为前缀在上游那边），把它当成完整历史缓存下来，后续展开出的是一段被截断的历史。两条合起来的判据是「只有自带完整历史的普通轮才配进缓存」 |
 | 会话粘连键取 `prompt_cache_key`，不取 `previous_response_id`（v0.97 记） | CLIProxyAPI 与 new-api 独立地都选了 `prompt_cache_key`：它**首轮就有**，而 `previous_response_id` 第一轮必然为空——拿它当粘连键，第一轮必然打散、第二轮才粘上，正好粘在续链最需要粘住的那一刻之后。portage 目前单渠道路由没有这个问题，这条是**将来做多渠道会话亲和时的前置知识**，不是当下的待办 |
+| 国产原生 Responses 是**无状态实现**：出向须 `store=false` 且不带 `previous_response_id`（[#44](https://github.com/SimonGino/portage/issues/44) 记，sub2api） | sub2api `normalizeDeepSeekResponsesRequestBody`（`901a0439f` 起；`e377c4358` 后 DeepSeek / Kimi / MiniMax 三家同规）在发出前强制 `store=false`、删 `previous_response_id`，带着这两个字段会被上游拒。**这与 §7.8 那道拒绝闸不是同一件事**：闸拒的是客户端（有状态语义在网关这一跳物理不成立），这条说的是我们自己发出去的字节要干净。portage 两条路的处置：**转换路径构造性满足**——R 出口恒发 `store:false`（v0.68，九份 Codex 实采都带），`previous_response_id` 在 decode 就拒、从不带出；**透传路径不洗字节**——`store` 由客户端自带（六份 Responses 入站 golden 全是 `store:false`），`previous_response_id` 靠 `channels.supports_stateful_responses`：**接这三家时该位必须关**，默认 1 会把续链请求放到上游去 400。这是那个能力位立起来后的第一批真实客户 |
+| 国产原生 Responses **不注入** Codex 合成 `instructions`（#44 记，sub2api） | sub2api 对 Codex OAuth 账号在 `instructions` 为空时合成一段（`defaultCodexSynthInstructions`），`nativeCNResponses` 显式跳过——那段是给 ChatGPT Codex 后端看的，国产端点不需要也不认。portage 两条路都不注入：R 出口按 v0.68 的裁定**不上提**系统提示到 `instructions`（五份实采都没这个字段，发上游没见过的顶层键严格上游会拒），透传原样。记下只为将来有人想「对齐 Codex 后端行为」时不要把这段加进国产出口 |
+| `max_output_tokens` 只有 OpenAI / DeepSeek 两家确认保留（#44 记，sub2api） | sub2api 非 Codex 客户端的 Responses 出向对该字段按平台分流（`b3092145d` 把 DeepSeek 加进白名单）：OpenAI / DeepSeek 原样保留，Anthropic 折成 `max_tokens`，**其余平台一律删**——含同样有原生 Responses 的 Kimi 与 MiniMax，是保守还是实证不明，两家认不认这个字段**未知**。portage R 出口只在客户端真的限了才发（v0.68），透传原样；接 Kimi / MiniMax 的 Responses 格时若撞 400，先怀疑这个字段 |
+| DeepSeek 原生 Responses **只认 function 工具**（#44 补，sub2api `cef18b4ad`，2026-08-22） | sub2api 给 DeepSeek API-key 账号的原生 Responses 出向套了 `apicompat.AdaptResponsesClientTools`：把 Codex 的 custom 工具、`tool_search`、`namespace` 壳**降成普通 function 工具**，回程按映射表还原（原为 Grok 写的，`f8445a241`）。开票时（v0.1.179）这条还没有。portage 透传路径不降——Codex 打 DeepSeek 的 Responses 格时 `apply_patch` 这类 custom 工具与 `namespace` 壳会原样到上游，被拒还是被忽略**未实测**；同协议无转换半边，v1.14 的摊平只在跨协议路径上生效，帮不上这一格。真接 DeepSeek 时按实测另裁，不预设改写 |
 
 ## 6. 主链路时序
 
