@@ -599,6 +599,20 @@ export interface MyModel {
   price_cache_write: number | null
 }
 
+/** 治理面的可路由清单一行（GET /routable-models，#57）：API Key 白名单的可选项，
+ *  与 /v1/models、/my/models 同一份谓词。 */
+export interface RoutableModel {
+  id: string
+  /** true = 纳管模型限定名（渠道名/模型名，直连），false = 接入点。 */
+  direct: boolean
+}
+
+/** 调用记录页筛选控件的取值域（GET /logs/facets 与 /my/logs/facets，#57）。 */
+export interface LogFacets {
+  /** 出现过的请求模型名，最近出现的在前；「(未记录模型)」那一档也在其中。 */
+  models: string[]
+}
+
 export interface SessionState {
   authenticated: boolean
   password_set: boolean

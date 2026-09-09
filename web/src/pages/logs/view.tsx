@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
-import type { CallLog, UsageRow, User } from '../../api'
+import type { CallLog, LogFacets, User } from '../../api'
 import {
   Card,
   CopyCode,
@@ -64,15 +64,6 @@ const ENDPOINT_OPTIONS: Option<string>[] = [
  * 这里说了算。
  */
 const LOG_PAGE = 10
-
-/**
- * 模型下拉的选项取最近多少天出现过的模型。
- *
- * 这一页没有天数开关：流水靠游标能一直往回翻，天数在这里没有意义（拆页前它是跟
- * 概览共用的那个开关，跟着走而已）。选项列表总得有个窗口，取放得最宽的那档——
- * 窗口越窄，越容易出现「想筛的那个模型不在列表里」。
- */
-const MODEL_OPTION_DAYS = 30
 
 function fmtMs(ms: number | null) {
   if (ms === null) return '—'
@@ -384,15 +375,10 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
   // 正在弹框里看的那一条（上游原文 v0.53、上游 request-id #81）。存整行而不是 id：翻页和刷新
   // 会把 rows 整块换掉，存 id 的话框还开着、内容却已经查无此行。
   const [detail, setDetail] = useState<CallLog | null>(null)
-  // 模型下拉的选项问的是「这段时间出现过哪些模型」，与排行页那份按维度聚合的数据
-  // 是两个问题，所以自己拉一次、固定按模型维度。
-  const models = useList(
-    () =>
-      api.get<{ rows: UsageRow[] | null }>(
-        `${mine ? '/my/usage' : '/usage'}?days=${MODEL_OPTION_DAYS}&by=model`,
-      ),
-    [],
-  )
+  // 模型下拉的选项问的是「出现过哪些模型」，与排行页那份按维度聚合的数据是两个
+  // 问题：取值域接口（#57）不带窗口——流水靠游标能一直往回翻，这一页没有天数开关，
+  // 选项也就不该有窗口，否则翻到老流水时「想筛的那个模型不在列表里」。
+  const facets = useList(() => api.get<LogFacets>(mine ? '/my/logs/facets' : '/logs/facets'), [])
   // 用户下拉的选项从用户列表来，不从流水聚合：人是配置不是流水，没烧过的用户也
   // 该筛得到（筛出来是空表，这本身就是答案）。用户侧不发这一请求——/users 是
   // 管理端接口，普通用户打过去只会收 403。
@@ -402,27 +388,15 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
   const shown = logs.rows
 
   // 模型下拉的选项。第一项是「不筛」——它是一个取值（空串），不是 placeholder，
-  // 所以得摆进列表里，否则选了别的之后没有路退回来。
-  //
-  // 选中的模型可能不在列表里：30 天窗口之外的老流水仍能翻到，翻到时那个模型早已
-  // 不在列表里，而 model 这个筛选条件还在生效。补一项回去并注明——不补的话触发器
-  // 显示的是「全部模型」，而表里明明还按它筛着。
+  // 所以得摆进列表里，否则选了别的之后没有路退回来。选中的模型一定在列表里：取值
+  // 域不带窗口，只能从这份列表里选出来（#57 之前这里有一条「补回选中项」的补丁）。
   const modelOptions = useMemo<Option<string>[]>(() => {
-    const seen = models.data?.rows ?? []
     const opts: Option<string>[] = [{ value: '', label: '全部模型' }]
-    if (model && !seen.some((r) => r.label === model)) {
-      opts.push({
-        value: model,
-        label: model,
-        hint: '这段时间没有',
-        icon: <ModelIcon model={model} size={16} />,
-      })
-    }
-    for (const r of seen) {
-      opts.push({ value: r.label, label: r.label, icon: <ModelIcon model={r.label} size={16} /> })
+    for (const m of facets.data?.models ?? []) {
+      opts.push({ value: m, label: m, icon: <ModelIcon model={m} size={16} /> })
     }
     return opts
-  }, [models.data, model])
+  }, [facets.data])
 
   const userOptions = useMemo<Option<string>[]>(() => {
     const opts: Option<string>[] = [{ value: '', label: '全部用户' }]

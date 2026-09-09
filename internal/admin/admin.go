@@ -146,6 +146,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 		// 我的观测面（#75）：本人流水/用量/配额与可用模型清单。归属焊死在 handler
 		// 的 WHERE 里，不收 user 参数——这四条给不出别人的账。
 		my.GET("/logs", h.myLogs)
+		my.GET("/logs/facets", h.myLogFacets)
 		my.GET("/usage", h.myUsage)
 		my.GET("/usage/buckets", h.myUsageBuckets)
 		my.GET("/quota", h.myQuota)
@@ -225,6 +226,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.DELETE("/access-points/:id", h.deleteAccessPoint)
 
 	adm.GET("/keys", h.listKeys)
+	// 白名单可选项（#57）：与 /v1/models 同一份可路由谓词，前端不再拿接入点 + 渠道
+	// 两张表自己拼近似。
+	adm.GET("/routable-models", h.routableModels)
 	cw.POST("/keys", h.createKey)
 	cw.PUT("/keys/:id", h.updateKey)
 	cw.DELETE("/keys/:id", h.deleteKey)
@@ -240,6 +244,7 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.POST("/import/preview", h.previewImport)
 
 	adm.GET("/logs", h.listLogs)
+	adm.GET("/logs/facets", h.logFacets)
 	adm.GET("/usage", h.usage)
 	adm.GET("/usage/buckets", h.usageBuckets)
 

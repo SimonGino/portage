@@ -1351,6 +1351,48 @@ const (
 // 三个维度一起动。
 const UnknownModelLabel = "(未记录模型)"
 
+// CallLogFacets 是调用记录页筛选控件的取值域（#57，架构评审卡 9）。
+//
+// 此前模型下拉拿 `/usage?days=30&by=model` 这个**聚合**接口硬当取值接口用：窗口
+// 之外的老流水翻得到、模型却不在列表里，前端只好再打一条「补回选中项」的补丁。
+// 取值域是它自己的问题——「出现过哪些模型」不带窗口、不带用量。
+type CallLogFacets struct {
+	// Models 是出现过的请求模型名，**最近出现的在前**（按最大 id 排，流水 id 即时间
+	// 序）。没解析到模型名那一档以 UnknownModelLabel 列出，与 UsageBy 的 model 维度
+	// 同一个哨兵——CallLogFilter.Model 认它。
+	Models []string `json:"models"`
+}
+
+// ListCallLogFacets 取筛选控件的取值域。forUser 非 0 只看归属这个用户的行（用户侧
+// 接口把它钉成本人，管理端传 0）。
+//
+// 全表 GROUP BY 不加窗口：单人网关的流水量级下这是毫秒级的事，而加窗口正是补丁的
+// 来处。
+func ListCallLogFacets(ctx context.Context, db Queryer, forUser int64) (CallLogFacets, error) {
+	where, args := ``, []any{UnknownModelLabel}
+	if forUser != 0 {
+		where, args = `WHERE user_id = ?`, append(args, forUser)
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT CASE WHEN model_requested <> '' THEN model_requested ELSE ? END AS label, MAX(id) AS last
+		FROM call_logs `+where+`
+		GROUP BY label ORDER BY last DESC`, args...)
+	if err != nil {
+		return CallLogFacets{}, err
+	}
+	defer rows.Close()
+	f := CallLogFacets{Models: []string{}}
+	for rows.Next() {
+		var label string
+		var last int64
+		if err := rows.Scan(&label, &last); err != nil {
+			return CallLogFacets{}, err
+		}
+		f.Models = append(f.Models, label)
+	}
+	return f, rows.Err()
+}
+
 // UsageBy 汇总一段时间的用量，按 dim 指定的维度聚合。时间范围由 r 定：默认是「近
 // r.Days 个自然日」（本地时区，见 windowStart），r 的两个端点都给时则是那个半开
 // 区间（口径层 v0.86，排行页点中节律带上某一格之后按那一格重算）。

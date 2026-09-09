@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
-import type { AccessPoint, ApiKey, Channel } from '../api'
+import type { ApiKey, RoutableModel } from '../api'
 import { Card, Confirm, CopyButton, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../ui'
 import { Chips } from '../fields'
 import type { Option } from '../fields'
@@ -8,11 +8,11 @@ import { ModelIcon } from '../icons'
 
 export default function Keys() {
   const keys = useList(() => api.get<ApiKey[] | null>('/keys'))
-  // 接入点与渠道都要拉：白名单里能写的是**客户端 model 字段那个字符串**，接入点名
-  // 和纳管模型限定名两种都算（口径层 v0.32）。手打很容易错一个字，而错了的表现是
-  // 那把 key 静默 403。
-  const aps = useList(() => api.get<AccessPoint[] | null>('/access-points'))
-  const channels = useList(() => api.get<Channel[] | null>('/channels'))
+  // 白名单里能写的是**客户端 model 字段那个字符串**，接入点名和纳管模型限定名两种
+  // 都算（口径层 v0.32）。手打很容易错一个字，而错了的表现是那把 key 静默 403。
+  // 可选项由服务端给（#57）：与 `GET /v1/models` 同一份可路由谓词——此前拿接入点 +
+  // 渠道两张表自己拼，拼出来的是它的不过滤近似，会列出打了必然 503 的名字。
+  const models = useList(() => api.get<{ models: RoutableModel[] | null }>('/routable-models'))
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ApiKey | null>(null)
   const [fresh, setFresh] = useState('')
@@ -30,29 +30,17 @@ export default function Keys() {
 
   if (keys.loading && keys.data === null) return <div className="boot">加载中…</div>
   const list = keys.data ?? []
-  // 可选项 = 未停用的接入点名 + 可用纳管模型的限定名，与 `GET /v1/models` 列的
-  // 那份清单同构（口径层 v0.32：两者都列、都可路由）。
-  const suggestions: Option<string>[] = [
-    ...(aps.data ?? [])
-      .filter((a) => !a.disabled)
-      .map((a) => ({ value: a.model, label: a.model, icon: <ModelIcon model={a.model} size={16} /> })),
-    ...(channels.data ?? [])
-      .filter((ch) => !ch.disabled)
-      .flatMap((ch) =>
-        (ch.models ?? [])
-          .filter((m) => !m.disabled)
-          .map((m) => {
-            const q = `${ch.name}/${m.upstream_model}`
-            return { value: q, label: q, icon: <ModelIcon model={q} size={16} /> }
-          }),
-      ),
-  ]
+  const suggestions: Option<string>[] = (models.data?.models ?? []).map((m) => ({
+    value: m.id,
+    label: m.id,
+    icon: <ModelIcon model={m.id} size={16} />,
+  }))
 
   return (
     <>
-      {/* 接入点那一路的报错也要露出来：白名单的可选项全靠它，
-          悄悄空掉的话看起来像「一个接入点都没建」。 */}
-      <ErrorBar message={keys.error || aps.error || channels.error} />
+      {/* 可路由清单那一路的报错也要露出来：白名单的可选项全靠它，
+          悄悄空掉的话看起来像「一个模型都没配」。 */}
+      <ErrorBar message={keys.error || models.error} />
       <Card
         title="API Key"
         action={

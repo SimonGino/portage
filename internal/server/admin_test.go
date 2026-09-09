@@ -775,3 +775,66 @@ func TestDeclarativeModeHidesUserSystem(t *testing.T) {
 		t.Errorf("声明形态 session 探测应 200，得到 %d", status)
 	}
 }
+
+// ── 筛选取值域与可路由清单（#57） ─────────────────────────────────────────
+
+// 白名单可选项走 /routable-models：与 /v1/models 同一份谓词——种下的是一个接入点，
+// 清单里就该有它且标 direct=false。
+func TestAdminRoutableModelsListsWhatV1ModelsLists(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "claude-direct", "anthropic", up.URL, "claude-3-5-sonnet", "sk-up")
+	g := gatewaytest.Start(t, db)
+
+	a := g.LoggedIn(t)
+	var out struct {
+		Models []struct {
+			ID     string `json:"id"`
+			Direct bool   `json:"direct"`
+		} `json:"models"`
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/routable-models", "", &out)
+	found := false
+	for _, m := range out.Models {
+		if m.ID == "claude-direct" {
+			found = true
+			if m.Direct {
+				t.Errorf("接入点被标成了直连：%+v", m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("可路由清单里没有种下的接入点：%+v", out)
+	}
+}
+
+// 流水筛选的模型取值域：中继过一次之后就该出现，不带时间窗口；用户侧那条只看本人，
+// 管理员那次调用对普通用户不可见。
+func TestAdminLogFacetsReflectRelayedCalls(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "claude-direct", "anthropic", up.URL, "claude-3-5-sonnet", "sk-up")
+	g := gatewaytest.Start(t, db)
+
+	g.Post(t, "/v1/messages", `{"model":"claude-direct","messages":[]}`, nil)
+	g.LastCallRow(t) // 等落库
+
+	a := g.LoggedIn(t)
+	var facets struct {
+		Models []string `json:"models"`
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/logs/facets", "", &facets)
+	if len(facets.Models) != 1 || facets.Models[0] != "claude-direct" {
+		t.Fatalf("管理端取值域 = %v，想要 [claude-direct]", facets.Models)
+	}
+
+	u, _ := g.UserSession(t, "facets@example.com")
+	facets.Models = nil
+	u.JSONInto(t, http.MethodGet, "/panel/api/my/logs/facets", "", &facets)
+	if facets.Models == nil || len(facets.Models) != 0 {
+		t.Fatalf("用户侧取值域 = %#v，想要空数组（那次调用不归属这个用户）", facets.Models)
+	}
+	if st, body := u.Do(t, http.MethodGet, "/panel/api/logs/facets", ""); st != http.StatusForbidden {
+		t.Fatalf("普通用户打管理端取值域 = %d %s，想要 403", st, body)
+	}
+}

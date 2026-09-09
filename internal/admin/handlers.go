@@ -1120,6 +1120,40 @@ func (h *Handler) myModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"models": out})
 }
 
+// routableModels 是治理面的可路由清单（#57，架构评审卡 9）：API Key 白名单的可选项。
+//
+// 此前 Keys.tsx 拿 /access-points + /channels 自己拼——那是 store.ListExposedModels
+// 的**不过滤**近似：渠道没凭证、协议集与渠道无交集的名字照样列出来，而白名单里放一个
+// 打了必然 503 的名字等于给自己挖坑。与 /v1/models、/my/models 同一份谓词。
+func (h *Handler) routableModels(c *gin.Context) {
+	models, err := store.ListExposedModels(c.Request.Context(), h.db)
+	if err != nil {
+		h.log.Error("列可路由模型失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	out := make([]gin.H, 0, len(models))
+	for _, m := range models {
+		out = append(out, gin.H{"id": m.ID, "direct": m.Direct})
+	}
+	c.JSON(http.StatusOK, gin.H{"models": out})
+}
+
+// logFacets 是调用记录页筛选控件的取值域（#57）。管理端看全部，用户侧（myLogFacets）
+// 归属焊死在 WHERE 里——与 listLogs / myLogs 同一对。
+func (h *Handler) logFacets(c *gin.Context)   { h.writeLogFacets(c, 0) }
+func (h *Handler) myLogFacets(c *gin.Context) { h.writeLogFacets(c, sessionUserFrom(c).ID) }
+
+func (h *Handler) writeLogFacets(c *gin.Context, forUser int64) {
+	f, err := store.ListCallLogFacets(c.Request.Context(), h.db, forUser)
+	if err != nil {
+		h.log.Error("读流水筛选取值失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	c.JSON(http.StatusOK, f)
+}
+
 // updateProfile 改本人展示名（#76 账号页）。只有这一个字段：邮箱是登录标识不可改，
 // 密码另有专门接口。
 func (h *Handler) updateProfile(c *gin.Context) {
