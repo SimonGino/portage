@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -431,6 +432,101 @@ func TestDecodeFullBodyReasoningTextIsBody(t *testing.T) {
 		if got[i].Text != w.text || got[i].Channel != w.channel || got[i].Index != 0 {
 			t.Errorf("第 %d 条 = %q/%q/#%d，期望 %q/%q/#0", i, got[i].Text, got[i].Channel, got[i].Index, w.text, w.channel)
 		}
+	}
+}
+
+// TestDecodeStreamDoneOnlyContent（#108）：只在 done 帧带正文 / 入参、不发 delta 的
+// 上游。此前 output_text.done 与 function_call_arguments.done 被当「第二份拷贝」跳过，
+// 正文与入参整段丢。构造样本，见 testdata/fixtures/README.md。
+func TestDecodeStreamDoneOnlyContent(t *testing.T) {
+	t.Run("text", func(t *testing.T) {
+		c := NewCodec()
+		events := collectWith(t, c, loadFixture(t, "responses-stream-done-only-text", "response.raw"))
+		var texts []string
+		for _, ev := range events {
+			if ev.Type == protocol.EvTextDelta {
+				texts = append(texts, ev.Text)
+			}
+		}
+		if len(texts) != 1 || texts[0] != "pong" {
+			t.Errorf("正文 = %q，期望恰好一条 \"pong\"", texts)
+		}
+		if drops := c.ResponseDrops().Names(); len(drops) != 0 {
+			t.Errorf("ResponseDrops = %v，期望空", drops)
+		}
+	})
+	t.Run("tool", func(t *testing.T) {
+		c := NewCodec()
+		events := collectWith(t, c, loadFixture(t, "responses-stream-done-only-tool", "response.raw"))
+		var seq []protocol.EventType
+		var args string
+		for _, ev := range events {
+			switch ev.Type {
+			case protocol.EvToolCallStart, protocol.EvToolCallEnd:
+				seq = append(seq, ev.Type)
+			case protocol.EvToolArgsDelta:
+				seq = append(seq, ev.Type)
+				args += ev.Text
+			}
+		}
+		want := []protocol.EventType{protocol.EvToolCallStart, protocol.EvToolArgsDelta, protocol.EvToolCallEnd}
+		if !slices.Equal(seq, want) {
+			t.Errorf("工具事件序 = %v，期望 Start → ArgsDelta → End", seq)
+		}
+		if args != `{"city":"上海"}` {
+			t.Errorf("入参 = %q", args)
+		}
+		if last := events[len(events)-1]; last.StopReason != "tool_calls" {
+			t.Errorf("停因 = %q，want tool_calls", last.StopReason)
+		}
+	})
+}
+
+// TestDecodeStreamDoneReconcilesWithDeltas（#108）：delta 与 done 都来时按账对，只补
+// done 比已放出多的后缀；前缀对不上、或 index 对不上任何一段 delta 时一个字不补、
+// 登记 event:名字——放出去的收不回来，重复一段比少一段更糟。
+func TestDecodeStreamDoneReconcilesWithDeltas(t *testing.T) {
+	raw := sseFrames(
+		`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+		// 正文：delta 只放了一半，done 补后缀。
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"hel"}`,
+		`data: {"type":"response.output_text.done","output_index":0,"content_index":0,"text":"hello"}`,
+		// 第二段：done 与 delta 对不上。
+		`data: {"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"abc"}`,
+		`data: {"type":"response.output_text.done","output_index":1,"content_index":0,"text":"xyz"}`,
+		// index 对不上任何一段 delta 的 done。
+		`data: {"type":"response.output_text.done","output_index":1,"content_index":5,"text":"ghost"}`,
+		// 入参：delta 放一半，done 补后缀；第二路对不上。
+		`data: {"type":"response.output_item.added","output_index":2,"item":{"id":"fc_1","type":"function_call","call_id":"c1","name":"f"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":2,"delta":"{\"a\":"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":2,"arguments":"{\"a\":1}"}`,
+		`data: {"type":"response.output_item.done","output_index":2,"item":{"id":"fc_1","type":"function_call","call_id":"c1","name":"f"}}`,
+		`data: {"type":"response.output_item.added","output_index":3,"item":{"id":"fc_2","type":"function_call","call_id":"c2","name":"f"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":3,"delta":"{\"b\":1}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":3,"arguments":"{\"b\":2}"}`,
+		`data: {"type":"response.output_item.done","output_index":3,"item":{"id":"fc_2","type":"function_call","call_id":"c2","name":"f"}}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+	)
+	c := NewCodec()
+	text := map[int]string{}
+	args := map[int]string{}
+	for _, ev := range collectWith(t, c, raw) {
+		switch ev.Type {
+		case protocol.EvTextDelta:
+			text[ev.Index] += ev.Text
+		case protocol.EvToolArgsDelta:
+			args[ev.Index] += ev.Text
+		}
+	}
+	if text[0] != "hello" || text[1] != "abc" {
+		t.Errorf("正文 = %v，期望 #0 \"hello\"（补后缀）、#1 \"abc\"（对不上不补、ghost 不补）", text)
+	}
+	if args[2] != `{"a":1}` || args[3] != `{"b":1}` {
+		t.Errorf("入参 = %v，期望 #2 补后缀、#3 保持 delta 那版", args)
+	}
+	drops := c.ResponseDrops().Names()
+	if !slices.Equal(drops, []string{"event:response.output_text.done", "event:response.function_call_arguments.done"}) {
+		t.Errorf("ResponseDrops = %v", drops)
 	}
 }
 

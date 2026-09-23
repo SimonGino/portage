@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
 )
@@ -39,14 +40,17 @@ import (
 // respFrame 是 SSE 帧的公共形态。Responses 的每种事件只用其中几个字段，合成一个
 // struct 解是因为帧类型判别在 `type` 上，先解出来才知道该看哪几个字段。
 type respFrame struct {
-	Type        string          `json:"type"`
-	OutputIndex int             `json:"output_index"`
-	Delta       string          `json:"delta"`
-	Input       string          `json:"input"`
-	Arguments   string          `json:"arguments"`
-	Item        *respItem       `json:"item"`
-	Response    *respPayload    `json:"response"`
-	Error       *respErrorField `json:"error"`
+	Type         string `json:"type"`
+	OutputIndex  int    `json:"output_index"`
+	ContentIndex int    `json:"content_index"`
+	Delta        string `json:"delta"`
+	// Text 是 output_text.done 带的这一段全文。
+	Text      string          `json:"text"`
+	Input     string          `json:"input"`
+	Arguments string          `json:"arguments"`
+	Item      *respItem       `json:"item"`
+	Response  *respPayload    `json:"response"`
+	Error     *respErrorField `json:"error"`
 }
 
 // respItem 是 output item。工具项的入参字段名随类型变：function_call 用 arguments，
@@ -199,10 +203,24 @@ type respStreamState struct {
 	// 会把前一个连同它攒了一半的分片一起覆盖掉，而前者的 flushCustom 又因 index
 	// 对不上直接返回——客户端看到的是一个只有 Start+End、零入参的调用，无声。
 	pending map[int]*customPending
+	// texts 记每段正文已放出的内容，按 (output_index, content_index) 分账；fnArgs 记
+	// 每路 function_call 已放出的入参，按 output_index 分账，键在 output_item.added
+	// 时开（没开过的 index 不补，补了也没有 Start 兜着）。两本账都只为 done 帧服务：
+	// done 带全文，只补比账上多出的后缀，见 doneSuffix（#108）。
+	texts  map[textSlot]*strings.Builder
+	fnArgs map[int]*strings.Builder
+	// sawTextDelta：这条流来过 output_text.delta。来过之后，index 对不上任何一段的
+	// done 说不清补的是哪段，不补（同 sub2api `1ed36679b`：重复一段客户端已有的正文
+	// 比少一段更糟）。纯 done 的上游一条 delta 都没有，不受这一闸影响。
+	sawTextDelta bool
+
 	// pendingOrder 记 index 的首次出现次序。收尾时按它冲缓冲，不按 index 数值排：
 	// index 不保证从 0 起、也不保证连续（§5 坑清单第一条）。
 	pendingOrder []int
 }
+
+// textSlot 是一段正文的身份：output item 的位置 + item 内部件的位置。
+type textSlot struct{ output, content int }
 
 // customPending 攒一个 custom_tool_call 的入参。
 type customPending struct {
@@ -252,16 +270,16 @@ var knownRespEvents = map[string]bool{
 	"response.queued":      true,
 
 	// 同一段内容的第二份拷贝（done 帧带全文，delta 已经逐片放过了），以及部件开合。
+	// output_text.done 与 function_call_arguments.done 不在这里：有的上游只在 done
+	// 帧带内容（#108），它们进 switch 按账补后缀，见 doneSuffix。
 	"response.content_part.added":           true,
 	"response.content_part.done":            true,
-	"response.output_text.done":             true,
 	"response.output_text.annotation.added": true,
 	"response.refusal.done":                 true,
 	"response.reasoning_summary_part.added": true,
 	"response.reasoning_summary_part.done":  true,
 	"response.reasoning_summary_text.done":  true,
 	"response.reasoning_text.done":          true,
-	"response.function_call_arguments.done": true,
 
 	// 服务端工具项的**子事件**：item 本身已经在 output_item.added 上登记过一次，
 	// 子事件再登记只是把同一件事说四遍。
@@ -332,8 +350,25 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 
 	case "response.output_text.delta":
 		if f.Delta != "" {
-			st.start(out)
-			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
+			st.sawTextDelta = true
+			st.emitText(textSlot{f.OutputIndex, f.ContentIndex}, f.Delta, out)
+		}
+
+	case "response.output_text.done":
+		// 正常上游这里是空转（delta 已放全，后缀为空）；只在 done 带正文的上游靠它
+		// 补齐（#108）。
+		part := textSlot{f.OutputIndex, f.ContentIndex}
+		sent := st.texts[part]
+		if sent == nil && st.sawTextDelta {
+			if f.Text != "" {
+				st.noteDrop("event:" + f.Type)
+			}
+			return
+		}
+		if suffix, ok := doneSuffix(sent, f.Text); !ok {
+			st.noteDrop("event:" + f.Type)
+		} else if suffix != "" {
+			st.emitText(part, suffix, out)
 		}
 
 	case "response.refusal.delta":
@@ -343,7 +378,8 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		// litellm types/llms/openai.py 同形）。
 		//
 		// 只认 .delta 不认 .done：done 帧带的是这一段的全文（字段名 refusal），
-		// 两个都收会把拒答发两遍——与 output_text 同一条理由。
+		// 两个都收会把拒答发两遍。（output_text.done 按账补后缀是 #108 的事；只在
+		// done 帧带拒答的上游还没见过，这里不照搬。）
 		if f.Delta != "" {
 			st.start(out)
 			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
@@ -370,7 +406,22 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		// function 形态的入参按契约就是 JSON 字符串，分片原样转发，上游的节奏保住。
 		if f.Delta != "" {
 			st.start(out)
+			if b := st.fnArgs[f.OutputIndex]; b != nil {
+				b.WriteString(f.Delta)
+			}
 			out <- protocol.Event{Type: protocol.EvToolArgsDelta, Index: f.OutputIndex, Text: f.Delta}
+		}
+
+	case "response.function_call_arguments.done":
+		sent := st.fnArgs[f.OutputIndex]
+		if sent == nil {
+			return
+		}
+		if suffix, ok := doneSuffix(sent, f.Arguments); !ok {
+			st.noteDrop("event:" + f.Type)
+		} else if suffix != "" {
+			sent.WriteString(suffix)
+			out <- protocol.Event{Type: protocol.EvToolArgsDelta, Index: f.OutputIndex, Text: suffix}
 		}
 
 	case "response.custom_tool_call_input.delta":
@@ -418,6 +469,40 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 	}
 }
 
+// emitText 放出一段正文并记账。
+func (st *respStreamState) emitText(part textSlot, text string, out chan<- protocol.Event) {
+	st.start(out)
+	if st.texts == nil {
+		st.texts = map[textSlot]*strings.Builder{}
+	}
+	b := st.texts[part]
+	if b == nil {
+		b = &strings.Builder{}
+		st.texts[part] = b
+	}
+	b.WriteString(text)
+	out <- protocol.Event{Type: protocol.EvTextDelta, Text: text, Index: part.output}
+}
+
+// doneSuffix 拿 done 帧的全文对账：返回账上没放过的后缀。
+//
+// 放出去的分片收不回来，所以前缀对不上（ok=false）时一个字也不补，由调用方登记
+// `event:名字` 留痕——客户端拿到的是 delta 那一版，done 那一版丢了。done 全文为空
+// 视为上游没带，不算对不上。出处 sub2api `6271c517d`（入参）/ `1ed36679b`（正文）。
+func doneSuffix(sent *strings.Builder, full string) (string, bool) {
+	var prefix string
+	if sent != nil {
+		prefix = sent.String()
+	}
+	if full == "" {
+		return "", true
+	}
+	if !strings.HasPrefix(full, prefix) {
+		return "", false
+	}
+	return full[len(prefix):], true
+}
+
 // start 放出 EvMessageStart，幂等。
 func (st *respStreamState) start(out chan<- protocol.Event) {
 	if st.started {
@@ -438,6 +523,10 @@ func (st *respStreamState) itemAdded(f *respFrame, out chan<- protocol.Event) {
 	case "function_call":
 		st.start(out)
 		st.sawTool = true
+		if st.fnArgs == nil {
+			st.fnArgs = map[int]*strings.Builder{}
+		}
+		st.fnArgs[f.OutputIndex] = &strings.Builder{}
 		out <- protocol.Event{
 			Type: protocol.EvToolCallStart, Index: f.OutputIndex,
 			// call_id 而不是 item id：canonical 的 ToolID 要与工具结果回带时用的
