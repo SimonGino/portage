@@ -311,9 +311,9 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 		st.started = true
 		out <- protocol.Event{Type: protocol.EvMessageStart, ID: st.id, Model: st.model}
 	}
-	st.flushTools(out)
 	stop := st.stop
 	truncated := stop == ""
+	st.flushTools(out, truncated)
 	if truncated {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
@@ -334,7 +334,10 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 // 为什么按 seq 而不按 index 排：index 是上游给的序号，不保证从 0 连号（跳号、
 // 从 1 起都见过）。按首次出现次序排能保证「先说的先出」，这与客户端看到的顺序一致；
 // 而 canonical 事件的 Index 字段仍原样携带上游的 index，不重编号。
-func (st *streamState) flushTools(out chan<- protocol.Event) {
+//
+// truncated：流没等到 finish_reason 就断了，这些 End 是替上游补的，没人担保入参写完
+// ——End 上带 Truncated 让出口别把它当成品（#106，openairesponses 的 flushTool）。
+func (st *streamState) flushTools(out chan<- protocol.Event, truncated bool) {
 	if len(st.tools) == 0 {
 		return
 	}
@@ -358,7 +361,7 @@ func (st *streamState) flushTools(out chan<- protocol.Event) {
 		for _, frag := range buf.args {
 			out <- protocol.Event{Type: protocol.EvToolArgsDelta, Index: idx, Text: frag}
 		}
-		out <- protocol.Event{Type: protocol.EvToolCallEnd, Index: idx}
+		out <- protocol.Event{Type: protocol.EvToolCallEnd, Index: idx, Truncated: truncated}
 	}
 }
 

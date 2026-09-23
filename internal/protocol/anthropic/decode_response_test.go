@@ -469,13 +469,15 @@ func TestDecodeFullBodyRejectsNonJSON(t *testing.T) {
 
 func TestCanonicalStopReasonMapping(t *testing.T) {
 	cases := map[string]string{
-		"end_turn":      "stop",
-		"tool_use":      "tool_calls",
-		"max_tokens":    "length",
-		"refusal":       "content_filter",
-		"stop_sequence": "stop",
-		"":              "stop",
-		"某个新词":          "stop", // 不把上游的新词直接捅给客户端
+		"end_turn":                      "stop",
+		"tool_use":                      "tool_calls",
+		"max_tokens":                    "length",
+		"pause_turn":                    "length", // #116：上游没写完，不是正常收尾
+		"model_context_window_exceeded": "length",
+		"refusal":                       "content_filter",
+		"stop_sequence":                 "stop",
+		"":                              "stop",
+		"某个新词":                          "stop", // 不把上游的新词直接捅给客户端
 	}
 	for in, want := range cases {
 		if got := canonicalStopReason(in); got != want {

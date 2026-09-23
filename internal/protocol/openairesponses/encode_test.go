@@ -535,16 +535,73 @@ func TestEncodeStreamFlushesTruncatedToolCall(t *testing.T) {
 		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_x", ToolName: "exec"},
 		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{"input":"ls`},
 	)
-	var sawItem bool
+	// 半截调用照样放出去（看得见意图），但以 incomplete 收口、不发 input.done，
+	// 整条响应也不许报 completed（#106：Codex 会拿残缺入参去执行工具）。
+	assertEventOrder(t, frames,
+		"response.created", "response.in_progress",
+		"response.output_item.added", "response.custom_tool_call_input.delta",
+		"response.output_item.done", "response.incomplete")
+	if st := frames[4].data["item"].(map[string]any)["status"]; st != "incomplete" {
+		t.Errorf("半截调用的 item status = %v，期望 incomplete", st)
+	}
+	resp := frames[5].data["response"].(map[string]any)
+	if st := resp["output"].([]any)[0].(map[string]any)["status"]; st != "incomplete" {
+		t.Errorf("终帧 output 里同一 item 的 status = %v，期望 incomplete", st)
+	}
+}
+
+// #106：解码侧兜底收尾（Truncated）的普通 turn 发 response.incomplete，不是 completed；
+// 已经收尾的调用照常 completed，只有替上游补的 End（CC 断流）才标 incomplete。
+func TestEncodeTruncatedTurnIsIncomplete(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{"path":"a"}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 1, Text: `{"pa`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 1, Truncated: true},
+		protocol.Event{Type: protocol.EvDone, StopReason: "stop", Truncated: true},
+	)
+	status := map[string]any{}
+	argsDone := 0
 	for _, f := range frames {
-		if f.event == "response.output_item.done" {
-			sawItem = true
+		switch f.event {
+		case "response.output_item.done":
+			item := f.data["item"].(map[string]any)
+			status[item["call_id"].(string)] = item["status"]
+		case "response.function_call_arguments.done":
+			argsDone++
 		}
 	}
-	if !sawItem {
-		t.Fatalf("半截的工具调用被吞了: %v", eventNames(frames))
+	if status["call_a"] != "completed" || status["call_b"] != "incomplete" {
+		t.Errorf("item status = %v，期望 call_a completed / call_b incomplete", status)
 	}
-	if frames[len(frames)-1].event != "response.completed" {
-		t.Errorf("流没有收尾: %v", eventNames(frames))
+	if argsDone != 1 {
+		t.Errorf("arguments.done 发了 %d 次，半截那一路不该发", argsDone)
+	}
+	last := frames[len(frames)-1]
+	if last.event != "response.incomplete" {
+		t.Fatalf("终帧 = %s，期望 response.incomplete", last.event)
+	}
+	if d := last.data["response"].(map[string]any)["incomplete_details"].(map[string]any); d["reason"] != "max_output_tokens" {
+		t.Errorf("incomplete_details = %v", d)
+	}
+
+	// 非流式同一台状态机，同一个判断。
+	body, err := NewCodec().EncodeFullBody([]protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+		{Type: protocol.EvTextDelta, Text: "半句"},
+		{Type: protocol.EvDone, StopReason: "stop", Truncated: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var full map[string]any
+	if err := json.Unmarshal(body, &full); err != nil {
+		t.Fatal(err)
+	}
+	if full["status"] != "incomplete" {
+		t.Errorf("非流式 status = %v，期望 incomplete", full["status"])
 	}
 }

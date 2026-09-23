@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "source": "构造样本（非转录）：#108。照 golden/responses-stream-text 的帧序与键集手写，**删掉 output_text.delta**，正文只在 output_text.done 的 text 上——sub2api `1ed36679b` 记的第三方 Responses 上游形态。没拿到这类上游的真实转录。",
+  "synthetic": true
+}
