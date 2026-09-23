@@ -103,9 +103,10 @@ func TestA2RRequestReachesUpstreamAsResponses(t *testing.T) {
 		}
 	}
 	// reasoning 反过来**必须有**：样本带 output_config.effort=high，档位同域直传
-	// （口径层 v0.65）。thinking 仍在上面的禁发表里——写它等于替客户端开思考。
-	if got := string(keys["reasoning"]); got != `{"effort":"high"}` {
-		t.Errorf("reasoning = %s，期望 {\"effort\":\"high\"}（档位直传）", got)
+	// （口径层 v0.65），且客户端要求了思考就补 summary:auto（v1.26，#117）。thinking
+	// 仍在上面的禁发表里——写它等于替客户端开思考。
+	if got := string(keys["reasoning"]); got != `{"effort":"high","summary":"auto"}` {
+		t.Errorf("reasoning = %s，期望 {\"effort\":\"high\",\"summary\":\"auto\"}（档位直传 + 补摘要）", got)
 	}
 }
 

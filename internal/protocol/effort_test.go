@@ -116,7 +116,8 @@ func effortCodecs() []effortCodec {
 				return encodeWith(t, openairesponses.NewCodec(), req)
 			},
 			effortKey: "reasoning",
-			want:      func(effort string) string { return `{"effort":"` + effort + `"}` },
+			// 要求了思考就补 summary:auto（口径层 v1.26，#117）；none 不补见 TestResponsesSummaryFollowsEffort。
+			want: func(effort string) string { return `{"effort":"` + effort + `","summary":"auto"}` },
 		},
 	}
 }
@@ -314,4 +315,27 @@ func hasDrop(dropped protocol.Drops, want string) bool {
 		}
 	}
 	return false
+}
+
+// R 出口的 summary:auto 只跟着「客户端要求了思考」走（口径层 v1.26，#117）：CC→R 与
+// A→R 同规；effort 为 none 只写档位不补摘要，没有 effort 则 reasoning 整个不写
+// （后者见 TestEffortAbsentAddsNothing）。
+func TestResponsesSummaryFollowsEffort(t *testing.T) {
+	for _, in := range effortCodecs() {
+		if in.name == "openairesponses" {
+			continue
+		}
+		for _, tc := range []struct{ effort, want string }{
+			{"high", `{"effort":"high","summary":"auto"}`},
+			{"none", `{"effort":"none"}`},
+		} {
+			t.Run(in.name+"/"+tc.effort, func(t *testing.T) {
+				req := in.decode(t, in.req(tc.effort))
+				keys, _ := encodeWith(t, openairesponses.NewCodec(), req)
+				if got := string(keys["reasoning"]); got != tc.want {
+					t.Errorf("reasoning = %s，期望 %s", got, tc.want)
+				}
+			})
+		}
+	}
 }
