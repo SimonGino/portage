@@ -213,12 +213,16 @@ func TestDecodeRequestParksResponsesOnlyFieldsInExtras(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{
-		"reasoning", "store", "include", "prompt_cache_key",
+		"reasoning", "store", "include",
 		"client_metadata", "text", "parallel_tool_calls",
 	} {
 		if _, ok := req.Extras[key]; !ok {
 			t.Errorf("顶层 %s 没进 Extras", key)
 		}
+	}
+	// prompt_cache_key 例外：提成一等字段直传（口径层 v1.25 ①），不留在 Extras。
+	if _, ok := req.Extras["prompt_cache_key"]; ok || req.PromptCacheKey == "" {
+		t.Errorf("prompt_cache_key 没提成一等字段: field=%q inExtras=%v", req.PromptCacheKey, ok)
 	}
 }
 

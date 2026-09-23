@@ -176,7 +176,7 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 	// reasoning_effort 就以它开头，按子串查会把档位直传误判成泄漏（口径层 v0.65）。
 	for _, forbidden := range []string{
 		"input_text", "custom_tool_call", "additional_tools",
-		"encrypted_content", "prompt_cache_key", "client_metadata", `"reasoning":`,
+		"encrypted_content", "client_metadata", `"reasoning":`,
 	} {
 		if strings.Contains(string(req.Body), forbidden) {
 			t.Errorf("Responses 侧字段 %q 漏进了 CC 请求体", forbidden)
@@ -189,6 +189,10 @@ func TestResponsesRequestReachesUpstreamAsChatCompletions(t *testing.T) {
 	}
 	if got := string(sentKeys["reasoning_effort"]); got != `"high"` {
 		t.Errorf("reasoning_effort = %s，期望 \"high\"（档位直传）", got)
+	}
+	// 会话缓存键同名同义，原值直传（口径层 v1.25 ①）。
+	if got := string(sentKeys["prompt_cache_key"]); got != `"cache-key-1"` {
+		t.Errorf("prompt_cache_key = %s，期望 \"cache-key-1\"（原值直传）", got)
 	}
 }
 

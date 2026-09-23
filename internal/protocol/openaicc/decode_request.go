@@ -100,6 +100,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	}
 
 	req.Extras = collectExtras(root, topLevelKnown)
+	req.PromptCacheKey = protocol.LiftPromptCacheKey(req.Extras)
 	c.includeUsage = wantsUsage(req.Extras)
 	return req, nil
 }

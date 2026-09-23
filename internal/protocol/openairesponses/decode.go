@@ -22,7 +22,7 @@ import (
 //
 // 不在这张表里的顶层键一律进 Request.Extras：reasoning / store / include /
 // prompt_cache_key / client_metadata / text / parallel_tool_calls 都靠这条通用规则
-// 接住，而不是逐个列举。Codex 每升一版就可能多发一个字段，白名单式解析会把它们
+// 接住（reasoning.effort 与 prompt_cache_key 随后从 Extras 提成一等字段），而不是逐个列举。Codex 每升一版就可能多发一个字段，白名单式解析会把它们
 // 静默吃掉。
 var topLevelKnown = map[string]bool{
 	"model": true, "stream": true, "max_output_tokens": true,
@@ -112,6 +112,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 	// 同 anthropic 侧：思考档位提成一等字段，Responses 侧它在 reasoning.effort。
 	// reasoning 里剩下的 summary 之类留在 Extras，出口按思考参数登记后丢。
 	req.Effort = protocol.LiftNestedEffort(req.Extras, "reasoning")
+	req.PromptCacheKey = protocol.LiftPromptCacheKey(req.Extras)
 
 	if c.compaction {
 		rewriteAsSummarizer(req)

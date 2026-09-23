@@ -156,6 +156,11 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 			drop(DropVendorRequest)
 		}
 	}
+	// prompt_cache_key 提成一等字段之后不在 Extras 里了，但 Anthropic 照样不认它：
+	// 按提走之前的档（vendor_request）登记后丢（口径层 v1.25 ①）。
+	if req.PromptCacheKey != "" {
+		drop(DropVendorRequest)
+	}
 
 	body, err := json.Marshal(out)
 	if err != nil {

@@ -118,6 +118,10 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	if req.Effort != "" {
 		out["reasoning"] = map[string]any{"effort": req.Effort}
 	}
+	// 会话缓存键原值直传（口径层 v1.25 ①）：CC 与 Responses 同名同义。
+	if req.PromptCacheKey != "" {
+		out["prompt_cache_key"] = req.PromptCacheKey
+	}
 
 	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致），
 	// 且**按档分类**（分档规则在 protocol.ClassifyExtrasKey，三个出口共用一份）。

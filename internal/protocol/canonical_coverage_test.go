@@ -127,7 +127,7 @@ var coverage = map[string]disposition{
 	"store":                      dExtras,
 	"include":                    dExtras,
 	"include[]":                  dExtras,
-	"prompt_cache_key":           dExtras,
+	"prompt_cache_key":           dField, // Request.PromptCacheKey（口径层 v1.25 ①）
 	"reasoning":                  dExtras,
 	"reasoning.effort":           dExtras,
 	"reasoning.context":          dExtras,
