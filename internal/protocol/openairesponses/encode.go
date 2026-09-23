@@ -131,7 +131,7 @@ type streamEncoder struct {
 	usage protocol.Usage
 	stop  string
 	// truncated 记 EvDone 是不是解码侧兜底合成的（上游没声明 stop reason 就断了）。
-	// 只有合成模式读它。
+	// 合成模式与普通收尾（#106）都读它，判据收在 cutShort。
 	truncated  bool
 	finished   bool
 	sawErrored bool
@@ -235,7 +235,9 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return e.bufferTool(ev)
 
 	case protocol.EvToolCallEnd:
-		return e.flushTool(ev.Index)
+		// End 带 Truncated 是解码侧在断流收尾时替上游补的（CC 没有逐条终止符，
+		// openaicc.flushTools），这一路入参没人担保写完了。
+		return e.flushTool(ev.Index, ev.Truncated)
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
@@ -284,7 +286,11 @@ func (e *streamEncoder) bufferTool(ev protocol.Event) error {
 // 而 JSON 字符串的转义没法按分片增量解。代价是丢掉了上游的分片节奏，但这条路上
 // 本来就没有节奏可丢：CC 流里没有逐条工具终止符，解码侧已经把分片攒到流末尾一次性
 // 冲出（§5 坑清单）。
-func (e *streamEncoder) flushTool(index int) error {
+//
+// incomplete：这一路没等到上游收尾（断流，#106）。照 opencodex 的 failCurrentToolCall：
+// 不发 `*_arguments.done` / `*_input.done`，item 以 `status:"incomplete"` 收口——半截
+// 入参当成品放出去，Codex 会拿残缺 JSON 去执行工具。
+func (e *streamEncoder) flushTool(index int, incomplete bool) error {
 	pending := e.pending[index]
 	if pending == nil {
 		return nil
@@ -344,15 +350,19 @@ func (e *streamEncoder) flushTool(index int) error {
 			return err
 		}
 	}
-	if err := e.frame(doneEvent, withNamespace(map[string]any{
-		"type": doneEvent, "item_id": itemID, "output_index": e.outputIndex,
-		"call_id": pending.id, "name": name, argsField: args,
-	})); err != nil {
-		return err
+	status := "incomplete"
+	if !incomplete {
+		status = "completed"
+		if err := e.frame(doneEvent, withNamespace(map[string]any{
+			"type": doneEvent, "item_id": itemID, "output_index": e.outputIndex,
+			"call_id": pending.id, "name": name, argsField: args,
+		})); err != nil {
+			return err
+		}
 	}
 
 	final := withNamespace(map[string]any{
-		"id": itemID, "type": itemType, "status": "completed",
+		"id": itemID, "type": itemType, "status": status,
 		"call_id": pending.id, "name": name, argsField: args,
 	})
 	if err := e.frame("response.output_item.done", map[string]any{
@@ -546,12 +556,13 @@ func (e *streamEncoder) finish() error {
 		return e.finishCompaction()
 	}
 	// 上游流断在半截（没等到 EvToolCallEnd）时，攒着的那些调用照样放出去，
-	// 按首次出现次序而不是 index 数值序（§5 坑清单第一条）。
+	// 按首次出现次序而不是 index 数值序（§5 坑清单第一条）。没收尾就标 incomplete
+	// （#106）：半个调用看得见意图，但不许当成品。
 	for _, index := range e.pendingOrder {
 		if e.pending[index] == nil {
 			continue
 		}
-		if err := e.flushTool(index); err != nil {
+		if err := e.flushTool(index, true); err != nil {
 			return err
 		}
 	}
@@ -560,9 +571,14 @@ func (e *streamEncoder) finish() error {
 	}
 
 	status, event := "completed", "response.completed"
-	if e.stop == "length" {
+	if e.stop == "length" || e.cutShort() {
 		// 截断有独立的终帧与状态：客户端据此决定要不要续写。混在 completed 里发，
 		// 被截断的回答看上去就是「模型说完了」。
+		//
+		// 断流（#106）同走 incomplete，与 opencodex 一致：codex-rs 把 response.incomplete
+		// 当流错误重试（`codex-api/src/sse/responses.rs`），正合断流语义。reason 沿用
+		// responseBody 的 max_output_tokens——线格合法取值里只有它贴「上游没写完」，
+		// 不造 opencodex 那个 `adapter_eof`（理由同 compactionFailure 的注释）。
 		status, event = "incomplete", "response.incomplete"
 	}
 	e.finalStatus = status
@@ -628,6 +644,11 @@ type compactionFailure struct {
 // truncated 那条是这里唯一**看不出**破绽的一种：解码侧为了给下游一个合法取值，会把
 // 断流兜成 `stop`，wire 上与真正的收尾一模一样，只有 EvDone 的 Truncated 位分得开。
 // 光看 e.stop 的话，一段写到一半的摘要会带着 completed 装回历史里。
+// cutShort 判这一轮是不是断在上游声明收尾之前：Truncated 是解码侧兜底收尾的标记；
+// e.stop 空是给直接喂事件的调用方留的余量——今天三个解码器都会兜成 stop，兜不着的
+// 路径（将来的解码器、测试直喂）不该因此漏过去。普通路径与压缩合成共用这一个判据。
+func (e *streamEncoder) cutShort() bool { return e.truncated || e.stop == "" }
+
 func (e *streamEncoder) compactionNoItem() *compactionFailure {
 	switch {
 	case e.stop == "length":
@@ -641,9 +662,7 @@ func (e *streamEncoder) compactionNoItem() *compactionFailure {
 		//
 		// 没有对得上的 incomplete_details.reason，所以留空走 response.failed。
 		return &compactionFailure{message: "压缩未完成：上游改去调工具了，摘要停在半截"}
-	case e.truncated || e.stop == "":
-		// e.stop 空是给直接喂事件的调用方留的余量——今天两个解码器都会兜成 stop，
-		// 兜不着的路径（将来的解码器、测试直喂）不该因此漏过去。
+	case e.cutShort():
 		return &compactionFailure{message: "压缩未完成：上游流在摘要收尾前断了"}
 	case e.compactionText.Len() == 0:
 		return &compactionFailure{message: "压缩未完成：上游没有产出摘要正文"}
@@ -727,8 +746,8 @@ func (e *streamEncoder) responseBody(status string, output []any, withUsage bool
 		"tools":                []any{},
 	}
 	if status == "incomplete" {
-		// 正常路径上 incomplete 只有截断一种成因（见 finish）。合成模式还会因内容过滤
-		// 走到 incomplete，那条由 finishCompaction 覆盖这一项。
+		// 正常路径上 incomplete 有截断与断流两种成因（见 finish），都记 max_output_tokens。
+		// 合成模式还会因内容过滤走到 incomplete，那条由 finishCompaction 覆盖这一项。
 		body["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
 	}
 	if withUsage {
