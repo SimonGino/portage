@@ -21,4 +21,4 @@ skills 说的五个角色词，在本仓库就是它们的字面量：
 
 阻塞源以 GitHub 原生 issue dependencies 为准（见 `issue-tracker.md`），正文 `Blocked by` 行只在 dependencies 不可用时兜底。
 
-GitHub 默认标签里除 `bug` 外已全部删除（2026-08-06）：单人私仓用不上 `good first issue` / `help wanted` 一类，留着只让标签选择器变吵。
+GitHub 默认标签只保留 `bug`：单人私仓用不上 `good first issue` / `help wanted` 一类。
