@@ -373,11 +373,17 @@ func (st *respState) emitDone(out chan<- protocol.Event) {
 //
 // 是 encode.go 里 mapStopReason 那条的反向。未知值一律 stop——宁可少说一句，也不把
 // 上游的新词直接捅给客户端（同 openaicc 解码侧的口径）。
+//
+// `pause_turn`（服务端工具循环暂停、等客户端续上）与 `model_context_window_exceeded`
+// 都是「上游没写完」，与 max_tokens 同档归 length（#116，opencodex
+// `src/responses/truncated-stop-reason.ts`、new-api `relaykit/reasonmap` 同判）。落成
+// stop 的话，压缩 turn 会把半截摘要当成替换历史装回 Codex——而压缩 turn 正是上下文
+// 快满的时候，后者在那里最可能出现。
 func canonicalStopReason(reason string) string {
 	switch reason {
 	case "tool_use":
 		return "tool_calls"
-	case "max_tokens":
+	case "max_tokens", "pause_turn", "model_context_window_exceeded":
 		return "length"
 	case "refusal":
 		return "content_filter"
