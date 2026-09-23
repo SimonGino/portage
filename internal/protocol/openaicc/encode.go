@@ -26,7 +26,7 @@ import (
 const (
 	DropMetadata      = "metadata"       // A 入口的 metadata.user_id（上游据此判定是否官方 Claude Code）与 R 入口的 metadata / user（#19）
 	DropCacheControl  = "cache_control"  // Anthropic 缓存断点，CC 协议无对应概念
-	DropThinking      = "thinking"       // thinking 块正文与 signature
+	DropThinking      = "thinking"       // thinking 块正文与 signature；带 tool_calls 的消息上明文回带成 reasoning_content，只剩签名 / 密文被丢（口径层 v1.27 ①）
 	DropServerTool    = "server_tool"    // 上游服务端工具声明（advisor_20260301 一类）
 	DropVendorRequest = "vendor_request" // 其余入口协议独有的顶层字段
 	DropToolGrammar   = "tool_grammar"   // custom 工具的文法约束（Responses format），CC 无对应能力
@@ -151,11 +151,13 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 // encodeMessages 把 canonical 消息序列铺成 CC 的 messages。
 //
 // 形态差异集中在三处：
-//   - System 块序列 → 一条前置的 role=system 消息（拼纯文本）
+//   - System 块序列与开头连续的 system 消息 → 一条前置的 role=system 消息；
+//     中段的 system 消息改发 user（口径层 v1.25 ②）
 //   - tool_result 块 → 独立的 role=tool 消息，且必须紧跟在带 tool_calls 的
 //     assistant 之后。Anthropic 把它们放在 user 消息里，位置天然是对的，按序展开
 //     即可，不需要重排
-//   - thinking 块 → 丢弃。跨协议不做伪映射（口径层 §2.6）
+//   - thinking 块 → 丢弃；例外是带 tool_calls 的 assistant 消息上的明文，回带成
+//     reasoning_content（口径层 v1.27 ①，见 encodeAssistant）
 func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any, error) {
 	// 先扫一遍收集本次请求里真实出现过的 tool_call id。孤儿 tool_result（引用一个
 	// 本次请求里不存在的调用）编出去就是一条没有 tool_calls 兜着的 role=tool 消息，
@@ -184,11 +186,22 @@ func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any,
 
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 
-	if content, ok := encodeMessageContent(req.System, drop); ok {
+	// system 归位（口径层 v1.25 ②，#114）：顶层 System 与紧随其后的连续 system 消息
+	// 按原序并成开头一条；其后的 system 消息由 encodeNonAssistant 改发 user。Codex 同时
+	// 发 instructions 与开头 developer、换模型时还在中段插 developer 通知，Qwen 系上游
+	// 对「不在开头的 system」回 400「System message must be at the beginning」
+	// （sub2api normalizeResponsesDerivedChatMessageRoles 同款修法）。所有 CC 上游一视同仁。
+	system := req.System
+	rest := req.Messages
+	for len(rest) > 0 && rest[0].Role == protocol.RoleSystem {
+		system = append(slices.Clip(system), rest[0].Content...)
+		rest = rest[1:]
+	}
+	if content, ok := encodeMessageContent(system, drop); ok {
 		msgs = append(msgs, map[string]any{"role": "system", "content": content})
 	}
 
-	for _, m := range req.Messages {
+	for _, m := range rest {
 		switch m.Role {
 		case protocol.RoleAssistant:
 			msg, err := encodeAssistant(m, drop)
@@ -205,7 +218,8 @@ func encodeMessages(req *protocol.Request, drop func(string)) ([]map[string]any,
 	return msgs, nil
 }
 
-// encodeAssistant 编一条 assistant 消息：正文拼纯文本，tool_use 变 tool_calls。
+// encodeAssistant 编一条 assistant 消息：正文拼纯文本，tool_use 变 tool_calls，
+// 带 tool_calls 时同一消息内的 thinking 明文变 reasoning_content。
 //
 // content 为空而 tool_calls 非空是合法形态（纯工具调用轮），此时 content 整键
 // 省略——部分严格上游对 content:null 与空字符串的接受度不一，省略是三家都认的。
@@ -222,8 +236,30 @@ func encodeAssistant(m protocol.Message, drop func(string)) (map[string]any, err
 			calls = append(calls, call)
 		}
 	}
-	if content, ok := encodeMessageContent(m.Content, drop); ok {
-		msg["content"] = content
+	content := m.Content
+	if len(calls) > 0 {
+		// 回带明文 reasoning_content（口径层 v1.27 ①，#118）：DeepSeek V4、百炼上的
+		// Kimi 等要求带 tool_calls 的 assistant 消息回传它，缺了 400。只取同一消息内
+		// 有明文的 thinking 块，多块换行相接（sub2api anthropicThinkingToReasoningContent
+		// 同）；无明文不发、不填占位。签名 / 密文在 Extras 里，不外带——有才登记丢弃。
+		var reasoning []string
+		content = nil
+		for _, b := range m.Content {
+			if b.Kind != protocol.BlockThinking || b.Text == "" {
+				content = append(content, b)
+				continue
+			}
+			reasoning = append(reasoning, b.Text)
+			if len(b.Extras) > 0 {
+				drop(DropThinking)
+			}
+		}
+		if len(reasoning) > 0 {
+			msg["reasoning_content"] = strings.Join(reasoning, "\n")
+		}
+	}
+	if c, ok := encodeMessageContent(content, drop); ok {
+		msg["content"] = c
 	}
 	if len(calls) > 0 {
 		msg["tool_calls"] = calls
@@ -275,14 +311,13 @@ func encodeNonAssistant(m protocol.Message, seen map[string]bool, drop func(stri
 
 	role := string(m.Role)
 	switch m.Role {
-	case protocol.RoleSystem:
-		// mid-conversation-system：CC 允许 role=system 出现在消息中段，位置原样保留。
-		role = "system"
 	case protocol.RoleTool:
 		// canonical 里的 RoleTool 只会来自 CC 入口，A 入口到不了这里；真到了就说明
 		// 上游侧已经是 CC 形态，原样发。
 		role = "tool"
 	default:
+		// 含中段的 RoleSystem：开头那串已由 encodeMessages 并进首条 system，走到这里的
+		// 都在会话中段，降成 user 原位发（口径层 v1.25 ②），同一段话照样送到模型。
 		role = "user"
 	}
 	if content, ok := encodeMessageContent(m.Content, drop); ok {

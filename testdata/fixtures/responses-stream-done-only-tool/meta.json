@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "source": "构造样本（非转录）：#108。function_call item 不发 function_call_arguments.delta，入参只在 function_call_arguments.done 的 arguments 上——sub2api `6271c517d` / `4f3b5110e` 记的第三方 Responses 上游形态。done 帧键集照 sub2api apicompat ResponsesStreamEvent（item_id / output_index / arguments），其余帧照本仓 decode_response_test 的 function_call 手搭流。没拿到这类上游的真实转录。",
+  "synthetic": true
+}

@@ -551,3 +551,34 @@ func TestDecodeRequestKeepsCustomToolCallInput(t *testing.T) {
 		t.Errorf("救治登记 = %v, 期望空——自由文本不该被当成残缺 JSON", got)
 	}
 }
+
+// reasoning item 的明文进 Text（口径层 v1.27 ①，#118）：content[].reasoning_text 优先，
+// 没有再取 summary[].text，多段换行相接；密文仍进 Extras、不当正文。构造样本：真实
+// 采样里没有带 content[] 的 reasoning item。
+func TestDecodeRequestReasoningPlaintextIntoText(t *testing.T) {
+	cases := map[string]struct{ item, want string }{
+		"只有 summary":    {`{"type":"reasoning","summary":[{"type":"summary_text","text":"s1"},{"type":"summary_text","text":"s2"}],"encrypted_content":"gAAAAAB"}`, "s1\ns2"},
+		"两者都有取 content": {`{"type":"reasoning","summary":[{"type":"summary_text","text":"s"}],"content":[{"type":"reasoning_text","text":"full"}]}`, "full"},
+		"都为空":           {`{"type":"reasoning","summary":[],"encrypted_content":"gAAAAAB"}`, ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			req, err := NewCodec().DecodeRequest([]byte(`{"model":"m","input":[`+c.item+`]}`), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := req.Messages[0].Content[0]
+			if b.Kind != protocol.BlockThinking || b.Text != c.want {
+				t.Errorf("块 = %s %q，期望 thinking %q", b.Kind, b.Text, c.want)
+			}
+			if _, ok := b.Extras["summary"]; ok {
+				t.Error("summary 已折进 Text，不该再留在 Extras")
+			}
+			if strings.Contains(c.item, "encrypted_content") {
+				if _, ok := b.Extras["encrypted_content"]; !ok {
+					t.Error("encrypted_content 没进 Extras")
+				}
+			}
+		})
+	}
+}
