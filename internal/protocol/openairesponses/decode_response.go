@@ -68,9 +68,11 @@ type respItem struct {
 		// 写在另一个键上，共用一个字段解不出来。
 		Refusal string `json:"refusal"`
 	} `json:"content"`
-	// Summary 是 reasoning 项的摘要段落。非流式只有这一处能拿到推理文本（流式那边
-	// 走 reasoning_summary_text.delta）。**不解 encrypted_content**：解出来也只能丢，
-	// 不给它留字段就少一次误外带的机会。
+	// Summary 是 reasoning 项的摘要段落，推理**正文**则在 Content 里以
+	// type:"reasoning_text" 部件出现（#107，CLIProxyAPI `17a65ee5`：MiniMax 一类上游
+	// 非流式只在这里放正文）。流式那边分别走 reasoning_summary_text.delta 与
+	// reasoning_text.delta。**不解 encrypted_content**：解出来也只能丢，不给它留字段
+	// 就少一次误外带的机会。
 	Summary []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -715,6 +717,16 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 					events = append(events, protocol.Event{
 						Type: protocol.EvThinkingDelta, Text: s.Text,
 						Channel: protocol.ThinkingSummary, Index: i,
+					})
+				}
+			}
+			// 推理正文（content[] 里的 reasoning_text）走 ThinkingBody，与流式
+			// reasoning_text.delta 对称；排在摘要之后，同 CLIProxyAPI `17a65ee5`（#107）。
+			for _, part := range item.Content {
+				if part.Type == "reasoning_text" && part.Text != "" {
+					events = append(events, protocol.Event{
+						Type: protocol.EvThinkingDelta, Text: part.Text,
+						Channel: protocol.ThinkingBody, Index: i,
 					})
 				}
 			}

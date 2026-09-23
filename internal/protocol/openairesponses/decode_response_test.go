@@ -396,6 +396,44 @@ func TestDecodeFullBodyReasoningSummary(t *testing.T) {
 	}
 }
 
+// TestDecodeFullBodyReasoningTextIsBody（#107）：非流式 reasoning item 的推理正文在
+// content[].reasoning_text 里，此前只读 summary[] 就被静默丢掉。正文走 ThinkingBody
+// （与流式 reasoning_text.delta 对称），摘要照旧 ThinkingSummary、排在前面。
+// 构造样本，见 testdata/fixtures/README.md。
+func TestDecodeFullBodyReasoningTextIsBody(t *testing.T) {
+	body := loadFixture(t, "responses-reasoning-text", "response.raw")
+	events, err := NewCodec().DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+
+	var got []protocol.Event
+	for _, ev := range events {
+		if strings.Contains(ev.Text, "gAAAAAB") {
+			t.Fatalf("密文漏进了事件正文: %.60q", ev.Text)
+		}
+		if ev.Type == protocol.EvThinkingDelta {
+			got = append(got, ev)
+		}
+	}
+	want := []struct {
+		text    string
+		channel protocol.ThinkingChannel
+	}{
+		{"先算乘法", protocol.ThinkingSummary},
+		{"6 乘 7 等于 42，", protocol.ThinkingBody},
+		{"答案是 42。", protocol.ThinkingBody},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ThinkingDelta = %d 条，期望 %d 条: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].Text != w.text || got[i].Channel != w.channel || got[i].Index != 0 {
+			t.Errorf("第 %d 条 = %q/%q/#%d，期望 %q/%q/#0", i, got[i].Text, got[i].Channel, got[i].Index, w.text, w.channel)
+		}
+	}
+}
+
 // --- 以下用手搭 fixture，覆盖真实样本到不了的形态 ---
 
 func sseFrames(frames ...string) []byte {
