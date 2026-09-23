@@ -40,12 +40,15 @@ import (
 //     output_item.done 那个 item，delta/done 只作预览。多发不伤，删了也没收益，不动。
 //   - delta 帧的 `obfuscation`：上游每片都带，这里不发。它是 padding 不是密钥
 //     （opencodex 的 copilot repair 直接 delete 掉），漏发无语义损失。
-//   - message item 的 `phase`（实采是 `commentary`）与 `metadata` /
-//     `internal_chat_message_metadata_passthrough`（回显 turn_id 与 create_time）：
-//     后两个是上游/中转的账本，我们没有对应物；`phase` 按 commentary / final
-//     合成与否 PO 已裁（2026-08-14，portage-legacy#79）：**不合成，维持现状**——语义源头
-//     （Anthropic/CC 上游）没有对应概念，opencodex 无 phase 也能跑，不发不是 bug；
-//     哪天实测出客户端行为差异再立票。
+//   - message item 的 `metadata` / `internal_chat_message_metadata_passthrough`（回显
+//     turn_id 与 create_time）：上游/中转的账本，我们没有对应物。
+//
+// message item 的 `phase`（实采是 `commentary`）**推断合成**（口径层 v1.27 ③，#120，推翻
+// portage-legacy#79 的「不合成」）：codex-rs 把缺失的 phase 当 `FinalAnswer`，工具调用前
+// 的开场白会被当成最终答案，Codex App 重复渲染、缺「Worked for …」分隔线（opencodex
+// #542 / #4885）。判法照 opencodex ADR-0069：`output_item.added` 不带（此刻还不知道）；
+// 收口时后面还有工具 / 推理 item → `commentary`，以 `stop` 干净收尾的最后一条 →
+// `final_answer`，截断 / 断流 / 其他停因收尾的不标。终帧 response.output 用的是同一个 item。
 //
 // **终帧的 response.output 列表不能拿这批样本作数**：实采里它是中转重组的降级形态
 // （工具 item 被改回 function_call、丢了 arguments，reasoning item 整个不见），压缩批与
@@ -301,8 +304,8 @@ func (e *streamEncoder) flushTool(index int, incomplete bool) error {
 		return err
 	}
 	// 已开的 item 先收口：Responses 的 output 是**有序 item 列表**，一个 item 没
-	// done 就开下一个，output_index 会对不上。
-	if err := e.closeOpenItem(); err != nil {
+	// done 就开下一个，output_index 会对不上。正文后面跟着工具调用，是开场白。
+	if err := e.closeOpenItem(phaseCommentary); err != nil {
 		return err
 	}
 
@@ -386,8 +389,8 @@ func (e *streamEncoder) flushTool(index int, incomplete bool) error {
 // 声称「有一个空封装」。opencodex 同样只在真的拿到封装时才写这一键。
 func (e *streamEncoder) openReasoning() error {
 	// 正文 item 先收口，理由同 flushTool：一个 item 没 done 就开下一个，
-	// output_index 会对不上。
-	if err := e.closeText(); err != nil {
+	// output_index 会对不上。正文后面还有推理，不是最终答案。
+	if err := e.closeText(phaseCommentary); err != nil {
 		return err
 	}
 	e.reasoningItem = "rs_" + rand.Text()
@@ -446,12 +449,13 @@ func (e *streamEncoder) closeReasoning() error {
 	return nil
 }
 
-// closeOpenItem 收掉当前开着的 output item，不管是哪一种（两者互斥）。
+// closeOpenItem 收掉当前开着的 output item，不管是哪一种（两者互斥）。phase 只作用于
+// message item（见 closeText）。
 //
 // 名字跟着 Responses 自己的域词走（item，不是块）——anthropic 那边叫 closeBlocks 是因为
 // 那个协议的域词就是 content block。
-func (e *streamEncoder) closeOpenItem() error {
-	if err := e.closeText(); err != nil {
+func (e *streamEncoder) closeOpenItem(phase string) error {
+	if err := e.closeText(phase); err != nil {
 		return err
 	}
 	return e.closeReasoning()
@@ -484,7 +488,14 @@ func (e *streamEncoder) openText() error {
 	return nil
 }
 
-func (e *streamEncoder) closeText() error {
+// message item 的 phase 取值（#120）。
+const (
+	phaseCommentary  = "commentary"
+	phaseFinalAnswer = "final_answer"
+)
+
+// closeText 收掉开着的 message item。phase 是收口时才知道的推断结果（文件头），空串不发。
+func (e *streamEncoder) closeText(phase string) error {
 	if !e.textOpen {
 		return nil
 	}
@@ -508,6 +519,9 @@ func (e *streamEncoder) closeText() error {
 	item := map[string]any{
 		"id": e.textItem, "type": "message", "status": "completed",
 		"role": "assistant", "content": []any{textPart(text)},
+	}
+	if phase != "" {
+		item["phase"] = phase
 	}
 	if err := e.frame("response.output_item.done", map[string]any{
 		"type": "response.output_item.done", "output_index": e.outputIndex, "item": item,
@@ -566,7 +580,13 @@ func (e *streamEncoder) finish() error {
 			return err
 		}
 	}
-	if err := e.closeOpenItem(); err != nil {
+	// 走到这里还开着的正文是最后一个 item：干净的 stop 收尾才算最终答案，截断 /
+	// 断流 / 其他停因的不标（#120）。
+	var phase string
+	if e.stop == "stop" && !e.cutShort() {
+		phase = phaseFinalAnswer
+	}
+	if err := e.closeOpenItem(phase); err != nil {
 		return err
 	}
 
