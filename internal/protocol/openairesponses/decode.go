@@ -215,13 +215,17 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request, td *tool
 			add(normalizeRole(role), blocks...)
 
 		case "reasoning":
-			// 推理 item 没有明文正文可留：summary 实采恒为空数组，encrypted_content
-			// 是**上游侧密文**，只有原上游解得开（§5 坑清单）。所以这里造一个空文本的
-			// thinking 块，两样都进 Extras——不是为了转出去（跨协议必然作废），是为了
-			// 「带 encrypted_content 的 input 不使转换报错」这条用例有东西可钉。
+			// 推理明文进 Text（口径层 v1.27 ①，#118）：CC 出口要把它回带成
+			// reasoning_content。明文取 content[].reasoning_text，没有再取
+			// summary[].text（二者都有时取 content——那是全文，summary 是摘要）。
+			// summary 并非恒空：Codex 开 model_reasoning_summary 时会回带摘要
+			// （responses-stream-reasoning-replay），ADE 也会填（in-responses-namespace-turn2）。
+			// encrypted_content 是**上游侧密文**，只有原上游解得开（§5 坑清单），照旧进
+			// Extras、不当正文。
 			add(protocol.RoleAssistant, protocol.Block{
 				Kind:   protocol.BlockThinking,
-				Extras: collectExtras(item, map[string]bool{"type": true, "id": true}),
+				Text:   reasoningText(item),
+				Extras: collectExtras(item, map[string]bool{"type": true, "id": true, "summary": true, "content": true}),
 			})
 
 		case "custom_tool_call", "function_call":
@@ -589,6 +593,32 @@ func collectExtras(src map[string]json.RawMessage, known map[string]bool) map[st
 		extras[k] = v
 	}
 	return extras
+}
+
+// reasoningText 取 reasoning item 的明文：content[] 有文本就用它，否则用 summary[]，
+// 多段以换行相接（与 sub2api extractResponsesReasoningText 同）。都没有返回空串。
+//
+// 形状不对（不是对象数组）当作没有明文，不报错：这段文本只是回带给上游的参考，
+// 为它拒掉整个请求不值当——此前整个 item 原样进 Extras，从不因它失败。
+func reasoningText(item map[string]json.RawMessage) string {
+	for _, key := range []string{"content", "summary"} {
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		if raw, ok := item[key]; !ok || json.Unmarshal(raw, &parts) != nil {
+			continue
+		}
+		var texts []string
+		for _, p := range parts {
+			if p.Text != "" {
+				texts = append(texts, p.Text)
+			}
+		}
+		if len(texts) > 0 {
+			return strings.Join(texts, "\n")
+		}
+	}
+	return ""
 }
 
 // unmarshalIf 解 src[key] 到 dst，键不存在时什么都不做。

@@ -168,10 +168,11 @@ var coverage = map[string]disposition{
 	"input[].output[].text": dField,
 
 	"input[].encrypted_content": dExtras, // 上游侧密文，跨协议必然作废（§5 坑清单）
-	"input[].summary":           dExtras,
-	"input[].summary[]":         dExtras, // Codex 实采里恒为空数组，ADE 会填（turn2）
-	"input[].summary[].type":    dExtras, // summary_text
-	"input[].summary[].text":    dExtras,
+	// reasoning 的明文折进 BlockThinking.Text（口径层 v1.27 ①，#118），不再进 Extras。
+	"input[].summary":        dField,
+	"input[].summary[]":      dField, // Codex 不开摘要时为空数组，开了会回带（reasoning-replay），ADE 会填（turn2）
+	"input[].summary[].type": dField, // summary_text
+	"input[].summary[].text": dField, // → BlockThinking.Text
 
 	// additional_tools 是个 input 项，decode 时提升到 Request.Tools。
 	// 「它原本是条 developer 消息」这个位置信息随之丢失——回编 Responses 时按
