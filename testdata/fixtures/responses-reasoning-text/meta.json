@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": false,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "source": "构造样本（非转录）：#107。形状取自 CLIProxyAPI `17a65ee5` 的单测（MiniMax-M3 上游：非流式 reasoning item 的推理正文在 content[].type==\"reasoning_text\"，summary[] 可空可有），外加一段摘要与一段 encrypted_content，钉「摘要走 ThinkingSummary、正文走 ThinkingBody、密文不出」。十份 Responses 转录全是 stream:true，非流式线格无真实样本（MVP 设计草案 §9 已登记的缺口）。",
+  "synthetic": true
+}

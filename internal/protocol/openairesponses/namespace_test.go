@@ -16,7 +16,7 @@ import (
 // testdata/fixtures/README.md。
 const fixtureDir = "../../../testdata/fixtures"
 
-func loadFixture(t *testing.T, name string) []byte {
+func loadFixture(t *testing.T, name, file string) []byte {
 	t.Helper()
 	dir := filepath.Join(fixtureDir, name)
 	metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
@@ -32,7 +32,7 @@ func loadFixture(t *testing.T, name string) []byte {
 	if !meta.Synthetic {
 		t.Fatalf("%s 的 meta.json 没有 synthetic:true——真录到的样本请放进 testdata/golden/ 走 verified 那道闸", name)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	body, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func requestError(t *testing.T, err error) *protocol.RequestError {
 // 撞名即 400（口径层 v1.14 ③）：摊平后一名两源，回 400 且**点名两个来源**。构造样本是
 // ③ 点名的那种——request_user_input 既是顶层 function（ADE）又是 functions 子项（Codex）。
 func TestDecodeRequestRejectsFlatNameCollision(t *testing.T) {
-	reqErr := requestError(t, must2(NewCodec().DecodeRequest(loadFixture(t, "in-responses-namespace-collision"), true)))
+	reqErr := requestError(t, must2(NewCodec().DecodeRequest(loadFixture(t, "in-responses-namespace-collision", "request.json"), true)))
 	if reqErr.Param != "tools[1].tools[0].name" {
 		t.Errorf("param = %q, 期望指到后来的那个来源 tools[1].tools[0].name", reqErr.Param)
 	}
@@ -323,7 +323,7 @@ func TestDecodeRequestCollisionGateOnlyCoversNamespaces(t *testing.T) {
 // 摊平名须满足 ^[a-zA-Z0-9_-]{1,64}$（口径层 v1.14 ④），不满足即 400 点名那个工具，不截断
 // 不转义。构造样本：ADE 真名 mcp__ade_asset_knowledge 加 46 字符子工具名，摊平 72 字符。
 func TestDecodeRequestRejectsInvalidFlatName(t *testing.T) {
-	reqErr := requestError(t, must2(NewCodec().DecodeRequest(loadFixture(t, "in-responses-namespace-badname"), true)))
+	reqErr := requestError(t, must2(NewCodec().DecodeRequest(loadFixture(t, "in-responses-namespace-badname", "request.json"), true)))
 	if reqErr.Param != "tools[0].tools[1].name" {
 		t.Errorf("param = %q, 期望 tools[0].tools[1].name（点名超限那一个，不是合规的邻居）", reqErr.Param)
 	}

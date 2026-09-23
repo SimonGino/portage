@@ -68,3 +68,20 @@ pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连�
 形状照 ADE 实采裁剪，工具的描述与 schema 是编的。消费方：
 `internal/protocol/openairesponses/namespace_test.go`（错误对象）、`internal/server/namespace_test.go`
 （HTTP 面：400 信封 + 上游零请求）、`internal/protocol/canonical_coverage_test.go`（覆盖表）。
+
+## responses-reasoning-text
+
+[#107](https://github.com/SimonGino/portage/issues/107)：非流式 Responses 的 reasoning item 把推理**正文**
+放在 `content[].type=="reasoning_text"`，不在 `summary[]`（CLIProxyAPI `17a65ee5`，MiniMax 一类上游）。
+**手工构造**——十份 Responses 转录全是 `stream: true`，非流式线格本就没有真实样本。形状照 CLIProxyAPI
+那条提交的单测，外加一段摘要与 `encrypted_content`，钉「摘要走 ThinkingSummary 在前、正文走
+ThinkingBody、密文不出」。消费方：`internal/protocol/openairesponses/decode_response_test.go`。
+
+## responses-stream-done-only-text / responses-stream-done-only-tool
+
+[#108](https://github.com/SimonGino/portage/issues/108)：有的第三方 Responses 上游不发 delta，正文只在
+`output_text.done` 的 `text`、工具入参只在 `function_call_arguments.done` 的 `arguments` 上（sub2api
+`1ed36679b` / `6271c517d` / `4f3b5110e`）。**手工构造**——手上没有这类上游的转录。text 那份照
+`golden/responses-stream-text` 的帧序与键集写、删掉 delta；tool 那份是一路 `function_call`，
+done 帧键集照 sub2api `apicompat.ResponsesStreamEvent`。钉「done 帧按账补后缀、纯 done 时整段放出」。
+消费方：`internal/protocol/openairesponses/decode_response_test.go`。

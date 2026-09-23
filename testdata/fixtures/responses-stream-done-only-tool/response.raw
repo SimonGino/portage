@@ -1,0 +1,18 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_do_2","object":"response","created_at":1790000000,"model":"gpt-5.6","status":"in_progress","output":[]},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_do_2","object":"response","created_at":1790000000,"model":"gpt-5.6","status":"in_progress","output":[]},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_do_1","type":"function_call","status":"in_progress","arguments":"","call_id":"call_do_1","name":"get_weather"},"output_index":0,"sequence_number":2}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_do_1","output_index":0,"arguments":"{\"city\":\"上海\"}","sequence_number":3}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_do_1","type":"function_call","status":"completed","arguments":"{\"city\":\"上海\"}","call_id":"call_do_1","name":"get_weather"},"output_index":0,"sequence_number":4}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_do_2","object":"response","created_at":1790000000,"model":"gpt-5.6","status":"completed","output":[{"id":"fc_do_1","type":"function_call","status":"completed","arguments":"{\"city\":\"上海\"}","call_id":"call_do_1","name":"get_weather"}],"usage":{"input_tokens":40,"output_tokens":12,"total_tokens":52}},"sequence_number":5}
+
