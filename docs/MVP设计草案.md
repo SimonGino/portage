@@ -2,6 +2,12 @@
 
 > 状态：草案 v1.45
 
+> vNEXT 变更（口径层 v1.25 ① 落地：`prompt_cache_key` CC↔R 提成一等字段直传，[#115](https://github.com/SimonGino/portage/issues/115)）：①canonical `Request` 加 `PromptCacheKey string`（§4.1），理由同 `Effort`：`Extras` 永不外带，留在那里 CC↔R 转换后 GPT 上游拿不到会话缓存键。②CC 与 Responses 两个解码侧用 `protocol.LiftPromptCacheKey` 从 `Extras` 提走（**提完即删**，同 `LiftNestedEffort` 的理由）；只认字符串，`null` 等非字符串形态留在 `Extras` 照旧登记 `vendor_request`——与提走之前的行为一致，不为一个不合法的值当场 400（new-api `to_oai_chat_req.go` 同样只认 string）。③CC 与 Responses 两个出口非空即原值写；Anthropic 出口没有这一格，按提走之前的档登记 `vendor_request` 后丢。不从 `metadata.user_id` 解析（v1.25 ① 已否）。④`canonical_coverage_test` 里 `prompt_cache_key` 由 `extras` 改 `field`；R→CC 整链用例（`convert_responses_test.go`）从「禁漏表」改成「原值直传」断言，codec 层 CC→R / R→CC / →A / `null` 四格在 `protocol/promptcachekey_test.go`（构造样本）。修改人 jinpenga。
+
+> vNEXT 变更（口径层 v1.26 落地：R 出口在客户端要求思考时补 `reasoning.summary:"auto"`，[#117](https://github.com/SimonGino/portage/issues/117)）：`openairesponses/encode_request.go` 在 `req.Effort` 非空且不为 `none` 时写 `reasoning:{effort, summary:"auto"}`，`none` 只写档位，没有 effort 整个 `reasoning` 不写（不替客户端开思考不变）。`none` 按字面精确比对，不归一大小写——与 `Effort` 域外值原样直传（v0.65 ⑤）同一立场。§9.4 与 §9.6 两处「R 出口不写 `reasoning.summary`」原地划线订正。修改人 jinpenga。
+
+> vNEXT 变更（[#109](https://github.com/SimonGino/portage/issues/109) 落地：Anthropic 出口工具 schema 为 `null` / `{}` 时归一）：`anthropic/encode_request.go` 的 `encodeTools` 经 `objectSchema` 出 `input_schema`，§5 坑清单补一行。只动 A 出口，CC / Responses 两个出口不在本票范围。用例 `TestEncodeRequestNormalizesEmptyInputSchema`（构造样本，四格：`null` / `{}` / 缺 `type` 的对象 / 已带 `type` 原样）。修改人 jinpenga。
+
 > vNEXT 变更（口径层 v1.25 ② / v1.27 ① 落地：CC 出口 system 归位与 `reasoning_content` 回带，[#114](https://github.com/SimonGino/portage/issues/114) [#118](https://github.com/SimonGino/portage/issues/118)，2026-09-23）：口径不变，两条都改在 CC 出口 `openaicc/encode.go` 这一处汇合点，A→CC 与 R→CC（含本地合成的总结请求）同受。①**system 归位**：`encodeMessages` 把顶层 `System` 与紧随其后的连续 `RoleSystem` 消息按原序并成开头一条 system（块序列拼接后走同一个 `encodeMessageContent`，文本以换行相接）；其后的 `RoleSystem` 在 `encodeNonAssistant` 里改发 `user`、原位不动。§4.3 那条「中段 system 原位」在 CC 出口上随之作废（R 出口仍原位发 developer，不在本条范围）。②**回带明文**：`encodeAssistant` 在带 `tool_calls` 的消息上把同一消息内有明文的 thinking 块以换行拼成 `reasoning_content`；无明文不发、无 tool_calls 不发；签名 / 密文在 `Block.Extras` 里不外带，块上有 Extras 时照旧登记 `thinking` 档（它不再表示「正文丢了」，只表示签名 / 密文丢了）。③**R 入口解码保留明文**：reasoning item 的 `content[].text`（优先）或 `summary[].text` 折进 `BlockThinking.Text`，`summary` / `content` 不再进 Extras（覆盖表那四格改 `dField`），`encrypted_content` 照旧进 Extras；形状不对当作无明文，不报错。推翻 `decode.go` 那条「summary 实采恒为空数组」的注释（`responses-stream-reasoning-replay` 与 `in-responses-namespace-turn2` 都带摘要）。Anthropic 与 R 出口对 thinking 仍一律丢并登记，不动。用例见 §9.1 缺口条。修改人 jinpenga。
 
 > vNEXT 变更（参考仓库复盘批的三条 R 出口 / 停因修补：[#116](https://github.com/SimonGino/portage/issues/116)、[#106](https://github.com/SimonGino/portage/issues/106)、[#120](https://github.com/SimonGino/portage/issues/120)）：①**#116 停因**：`anthropic.canonicalStopReason` 把 `pause_turn` 与 `model_context_window_exceeded` 归 `length`（与 `max_tokens` 同档：上游没写完；opencodex `truncated-stop-reason.ts`、new-api `reasonmap` 同判）。此前落 `stop`，压缩 turn 会把半截摘要合成 compaction item 装回历史，非压缩路径同样报成正常结束。②**#106 R 出口断流**：`finish` 见 `EvDone.Truncated`（或直喂没有 `EvDone`）发 `response.incomplete`，不再发 `completed`；判据与压缩合成共用 `cutShort()`。未收尾的工具调用以 `status:"incomplete"` 收口、不发 `*_arguments.done` / `*_input.done`（照 opencodex `failCurrentToolCall`）。「未收尾」有两种来路：Anthropic 上游是 `EvToolCallEnd` 没到、编码侧收尾时冲出；CC 上游没有逐条终止符，End 恒由 `openaicc.flushTools` 在收尾补发，所以**canonical 在 `EvToolCallEnd` 上也用 `Truncated` 位**，断流收尾补的 End 置位，出口据此认出「这一路没人担保写完」。`incomplete_details.reason` 沿用 `max_output_tokens`（合法取值里唯一贴「没写完」的，不造 opencodex 的 `adapter_eof`），codex-rs 对 `response.incomplete` 按流错误重试，与 reason 取值无关。A / CC 两个出口同款问题（断流照发 `end_turn` / `stop`）**未动**：客户端侧怎么表达断流是 [#98](https://github.com/SimonGino/portage/issues/98) 挂着的裁决点。③**#120 phase 推断**（口径层 v1.27 ③）：`closeText` 收口时定 phase——后面还有工具 / 推理 item 的是 `commentary`，以 `stop` 干净收尾的最后一条是 `final_answer`，截断 / 断流 / 其他停因的不标；`output_item.added` 不带；终帧 `response.output` 与非流式用同一个 item。用例全是构造样本（手搭事件 / 手搭上游 SSE），这三种形态手上都没有真实转录。修改人 jinpenga。
@@ -308,6 +314,7 @@ type Request struct {
     Stop        []string
     Stream      bool
     Effort      string       // 思考档位，原样字符串不归一（口径层 v0.65）；零值 = 客户端没说
+    PromptCacheKey string    // CC↔R 会话缓存键，原值直传（口径层 v1.25 ①）；→A 登记 vendor_request 后丢
     Extras      map[string]any
 }
 
@@ -563,6 +570,7 @@ type Codec interface {
 | Anthropic 必填 max_tokens | OpenAI 可缺省；转 Anthropic 出口时必须填默认（配置项 `default_max_tokens`） |
 | 角色交替约束 | Anthropic 要求 user/assistant 交替；OpenAI 允许多条连续同角色；转 Anthropic 前需合并相邻同角色消息 |
 | assistant 空 content | 纯 tool_calls 的 assistant 消息 content 可能为 null，转 Anthropic 时空块要剔除 |
+| 工具 schema 为 `null` / `{}`（[#109](https://github.com/SimonGino/portage/issues/109)，new-api `3dda1d50c`） | CC / Responses 的 `parameters` 可以写 `null` 或 `{}`，原样发成 Anthropic 的 `input_schema` 时前者是 `null`、后者缺 `type`，两者都 400。A 出口 `objectSchema` 归一：`null` 与缺失同待遇发 `{"type":"object"}`；对象缺顶层 `type` 时在字节层面补 `"type":"object"`，其余字节不动；非对象形态原样带、让上游说话。不是给上游设白名单，是「无参」三种等价写法归一。CC / R 出口不在本票范围、未动 |
 | tool_result id 对齐 | OpenAI `tool_call_id` ↔ Anthropic `tool_use_id`，互转时 id 原样携带 |
 | streaming usage | OpenAI 需 `stream_options.include_usage` 才在流末尾给 usage；向 OpenAI 出口发流式请求时**强制注入该参数**，否则日志拿不到 token 数 |
 | stop reason 映射 | `end_turn`↔`stop`、`tool_use`↔`tool_calls`/`function_call`、`max_tokens`↔`length` 查表，未知值统一 `stop`。Anthropic 的 `pause_turn` 与 `model_context_window_exceeded` 是「上游没写完」，归 `length` 不归 `stop`（vNEXT，#116）——落成 `stop` 的话压缩 turn 会装回半截摘要 |
@@ -1350,7 +1358,7 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 
 **已知缺口，不装作没有**：
 
-- ~~**跨协议的推理在这两条路上一律丢弃，CC / Anthropic 客户端看不到上游的推理过程。**~~ **已销账（#4，2026-08-17）**：三个出口的合成半边与两个缺失的解码半边一并落地，见 §9.6。**唯一还看不见推理的情形**是 CC→R / A→R 上上游自己不回摘要（R 出口按 v0.65 ⑥ 不写 `reasoning.summary`），那是口径定的，不是实现欠的。以下是销账前的原文。
+- ~~**跨协议的推理在这两条路上一律丢弃，CC / Anthropic 客户端看不到上游的推理过程。**~~ **已销账（#4，2026-08-17）**：三个出口的合成半边与两个缺失的解码半边一并落地，见 §9.6。~~**唯一还看不见推理的情形**是 CC→R / A→R 上上游自己不回摘要（R 出口按 v0.65 ⑥ 不写 `reasoning.summary`），那是口径定的，不是实现欠的。~~ 〔vNEXT 订正：口径层 v1.26 收窄了这条，R 出口在客户端要求思考（effort 非空且不为 `none`）时补 `reasoning.summary:"auto"`，[#117](https://github.com/SimonGino/portage/issues/117) 落地；此后只剩客户端没发 effort 或发 `none` 时上游不回摘要。〕以下是销账前的原文。
   - **跨协议的推理在这两条路上一律丢弃，CC / Anthropic 客户端看不到上游的推理过程——这是欠的账，不是合规的取舍。** 单独点名且置顶，因为它是**用户可感知的退化**，而且性质比「已知缺口」更重一档。本条**订正 portage-legacy#80 初版的错误引证**：初版写的是「口径层 v0.10 明令跨协议只能丢、不得伪造」，而 v0.10 早在 2026-08-13 就被**口径层 v0.62 推翻**、又被 v0.65 加固——现行口径是**出向（上游 → 客户端）一律合成，四条路径对称**，且 v0.65 把丢弃的性质从「体验问题」升格成**错误**（「已发生的成本不得静默吞没」：上游已生成并计过费的思考内容，网关必须让它对用户可见）。
   - 更要紧的是**挡着这一格的东西已经没了**：口径层 §2.6 明写「Responses 出向那一格：口径已定「要合成」，样本已采（portage-legacy#93 兑现）……合并后这一格只剩实现」，而 `responses-stream-reasoning-turn1`（`reasoning_summary_part.added` → `text.delta` → `text.done` → `part.done` 整条生命周期）已随 portage-legacy#79 入库，portage-legacy#80 的解码用例正在消费它。所以这不是「等样本」，是**待实现**。
   - 初版那条技术立论也站不住：「摘要转成 `EvThinkingDelta` 等于拿摘要冒充推理正文」忽略了 canonical 的 `ThinkingChannel` 自 v0.29 就是 **body / summary / signature 三通道**，摘要本来就有自己的通道装，不必冒充正文。真正不能搬的只有 `encrypted_content`（上游侧密文，解不开也不该复用）。
@@ -1423,7 +1431,7 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 **已知缺口，不装作没有**：
 
 - **A 源侧带正文的真机转录仍然没有。** 新入库那两份（`anthropic-stream-thinking` / `anthropic-thinking-high`，2026-08-15 采）是 `output_config.effort=high` 单发触发的思考，**`thinking` 正文整段为空、真内容只有那串 1 KB 签名**。它们钉住的是「effort-only → 空正文 + 有签名」这个形态与「签名不许外漏」；「推理正文到得了客户端」那一半仍由手写帧覆盖。成因两种可能（上游默认不回正文 / 中转剥掉了正文），从现有字节分不出来——要分得开得再采一次带 `thinking.display` 的。低档（`low`）那一份也没采到。
-- **R 出口不写 `reasoning.summary`。** 「思考多少」与「展不展示」是正交两维（v0.65 ⑥：网关不替客户端开思考），客户端只说了前者。后果是 CC→R / A→R 上上游可能因此不回摘要，那两条路的推理仍然看不见——**不是这一批的实现漏了，是口径这么定的**。
+- ~~**R 出口不写 `reasoning.summary`。** 「思考多少」与「展不展示」是正交两维（v0.65 ⑥：网关不替客户端开思考），客户端只说了前者。后果是 CC→R / A→R 上上游可能因此不回摘要，那两条路的推理仍然看不见——**不是这一批的实现漏了，是口径这么定的**。~~ 〔vNEXT 订正，[#117](https://github.com/SimonGino/portage/issues/117)：口径层 v1.26 判这条代价违背 v0.65 ⑥「已发生的成本不得静默吞没」。R 出口现在于 effort 非空且不为 `none` 时写 `reasoning:{effort, summary:"auto"}`，CC→R 与 A→R 同规；没有 effort 仍一个字不加，`none` 只写档位。入站的 `thinking.display` / `reasoning.summary` 仍登记 `thinking_param` 后丢。用例在 `protocol/effort_test.go`（`TestResponsesSummaryFollowsEffort`）与 `server/convert_a2r_test.go`。〕
 - ~~**上游报的 `output_tokens_details.thinking_tokens` 还没进账本。**~~ —— **已销，见 v0.89**（[#5](https://github.com/SimonGino/portage/issues/5)，2026-08-18）：Anthropic Tap 与解码侧都补上了这一格，两份样本的 `expect` 随之改成 249/true 与 310/true。
 - **压缩 turn 里推理照旧一个帧都不发。** `encode.go` 的合成分支在主 switch 之前就把 `EvThinkingDelta` 吞了——一个推理 item 混进 output，「恰好一个 compaction item」就不成立（portage-legacy#74）。用例 `TestCompactionSwallowsThinking` 钉住这条。
 - **`response.reasoning_text.delta`（推理正文流）没有样本。** 九份 Responses 转录里一次都没出现（线上两条 R 上游只回摘要），那一支只保形态完备，覆盖靠构造帧。评审判这一支是 #4 票面之外的多做，**PO 于 2026-08-17 裁定保留**：它与 `reasoning_summary_text.delta` 是同一入口的姊妹事件，不认它就是遇上时静默丢内容。

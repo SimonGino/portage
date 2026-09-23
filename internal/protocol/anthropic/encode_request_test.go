@@ -208,6 +208,42 @@ func TestEncodeRequestFillsMissingInputSchema(t *testing.T) {
 	}
 }
 
+// 「无参」的等价写法归一（#109）：CC / Responses 的 parameters 为 null 或 {} 时原样发出，
+// Anthropic 回 400。null 与缺失同待遇；对象缺 type 只补 type，其余字节不动；已带 type
+// 的原样。构造样本（参考 new-api shared/claude/schema.go 的同一修法），不冒充 golden。
+func TestEncodeRequestNormalizesEmptyInputSchema(t *testing.T) {
+	cases := []struct{ name, schema, want string }{
+		{"null", `null`, `{"type":"object"}`},
+		{"空对象", `{}`, `{"type":"object"}`},
+		{"对象缺 type", `{"properties":{"n":{"type":"integer"}},"required":["n"]}`,
+			`{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}`},
+		{"已带 type 原样", `{"properties":{},"type":"object"}`, `{"properties":{},"type":"object"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := NewCodec(Options{DefaultMaxTokens: 8192}).EncodeRequest(&protocol.Request{
+				Model:    "m",
+				Tools:    []protocol.Tool{{Kind: protocol.ToolFunction, Name: "wait", Schema: json.RawMessage(tc.schema)}},
+				Messages: []protocol.Message{userMsg("hi")},
+			}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out struct {
+				Tools []struct {
+					InputSchema json.RawMessage `json:"input_schema"`
+				} `json:"tools"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(out.Tools[0].InputSchema); got != tc.want {
+				t.Errorf("input_schema = %s，期望 %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // 非 JSON 入参（Codex 的 exec 收 JS 源码）必须包成 JSON 对象：Anthropic 的
 // tool_use.input 只收对象。不包，请求直接被拒。
 func TestEncodeRequestWrapsNonJSONToolArgs(t *testing.T) {

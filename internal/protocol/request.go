@@ -224,12 +224,20 @@ type Request struct {
 	// 它走 DropThinkingParam 登记后丢。
 	Effort string
 
+	// PromptCacheKey 是 CC 与 Responses 同名同义的会话缓存键（口径层 v1.25 ①，#115）：
+	// 上游据此把同一会话路由到同一缓存。两个 OpenAI 入口读、两个 OpenAI 出口原值写；
+	// Anthropic 出口没有这一格，照旧登记 vendor_request 后丢。
+	//
+	// 一等字段的理由同 Effort：Extras 永不外带，留在那里 CC↔R 转换后上游就拿不到它。
+	// **不从 Anthropic metadata.user_id 解析**来造它（v1.25 ① 已否）。零值即「客户端没发」。
+	PromptCacheKey string
+
 	// Extras 存顶层的协议独有字段，同协议透传时原样取回。已知住户：
 	//   Anthropic: metadata（上游据此判定是否官方 Claude Code，重序列化丢了会被
 	//              降级成第三方 app，见 §5 坑清单）、thinking、context_management、
 	//              output_config（effort 已提成一等字段 Effort，剩余键才留这儿）
-	//   Responses: reasoning（同上）、store、include、prompt_cache_key、
-	//              client_metadata、text、parallel_tool_calls
+	//   Responses: reasoning（同上）、store、include、client_metadata、text、
+	//              parallel_tool_calls（prompt_cache_key 已提成 PromptCacheKey）
 	Extras map[string]any
 }
 
@@ -258,6 +266,21 @@ func LiftNestedEffort(extras map[string]any, parent string) string {
 		delete(extras, parent)
 	}
 	return effort
+}
+
+// LiftPromptCacheKey 把 extras 里字符串形态的 prompt_cache_key 提出来并从 extras 删掉，
+// 返回它；CC 与 Responses 两个解码侧共用。
+//
+// 非字符串（null 等）不认，留在 Extras 里照旧登记 vendor_request 后丢——与改动前的
+// 行为一致，不为一个不合法的值当场 400。提完即删的理由同 LiftNestedEffort：留着的话
+// 出口会为一个其实转发出去了的键登记丢弃，账本说假话。
+func LiftPromptCacheKey(extras map[string]any) string {
+	key, ok := extras["prompt_cache_key"].(string)
+	if !ok {
+		return ""
+	}
+	delete(extras, "prompt_cache_key")
+	return key
 }
 
 // thinkingParamKeys 是 Extras 里属于「思考参数」这一档（各出口的 DropThinkingParam）的顶层键。

@@ -121,6 +121,10 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	if req.Effort != "" {
 		out["reasoning_effort"] = req.Effort
 	}
+	// 会话缓存键原值直传（口径层 v1.25 ①）：CC 与 Responses 同名同义。
+	if req.PromptCacheKey != "" {
+		out["prompt_cache_key"] = req.PromptCacheKey
+	}
 
 	// 入口协议独有的顶层字段一律不带过去。它们对 CC 上游没有意义，而严格中转会
 	// 因为一个不认识的顶层键整体拒收——metadata / thinking / context_management /

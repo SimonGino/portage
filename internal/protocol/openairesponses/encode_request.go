@@ -111,12 +111,22 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 
 	// 思考档位原样直传（口径层 v0.65）：Responses 侧写 reasoning.effort。
 	//
-	// **只写 effort 这一个子键**，不顺手加 summary——「思考多少」与「展不展示」是正交
-	// 两维，客户端只说了前者。（CLIProxyAPI 的 internal/thinking 同样分两维，但
-	// 2026-09 起会把 CC 的 reasoning_effort 跨协议映成 reasoning.summary:auto，见 summary.go。）代价记在
-	// 口径层：CC→R / A→R 上上游可能因此不回摘要，那条路的推理仍然看不见。
+	// 客户端要求了思考（effort 非空且不为 none）时**同时补 summary:"auto"**（口径层
+	// v1.26，#117）：OpenAI 推理模型不请求摘要就不回摘要，CC→R / A→R 上推理已计费却
+	// 对客户端不可见，违背 v0.65 ⑥「已发生的成本不得静默吞没」。它只管看不看得见、
+	// 不管要不要思考，所以没有 effort 仍一个字不加（不替客户端开思考）；none 是客户端
+	// 明说不思考，没有摘要可要。旁证 CLIProxyAPI internal/thinking/summary.go 同规。
+	// 入站的 thinking.display / reasoning.summary 仍按思考参数登记丢弃（v0.65 ⑥）。
 	if req.Effort != "" {
-		out["reasoning"] = map[string]any{"effort": req.Effort}
+		reasoning := map[string]any{"effort": req.Effort}
+		if req.Effort != "none" {
+			reasoning["summary"] = "auto"
+		}
+		out["reasoning"] = reasoning
+	}
+	// 会话缓存键原值直传（口径层 v1.25 ①）：CC 与 Responses 同名同义。
+	if req.PromptCacheKey != "" {
+		out["prompt_cache_key"] = req.PromptCacheKey
 	}
 
 	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致），
