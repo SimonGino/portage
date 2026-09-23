@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -530,9 +531,10 @@ func encodeToolResult(res *protocol.ToolResult, drop func(string)) map[string]an
 
 // encodeTools 编工具声明。
 //
-// input_schema 是**必填**，所以三种来源都得给出点什么：有 Schema 的原样带；custom
-// 工具合成 {"input": string}（见 protocol.CustomToolSchema，这也是让模型知道该回
-// 什么形状的唯一途径）；两者都没有的给一个空对象 schema。
+// input_schema 是**必填**，所以三种来源都得给出点什么：有 Schema 的原样带（null 与
+// 缺 type 的对象先归一，见 objectSchema）；custom 工具合成 {"input": string}（见
+// protocol.CustomToolSchema，这也是让模型知道该回什么形状的唯一途径）；两者都没有的
+// 给一个空对象 schema。
 //
 // 服务端工具直接丢：它是**上游侧**能力，目标上游既不认这个 type 也变不出这个能力。
 // 丢时**带名字**登记（口径层 v1.14 ⑨）。另交出声明出去的与被丢的工具名，给
@@ -549,9 +551,9 @@ func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[stri
 		if t.Description != "" {
 			tool["description"] = t.Description
 		}
-		switch {
-		case len(t.Schema) > 0:
-			tool["input_schema"] = json.RawMessage(t.Schema)
+		switch schema := objectSchema(t.Schema); {
+		case len(schema) > 0:
+			tool["input_schema"] = schema
 		case t.Kind == protocol.ToolCustom:
 			tool["input_schema"] = protocol.CustomToolSchema()
 			dropped.Add(DropToolGrammar, t.Name)
@@ -562,6 +564,33 @@ func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[stri
 		declared = append(declared, t.Name)
 	}
 	return out, declared, droppedTools
+}
+
+// objectSchema 把「无参」的等价写法归一成 Anthropic 收得下的 input_schema（#109）。
+//
+// CC / Responses 的 parameters 可以是 `null` 或 `{}`，原样发成 input_schema 时前者是
+// `null`、后者缺 `type`，Anthropic 两者都回 400。`null` 与缺失同待遇，返回 nil 交给
+// 调用方的默认分支；对象但顶层没有 `type` 时在字节层面补 `"type":"object"`，其余字节
+// 一个不动（键序与数值精度理由同 protocol.Tool.Schema）。不是对象的形态原样带过去，
+// 让上游给出看得见的 400——这不是替上游设白名单。参考 new-api
+// relaykit/relayconvert/internal/shared/claude/schema.go。
+func objectSchema(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &top) != nil {
+		return raw
+	}
+	if _, ok := top["type"]; ok {
+		return raw
+	}
+	inner := bytes.TrimSpace(trimmed[1:]) // 去掉开头的 '{'
+	if len(top) == 0 {
+		return json.RawMessage(`{"type":"object"}`)
+	}
+	return append(json.RawMessage(`{"type":"object",`), inner...)
 }
 
 // encodeToolChoice 把 canonical 的选择策略编成 Anthropic 形态。
