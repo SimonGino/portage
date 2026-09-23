@@ -112,7 +112,8 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 	// 思考档位原样直传（口径层 v0.65）：Responses 侧写 reasoning.effort。
 	//
 	// **只写 effort 这一个子键**，不顺手加 summary——「思考多少」与「展不展示」是正交
-	// 两维（CLIProxyAPI 的 internal/thinking 也这么分），客户端只说了前者。代价记在
+	// 两维，客户端只说了前者。（CLIProxyAPI 的 internal/thinking 同样分两维，但
+	// 2026-09 起会把 CC 的 reasoning_effort 跨协议映成 reasoning.summary:auto，见 summary.go。）代价记在
 	// 口径层：CC→R / A→R 上上游可能因此不回摘要，那条路的推理仍然看不见。
 	if req.Effort != "" {
 		out["reasoning"] = map[string]any{"effort": req.Effort}

@@ -35,7 +35,7 @@ import (
 // 字段级比对里**没对上、但有意不改**的三处：
 //
 //   - `custom_tool_call_input.done`：实采只有 item_id / output_index / input（opencodex
-//     `src/bridge.ts` 的合成同款），这里多发 call_id 与 name。多出来的两格 wire-legal
+//     `src/bridge/sse.ts` 的合成同款），这里多发 call_id 与 name。多出来的两格 wire-legal
 //     ——sub2api 的合成也带（`apicompat/responses_client_tools.go`），而 codex-rs 认的是
 //     output_item.done 那个 item，delta/done 只作预览。多发不伤，删了也没收益，不动。
 //   - delta 帧的 `obfuscation`：上游每片都带，这里不发。它是 padding 不是密钥
@@ -655,7 +655,7 @@ func (e *streamEncoder) compactionNoItem() *compactionFailure {
 // 或者一个 item 都不产、发一个明着失败的终帧。
 //
 // 只发 output_item.done，不发配套的 output_item.added——与 opencodex
-// （`src/bridge.ts` 的合成分支）一致。这个 item 不是逐步生成出来的，added 描述的那个
+// （`src/bridge/sse.ts` 的合成分支）一致。这个 item 不是逐步生成出来的，added 描述的那个
 // 「开始了」的时刻并不存在。
 func (e *streamEncoder) finishCompaction() error {
 	fail := e.compactionNoItem()

@@ -4,9 +4,9 @@
 
 ## `new-api`（QuantumNous/new-api）
 
-Go 网关主参考。读 `relay/` 协议适配层、SSE 流式转发、`controller/` + `middleware/` 的 key 鉴权与渠道路由；运营功能（计费 / 多用户 / 渠道权重）不抄。
+Go 网关主参考。读 `relay/` 的 handler 与 SSE 流式转发、`controller/` + `middleware/` 的 key 鉴权与渠道路由；运营功能（计费 / 多用户 / 渠道权重）不抄。
 
-**上游 canonical DTO 在 `relaykit/dto/`；下游 fork 常把它改成另一套 `dto/`，勿混。**
+**协议互转在 `relaykit/relayconvert/`（按源协议分目录：`claude_messages/`、`oai_chat/`、`oai_responses/`，工具转换在 `internal/toolconv/`）。上游 canonical DTO 在 `relaykit/dto/`；下游 fork 常把它改成另一套 `dto/`，勿混。**
 
 ## `sub2api`（Wei-Shaw/sub2api）
 
@@ -16,11 +16,11 @@ Go 网关主参考。读 `relay/` 协议适配层、SSE 流式转发、`controll
 
 ## `litellm`（BerriAI/litellm）
 
-Python 网关，字段映射最全。做 Anthropic↔OpenAI 转换时对照 `litellm/llms/*/chat/` 各 provider transformation 核对 thinking、tool calling、usage 语义。
+Python 网关，字段映射最全。做 Anthropic↔OpenAI 转换时对照它核 thinking、tool calling、usage 语义。转换主体按「入口 → 出口」分散在：`llms/anthropic/experimental_pass_through/adapters/`（A→CC）、`llms/anthropic/experimental_pass_through/responses_adapters/`（A→R）、`responses/litellm_completion_transformation/`（R→CC）、`completion_extras/litellm_responses_transformation/`（CC→R）、`litellm_core_utils/prompt_templates/{factory,common_utils}.py`（CC→A 消息编码）；`llms/anthropic/chat/transformation.py` 只剩参数映射。
 
 ## `opencodex`（lidge-jun/opencodex，MIT）
 
-TS/Bun 本地代理，把 Codex 的 Responses API 转译到任意 provider。**Codex CLI（codex-rs）客户端行为兼容的首要参考**：自动压缩（`src/responses/compaction.ts`、`src/bridge.ts` 合成 compaction item）、reasoning 回放、Responses SSE 事件线。
+TS/Bun 本地代理，把 Codex 的 Responses API 转译到任意 provider。**Codex CLI（codex-rs）客户端行为兼容的首要参考**：自动压缩（`src/responses/compaction.ts`、`src/bridge/sse.ts` 合成 compaction item，非流式在 `src/bridge/response-json.ts`）、reasoning 回放、Responses SSE 事件线。
 
 ## `mimo2codex`（7as0nch/mimo2codex，MIT）
 

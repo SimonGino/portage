@@ -23,7 +23,8 @@ type Role string
 // 原字符串不留。理由是这个映射不可逆也不需要可逆——同协议路径根本不进 codec，所以
 // 没有任何一条链路会把 developer 原样转回去；而 R 出口方向收到的 RoleSystem 一律
 // 按 Responses 惯例发 developer。这条不对称在 sub2api 两个方向上都能对上
-// （chatcompletions_responses_bridge.go:518 收敛、anthropic_to_responses.go:133 展开）。
+// （chatcompletions_responses_bridge.go 的 chatCompletionsBridgeRole 收敛、
+// anthropic_to_responses.go 的 convertAnthropicToResponsesInput 展开）。
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"

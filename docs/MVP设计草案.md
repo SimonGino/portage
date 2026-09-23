@@ -353,11 +353,11 @@ type Tool struct {
 | `assistant` | `assistant` | `assistant` | 输出侧的 `message` 项 |
 | `tool` | 无——工具结果是 user 消息里的 `tool_result` 块 | `role=="tool"` 独立消息 | 无——`custom_tool_call_output` / `function_call_output` 独立 input 项 |
 
-`developer` 是**归一，不是丢弃**（PO 确认 jinpenga，2026-08-07）：decode 收敛成 `RoleSystem`，原字符串不留；R 出口方向收到 `RoleSystem` 一律按 Responses 惯例发 `developer`。这条不对称成立是因为同协议路径根本不进 codec，没有任何链路会把 `developer` 原样转回去。两个方向在 sub2api 上都能对上（收敛 `apicompat/chatcompletions_responses_bridge.go:518`，展开 `apicompat/anthropic_to_responses.go:133`）。
+`developer` 是**归一，不是丢弃**（PO 确认 jinpenga，2026-08-07）：decode 收敛成 `RoleSystem`，原字符串不留；R 出口方向收到 `RoleSystem` 一律按 Responses 惯例发 `developer`。这条不对称成立是因为同协议路径根本不进 codec，没有任何链路会把 `developer` 原样转回去。两个方向在 sub2api 上都能对上（收敛 `apicompat/chatcompletions_responses_bridge.go` 的 `chatCompletionsBridgeRole`，展开 `apicompat/anthropic_to_responses.go` 的 `convertAnthropicToResponsesInput`）。
 
 `ToolChoice.Mode` 的 `required` 对应 Anthropic 的 `tool_choice.type=="any"`。本仓 5 份 Anthropic 样本**都不带 `tool_choice`**，这一格取自参考仓库而非实采。
 
-`Temperature` 与 `Stop` 在 9 份样本里**一次都没出现过**（两个 harness 都不发），它们进模型的依据是参考仓库里的标准字段映射（`litellm/llms/*/chat/`、sub2api `apicompat/`），不是实采。`coverage` 表因此不列它们——那张表校的是「样本里的字段有没有被漏掉」，把没采到的字段塞进去只会让它恒红。
+`Temperature` 与 `Stop` 在 9 份样本里**一次都没出现过**（两个 harness 都不发），它们进模型的依据是参考仓库里的标准字段映射（litellm 转换主体、sub2api `apicompat/`），不是实采。`coverage` 表因此不列它们——那张表校的是「样本里的字段有没有被漏掉」，把没采到的字段塞进去只会让它恒红。
 
 ### 4.2 事件侧
 
@@ -1392,7 +1392,7 @@ harness 选型是被逼出来的：**Codex CLI 0.144.1 已经不支持 `wire_api
 
 解码侧同批补齐两个此前不存在的半边：CC 的 `reasoning_content`（DeepSeek 起头的事实标准，流式与非流式同名同义，所以两条路共用 `streamState.body`）与 Responses 的 `reasoning_summary_text.delta`（外加 `reasoning_text.delta` 与非流式 `summary[]`）。**只认 `.delta`，不认 `.done`/`output_item.done` 里那份 `summary[]`**：同一段摘要在上游流里出现三遍，三处都收就发三遍。
 
-Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `src/bridge.ts` 的合成路径：`output_item.added` → **`reasoning_summary_part.added`** → `text.delta*` → `text.done` → `part.done` → `output_item.done`。`part.added` 不是可省的装饰——Codex 侧靠它把 `summary[0]` 那个槽位立起来，缺了它后面的 delta 索引到一个不存在的 part（与正文那侧 `content_part.added` 同一个坑，sub2api 在正文侧踩过）。**item 上不写 `encrypted_content`**：我们手里没有上游的封装，写空串等于声称「有一个空封装」；opencodex 同样只在真拿到封装时才写这一键。
+Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `src/bridge/sse.ts` 的合成路径：`output_item.added` → **`reasoning_summary_part.added`** → `text.delta*` → `text.done` → `part.done` → `output_item.done`。`part.added` 不是可省的装饰——Codex 侧靠它把 `summary[0]` 那个槽位立起来，缺了它后面的 delta 索引到一个不存在的 part（与正文那侧 `content_part.added` 同一个坑，sub2api 在正文侧踩过）。**item 上不写 `encrypted_content`**：我们手里没有上游的封装，写空串等于声称「有一个空封装」；opencodex 同样只在真拿到封装时才写这一键。
 
 请求侧 `Effort` 提成 canonical 一等字段（理由与 `Image.Detail` 同：`Extras` 永不外带，留在那里等于每个出口都拿不到它）。三个入口读、三个出口写，**六条路全开**；`LiftNestedEffort` 提完即从 `Extras` 里删（`output_config` / `reasoning` 被掏空则连键一起删）——不删的话出口会为一个**其实转发出去了**的键登记一次 `vendor_request`，账本就说了假话。新增登记档 `thinking_param`，与 `DropThinking`（内容块）和 `DropVendorRequest`（其余顶层字段）三分：住户是思考开关本身、`reasoning.summary`、各家数值预算，以及**档位解不出来时（非字符串 / 空串）整个留下的载体** `output_config` / `reasoning`。这张键表住在 `protocol.IsThinkingParamKey`、**只有一份**：三个出口的分类规则必须字字一样，而镜像三份的代价在本批评审里已经付过一次——`output_config` 三份表里一份都没写，于是解不出档位的 effort 在三个出口全记成了 `vendor_request`，正好是这一档要防的那件事；补它要改三处，漏一处就还是同一个洞，收成一份之后新键不可能半落地。`DropXxx` 常量仍各包一份（那是**名字**，不是**规则**）。
 
@@ -1525,16 +1525,17 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 |---|---|
 | `new-api/relaykit/dto/`（claude.go、openai_request.go） | canonical 请求模型的现实形态（注意：上游在 `relaykit/dto/`，非 fork 的 `dto/`） |
 | `new-api/relay/channel/claude/adaptor.go`、`relay/claude_handler.go` | Claude 编解码 |
-| `new-api/relay/chat_completions_via_responses.go`、`relay/responses_handler.go` | CC ↔ Responses 互转 |
+| `new-api/relay/chat_completions_via_responses.go`、`relay/responses_handler.go` | CC ↔ Responses 互转的 handler 入口 |
+| `new-api/relaykit/relayconvert/`（`claude_messages/`、`oai_chat/`、`oai_responses/`、`internal/toolconv/`） | 三协议互转本体（2026-07 从 `relay/` 拆出）；hosted 工具（`web_search`）互转见 `claude_messages/to_oai_responses_hosted_stream.go` |
 | `new-api/relay/helper/`、`relay/common/` | SSE 工具函数 |
 | `new-api/relay/relay_adaptor.go`、`model/channel*.go` | failover / 渠道选择思路（不取其复杂度）；`model/channel.go` 多 key 聚合语义（我们改为建表实现） |
 | `new-api/relay/channel/vertex/service_account.go` | Vertex service account → access token 刷新（credential_type=service_account 参考） |
 | `new-api/model/log.go` | 日志落库 |
-| `litellm/litellm/llms/*/chat/`（各 provider transformation） | P1 协议转换字段映射的交叉对照（thinking、tool calling、usage 语义） |
+| litellm 转换主体（按入口 → 出口分目录，清单见 `docs/agents/reference-repos.md`） | P1 协议转换字段映射的交叉对照（thinking、tool calling、usage 语义） |
 | `sub2api/backend/internal/pkg/apicompat/` | **P1 转换的 Go 实现首要参考**：自包含转换库（A↔CC、Responses↔CC/A bridge、Responses SSE 事件线格式，含 Codex 事件流测试）；注意 LGPL-3.0，参考思路可、整包复制需评估义务 |
 | `sub2api/backend/` 其余 | Anthropic 协议侧处理与 Go 工程结构参考（订阅池/计费不抄） |
 | `opencodex/src/responses/compaction.ts` | Codex 自动压缩（remote compaction v2）：`compaction_trigger` 判定、summarizer 改写、`ocx1:` 信封编解码——§7.6/§7.7 本地合成的同构参考（MIT，PO 2026-08-13 裁定照抄） |
-| `opencodex/src/bridge.ts` | Responses SSE 事件线合成：adapter 事件 → `output_item.added/done` 等事件序列与收尾判据；压缩 turn 攒正文、收尾时合成恰好一个 compaction item |
+| `opencodex/src/bridge/sse.ts`（非流式 `src/bridge/response-json.ts`） | Responses SSE 事件线合成：adapter 事件 → `output_item.added/done` 等事件序列与收尾判据；压缩 turn 攒正文、收尾时合成恰好一个 compaction item |
 | `opencodex/src/responses/reasoning-envelope.ts` | reasoning 回放（跨协议）：Anthropic thinking signature 藏进 `encrypted_content` 的 `ocxr1:` 信封往返；文件头注释是「signature 缺失回放即 400」的一手证词 |
 | `opencodex/src/responses/reasoning-replay-cache.ts` | reasoning 回放（工具轮）：`reasoning_content` 的有状态回放兜底（按会话隔离、TTL 有界）——本项目无状态路线不抄，作成本对照 |
 | `CLIProxyAPI/internal/translator/openai/claude/` | thinking 出向合成：`reasoning_content` → `thinking` 块（不带 signature）；请求侧回带处置同目录 |
