@@ -43,3 +43,11 @@ Go 本地代理。**「thinking/reasoning 跨协议保真与 signature 处置」
 **架构不参考**（点对点 N×M、30 对逐一注册、无 canonical 事件模型），五套有状态 reasoning 回放账本知道即可、不抄。
 
 MIT 标准条款：阅读借鉴零义务，复制代码只需在分发物保留版权声明与许可全文，**不因 Go 静态链接传染**（与 sub2api 的 LGPL-3.0 关键不同）。
+
+## `magpie`（yetone/magpie，MIT）
+
+Go 桌面应用（菜单栏 + TUI + CLI）附带的本地网关，四协议（A / CC / R / Gemini）互转，结构与本项目最接近：`internal/gateway/ir.go` 一份 canonical IR（`Request`/`Part` + 流式 `Event{KStart…KError}`），每个协议一个文件各出 `parse*`/`build*`/`decode*`/`*Encoder`（`anthropic.go`、`chat.go`、`responses.go`、`gemini.go`），同协议走 `gateway.go` 的 `passthrough`、用量靠 `sniff.go` 旁路嗅出。**架构对照用，字段语义不以它为准**——IR 只有 text/image/tool_call/tool_result/thinking 五种 part，服务端工具、`namespace`、`encrypted_content` 回放等都不承载；它的透传也不保真（改写 `model`、CC `developer`→`system`、Anthropic 未请求即关 thinking），与本项目硬约束相反。
+
+可参考的点：`affinity.go` 按「上次读缓存 token 数 + 缓存冷却时长」决定会话是否粘在同一 key 上；`ir.go` 的 `fitEffort`/`budgetOf`/`effortOfBudget` 做 effort ↔ thinking budget 双向换算并就近贴合模型支持的档位；`codex_backend.go` 的 `codexCompact` 是 Codex 压缩本地合成的又一实现（与 opencodex 同构，信封前缀 `magpieCompaction`，压缩提示词取自 openai/codex）。订阅桥接（`*_subscription.go`、`codeassist.go`）、agent 配置编辑、routing group / fallback 不在本项目范围。
+
+MIT，义务同 CLIProxyAPI：阅读借鉴零义务，复制代码需在分发物保留版权声明与许可全文。
