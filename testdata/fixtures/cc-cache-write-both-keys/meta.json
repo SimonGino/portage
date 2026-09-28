@@ -1,0 +1,19 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": false,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#111。从 golden/cc-text 的真实转录派生，只改 usage 一处；两个写入键同时出现（cache_write_tokens 100、cache_creation_input_tokens 2048），钉「取大」（PO 2026-09-28 裁决 2）。",
+  "synthetic": true,
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 4221,
+    "OutputTokens": 34,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 2048,
+    "StopReason": "stop",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 4221
+}

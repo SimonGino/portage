@@ -128,13 +128,16 @@ type Usage struct {
 // 口径（它与两项缓存互不相交，客户端自己相加）。A 出口编码时用它减回去，与
 // anthropic 解码侧那个加回缓存的加法互为逆向。
 //
-// 钳到 0：上游报的缓存数大于毛值（口径不一致的兼容上游）时，负的 input_tokens 不是
-// 合法 Anthropic 响应，客户端多半直接算崩。
+// 钳到 0：缓存两项之和可以大于毛值——OpenAI 的 cached_tokens 与 cache_write_tokens
+// 都是未调整的前缀计数，实测 prompt 3619 / cached 2921 / write 3616（new-api
+// 92d3c9d18）。负的 input_tokens 不是合法 Anthropic 响应，客户端多半直接算崩。
+// 钳的只是这个差，两项缓存照上游原数留着、不按比例压缩（PO 2026-09-28 裁决：记账
+// 保真优先，A 客户端的上下文占用显示因此可能偏高，接受）。计价同理
+// （calllog.Prices.CostUSD 钳净输入、两项照原数计）。
 //
 // 钳零**不登记日志**，与 codec 的丢块登记（openaicc 的 DropVendorContent）不同档：
 // 那边是我们主动丢掉了客户端本该看到的东西，这边没丢任何信息——毛值与两项明细都
-// 照原样在别的字段里。而且两个解码侧都构造性地保证毛值 ≥ 缓存之和，真钳到说明上游
-// 自己报的数就自相矛盾，那是排障要看 Tap.Summary（保留上游原样）的场景。
+// 照原样在别的字段里。
 func (u Usage) NetInput() int {
 	return max(0, u.InputTokens-u.CacheReadTokens-u.CacheWriteTokens)
 }

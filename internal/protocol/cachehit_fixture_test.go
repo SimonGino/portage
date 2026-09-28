@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/SimonGino/portage/internal/protocol"
-	"github.com/SimonGino/portage/internal/protocol/anthropic"
+	"github.com/SimonGino/portage/internal/protocol/codecs"
 	"github.com/SimonGino/portage/internal/protocol/taps"
 )
 
@@ -23,9 +23,19 @@ const fixtureDir = "../../testdata/fixtures"
 // 这两份从真实转录派生、只改 usage 数字，形状依据官方文档：input_tokens 只算最后一个
 // 缓存断点**之后**的 token，与两项缓存互不相交（platform.claude.com/docs/en/api/rate-limits，
 // 2026-08-13 核对）。它证明不了「官方真的这么发」——那是 #2 拿官方 key 才能收的口。
+//
+// 后五份是 #111 补的**缓存写入**形状：OpenAI 官方把写入量报在 CC 的
+// prompt_tokens_details.cache_write_tokens / R 的 input_tokens_details.cache_write_tokens，
+// 百炼报在 prompt_tokens_details.cache_creation_input_tokens，此前 CC 两侧与 R Tap
+// 都不读，写入部分被按普通输入计价。
 var cacheHitFixtures = []string{
 	"anthropic-cache-hit",
 	"anthropic-stream-cache-hit",
+	"cc-cache-write",
+	"cc-stream-cache-write",
+	"cc-stream-cache-write-bailian",
+	"cc-cache-write-both-keys",
+	"responses-cache-write",
 }
 
 type fixtureMeta struct {
@@ -89,14 +99,14 @@ func TestCacheHitFixturesThroughTap(t *testing.T) {
 	}
 }
 
-// TestCacheHitFixturesThroughCanonical：样本 → Anthropic 解码 → canonical Usage，
-// 验的是「净值加回缓存两项」那段归一（protocol/event.go）。此前只有 CC 样本走到过
-// 缓存字段，这段加法在 Anthropic 侧读错了不会有任何用例发现。
+// TestCacheHitFixturesThroughCanonical：样本 → 按 meta.protocol 解码 → canonical Usage。
+// Anthropic 样本验的是「净值加回缓存两项」那段归一（protocol/event.go）；OpenAI 系
+// 样本验的是缓存两项明细读到了 canonical（毛值直映，不加减）。
 func TestCacheHitFixturesThroughCanonical(t *testing.T) {
 	for _, name := range cacheHitFixtures {
 		t.Run(name, func(t *testing.T) {
 			meta, raw := loadFixture(t, name)
-			codec := anthropic.NewCodec()
+			codec := codecs.New(protocol.Protocol(meta.Protocol), codecs.Options{})
 
 			var got protocol.Usage
 			var seen int
@@ -138,8 +148,78 @@ func TestCacheHitFixturesThroughCanonical(t *testing.T) {
 			}
 			// 编码回 Anthropic 线上格式时要能减回去，与解码侧那个加法互为逆向；
 			// 对不上说明毛值/净值在某一侧串了档，客户端看到的 input_tokens 就会错。
+			// 只对 Anthropic 样本成立：OpenAI 系的 Summary 本就是毛值。
+			if meta.Protocol != string(protocol.Anthropic) {
+				return
+			}
 			if net := got.NetInput(); net != meta.Expect.InputTokens {
 				t.Errorf("NetInput = %d, 期望回到上游原样的 %d", net, meta.Expect.InputTokens)
+			}
+		})
+	}
+}
+
+// TestCacheWriteCrossesExits：缓存写入量跨协议带到出口（#111）。上游样本按自家
+// codec 解码，再用另一协议的 codec 编成非流式响应，读出口 usage 里的写入键。
+//
+// cc-stream-cache-write 的 cached + write > prompt（new-api 的取值）：A 出口
+// input_tokens 照实钳成 0、两项缓存照原数写，不按比例压缩（PO 2026-09-28 裁决 4）。
+func TestCacheWriteCrossesExits(t *testing.T) {
+	cases := []struct {
+		fixture   string
+		exit      protocol.Protocol
+		wantWrite float64
+		wantInput float64 // 出口 usage 顶层的输入键（A 是净值，CC / R 是毛值）
+	}{
+		{"cc-stream-cache-write", protocol.Anthropic, 3616, 0},
+		{"cc-stream-cache-write", protocol.OpenAIResponses, 3616, 3619},
+		{"anthropic-cache-hit", protocol.OpenAI, 1024, 4881},
+		{"responses-cache-write", protocol.OpenAI, 10240, 14521},
+	}
+	for _, c := range cases {
+		t.Run(c.fixture+"→"+string(c.exit), func(t *testing.T) {
+			meta, raw := loadFixture(t, c.fixture)
+			in := codecs.New(protocol.Protocol(meta.Protocol), codecs.Options{})
+			var events []protocol.Event
+			if meta.Stream {
+				ch, err := in.DecodeStream(bytes.NewReader(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for ev := range ch {
+					events = append(events, ev)
+				}
+			} else {
+				var err error
+				if events, err = in.DecodeFullBody(raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			body, err := codecs.New(c.exit, codecs.Options{}).EncodeFullBody(events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out struct {
+				Usage map[string]any `json:"usage"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
+			u := out.Usage
+			var write, input any
+			switch c.exit {
+			case protocol.Anthropic:
+				write, input = u["cache_creation_input_tokens"], u["input_tokens"]
+			case protocol.OpenAI:
+				d, _ := u["prompt_tokens_details"].(map[string]any)
+				write, input = d["cache_write_tokens"], u["prompt_tokens"]
+			case protocol.OpenAIResponses:
+				d, _ := u["input_tokens_details"].(map[string]any)
+				write, input = d["cache_write_tokens"], u["input_tokens"]
+			}
+			if write != c.wantWrite || input != c.wantInput {
+				t.Errorf("出口 usage 写入 = %v、输入 = %v，期望 %v、%v\nusage = %v",
+					write, input, c.wantWrite, c.wantInput, u)
 			}
 		})
 	}

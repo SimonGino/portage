@@ -96,8 +96,8 @@ func TestTapNonStream(t *testing.T) {
 	}
 }
 
-// Anthropic 兼容端点会在 Responses 形状上多带 cache_creation_input_tokens；
-// 官方 OpenAI 不发，缺失即零值。
+// Anthropic 兼容端点会在 Responses 形状上多带顶层 cache_creation_input_tokens；
+// 官方 OpenAI 报在 input_tokens_details.cache_write_tokens（见 fixtures/responses-cache-write）。
 func TestTapReadsCacheCreationWhenPresent(t *testing.T) {
 	const body = `{"id":"resp_a","model":"claude-sonnet-4-5","status":"completed",` +
 		`"usage":{"input_tokens":100,"output_tokens":20,` +

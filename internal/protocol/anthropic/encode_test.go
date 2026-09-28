@@ -442,7 +442,7 @@ func TestEncodeFullBodyAggregates(t *testing.T) {
 	if out.Usage.InputTokens != 7 || out.Usage.OutputTokens != 34 || out.Usage.CacheReadTokens != 5 {
 		t.Errorf("usage = %+v，期望 input 7（毛值 12 减掉缓存读 5）", out.Usage)
 	}
-	// 缓存写入侧 CC 没有对应概念，恒零——但键必须在，Claude Code 缺键与 0 不当一回事。
+	// 这份 usage 没有缓存写入，写 0——但键必须在，Claude Code 缺键与 0 不当一回事。
 	if !strings.Contains(string(body), "cache_creation_input_tokens") {
 		t.Error("usage 缺 cache_creation_input_tokens 键")
 	}

@@ -85,3 +85,14 @@ ThinkingBody、密文不出」。消费方：`internal/protocol/openairesponses/
 `golden/responses-stream-text` 的帧序与键集写、删掉 delta；tool 那份是一路 `function_call`，
 done 帧键集照 sub2api `apicompat.ResponsesStreamEvent`。钉「done 帧按账补后缀、纯 done 时整段放出」。
 消费方：`internal/protocol/openairesponses/decode_response_test.go`。
+
+## cc-cache-write / cc-stream-cache-write / cc-stream-cache-write-bailian / cc-cache-write-both-keys / responses-cache-write
+
+[#111](https://github.com/SimonGino/portage/issues/111)：缓存写入量。OpenAI 官方报在 CC 的
+`prompt_tokens_details.cache_write_tokens` / R 的 `input_tokens_details.cache_write_tokens`（new-api
+`48068ce92`、sub2api `4a2b10c94`），阿里百炼报在 `prompt_tokens_details.cache_creation_input_tokens`
+（litellm `645b87fae1`）。**手工构造**——手上没有官方直连与百炼的转录。四份 CC 从 `golden/cc-text` /
+`golden/cc-stream-text` 派生、只改 usage 一处；R 那份键集照 `golden/responses-stream-text` 终帧（实采
+`cache_write_tokens` 恒 0），外壳裁成一条 message 的非流式响应。`cc-stream-cache-write` 取 new-api
+单测的数（prompt 3619 / cached 2921 / write 3616，cached + write > prompt），钉「原数照记、只钳 NetInput」；
+`both-keys` 钉「两键取大」。消费方：`internal/protocol/cachehit_fixture_test.go`（Tap、canonical、跨出口）。

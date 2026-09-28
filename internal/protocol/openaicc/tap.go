@@ -28,17 +28,32 @@ type chunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens        int `json:"prompt_tokens"`
-		CompletionTokens    int `json:"completion_tokens"`
-		PromptTokensDetails *struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details"`
+		PromptTokens        int            `json:"prompt_tokens"`
+		CompletionTokens    int            `json:"completion_tokens"`
+		PromptTokensDetails *promptDetails `json:"prompt_tokens_details"`
 		// ReasoningTokens 用 *int：0 与「没这个键」要分得开（见 Summary 那边的
 		// HasReasoningTokens）。details 整体缺失是同一档「没报」。
 		CompletionTokensDetails *struct {
 			ReasoningTokens *int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
 	} `json:"usage"`
+}
+
+// promptDetails 是 prompt_tokens_details，Tap 与 codec 共用：缓存写入的两种键
+// 只在这里认一次。
+type promptDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+	// 缓存写入两家各报一个键：OpenAI 官方 cache_write_tokens（new-api 48068ce92、
+	// sub2api 4a2b10c94），阿里百炼 cache_creation_input_tokens（litellm 645b87fae1）。
+	// 两者都是毛值 prompt_tokens 的明细，不是另一笔加数。
+	CacheWriteTokens         int `json:"cache_write_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+}
+
+// cacheWrite 两键都有值时取大（PO 2026-09-28 裁决）：两键说的是同一笔写入，相加
+// 会重复计。
+func (d *promptDetails) cacheWrite() int {
+	return max(d.CacheWriteTokens, d.CacheCreationInputTokens)
 }
 
 func observe(sum *protocol.Summary, data []byte) {
@@ -66,9 +81,13 @@ func observe(sum *protocol.Summary, data []byte) {
 	if c.Usage.CompletionTokens != 0 {
 		sum.OutputTokens = c.Usage.CompletionTokens
 	}
-	// CC 只有缓存命中（读）的概念，没有缓存写入，CacheWriteTokens 保持零值。
-	if d := c.Usage.PromptTokensDetails; d != nil && d.CachedTokens != 0 {
-		sum.CacheReadTokens = d.CachedTokens
+	if d := c.Usage.PromptTokensDetails; d != nil {
+		if d.CachedTokens != 0 {
+			sum.CacheReadTokens = d.CachedTokens
+		}
+		if w := d.cacheWrite(); w != 0 {
+			sum.CacheWriteTokens = w
+		}
 	}
 	// 与上面几个「非零才覆盖」不同：这里 0 是有意义的取值（这次没思考），所以按
 	// 键在不在来判，不按值。
