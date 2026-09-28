@@ -120,7 +120,8 @@ func unclearDetail(status int) string {
 
 // modelProbeBody 给出各协议的最小合法请求体。
 //
-//   - CC 与 Anthropic 用 `max_tokens: 1`——两边的通用最小参数。注意 OpenAI 官方的
+//   - CC 与 Anthropic 用 `max_tokens: 16`（口径层 v1.29；原为 1，个别上游回 400
+//     「max_tokens must be greater than 2」，检测就误报）。注意 OpenAI 官方的
 //     推理系模型（o 系、gpt-5 系）拒收 max_tokens、只认 max_completion_tokens，
 //     那会落成 400 →「说不清」；不迁就它，因为兼容型上游对不认识的字段各有脾气，
 //     而 400 的固定词表已经写明「模型多半存在」。
@@ -129,7 +130,7 @@ func modelProbeBody(p protocol.Protocol, model string) string {
 	m, _ := json.Marshal(model) // 模型名来自库，仍然按 JSON 字符串正经编码
 	switch p {
 	case protocol.Anthropic, protocol.OpenAI:
-		return `{"model":` + string(m) + `,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
+		return `{"model":` + string(m) + `,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`
 	case protocol.OpenAIResponses:
 		return `{"model":` + string(m) + `,"input":"hi","max_output_tokens":16}`
 	}

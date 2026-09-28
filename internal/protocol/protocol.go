@@ -95,9 +95,9 @@ func UpstreamEndpoint(p Protocol) (Endpoint, bool) {
 
 // RequestError 是「入站请求本身不合法」这一类**可逐字回显**的错误。
 //
-// 它存在的理由只有一个：codec 的 DecodeRequest 认出的某些问题，客户端有既定的降级
-// 动作可做（第一例是 previous_response_id → 重发完整 input），而那个动作是由错误体
-// 里的 code 触发的。普通的解码失败仍然走裸 error——那一档客户端除了「请求体坏了」
+// 它存在的理由只有一个：有些问题客户端有既定的降级动作可做（codec 认出的
+// previous_response_id → 重发完整 input；上游说上下文超长 → 压缩再重试），而那个
+// 动作是由错误体里的 code 触发的。普通的解码失败仍然走裸 error——那一档客户端除了「请求体坏了」
 // 之外读不出别的，多一个 code 也没人认。
 //
 // 承载它的状态码恒为 400：这个类型的定义就是「客户端的问题」。真要一个非 400 的

@@ -78,7 +78,7 @@ func TestProbeModelTransportFailureWording(t *testing.T) {
 	}
 }
 
-// 最小真实请求体的形状：CC/Anthropic 用 max_tokens:1，Responses 用
+// 最小真实请求体的形状：CC/Anthropic 用 max_tokens:16，Responses 用
 // max_output_tokens:16（OpenAI 的下限）；模型名按 JSON 字符串正经编码。
 func TestModelProbeBodyShapes(t *testing.T) {
 	for _, tc := range []struct {
@@ -86,8 +86,8 @@ func TestModelProbeBodyShapes(t *testing.T) {
 		key   string
 		want  float64
 	}{
-		{protocol.OpenAI, "max_tokens", 1},
-		{protocol.Anthropic, "max_tokens", 1},
+		{protocol.OpenAI, "max_tokens", 16},
+		{protocol.Anthropic, "max_tokens", 16},
 		{protocol.OpenAIResponses, "max_output_tokens", 16},
 	} {
 		var body map[string]any
