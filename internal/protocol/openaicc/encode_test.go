@@ -372,6 +372,31 @@ func TestEncodeRequestSkipsEmptyAssistantMessage(t *testing.T) {
 	}
 }
 
+// redacted_thinking（Anthropic 官方 thinking 变体，issue #99）跨协议到 CC：没有合成
+// 文本可回带，密文更不能发——与普通 thinking 走同一档 DropThinking，不是 DropVendorContent
+// （decode 侧已把它归一成 BlockThinking，这里钉的是它落进已有分支、没有另开口子）。
+func TestEncodeRedactedThinkingDroppedAsThinking(t *testing.T) {
+	src, err := os.ReadFile("../../../testdata/fixtures/in-anthropic-redacted-thinking/request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := anthropic.NewCodec().DecodeRequest(src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, dropped, _ := encode(t, req, false)
+
+	if !contains(dropped, openaicc.DropThinking) {
+		t.Errorf("redacted_thinking 没登记 DropThinking: %v", dropped)
+	}
+	if contains(dropped, openaicc.DropVendorContent) {
+		t.Errorf("redacted_thinking 不该走 vendor_content 档: %v", dropped)
+	}
+	if strings.Contains(string(body), "EmwKAhgBEgy3va3pzix") || strings.Contains(string(body), "redacted_thinking") {
+		t.Errorf("密文或块类型漏进了 CC 请求:\n%s", body)
+	}
+}
+
 // 非 JSON 入参要包成 JSON 对象：CC 的 function.arguments 按契约必须是 JSON 字符串。
 // A 入口走不到这条分支（Anthropic 的 input 恒是对象），但 portage-legacy#12 的 Codex custom 工具
 // 会——这里先把不变量钉住。

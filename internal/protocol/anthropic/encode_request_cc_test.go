@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -426,5 +427,33 @@ func TestEncodeRequestReportsReplayedThinking(t *testing.T) {
 		if strings.Contains(string(body), leaked) {
 			t.Errorf("回带的 %q 漏给了上游:\n%s", leaked, body)
 		}
+	}
+}
+
+// redacted_thinking 到 Anthropic 出口同样丢 + 登记 DropThinking（口径层 v0.62 ③，#99）：
+// 密文只有签发它的上游认，无状态选路下原样回写可能 400。生产上 A→A 走透传到不了这里，
+// 钉的是出口不按 Extras["data"] 放行——否则 R 入口 reasoning item 带个 data 键就能伪造。
+func TestEncodeRequestDropsRedactedThinking(t *testing.T) {
+	src, err := os.ReadFile("../../../testdata/fixtures/in-anthropic-redacted-thinking/request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCodec(Options{DefaultMaxTokens: 8192})
+	req, err := c.DecodeRequest(src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, dropped, err := c.EncodeRequestReport(req, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDrop(dropped, DropThinking) {
+		t.Errorf("redacted_thinking 没登记 DropThinking: %v", dropped)
+	}
+	if hasDrop(dropped, DropVendorContent) {
+		t.Errorf("redacted_thinking 不该走 vendor_content 档: %v", dropped)
+	}
+	if strings.Contains(string(body), "redacted_thinking") {
+		t.Errorf("redacted_thinking 不该写回:\n%s", body)
 	}
 }
