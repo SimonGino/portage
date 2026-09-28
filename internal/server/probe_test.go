@@ -75,7 +75,7 @@ func matrixUpstream(t *testing.T, seen *[]probedRequest) string {
 }
 
 // 三态判定（口径层 v0.43 沿用）：2xx = 通，404/405 = 不通，其余 = 说不清。
-// 顺带断言发的是带模型名的最小真实请求：max_tokens 压到 1，别真花钱。
+// 顺带断言发的是带模型名的最小真实请求：max_tokens 压到 16，别真花钱。
 func TestProbeReportsThreeStates(t *testing.T) {
 	var seen []probedRequest
 	db := gatewaytest.NewDB(t)
@@ -108,8 +108,8 @@ func TestProbeReportsThreeStates(t *testing.T) {
 		}
 	}
 	for _, req := range seen {
-		if req.Body["max_tokens"] != float64(1) {
-			t.Errorf("模型 %v 的检测请求没把 max_tokens 压到 1：%+v", req.Body["model"], req.Body)
+		if req.Body["max_tokens"] != float64(16) {
+			t.Errorf("模型 %v 的检测请求没把 max_tokens 压到 16：%+v", req.Body["model"], req.Body)
 		}
 	}
 }

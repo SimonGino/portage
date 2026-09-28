@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/SimonGino/portage/internal/calllog"
 	"github.com/SimonGino/portage/internal/exchange"
@@ -162,12 +166,19 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// Tap 与 body 记录照样挂在**上游原始字节**上：usage 要的是上游自己报的数，
 	// 不是网关重编出来的响应。
 	dumpFrom(c).write("out.json", outBody)
-	res, ok := s.ex.Do(c.Request.Context(), c.Writer, exchange.Request{
+	xreq := exchange.Request{
 		Rec: rec, Inbound: ep.Proto, Route: routeOf(cand), Endpoint: outEp,
 		Body: outBody, Header: c.Request.Header, Stream: stream,
-	})
+	}
+	res, ok := s.ex.Do(c.Request.Context(), c.Writer, xreq)
 	if !ok {
 		return
+	}
+	if res.Status == http.StatusBadRequest {
+		res, ok = s.retryTokenFloor(c, cand, outCodec, req, stream, xreq, res)
+		if !ok {
+			return
+		}
 	}
 	defer res.Close()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
@@ -186,6 +197,64 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	}
 	s.bufferConverted(c, rec, ep, cand, inCodec, outCodec, res.Body)
 	s.warnResponseDrops(cand, outCodec)
+}
+
+// retryTokenFloor 处理「上游嫌 max_tokens 太小」这一种 400（口径层 v1.29）：从报错里
+// 读出它要的下限，按下限重编请求再发**一次**。健康检查一类的客户端只要一两个 token，
+// 个别上游回 400「max_tokens must be greater than 2」，改一个数就能过的事不该让
+// 客户端吃一个错。
+//
+// 只在转换路径做：请求体本来就是我们重编的，改 canonical 的 MaxTokens 等于换个数
+// 编出去；透传路径改请求体违背透传保真。这时首字节还没写出，重发不破承诺边界。
+// 不是这一种 400 的，把读掉的字节接回去，原样交给下游的 writeUpstreamError。
+func (s *Server) retryTokenFloor(c *gin.Context, cand store.Candidate, outCodec protocol.Codec,
+	req *protocol.Request, stream bool, xreq exchange.Request, res *exchange.Result) (*exchange.Result, bool) {
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	floor := tokenFloor(raw)
+	if req.MaxTokens <= 0 || floor <= req.MaxTokens {
+		res.Body = io.MultiReader(bytes.NewReader(raw), res.Body)
+		return res, true
+	}
+	retried := *req
+	retried.MaxTokens = floor
+	body, _, err := encodeRequest(outCodec, &retried, stream)
+	if err != nil {
+		res.Body = io.MultiReader(bytes.NewReader(raw), res.Body)
+		return res, true
+	}
+	res.Close()
+	s.log.Info("上游嫌 max_tokens 太小，按它给的下限重发一次",
+		"channel", cand.ChannelName, "from", req.MaxTokens, "to", floor)
+	xreq.Body = body
+	xreq.Rec.Resent()
+	res, ok := s.ex.Do(c.Request.Context(), c.Writer, xreq)
+	if !ok {
+		// 重发撞上并发闸时 QueueRejected 会把出站端点清空（「没打过上游」），可第一次
+		// 已经打过了，补回来。
+		xreq.Rec.Dialing(xreq.Endpoint.Path)
+	}
+	return res, ok
+}
+
+// tokenFloorRe 读上游报的 max_tokens 下限，词表取自 magpie `tooFewTokens`（9e78539）。
+var tokenFloorRe = regexp.MustCompile(`(?i)max_(?:completion_|output_)?tokens.{0,60}?(greater than|more than|larger than|at least|>=|>)\s*(\d+)`)
+
+// tokenFloor 是上游说它至少要多少个 token；报错说的不是这件事时为 0。上限 1024：
+// 更大的数说的是别的（「max_tokens 300000 > 128000」那类上限报错）。
+func tokenFloor(raw []byte) int {
+	m := tokenFloorRe.FindSubmatch(raw)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(string(m[2]))
+	if err != nil || n > 1024 {
+		return 0
+	}
+	switch strings.ToLower(string(m[1])) {
+	case "at least", ">=":
+		return n
+	}
+	return n + 1
 }
 
 // warnResponseDrops 打「上游响应里有转换路径放不出去的项」这一条。
@@ -229,31 +298,73 @@ func encodeRequest(codec protocol.Codec, req *protocol.Request, stream bool) ([]
 // 重试决策的依据。
 // 回给客户端的只有 error.message 一句，但**落库落全**（截到 2KB，口径层 v0.53）：
 // 客户端拿到的是我们的错误契约，排障要的是上游到底说了什么，两者不该是同一份文本。
+//
+// 唯一的例外是「上下文超长」：各家上游说法不一，客户端只认自家那句，认出来才会压缩
+// 再重试，认不出就停在那里。所以这一档改说成入口协议的原话——Anthropic 是 message
+// 以 `prompt is too long` 开头，OpenAI 系是 code `context_length_exceeded`——状态码
+// 统一 400（Anthropic 与 OpenAI 自己都用 400 说这件事；413 会被 Codex 当传输失败重发）。
 func (s *Server) writeUpstreamError(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, status int, body io.Reader) {
 	// 收场与原文一次记完：「上游说不行」与「它说了什么」本来就是同一件事，
 	// 分两处写只是因为它们以前落在两个函数里。读多少由流水那一侧定。
 	raw := rec.UpstreamRejected(body)
-	msg := upstreamErrorMessage(raw)
+	msg, code := upstreamErrorMessage(raw)
 	if msg == "" {
 		msg = "上游返回 " + http.StatusText(status)
+	}
+	if contextTooLong(status, msg, code) {
+		if ep.Proto == protocol.Anthropic && !strings.HasPrefix(strings.ToLower(msg), "prompt is too long") {
+			msg = "prompt is too long: " + msg
+		}
+		ep.Proto.WriteRequestError(c.Writer, &protocol.RequestError{Message: msg, Code: "context_length_exceeded"})
+		return
 	}
 	ep.Proto.WriteError(c.Writer, status, msg)
 }
 
-// upstreamErrorMessage 从上游错误体里取出可读的说明。
+// upstreamErrorMessage 从上游错误体里取出可读的说明与 code。
 //
-// 只取 error.message 一个字段，不整体转发：错误体的其余部分（headers 回显、请求
+// 只取 error.message 一个字段回显，不整体转发：错误体的其余部分（headers 回显、请求
 // 快照一类）是上游自己的实现细节，转发它等于把一段不受控的内容塞进我们的错误契约。
-func upstreamErrorMessage(raw []byte) string {
+// code 只拿来判档，不回显。
+func upstreamErrorMessage(raw []byte) (msg, code string) {
 	var payload struct {
 		Error struct {
 			Message string `json:"message"`
+			Code    any    `json:"code"` // 有的上游写数字
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
-		return ""
+		return "", ""
 	}
-	return payload.Error.Message
+	code, _ = payload.Error.Code.(string)
+	return payload.Error.Message, code
+}
+
+// contextTooLongRe 是各家说「输入超过模型上下文」的写法：OpenAI 的 maximum context
+// length、Anthropic 的 prompt is too long、火山的 Input exceeds the context limit、
+// Kimi 的 exceeded model token limit、中文上游的「超过上下文」。词表取自 magpie
+// `tooLongRe`（40812f1）与 mimo2codex `contextOverflow.ts`，去掉了会撞上限流报错的
+// too many tokens。
+var contextTooLongRe = regexp.MustCompile(`(?i)context_length_exceeded|prompt is too long|input is too long|maximum context length|` +
+	`(exceeds?|exceeded|over|beyond)( the)?( model'?s?)?( maximum)? (context|token limit)|context (length|limit|window) (is )?exceeded|` +
+	`上下文(长度)?(超|过长)|超(过|出)了?(模型)?的?(最大)?上下文`)
+
+// contextTooLong 报告上游这个错误是不是在说「对话装不下了」。
+//
+// 只认 400 / 413：429 的「token 超限」说的是限流。提到 max_tokens 一类的不认——那是
+// 回复额度太大，压缩对话救不了。
+func contextTooLong(status int, msg, code string) bool {
+	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	if code == "context_length_exceeded" {
+		return true
+	}
+	m := strings.ToLower(msg)
+	if strings.Contains(m, "max_tokens") || strings.Contains(m, "max_output_tokens") || strings.Contains(m, "max_completion_tokens") {
+		return false
+	}
+	return contextTooLongRe.MatchString(msg)
 }
 
 // streamConverted 跑流式转换：上游 SSE → canonical 事件 → 入口协议 SSE。

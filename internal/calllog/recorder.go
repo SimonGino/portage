@@ -203,9 +203,16 @@ func (r *Recorder) Dialing(upstreamEndpoint string) { r.upstreamEndpoint = upstr
 //
 // 收三个裸参数而不是 upstream.Attempt：本包绝不能 import internal/upstream
 // （upstream 已经 import 了 store，而 store 又 import 本包，收进来就成环）。
+//
+// 重打次数是累加的：转换路径的 max_tokens 下限重发（口径层 v1.29）会让同一条流水
+// 走两次 exchange，后一次不能把前一次的数盖掉。凭证与排队取最后那次。
 func (r *Recorder) Attempted(retries int, credential string, queueWait time.Duration) {
-	r.retries, r.channelKey, r.queueWait = retries, credential, queueWait
+	r.retries += retries
+	r.channelKey, r.queueWait = credential, queueWait
 }
+
+// Resent 记一次 exchange 之外的重发（口径层 v1.29 的 max_tokens 下限重发）。
+func (r *Recorder) Resent() { r.retries++ }
 
 // RequestIDs 记下响应头里的两档 request id 候选（口径层 v0.74）。最终取哪一档
 // 由收尾时的 resolveUpstreamRequestID 定——中间那档在错误体里，那会儿还没收完。
