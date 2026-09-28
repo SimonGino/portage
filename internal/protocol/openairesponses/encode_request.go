@@ -44,6 +44,7 @@ const (
 	DropOrphanResult  = "orphan_result"   // 找不到对应工具调用的结果
 	DropSampling      = "sampling_params" // temperature / top_p / stop，见文件头
 	DropImageFileID   = "image_file_id"   // file_id 是上游作用域句柄，跨协议搬不走
+	DropDocument      = "document"        // Anthropic document / CC file 文件块（#100），认得的语义，不记 vendor_content
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
 	// （内容块）不是一档。effort 不在这一档——它现在原样直传成 reasoning.effort。
 	DropThinkingParam = "thinking_param"
@@ -298,8 +299,18 @@ func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) map[string
 		if _, ok := b.Extras["cache_control"]; ok {
 			drop(DropCacheControl)
 		}
-		if b.Kind == protocol.BlockText && b.Text != "" {
-			parts = append(parts, b.Text)
+		switch b.Kind {
+		case protocol.BlockText:
+			if b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		case protocol.BlockImage:
+			// 图由 liftOutImageParts 抬成后续 user 项，file_id 也在那边登记。
+		case protocol.BlockDocument:
+			drop(DropDocument)
+		default:
+			// output 只收字符串，其余块发不出去：登记而不是静默丢（#100）。
+			drop(DropVendorContent)
 		}
 	}
 	output := strings.Join(parts, "\n")
@@ -431,6 +442,8 @@ func encodeOutParts(blocks []protocol.Block, textType string, drop func(string))
 			if part, ok := encodeOutImage(b.Image, drop); ok {
 				parts = append(parts, part)
 			}
+		case protocol.BlockDocument:
+			drop(DropDocument)
 		default:
 			drop(DropVendorContent)
 		}
@@ -518,6 +531,9 @@ func joinOutBlocks(blocks []protocol.Block, drop func(string)) string {
 				drop(DropImageFileID)
 			}
 			// 图由 encodeOutUserParts / liftOutImages 另发。
+
+		case protocol.BlockDocument:
+			drop(DropDocument)
 
 		default:
 			// 认不得的块类型：跳过并登记。不登记就是静默改写语义。

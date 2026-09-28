@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "synthetic": true,
+  "source": "issue #100 手工构造：照 Anthropic PDF support 文档的 document 块形状写（source.type=base64 + media_type=application/pdf + 可选 title），另在 tool_result.content 里嵌一个 document（litellm responses_adapters 同样按这个形状读 document）。不是 harness 转录——实采样本里没有带文件的轮次。PDF 是 %PDF-1.4/%%EOF 两行的真字节，钉的是解码归一成 BlockDocument、跨协议两个出口记 document 档（含 tool_result 里的那一块），不是 PDF 内容。"
+}

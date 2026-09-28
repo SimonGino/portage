@@ -259,7 +259,7 @@ func decodeBlocks(raw json.RawMessage) ([]protocol.Block, error) {
 //
 // text → BlockText；image_url → BlockImage（data URI 拆成 MediaType+Data，其余当
 // URL）。空 data URI 返回一个没有 Image 的 BlockImage，由 decodeBlocks 丢掉。
-// input_audio 等仍原样带着 type 进 Extras。
+// file → BlockDocument（载荷进 Extras）。input_audio 等仍原样带着 type 进 Extras。
 func decodePart(item map[string]json.RawMessage) (protocol.Block, error) {
 	var kindStr string
 	if err := unmarshalIf(item, "type", &kindStr); err != nil {
@@ -279,6 +279,10 @@ func decodePart(item map[string]json.RawMessage) (protocol.Block, error) {
 		}
 	}
 	block := protocol.Block{Kind: protocol.BlockKind(kindStr)}
+	if kindStr == "file" {
+		// 文件块归 BlockDocument，只为跨协议丢弃时记对档；file 对象整个进 Extras（#100）。
+		block.Kind = protocol.BlockDocument
+	}
 	known := map[string]bool{"type": true}
 	if block.Kind == protocol.BlockText {
 		if err := unmarshalIf(item, "text", &block.Text); err != nil {

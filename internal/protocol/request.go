@@ -44,6 +44,10 @@ const (
 	BlockToolResult BlockKind = "tool_result"
 	// BlockImage 是跨协议图片块（#1）。载荷在 Image，三种来源各填一组字段。
 	BlockImage BlockKind = "image"
+	// BlockDocument 是三协议各有的文件块：Anthropic document、CC file、Responses
+	// input_file（#100）。目前只为跨协议丢弃时记对档（DropDocument），载荷原样留在
+	// Extras，不做对端映射——映不映另见 #101。
+	BlockDocument BlockKind = "document"
 )
 
 // Block 是内容块。

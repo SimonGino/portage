@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "openai_responses",
+  "stream": false,
+  "endpoint": "/v1/responses",
+  "synthetic": true,
+  "source": "issue #100 手工构造：照 OpenAI file inputs 文档的 Responses input_file part 形状写（filename + file_data data URI，与 input_image 同在 content 数组；litellm responses_adapters 出的也是这个形状），另在 function_call_output.output 数组里嵌一个 input_file。不是 harness 转录——Codex / ADE 实采样本里没有带文件的轮次。钉的是解码归一成 BlockDocument、跨协议两个出口记 document 档（含工具结果里的那一块）。"
+}

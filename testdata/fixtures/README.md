@@ -51,6 +51,19 @@ hash——往返验不了，而往返正是图片这格唯一值得测的东西�
 `openaicc.TestEncodeRedactedThinkingDroppedAsThinking`、
 `openairesponses.TestEncodeRedactedThinkingDroppedAsThinking`。
 
+## in-anthropic-document / in-cc-file / in-responses-input-file
+
+[#100](https://github.com/SimonGino/portage/issues/100) 文件块记档，三份都是**手工构造**：实采入站样本里没有带文件的轮次。
+形状照三家官方文档写（A `document` + `source.base64` + `title`；CC `{type:file, file:{filename, file_data}}`；
+R `input_file` 的 `filename` + `file_data`），litellm 的 A→CC / A→R 适配器读写的是同一形状。PDF 载荷是
+`%PDF-1.4` / `%%EOF` 两行的真字节。A 与 R 两份另在工具结果里嵌一个文件块。
+
+钉的是：解码归一成 `BlockDocument`（载荷进 Extras），跨协议两个出口登记 `document` 档、不落
+`vendor_content`、载荷不外带；工具结果里那块单独也要登记（A→R / R→A 此前静默丢）。映成对端文件块
+不在本票，另见 [#101](https://github.com/SimonGino/portage/issues/101)。
+
+消费方：`internal/protocol/document_fixture_test.go`、`internal/protocol/canonical_coverage_test.go`（覆盖表）。
+
 ## anthropic-cache-hit / anthropic-stream-cache-hit
 
 补的是 #37 第 2 项的**一半**：`anthropic-*` 六份真实样本的 cache 计数全是 0（中转那侧压根
