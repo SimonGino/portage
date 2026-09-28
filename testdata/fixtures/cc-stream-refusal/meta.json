@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_cc",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：issue #113。CC 解码此前完全不认 delta.refusal，静默整段丢掉，客户端只收到空回复 + end_turn。形状照 litellm types/llms/openai.py 的 ChatCompletionResponseMessage / OpenAI 官方 refusals 文档：首帧只带 role，refusal 逐片下发，finish_reason:\"stop\" 单独占一帧，usage 帧 choices 为空——同 golden/cc-stream-text 的帧序。没有任何上游真实拒答转录。",
+  "synthetic": true
+}

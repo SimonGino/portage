@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_cc",
+  "stream": false,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：issue #113。非流式 choices[].message.refusal 同流式 delta.refusal 一样此前不解码。形状同形（litellm types / OpenAI 官方 refusals 文档），finish_reason:\"stop\"。没有任何上游真实拒答转录。",
+  "synthetic": true
+}
