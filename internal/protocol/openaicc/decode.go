@@ -332,7 +332,9 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 		stop = "content_filter"
 	}
 	truncated := stop == ""
-	st.flushTools(out, truncated)
+	// length 同样没人担保：CC 没有逐条终止符，截断落在哪一路看不出来，并行调用一律
+	// 按半截交代（#127，PO 裁决的保守取舍）。
+	st.flushTools(out, truncated || stop == "length")
 	if truncated {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
@@ -354,8 +356,9 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 // 从 1 起都见过）。按首次出现次序排能保证「先说的先出」，这与客户端看到的顺序一致；
 // 而 canonical 事件的 Index 字段仍原样携带上游的 index，不重编号。
 //
-// truncated：流没等到 finish_reason 就断了，这些 End 是替上游补的，没人担保入参写完
-// ——End 上带 Truncated 让出口别把它当成品（#106，openairesponses 的 flushTool）。
+// truncated：流没等到 finish_reason 就断了（#106），或 finish_reason 是 length（#127），
+// 这些 End 没人担保入参写完——End 上带 Truncated 让出口别把它当成品（openairesponses
+// 的 flushTool）。
 func (st *streamState) flushTools(out chan<- protocol.Event, truncated bool) {
 	if len(st.tools) == 0 {
 		return

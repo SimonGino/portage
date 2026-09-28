@@ -147,6 +147,9 @@ type toolPending struct {
 	id   string
 	name string
 	args []string
+	// ended：上游已给 End，但 item 还压着没放（#127，见 releaseTools）。truncated 是
+	// End 上的 Truncated——解码侧断流时替上游补的收尾，入参没人担保写完。
+	ended, truncated bool
 }
 
 func (e *streamEncoder) event(ev protocol.Event) error {
@@ -185,6 +188,9 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		if ev.Text == "" {
 			return nil
 		}
+		if err := e.releaseTools(false); err != nil {
+			return err
+		}
 		if err := e.ensureStarted(); err != nil {
 			return err
 		}
@@ -217,6 +223,9 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		if !ok {
 			return nil
 		}
+		if err := e.releaseTools(false); err != nil {
+			return err
+		}
 		if err := e.ensureStarted(); err != nil {
 			return err
 		}
@@ -238,9 +247,14 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return e.bufferTool(ev)
 
 	case protocol.EvToolCallEnd:
-		// End 带 Truncated 是解码侧在断流收尾时替上游补的（CC 没有逐条终止符，
-		// openaicc.flushTools），这一路入参没人担保写完了。
-		return e.flushTool(ev.Index, ev.Truncated)
+		// 只记收尾不放 item（#127）：End 不等于入参写完——A 上游 content_block_stop 先于
+		// max_tokens 到。放不放、按什么状态放，要等下一个事件或停因来定，见 releaseTools。
+		// Truncated 是 openaicc 解码侧在断流或 length 收尾时置的（CC 没有逐条终止符），
+		// 这一路入参没人担保写完。
+		if p := e.pending[ev.Index]; p != nil {
+			p.ended, p.truncated = true, ev.Truncated
+		}
+		return nil
 
 	case protocol.EvUsage:
 		if ev.Usage != nil {
@@ -255,12 +269,22 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return nil
 
 	case protocol.EvError:
+		if err := e.releaseTools(false); err != nil {
+			return err
+		}
 		return e.writeError(ev)
 	}
 	return nil
 }
 
 func (e *streamEncoder) bufferTool(ev protocol.Event) error {
+	if ev.Type == protocol.EvToolCallStart {
+		// 新调用开头，前面已收尾的调用就不会再被截断波及了，先按序放出去。放在取槽
+		// 之前：同 index 复用时，新调用不能写进刚被放掉的旧槽。
+		if err := e.releaseTools(false); err != nil {
+			return err
+		}
+	}
 	pending := e.pending[ev.Index]
 	if pending == nil {
 		// 没见过 Start 的 index 冒出来也开槽而不是丢弃，同 anthropic 侧的理由——
@@ -290,15 +314,16 @@ func (e *streamEncoder) bufferTool(ev protocol.Event) error {
 // 本来就没有节奏可丢：CC 流里没有逐条工具终止符，解码侧已经把分片攒到流末尾一次性
 // 冲出（§5 坑清单）。
 //
-// incomplete：这一路没等到上游收尾（断流，#106）。照 opencodex 的 failCurrentToolCall：
-// 不发 `*_arguments.done` / `*_input.done`，item 以 `status:"incomplete"` 收口——半截
-// 入参当成品放出去，Codex 会拿残缺 JSON 去执行工具。
-func (e *streamEncoder) flushTool(index int, incomplete bool) error {
+// incomplete：这一路没等到上游收尾（断流，#106），或收尾后停因是 length（#127）。照
+// opencodex 的 failCurrentToolCall：不发 `*_arguments.done` / `*_input.done`，item 以
+// `status:"incomplete"` 收口——半截入参当成品放出去，Codex 会拿残缺 JSON 去执行工具。
+func (e *streamEncoder) flushTool(index int) error {
 	pending := e.pending[index]
 	if pending == nil {
 		return nil
 	}
 	delete(e.pending, index)
+	incomplete := !pending.ended || pending.truncated || e.stop == "length"
 
 	if err := e.ensureStarted(); err != nil {
 		return err
@@ -375,6 +400,25 @@ func (e *streamEncoder) flushTool(index int, incomplete bool) error {
 	}
 	e.done = append(e.done, final)
 	e.outputIndex++
+	return nil
+}
+
+// releaseTools 按首次出现次序（不按 index 数值序，§5 坑清单第一条）放出攒着的调用；
+// all 为假时只放已收尾的。
+//
+// 已收尾的调用压到「下一个会上线的事件」才放（#127，PO 裁决只压最后一个）：之后还有
+// 正文 / 推理 / 新调用 / 错误，说明截断落不到它头上，按 completed 放，item 次序与 phase
+// 与逐个放时一致；压到收尾的，由 flushTool 按停因定状态。不整体推迟到 EvDone——文本 →
+// 工具 → 文本时后一段会并进前一个还开着的 message item。
+func (e *streamEncoder) releaseTools(all bool) error {
+	for _, index := range e.pendingOrder {
+		if p := e.pending[index]; p == nil || !(all || p.ended) {
+			continue
+		}
+		if err := e.flushTool(index); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -569,16 +613,10 @@ func (e *streamEncoder) finish() error {
 	if e.compaction {
 		return e.finishCompaction()
 	}
-	// 上游流断在半截（没等到 EvToolCallEnd）时，攒着的那些调用照样放出去，
-	// 按首次出现次序而不是 index 数值序（§5 坑清单第一条）。没收尾就标 incomplete
-	// （#106）：半个调用看得见意图，但不许当成品。
-	for _, index := range e.pendingOrder {
-		if e.pending[index] == nil {
-			continue
-		}
-		if err := e.flushTool(index, true); err != nil {
-			return err
-		}
+	// 攒着的调用全部放出：没收尾的（断流，#106）与停因 length 的（#127）标
+	// incomplete——半个调用看得见意图，但不许当成品。
+	if err := e.releaseTools(true); err != nil {
+		return err
 	}
 	// 走到这里还开着的正文是最后一个 item：干净的 stop 收尾才算最终答案，截断 /
 	// 断流 / 其他停因的不标（#120）。
