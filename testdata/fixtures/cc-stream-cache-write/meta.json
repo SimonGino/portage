@@ -1,0 +1,19 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#111。从 golden/cc-stream-text 的真实转录派生，只改 usage 一处；OpenAI 官方形状 prompt_tokens_details.cache_write_tokens，数字取 new-api 48068ce92 / 92d3c9d18 单测的取值（prompt 3619 / cached 2921 / write 3616）：cached + write > prompt，两项都是未调整的前缀计数。钉「原数照记、只把 NetInput 钳到 0」（PO 2026-09-28 裁决 4）。",
+  "synthetic": true,
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 3619,
+    "OutputTokens": 37,
+    "CacheReadTokens": 2921,
+    "CacheWriteTokens": 3616,
+    "StopReason": "stop",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 3619
+}

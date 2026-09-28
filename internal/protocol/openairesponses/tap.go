@@ -30,9 +30,11 @@ type response struct {
 		OutputTokens       int `json:"output_tokens"`
 		InputTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens"`
+			// 官方 OpenAI 的缓存写入报在这里（new-api 48068ce92、sub2api 4a2b10c94）。
+			CacheWriteTokens int `json:"cache_write_tokens"`
 		} `json:"input_tokens_details"`
-		// Anthropic 兼容端点会在 Responses 形状上多带这一项（见 sub2api
-		// apicompat/types.go ResponsesUsage）；官方 OpenAI 不发，缺失即零值。
+		// Anthropic 兼容端点把缓存写入放在顶层这一项（见 sub2api apicompat/types.go
+		// ResponsesUsage）。与上面那个键的先后同 decode_response.go：顶层非零时它说了算。
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 		// ReasoningTokens 用 *int：0 与「没这个键」要分得开（见 Summary 那边的
 		// HasReasoningTokens）。
@@ -87,8 +89,13 @@ func apply(sum *protocol.Summary, r *response) {
 	if u.OutputTokens != 0 {
 		sum.OutputTokens = u.OutputTokens
 	}
-	if d := u.InputTokensDetails; d != nil && d.CachedTokens != 0 {
-		sum.CacheReadTokens = d.CachedTokens
+	if d := u.InputTokensDetails; d != nil {
+		if d.CachedTokens != 0 {
+			sum.CacheReadTokens = d.CachedTokens
+		}
+		if d.CacheWriteTokens != 0 {
+			sum.CacheWriteTokens = d.CacheWriteTokens
+		}
 	}
 	if u.CacheCreationInputTokens != 0 {
 		sum.CacheWriteTokens = u.CacheCreationInputTokens

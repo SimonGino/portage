@@ -80,11 +80,9 @@ func (b *choiceBody) reasoningText() string {
 }
 
 type usagePayload struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
+	PromptTokens        int            `json:"prompt_tokens"`
+	CompletionTokens    int            `json:"completion_tokens"`
+	PromptTokensDetails *promptDetails `json:"prompt_tokens_details"`
 	// 这里用值不用 *int（与 Tap 那侧不同）：canonical 的 Usage 零值就是「没报」，
 	// 「报了 0」与「没报」写出去的字节一样，不需要分。
 	CompletionTokensDetails *struct {
@@ -281,15 +279,14 @@ func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
 //
 // 语义是累计快照而非增量（protocol/event.go）：非零字段覆盖先前值，消费方不做加法。
 // CC 的 prompt_tokens 本就是**毛值**（含缓存命中），与 canonical 的口径一致，直映即可
-// （protocol.Usage 的约定）；cached_tokens 是它的明细，不再往 InputTokens 上加。
+// （protocol.Usage 的约定）；缓存读、写两项是它的明细，不再往 InputTokens 上加。
 func (st *streamState) observeUsage(u *usagePayload, out chan<- protocol.Event) {
 	if st.usage == nil {
 		st.usage = &protocol.Usage{}
 	}
 	next := protocol.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
-	// CC 只有缓存命中（读）的概念，没有缓存写入，CacheWriteTokens 恒零。
 	if d := u.PromptTokensDetails; d != nil {
-		next.CacheReadTokens = d.CachedTokens
+		next.CacheReadTokens, next.CacheWriteTokens = d.CachedTokens, d.cacheWrite()
 	}
 	// 思考 token 是 completion_tokens 的明细，不从它里面减（口径层 v0.66）。
 	if d := u.CompletionTokensDetails; d != nil {

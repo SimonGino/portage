@@ -46,3 +46,12 @@ func TestUsageBodyOmitsReasoningWhenAbsent(t *testing.T) {
 		})
 	}
 }
+
+// 缓存写入同样有数才写（#111，PO 2026-09-28 裁决）：多数 CC 上游不报这一项，恒写 0
+// 会把「没报」说成「没写」。有数时的键名与值由 cachehit_fixture_test 的跨出口用例断。
+func TestUsageBodyOmitsCacheWriteWhenAbsent(t *testing.T) {
+	d := usageBody(protocol.Usage{InputTokens: 10, CacheReadTokens: 4})["prompt_tokens_details"].(map[string]any)
+	if _, ok := d["cache_write_tokens"]; ok {
+		t.Errorf("没写入时不该出现 cache_write_tokens，实得 %v", d)
+	}
+}

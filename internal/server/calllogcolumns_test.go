@@ -48,13 +48,13 @@ func TestAnthropicTokenColumnsLandInCallLogs(t *testing.T) {
 
 // CC 渠道：input_tokens 本来就是**毛值**（prompt_tokens 已含缓存命中那部分）。
 //
-// 2079 = 31 + 2048，与上面那条 Anthropic 是同一次调用的两种记法（CC 没有缓存写
-// 一项，所以差 12）。#6 归一只该动 Anthropic 那条——这条的 2079 从头到尾不动，
+// 2079 = 31 + 2048，与上面那条 Anthropic 是同一次调用的两种记法（这份 CC 响应没报
+// 缓存写，所以差 12）。#6 归一只该动 Anthropic 那条——这条的 2079 从头到尾不动，
 // 动了即归一误伤。
 //
-// cache_write_tokens 落 0 而不是 NULL：CC 协议没有缓存写入的概念，上游一定不报，
-// 但只要走到了 summary 这一列就恒落（口径层 v0.66 只给思考那一格开了「没报就
-// NULL」的例外）。
+// cache_write_tokens 落 0 而不是 NULL：这份响应没报缓存写入（多数 CC 上游不报，
+// OpenAI 官方与百炼才报，见 openaicc.promptDetails），但只要走到了 summary 这一列
+// 就恒落（口径层 v0.66 只给思考那一格开了「没报就 NULL」的例外）。
 func TestChatCompletionsTokenColumnsLandInCallLogs(t *testing.T) {
 	gw, up := newOpenAIGateway(t, "gw-cc", "openai", "qwen3-max")
 	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"},

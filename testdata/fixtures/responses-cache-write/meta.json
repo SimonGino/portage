@@ -1,0 +1,21 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": false,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "source": "构造样本（非转录）：#111。usage 键集照 golden/responses-stream-text 终帧（input_tokens_details 带 cache_write_tokens，实采值恒 0），只把 cache_write_tokens 改成非零；外壳照 fixtures/responses-reasoning-text 的非流式形状裁到一条 message。OpenAI 官方把缓存写入报在 input_tokens_details.cache_write_tokens（new-api 48068ce92、sub2api 4a2b10c94），此前 R Tap 不读这个键。",
+  "synthetic": true,
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 14521,
+    "OutputTokens": 5,
+    "CacheReadTokens": 3840,
+    "CacheWriteTokens": 10240,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 14521
+}

@@ -27,6 +27,17 @@ func TestCostSumsFourComponentsOnNetInput(t *testing.T) {
 	}
 }
 
+// cached + write > prompt（OpenAI 两项都是未调整的前缀计数，new-api 92d3c9d18 的取值）：
+// 净输入钳到 0，读、写两项照原数全额计价，不按比例压缩（#111，PO 2026-09-28 裁决）。
+func TestCostClampsNetInputWhenCacheExceedsGross(t *testing.T) {
+	p := calllog.Prices{Input: f(1.25), Output: f(10), CacheRead: f(0.125), CacheWrite: f(1.5625)}
+	got := p.CostUSD(3619, 37, 2921, 3616)
+	want := 37*10/1e6 + 2921*0.125/1e6 + 3616*1.5625/1e6
+	if !got.Valid || math.Abs(got.Float64-want) > 1e-12 {
+		t.Fatalf("CostUSD = %+v，期望 %v（净输入 0）", got, want)
+	}
+}
+
 // 未定价记 0：四价全 NULL 的条目有用量照记 0，不留 NULL——「没定价」与「没打上游」
 // 在这一列上必须分得开。逐项适用：只缺某一项时那一项按 0 计，其余照算。
 func TestUnpricedComponentsCountAsZero(t *testing.T) {
