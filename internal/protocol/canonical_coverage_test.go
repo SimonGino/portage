@@ -87,6 +87,13 @@ var coverage = map[string]disposition{
 	// detail 在 CC 上住在 image_url 对象**里面**，Responses 上是 part 顶层的兄弟
 	// （见下面 input[].content[].detail）——同一个语义、两种形状，别写反。
 	"messages[].content[].image_url.detail": dField, // → Image.Detail（口径层 v0.78）
+	// 文件块（#100）：Kind 归 BlockDocument，载荷整个进 Extras，只为跨协议丢弃时记
+	// document 档。A document 的 source.* 与 image 同路径（上面记 dField），在
+	// document 上落的是 Extras——表按路径不按块类型，同一路径两种住户。
+	"messages[].content[].title":          dExtras, // A document
+	"messages[].content[].file":           dExtras, // CC file part
+	"messages[].content[].file.filename":  dExtras,
+	"messages[].content[].file.file_data": dExtras,
 
 	// tool_result 里的图（#1）。容器形状三协议不一样，是本项目此前没记过的一条
 	// 转换约束：Anthropic 的 tool_result.content 收 text+image 数组，CC 的
@@ -151,8 +158,10 @@ var coverage = map[string]disposition{
 	"input[].content[]":           dField,
 	"input[].content[].type":      dField, // input_text / input_image
 	"input[].content[].text":      dField,
-	"input[].content[].image_url": dField, // Responses 上是字符串，不是对象
-	"input[].content[].detail":    dField, // → Image.Detail；顶层，不在 image_url 里
+	"input[].content[].image_url": dField,  // Responses 上是字符串，不是对象
+	"input[].content[].detail":    dField,  // → Image.Detail；顶层，不在 image_url 里
+	"input[].content[].filename":  dExtras, // input_file → BlockDocument（#100），载荷进 Extras
+	"input[].content[].file_data": dExtras,
 
 	"input[].call_id":   dField, // ToolCall.ID / ToolResult.ToolCallID
 	"input[].name":      dField, // ToolCall.Name
@@ -161,12 +170,14 @@ var coverage = map[string]disposition{
 	// namespace 不落成独立字段：它与裸名一起被折进 ToolCall.Name（摊平名，#95）。
 	// 归 dField 是因为它确实被读、被消费、且决定了 canonical 里的名字——不是丢弃，
 	// 也不是原样带着走的 Extras（读完即从 Extras 删）。
-	"input[].namespace":     dField,
-	"input[].status":        dExtras,
-	"input[].output":        dField, // ToolResult.Content
-	"input[].output[]":      dField,
-	"input[].output[].type": dField,
-	"input[].output[].text": dField,
+	"input[].namespace":          dField,
+	"input[].status":             dExtras,
+	"input[].output":             dField, // ToolResult.Content
+	"input[].output[]":           dField,
+	"input[].output[].type":      dField,
+	"input[].output[].text":      dField,
+	"input[].output[].filename":  dExtras, // 工具结果里的 input_file，同上（#100）
+	"input[].output[].file_data": dExtras,
 
 	"input[].encrypted_content": dExtras, // 上游侧密文，跨协议必然作废（§5 坑清单）
 	// reasoning 的明文折进 BlockThinking.Text（口径层 v1.27 ①，#118），不再进 Extras。

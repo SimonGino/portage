@@ -355,7 +355,8 @@ func normalizeRole(r protocol.Role) protocol.Role {
 //
 // input_text / output_text / text 三个 type 都落成 BlockText：它们的区别是「谁写的」，
 // 而那个信息已经在消息的 role 上了，块级再留一份没有消费方。
-// input_image 落成 BlockImage；认不得的 type（input_audio 等）原样留 Kind + Extras。
+// input_image 落成 BlockImage，input_file 落成 BlockDocument；认不得的 type
+// （input_audio 等）原样留 Kind + Extras。
 func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -400,8 +401,13 @@ func decodeContent(raw json.RawMessage) ([]protocol.Block, error) {
 				}),
 			})
 		default:
+			kind := protocol.BlockKind(typ)
+			if typ == "input_file" {
+				// 文件块归 BlockDocument，只为跨协议丢弃时记对档；载荷留 Extras（#100）。
+				kind = protocol.BlockDocument
+			}
 			blocks = append(blocks, protocol.Block{
-				Kind:   protocol.BlockKind(typ),
+				Kind:   kind,
 				Extras: collectExtras(p, map[string]bool{"type": true}),
 			})
 		}

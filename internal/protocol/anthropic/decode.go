@@ -168,6 +168,8 @@ func decodeBlock(item map[string]json.RawMessage) (protocol.Block, error) {
 	if kindStr == "redacted_thinking" {
 		kind = protocol.BlockThinking
 	}
+	// document 的 type 串恰是 protocol.BlockDocument，无需归一；source / title 等载荷
+	// 走下面的 collectExtras，只为跨协议丢弃时记对档（#100）。
 	block := protocol.Block{Kind: kind}
 
 	switch kind {

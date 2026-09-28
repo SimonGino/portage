@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "openai",
+  "stream": false,
+  "endpoint": "/v1/chat/completions",
+  "synthetic": true,
+  "source": "issue #100 手工构造：照 OpenAI file inputs 文档的 CC file part 形状写（{type:file, file:{filename, file_data: data URI}}，litellm ChatCompletionFileObject 同形）。不是 harness 转录——实采 in-cc-* 的 content 全是字符串。钉的是解码归一成 BlockDocument、跨协议两个出口记 document 档。"
+}

@@ -1,0 +1,22 @@
+{
+  "model": "gpt-5.6-luna",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {"type": "input_text", "text": "读一下这份合同，再把附件也拉下来"},
+        {"type": "input_file", "filename": "contract.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"}
+      ]
+    },
+    {"type": "function_call", "call_id": "call_fetch", "name": "fetch_attachment", "arguments": "{}"},
+    {
+      "type": "function_call_output",
+      "call_id": "call_fetch",
+      "output": [
+        {"type": "input_text", "text": "附件已取回"},
+        {"type": "input_file", "filename": "attachment.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"}
+      ]
+    }
+  ]
+}
