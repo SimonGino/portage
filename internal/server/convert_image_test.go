@@ -556,5 +556,67 @@ func TestA2RToolResultImageIsLiftedIntoUserMessage(t *testing.T) {
 	}
 }
 
+// A→CC：tool_result 只有图、没有文本时，role=tool 的 content 应是占位串 "[image]"
+// 而不是空串——模型读到空 content 后紧跟一条图片消息会搞错因果（issue #110）。
+func TestA2CCImageOnlyToolResultGetsImagePlaceholder(t *testing.T) {
+	gw, up := newConvertGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"},
+		`{"id":"chatcmpl-9","model":"`+ccUpstreamModel+`","choices":[{"index":0,`+
+			`"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],`+
+			`"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-toolresult-imageonly"), nil)
+
+	var sent sentCCRequest
+	decodeSent(t, up.Last(t).Body, &sent)
+
+	toolIdx := -1
+	for i, m := range sent.Messages {
+		if m.Role != "tool" {
+			continue
+		}
+		toolIdx = i
+		var s string
+		if err := json.Unmarshal(m.Content, &s); err != nil {
+			t.Fatalf("role=tool 的 content 不是字符串（%s）", m.Content)
+		}
+		if s != "[image]" {
+			t.Errorf("只有图被抬出时 role=tool content = %q，期望 \"[image]\"", s)
+		}
+	}
+	if toolIdx < 0 {
+		t.Fatalf("没有 role=tool 消息: %s", up.Last(t).Body)
+	}
+}
+
+// A→R：同一场景，function_call_output.output 应是 "[image]"（issue #110）。
+func TestA2RImageOnlyToolResultGetsImagePlaceholder(t *testing.T) {
+	gw, up := newA2RGateway(t)
+	up.RespondWith(200, map[string]string{"Content-Type": "application/json"}, responsesOKBody)
+
+	gw.Post(t, "/v1/messages", fixtureBody(t, "in-anthropic-toolresult-imageonly"), nil)
+
+	var sent sentResponsesRequest
+	decodeSent(t, up.Last(t).Body, &sent)
+
+	outputIdx := -1
+	for i, item := range sent.Input {
+		if item.Type != "function_call_output" && item.Type != "custom_tool_call_output" {
+			continue
+		}
+		outputIdx = i
+		var s string
+		if err := json.Unmarshal(item.Output, &s); err != nil {
+			t.Fatalf("%s.output 不是字符串（%s）", item.Type, item.Output)
+		}
+		if s != "[image]" {
+			t.Errorf("只有图被抬出时 output = %q，期望 \"[image]\"", s)
+		}
+	}
+	if outputIdx < 0 {
+		t.Fatalf("没有工具结果项: %s", up.Last(t).Body)
+	}
+}
+
 // A→A 同协议透传不走 codec，图片这一路碰不到它——那条路是字节直传，没有解码编码。
 // 这里不重复钉，透传的字节保真由 relay_test.go 负责。

@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "synthetic": true,
+  "source": "#110 手工构造：tool_result.content 只有一张图、没有文本，钉「CC / Responses 出口在只有图被抬出时把 role=tool content / function_call_output.output 发成占位串 \"[image]\"，不发空串」这条转换约束。图是 fixtures/tiny.png 的真字节（1x1 PNG）。不是 harness 转录——实采的工具结果全是纯文本，也没有只带图的轮次。"
+}

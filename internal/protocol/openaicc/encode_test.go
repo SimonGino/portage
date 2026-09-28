@@ -666,6 +666,134 @@ func TestEncodeRequestLiftsToolResultImagesIntoOneUserMessage(t *testing.T) {
 	if len(parts) != 2 {
 		t.Fatalf("应是一条 user 里两张图，实得 %v", parts)
 	}
+	var toolText string
+	if err := json.Unmarshal(out.Messages[1].Content, &toolText); err != nil || toolText != "[image]" {
+		t.Errorf("只有图被抬出时 role=tool content 应是 \"[image]\"，实得 %s", out.Messages[1].Content)
+	}
+}
+
+// TestEncodeRequestEmptyToolResultGetsPlaceholder：完全没有内容的 tool_result 发
+// "(empty)"，不发空串——与 R 出口对称（issue #110）。
+func TestEncodeRequestEmptyToolResultGetsPlaceholder(t *testing.T) {
+	_, _, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{ToolCallID: "call_1"}},
+			}},
+		},
+	}, false)
+	var toolText string
+	if err := json.Unmarshal(out.Messages[1].Content, &toolText); err != nil || toolText != "(empty)" {
+		t.Errorf("完全空的 tool_result content 应是 \"(empty)\"，实得 %s", out.Messages[1].Content)
+	}
+}
+
+// TestEncodeRequestDroppedFileImageToolResultGetsEmptyPlaceholder：唯一的图是
+// file_id 且被丢、没能抬出时，不声称有图，按空结果处理（issue #110）。
+func TestEncodeRequestDroppedFileImageToolResultGetsEmptyPlaceholder(t *testing.T) {
+	_, dropped, out := encode(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file_abc"}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	if !contains(dropped, openaicc.DropImageFileID) {
+		t.Errorf("file_id 图应登记 DropImageFileID: %v", dropped)
+	}
+	if len(out.Messages) != 2 {
+		t.Fatalf("图没能抬出，不该有第三条 user 消息，实得 %+v", out.Messages)
+	}
+	var toolText string
+	if err := json.Unmarshal(out.Messages[1].Content, &toolText); err != nil || toolText != "(empty)" {
+		t.Errorf("图被丢、没抬出时 content 应是 \"(empty)\"，实得 %s", out.Messages[1].Content)
+	}
+}
+
+// 占位与抬图必须一致：说「[image]」就一定有图抬出去，没抬出就一定是「(empty)」——
+// 文件块混图、只有文件块、file_id 图混可抬的图、空图块几种组合逐一钉（#110）。
+func TestEncodeRequestToolResultPlaceholderMatchesLiftedImages(t *testing.T) {
+	req := func(content []protocol.Block) *protocol.Request {
+		return &protocol.Request{Model: "m", Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{ToolCallID: "call_1", Content: content}},
+			}},
+		}}
+	}
+	cases := []struct {
+		name    string
+		content []protocol.Block
+		want    string
+		lifted  int
+	}{
+		{"文件块 + 图", []protocol.Block{
+			{Kind: protocol.BlockDocument},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+		}, "[image]", 1},
+		{"只有文件块", []protocol.Block{{Kind: protocol.BlockDocument}}, "(empty)", 0},
+		{"file_id 图 + 可抬的图", []protocol.Block{
+			{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file_abc"}},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+		}, "[image]", 1},
+		{"空图块", []protocol.Block{{Kind: protocol.BlockImage}}, "(empty)", 0},
+		{"空文本 + 图", []protocol.Block{
+			{Kind: protocol.BlockText},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+		}, "[image]", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, out := encode(t, req(tc.content), false)
+			var text string
+			if err := json.Unmarshal(out.Messages[1].Content, &text); err != nil || text != tc.want {
+				t.Errorf("role=tool content = %s，期望 %q", out.Messages[1].Content, tc.want)
+			}
+			var parts []map[string]any
+			if len(out.Messages) == 3 {
+				if err := json.Unmarshal(out.Messages[2].Content, &parts); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(out.Messages) != 2+min(tc.lifted, 1) || len(parts) != tc.lifted {
+				t.Errorf("抬出 %d 张图，期望 %d：%+v", len(parts), tc.lifted, out.Messages)
+			}
+		})
+	}
+}
+
+// R→CC：R 入口数组形态的 function_call_output 只有一张图，同样发 "[image]" 并抬图（#110）。
+func TestEncodeRequestResponsesImageOnlyToolOutputGetsImagePlaceholder(t *testing.T) {
+	req := decodeResponses(t, `{"model":"m","input":[`+
+		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"},`+
+		`{"type":"function_call_output","call_id":"call_1","output":[`+
+		`{"type":"input_image","image_url":"data:image/png;base64,`+tinyPNG+`"}]}]}`)
+	_, _, out := encode(t, req, false)
+	if len(out.Messages) != 3 || out.Messages[1].Role != "tool" || out.Messages[2].Role != "user" {
+		t.Fatalf("期望 assistant / tool / user，实得 %+v", out.Messages)
+	}
+	if got := contentText(t, out.Messages[1].Content); got != "[image]" {
+		t.Errorf("role=tool content = %q，期望 \"[image]\"", got)
+	}
 }
 
 func TestEncodeRequestEmptyMediaTypeDefaultsPNG(t *testing.T) {
@@ -891,6 +1019,13 @@ func TestEncodeRequestLiftsImagesAfterAllToolMessages(t *testing.T) {
 	for i := range want {
 		if roles[i] != want[i] {
 			t.Fatalf("角色序列 = %v，期望 %v——抬出来的图夹进了两条 tool 中间", roles, want)
+		}
+	}
+
+	for i, want := range map[int]string{1: "[image]", 2: "第二个结果"} {
+		var text string
+		if err := json.Unmarshal(out.Messages[i].Content, &text); err != nil || text != want {
+			t.Errorf("第 %d 条 tool content = %s，期望 %q", i, out.Messages[i].Content, want)
 		}
 	}
 

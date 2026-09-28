@@ -34,6 +34,17 @@ hash——往返验不了，而往返正是图片这格唯一值得测的东西�
 消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
 `internal/server/convert_image_test.go`（六格全链路 + 抬图）。
 
+## in-anthropic-toolresult-imageonly
+
+[#110](https://github.com/SimonGino/portage/issues/110)：tool_result 只有一张图、没有文本，**手工构造**——
+在 `in-anthropic-toolresult-image` 基础上去掉那段正文（真实 harness 至今没发过只带图不带文本的工具结果）。
+钉的是：CC 出口 role=tool 的 `content`、R 出口 `function_call_output.output` 在只有图被抬出时都发占位串
+`"[image]"`，不发空串——模型读到空 content 后紧跟一条图片消息会把因果关系搞错。图是 `tiny.png` 的真字节。
+
+消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
+`internal/server/convert_image_test.go`（`TestA2CCImageOnlyToolResultGetsImagePlaceholder`、
+`TestA2RImageOnlyToolResultGetsImagePlaceholder`）。
+
 ## in-anthropic-redacted-thinking
 
 #99 的入站样本，**手工构造**：本库实采的 `in-anthropic-*` 与 `golden/in-anthropic-thinking-replay`
