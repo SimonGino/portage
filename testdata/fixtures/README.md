@@ -77,6 +77,17 @@ pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连�
 那条提交的单测，外加一段摘要与 `encrypted_content`，钉「摘要走 ThinkingSummary 在前、正文走
 ThinkingBody、密文不出」。消费方：`internal/protocol/openairesponses/decode_response_test.go`。
 
+## cc-stream-refusal / cc-refusal
+
+[#113](https://github.com/SimonGino/portage/issues/113)：CC 解码此前完全不认 `refusal` 字段
+（流式 `delta.refusal`、非流式 `message.refusal`），静默整段丢掉，客户端只收到空回复 + `end_turn`。
+**手工构造**——CC 侧目前没有任何真实拒答转录。流式那份照 `golden/cc-stream-text` 的帧序写
+（首帧只带 role，正文逐片下发，`finish_reason` 单独占一帧，usage 帧 `choices` 为空）；非流式
+那份是单帧 `message.refusal` + `finish_reason:"stop"`。形状依据 litellm
+`types/llms/openai.py` 的 `ChatCompletionResponseMessage` 与 OpenAI 官方 refusals 文档。
+钉「拒答当正文放出、`finish_reason:"stop"` 改判 canonical `content_filter`」。消费方：
+`internal/protocol/openaicc/decode_test.go`。
+
 ## responses-stream-done-only-text / responses-stream-done-only-tool
 
 [#108](https://github.com/SimonGino/portage/issues/108)：有的第三方 Responses 上游不发 delta，正文只在

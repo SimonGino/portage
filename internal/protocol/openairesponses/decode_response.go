@@ -194,6 +194,10 @@ type respStreamState struct {
 	sawTool  bool
 	doneSent bool
 	errSent  bool
+	// sawRefusal：本轮出现过拒答正文（response.refusal.delta 或非流式 refusal 部件）。
+	// stopReason() 据此把 status:"completed" 改判 content_filter（issue #113）；
+	// length/tool_calls 走别的分支，优先级天然保住。
+	sawRefusal bool
 
 	// pending 是正开着的 custom_tool_call，**按 output_index 分槽**：它们的入参要攒
 	// 满再一次性放出，理由见 flushCustom。function_call 不进这里，分片当场转发。
@@ -382,6 +386,7 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		// done 帧带拒答的上游还没见过，这里不照搬。）
 		if f.Delta != "" {
 			st.start(out)
+			st.sawRefusal = true
 			out <- protocol.Event{Type: protocol.EvTextDelta, Text: f.Delta, Index: f.OutputIndex}
 		}
 
@@ -677,6 +682,13 @@ func (st *respStreamState) stopReason(r *respPayload) string {
 		// 客户端就不知道该去执行工具了。
 		return "tool_calls"
 	}
+	if st.sawRefusal && r.Status == "completed" {
+		// 拒答改判（issue #113，PO 2026-09-28 裁决）：status:"completed" 时本轮
+		// 出现过拒答正文，canonical 停因改判 content_filter，A 出口自动映成
+		// stop_reason:"refusal"。status 为空（非流式没声明收尾）照旧兜 stop +
+		// Truncated，同 CC 侧截断不改判。
+		return "content_filter"
+	}
 	return "stop"
 }
 
@@ -758,6 +770,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 	}
 
 	sawTool := false
+	sawRefusal := false
 	for i, item := range payload.Output {
 		switch item.Type {
 		case "message":
@@ -767,6 +780,9 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 					// 拒答部件的正文在 refusal 键上，不在 text 上。走**正文**出去，
 					// 同流式 response.refusal.delta：跳过等于让客户端看着空回复干等。
 					text = part.Refusal
+					if text != "" {
+						sawRefusal = true
+					}
 				}
 				if text != "" {
 					events = append(events, protocol.Event{
@@ -830,7 +846,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 		events = append(events, protocol.Event{Type: protocol.EvUsage, Usage: &u})
 	}
 
-	st := &respStreamState{sawTool: sawTool}
+	st := &respStreamState{sawTool: sawTool, sawRefusal: sawRefusal}
 	stop := st.stopReason(&payload)
 	// status 为空才算「上游没声明收尾」；completed / incomplete 都是明确的结束
 	// （同 anthropic/decode_response.go 用 StopReason 是否为空判 Truncated）。

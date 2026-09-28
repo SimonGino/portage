@@ -41,6 +41,35 @@ func loadUpstream(t *testing.T, name string) ([]byte, protocol.Summary) {
 	return raw, meta.Expect
 }
 
+// fixtureDir 放的是**构造样本**，与 goldenDir 的真实转录分属两档：golden 认
+// `verified: true`，这边认 `synthetic: true`（钉死它不是转录）。缘由与升格规矩见
+// testdata/fixtures/README.md。
+const fixtureDir = "../../../testdata/fixtures"
+
+// loadFixture 读一份构造样本（同 openairesponses 包的 loadFixture）。
+func loadFixture(t *testing.T, name, file string) []byte {
+	t.Helper()
+	dir := filepath.Join(fixtureDir, name)
+	metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta struct {
+		Synthetic bool `json:"synthetic"`
+	}
+	if err := json.Unmarshal(metaRaw, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Synthetic {
+		t.Fatalf("%s 的 meta.json 没有 synthetic:true——真录到的样本请放进 testdata/golden/ 走 verified 那道闸", name)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func collect(t *testing.T, events <-chan protocol.Event) []protocol.Event {
 	t.Helper()
 	var out []protocol.Event
@@ -294,6 +323,63 @@ func TestDecodeStreamMarksTruncatedWhenUpstreamNeverFinished(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDecodeRefusalBecomesText：模型拒答（流式 delta.refusal、非流式 message.refusal）
+// 走正文放出去，finish_reason:"stop" 改判成 canonical content_filter（issue #113，A 出口
+// 自动映成 stop_reason:"refusal"）。此前 refusal 字段整段不解，客户端收到空回复 + end_turn。
+func TestDecodeRefusalBecomesText(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		decode  func(*testing.T, []byte) []protocol.Event
+	}{
+		{"cc-stream-refusal", decodeStream},
+		{"cc-refusal", decodeFull},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			events := tc.decode(t, loadFixture(t, tc.fixture, "response.raw"))
+			var text strings.Builder
+			for _, ev := range events {
+				if ev.Type == protocol.EvTextDelta {
+					text.WriteString(ev.Text)
+				}
+			}
+			if text.String() != "抱歉，我不能帮这个忙。" {
+				t.Errorf("拒答正文 = %q", text.String())
+			}
+			if got := doneReason(events); got != "content_filter" {
+				t.Errorf("StopReason = %q, want content_filter", got)
+			}
+		})
+	}
+}
+
+// TestDecodeStreamRefusalKeepsLengthAndToolCalls：拒答改判让位给 length 与
+// tool_calls（issue #113 验收标准：优先级 length/tool_calls > 拒答改判）。
+func TestDecodeStreamRefusalKeepsLengthAndToolCalls(t *testing.T) {
+	t.Run("length优先", func(t *testing.T) {
+		raw := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n" +
+			`data: {"choices":[{"index":0,"delta":{"refusal":"抱歉"},"finish_reason":"length"}]}` + "\n\n"
+		if got := doneReason(decodeStream(t, []byte(raw))); got != "length" {
+			t.Errorf("StopReason = %q, want length（拒答同轮出现，length 仍优先）", got)
+		}
+	})
+
+	t.Run("tool_calls优先", func(t *testing.T) {
+		raw := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n" +
+			`data: {"choices":[{"index":0,"delta":{"refusal":"抱歉","tool_calls":[{"index":0,"id":"call_a","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n"
+		if got := doneReason(decodeStream(t, []byte(raw))); got != "tool_calls" {
+			t.Errorf("StopReason = %q, want tool_calls（拒答同轮出现，tool_calls 仍优先）", got)
+		}
+	})
+
+	t.Run("带工具调用的stop不改判", func(t *testing.T) {
+		raw := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n" +
+			`data: {"choices":[{"index":0,"delta":{"refusal":"抱歉","tool_calls":[{"index":0,"id":"call_a","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"stop"}]}` + "\n\n"
+		if got := doneReason(decodeStream(t, []byte(raw))); got != "stop" {
+			t.Errorf("StopReason = %q, want stop（有工具调用时不改判 content_filter）", got)
+		}
+	})
 }
 
 type toolCall struct{ id, name, args string }
