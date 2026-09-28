@@ -284,6 +284,48 @@ func TestDecodeRequestSplitsThinkingAndSignature(t *testing.T) {
 	}
 }
 
+// redacted_thinking 是 Anthropic 官方定义的 thinking 变体，不是没见过的 vendor 块：
+// 归一到 BlockThinking，没有明文（Text 恒空），密文进 Extras["data"]（issue #99）。
+// 样本是构造样本，synthetic 闸由 canonical_coverage_test.go 统一把，见
+// testdata/fixtures/README.md。
+func TestDecodeRequestRedactedThinkingBecomesBlockThinking(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/fixtures/in-anthropic-redacted-thinking/request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := anthropic.NewCodec().DecodeRequest(body, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, m := range req.Messages {
+		for _, b := range m.Content {
+			if b.Kind != protocol.BlockThinking {
+				continue
+			}
+			data, ok := b.Extras["data"].(string)
+			if !ok {
+				continue
+			}
+			found = true
+			if b.Text != "" {
+				t.Errorf("redacted_thinking 不该有明文: %q", b.Text)
+			}
+			if data == "" {
+				t.Error("redacted_thinking 的密文没进 Extras[\"data\"]")
+			}
+			if _, ok := b.Extras["signature"]; ok {
+				t.Error("redacted_thinking 不该有 signature")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("没找到解成 BlockThinking 且带 Extras[\"data\"] 的块")
+	}
+}
+
 // 全函数不是「样本能解就行」：没见过的块类型、缺字段、纯字符串 content 都不许把
 // 整条请求打死——真打死了，一个新 beta 上线当天全部请求就都回 400 了。
 func TestDecodeRequestToleratesUnknownShapes(t *testing.T) {

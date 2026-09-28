@@ -34,6 +34,23 @@ hash——往返验不了，而往返正是图片这格唯一值得测的东西�
 消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
 `internal/server/convert_image_test.go`（六格全链路 + 抬图）。
 
+## in-anthropic-redacted-thinking
+
+#99 的入站样本，**手工构造**：本库实采的 `in-anthropic-*` 与 `golden/in-anthropic-thinking-replay`
+只有明文 `thinking`，没有 `redacted_thinking`（Fable 5.1 不产，Opus/Sonnet 4.x 才产，本机无转录）。
+形状照 Anthropic extended-thinking 文档写：`{"type":"redacted_thinking","data":...}` 后接同轮
+`tool_use`，data 是编的 base64 串。
+
+钉的是：解码归一成 `BlockThinking`（密文落 `Extras["data"]`），三个出口一律丢并登记
+`DropThinking`，不落 `vendor_content`。Anthropic 出口也丢（口径层 v0.62 ③，回带一律丢），
+不原样回写——生产上 A→A 走透传到不了编码器；真录到带 redacted_thinking 的回放再进 `golden/`。
+
+消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
+`anthropic.TestDecodeRequestRedactedThinkingBecomesBlockThinking`、
+`anthropic.TestEncodeRequestDropsRedactedThinking`、
+`openaicc.TestEncodeRedactedThinkingDroppedAsThinking`、
+`openairesponses.TestEncodeRedactedThinkingDroppedAsThinking`。
+
 ## anthropic-cache-hit / anthropic-stream-cache-hit
 
 补的是 #37 第 2 项的**一半**：`anthropic-*` 六份真实样本的 cache 计数全是 0（中转那侧压根

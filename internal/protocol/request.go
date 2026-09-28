@@ -69,6 +69,8 @@ type Block struct {
 	//     tool_result 块上都有。它是**位置敏感**的——脱敏口径专门保住了它，
 	//     因为断点位置本身就是被测行为。
 	//   - signature：Anthropic thinking 块的签名。
+	//   - data：Anthropic redacted_thinking 块的不透明密文（无明文，Text 恒空，
+	//     issue #99）。跟 signature 是同一格的两种住户，跨协议同样丢。
 	//   - encrypted_content：Responses reasoning 的密文（摘要 / 明文进 Text）。
 	Extras map[string]any
 }

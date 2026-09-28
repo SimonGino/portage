@@ -3,6 +3,7 @@ package openairesponses
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -434,6 +435,32 @@ func TestEncodeThinkingDroppedNotFabricated(t *testing.T) {
 	for _, leak := range []string{"let me think", "sig123", "reasoning", "encrypted_content"} {
 		if strings.Contains(string(body), leak) {
 			t.Errorf("请求体里出现了 %q：跨协议推理只能丢、不得伪造（口径层 v0.10）", leak)
+		}
+	}
+	if !hasDrop(dropped, DropThinking) {
+		t.Errorf("dropped = %v, want 含 %s", dropped, DropThinking)
+	}
+}
+
+// redacted_thinking（Anthropic 官方 thinking 变体，issue #99）跨协议到 R：没有合成
+// 文本、也没有 encrypted_content 可对应，密文不外带——与普通 thinking 走同一档
+// DropThinking（decode 侧已把它归一成 BlockThinking，这里钉的是没有另开口子）。
+func TestEncodeRedactedThinkingDroppedAsThinking(t *testing.T) {
+	src, err := os.ReadFile("../../../testdata/fixtures/in-anthropic-redacted-thinking/request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := anthropic.NewCodec().DecodeRequest(src, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, dropped, err := NewCodec().EncodeRequestReport(req, false)
+	if err != nil {
+		t.Fatalf("EncodeRequestReport: %v", err)
+	}
+	for _, leak := range []string{"EmwKAhgBEgy3va3pzix", "redacted_thinking", "encrypted_content"} {
+		if strings.Contains(string(body), leak) {
+			t.Errorf("请求体里出现了 %q：跨协议 redacted_thinking 只能丢", leak)
 		}
 	}
 	if !hasDrop(dropped, DropThinking) {

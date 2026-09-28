@@ -1,0 +1,8 @@
+{
+  "direction": "inbound",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "synthetic": true,
+  "source": "issue #99 手工构造：照 Anthropic extended-thinking 文档的 redacted_thinking 形状写（type: redacted_thinking + 不透明 data，没有 thinking 正文字段），data 后紧跟同一 assistant 轮的 tool_use（Opus/Sonnet 4.x 老对话回放带出来的典型形态）。不是 harness 转录：本库现有的 in-anthropic-* 实采样本与 testdata/golden/in-anthropic-thinking-replay 都只有明文 thinking（含签名缺失的形态），没有 redacted_thinking——Fable 5.1 不产这种块，Opus/Sonnet 4.x 家族才产，本机没有对应转录。data 是编的 base64 串，钉的是解码归一成 BlockThinking、三个出口都走 DropThinking 同一档，不是这串密文本身的解密含义。"
+}

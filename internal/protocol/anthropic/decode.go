@@ -160,6 +160,14 @@ func decodeBlock(item map[string]json.RawMessage) (protocol.Block, error) {
 	// 未知块类型原样带着 type 走：Kind 是字符串类型，装得下没见过的形态。
 	// 报错等于让一个新 beta 块类型把整条请求打死，而它多半只是我们不认识。
 	kind := protocol.BlockKind(kindStr)
+	// redacted_thinking 是 Anthropic 官方定义的 thinking 变体（上游要求隐藏推理时
+	// 发的不透明密文），不是没见过的 vendor 私货——归一到 BlockThinking：没有明文，
+	// Text 留空；密文没有专属字段，走下面的 collectExtras 落 Extras["data"]，与普通
+	// thinking 的 Extras["signature"] 是同一格的两种住户。跨协议丢弃因此走 DropThinking
+	// 同一档而非 DropVendorContent（issue #99）。
+	if kindStr == "redacted_thinking" {
+		kind = protocol.BlockThinking
+	}
 	block := protocol.Block{Kind: kind}
 
 	switch kind {

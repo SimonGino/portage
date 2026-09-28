@@ -55,6 +55,8 @@ const (
 	// 这一格**必须登记**（口径层 v0.62 ④）：客户端回放的是我们合成出来的、
 	// 没有 signature 的 thinking 块，多数客户端会补一个 `signature:""` 再发回来，
 	// 而 Anthropic 见空签名直接 400——第二轮就崩。丢是对的，但要看得见。
+	// redacted_thinking 也落这一档（decode 侧归一成 BlockThinking，#99）：密文只有签发
+	// 它的上游认，无状态选路下原样回写同样可能 400，与普通 thinking 同规丢弃。
 	DropThinking = "thinking" // 回带方向的 thinking 块正文与 signature
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
 	// （内容块）和 DropVendorRequest（其余顶层字段）都不是一档：住户是思考开关本身

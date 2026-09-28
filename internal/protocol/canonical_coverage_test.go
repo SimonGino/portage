@@ -69,6 +69,7 @@ var coverage = map[string]disposition{
 	"messages[].content[].text":               dField,
 	"messages[].content[].thinking":           dField,  // BlockThinking.Text
 	"messages[].content[].signature":          dExtras, // 回带同一上游用，跨协议丢
+	"messages[].content[].data":               dExtras, // redacted_thinking 的密文，同上（issue #99）
 	"messages[].content[].id":                 dField,  // ToolCall.ID
 	"messages[].content[].name":               dField,  // ToolCall.Name
 	"messages[].content[].input":              dOpaque, // ToolCall.Args
