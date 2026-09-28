@@ -226,7 +226,14 @@ func (s *Server) retryTokenFloor(c *gin.Context, cand store.Candidate, outCodec 
 	s.log.Info("上游嫌 max_tokens 太小，按它给的下限重发一次",
 		"channel", cand.ChannelName, "from", req.MaxTokens, "to", floor)
 	xreq.Body = body
-	return s.ex.Do(c.Request.Context(), c.Writer, xreq)
+	xreq.Rec.Resent()
+	res, ok := s.ex.Do(c.Request.Context(), c.Writer, xreq)
+	if !ok {
+		// 重发撞上并发闸时 QueueRejected 会把出站端点清空（「没打过上游」），可第一次
+		// 已经打过了，补回来。
+		xreq.Rec.Dialing(xreq.Endpoint.Path)
+	}
+	return res, ok
 }
 
 // tokenFloorRe 读上游报的 max_tokens 下限，词表取自 magpie `tooFewTokens`（9e78539）。
@@ -243,7 +250,7 @@ func tokenFloor(raw []byte) int {
 	if err != nil || n > 1024 {
 		return 0
 	}
-	switch string(m[1]) {
+	switch strings.ToLower(string(m[1])) {
 	case "at least", ">=":
 		return n
 	}

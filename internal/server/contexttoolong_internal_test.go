@@ -39,6 +39,7 @@ func TestTokenFloor(t *testing.T) {
 	for msg, want := range map[string]int{
 		`{"error":{"message":"max_tokens must be greater than 2"}}`:                3,
 		`max_completion_tokens must be at least 16`:                                16,
+		`max_tokens: At Least 16`:                                                  16,
 		`Invalid 'max_output_tokens': integer below minimum value. Expected >= 16`: 16,
 		`max_tokens: 300000 > 128000, which is the maximum allowed`:                0,
 		`max_tokens is too large: 999999`:                                          0,

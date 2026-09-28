@@ -40,6 +40,9 @@ func TestTokenFloorRetriedOnConvertedPath(t *testing.T) {
 	if up.Count() != 2 {
 		t.Errorf("上游收到 %d 次, 期望恰好 2 次（原请求 + 一次重发）", up.Count())
 	}
+	if row := gw.LastCallRow(t); row.RetryCount != 1 {
+		t.Errorf("流水 retry_count = %d, 期望 1（那次重发）", row.RetryCount)
+	}
 }
 
 // 下限重发之后仍被拒：不再重发第二次，原样把上游的 400 回给客户端。
