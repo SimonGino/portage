@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -412,13 +413,16 @@ func (e *streamEncoder) flushTool(index int) error {
 // 工具 → 文本时后一段会并进前一个还开着的 message item。
 func (e *streamEncoder) releaseTools(all bool) error {
 	for _, index := range e.pendingOrder {
-		if p := e.pending[index]; p == nil || !(all || p.ended) {
+		if p := e.pending[index]; p == nil || (!all && !p.ended) {
 			continue
 		}
 		if err := e.flushTool(index); err != nil {
 			return err
 		}
 	}
+	// 放掉的 index 从次序里摘掉：同 index 复用时新调用得排到队尾，留着旧项会把它提到
+	// 还压着的前一路前面。flushTool 只经这里调用，摘在这一处就够。
+	e.pendingOrder = slices.DeleteFunc(e.pendingOrder, func(i int) bool { return e.pending[i] == nil })
 	return nil
 }
 
