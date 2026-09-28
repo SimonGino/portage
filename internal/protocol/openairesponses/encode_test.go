@@ -694,3 +694,26 @@ func TestEncodeHeldToolCallReleasedByStartAndError(t *testing.T) {
 		t.Errorf("放出序 = %v，期望 %v", got, want)
 	}
 }
+
+// index 被复用时另一路还压着：旧 index 的次序项不许留下来把新调用排到前面。
+func TestEncodeReusedIndexKeepsCallOrder(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_c", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 1},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvDone, StopReason: "tool_calls"},
+	)
+	var got []string
+	for _, f := range frames {
+		if f.event == "response.output_item.done" {
+			got = append(got, fmt.Sprint(f.data["item"].(map[string]any)["call_id"]))
+		}
+	}
+	if want := []string{"call_a", "call_b", "call_c"}; !slices.Equal(got, want) {
+		t.Errorf("放出序 = %v，期望 %v", got, want)
+	}
+}
