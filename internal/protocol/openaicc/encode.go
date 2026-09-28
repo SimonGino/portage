@@ -297,14 +297,17 @@ func encodeNonAssistant(m protocol.Message, seen map[string]bool, drop func(stri
 		if _, ok := b.Extras["cache_control"]; ok {
 			drop(DropCacheControl)
 		}
+		// 先拼正文、再抬图，保持两者的丢弃登记顺序；占位看的是真抬出去的图（#110）。
+		text := joinBlocks(b.ToolResult.Content, drop)
+		parts := liftImageParts(b.ToolResult.Content, drop)
 		// tool_call_id 原样携带（§5 坑清单）：Anthropic 的 tool_use_id 与 CC 的
 		// tool_call_id 是同一个标识，重编号会让结果对不回调用。
 		out = append(out, map[string]any{
 			"role":         "tool",
 			"tool_call_id": b.ToolResult.ToolCallID,
-			"content":      joinBlocks(b.ToolResult.Content, drop),
+			"content":      protocol.ToolResultOutput(text, len(parts) > 0),
 		})
-		lifted = append(lifted, liftImageParts(b.ToolResult.Content, drop)...)
+		lifted = append(lifted, parts...)
 	}
 	if len(lifted) > 0 {
 		out = append(out, map[string]any{"role": "user", "content": lifted})

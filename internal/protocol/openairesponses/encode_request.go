@@ -225,8 +225,9 @@ func encodeOutMessage(m protocol.Message, seen map[string]bool, drop func(string
 			drop(DropOrphanResult)
 			continue
 		}
-		items = append(items, encodeOutToolResult(b.ToolResult, drop))
-		lifted = append(lifted, liftOutImageParts(b.ToolResult.Content, drop)...)
+		item, parts := encodeOutToolResult(b.ToolResult, drop)
+		items = append(items, item)
+		lifted = append(lifted, parts...)
 	}
 	if len(lifted) > 0 {
 		items = append(items, map[string]any{
@@ -289,11 +290,11 @@ func encodeOutToolCall(call *protocol.ToolCall) map[string]any {
 	}
 }
 
-// encodeOutToolResult 编一条工具结果。
+// encodeOutToolResult 编一条工具结果，连同从里面抬出的图 part 一起交给调用方。
 //
-// output 是**纯字符串**（sub2api 两个 to_responses 转换器一致），多块用换行拼。
-// 空结果发 "(empty)" 而不是空串，同样照 sub2api：部分上游拒收空 output。
-func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) map[string]any {
+// output 是**纯字符串**（sub2api 两个 to_responses 转换器一致），多块用换行拼；没有
+// 文本时按有没有图真被抬出补占位（protocol.ToolResultOutput，与 CC 出口共用，#110）。
+func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) (map[string]any, []map[string]any) {
 	var parts []string
 	for _, b := range res.Content {
 		if _, ok := b.Extras["cache_control"]; ok {
@@ -313,13 +314,11 @@ func encodeOutToolResult(res *protocol.ToolResult, drop func(string)) map[string
 			drop(DropVendorContent)
 		}
 	}
-	output := strings.Join(parts, "\n")
-	if output == "" {
-		output = "(empty)"
-	}
+	images := liftOutImageParts(res.Content, drop)
 	return map[string]any{
-		"type": "function_call_output", "call_id": res.ToolCallID, "output": output,
-	}
+		"type": "function_call_output", "call_id": res.ToolCallID,
+		"output": protocol.ToolResultOutput(strings.Join(parts, "\n"), len(images) > 0),
+	}, images
 }
 
 // encodeOutTools 编工具声明，返回声明出去的工具名集合供 tool_choice 校验用。

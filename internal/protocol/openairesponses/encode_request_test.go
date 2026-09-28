@@ -672,6 +672,94 @@ func TestEncodeRequestLiftsToolResultImagesIntoOneUserMessage(t *testing.T) {
 	if len(parts) != 2 {
 		t.Fatalf("应是一条 user 里两张图，实得 %v", parts)
 	}
+	if got[1]["output"] != "[image]" {
+		t.Errorf("只有图被抬出时 output 应是 \"[image]\"，实得 %v", got[1]["output"])
+	}
+}
+
+// TestEncodeRequestDroppedFileImageToolResultGetsEmptyPlaceholder：唯一的图是
+// file_id 且被丢、没能抬出时，不声称有图，output 按空结果处理（issue #110）。
+func TestEncodeRequestDroppedFileImageToolResultGetsEmptyPlaceholder(t *testing.T) {
+	out, dropped := encodeOut(t, &protocol.Request{
+		Model: "m",
+		Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{
+					ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true,
+				}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{
+					ToolCallID: "call_1",
+					Content: []protocol.Block{
+						{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file_abc"}},
+					},
+				}},
+			}},
+		},
+	}, false)
+	if !hasDrop(dropped, DropImageFileID) {
+		t.Errorf("file_id 图应登记 DropImageFileID: %v", dropped)
+	}
+	got := items(t, out)
+	if len(got) != 2 {
+		t.Fatalf("图没能抬出，不该有抬出的 user 项，实得 %v", got)
+	}
+	if got[1]["output"] != "(empty)" {
+		t.Errorf("图被丢、没抬出时 output 应是 \"(empty)\"，实得 %v", got[1]["output"])
+	}
+}
+
+// 占位与抬图必须一致：说「[image]」就一定有图抬出去，没抬出就一定是「(empty)」——
+// 文件块混图、只有文件块、file_id 图混可抬的图、空图块几种组合逐一钉（#110）。
+func TestEncodeRequestToolResultPlaceholderMatchesLiftedImages(t *testing.T) {
+	req := func(content []protocol.Block) *protocol.Request {
+		return &protocol.Request{Model: "m", Messages: []protocol.Message{
+			{Role: protocol.RoleAssistant, Content: []protocol.Block{
+				{Kind: protocol.BlockToolUse, ToolCall: &protocol.ToolCall{ID: "call_1", Name: "f", Args: `{}`, ArgsIsJSON: true}},
+			}},
+			{Role: protocol.RoleUser, Content: []protocol.Block{
+				{Kind: protocol.BlockToolResult, ToolResult: &protocol.ToolResult{ToolCallID: "call_1", Content: content}},
+			}},
+		}}
+	}
+	cases := []struct {
+		name    string
+		content []protocol.Block
+		want    string
+		lifted  int
+	}{
+		{"文件块 + 图", []protocol.Block{
+			{Kind: protocol.BlockDocument},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+		}, "[image]", 1},
+		{"只有文件块", []protocol.Block{{Kind: protocol.BlockDocument}}, "(empty)", 0},
+		{"file_id 图 + 可抬的图", []protocol.Block{
+			{Kind: protocol.BlockImage, Image: &protocol.Image{FileID: "file_abc"}},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{MediaType: "image/png", Data: tinyPNG}},
+		}, "[image]", 1},
+		{"空图块", []protocol.Block{{Kind: protocol.BlockImage}}, "(empty)", 0},
+		{"空文本 + 图", []protocol.Block{
+			{Kind: protocol.BlockText},
+			{Kind: protocol.BlockImage, Image: &protocol.Image{URL: "https://a.example/1.png"}},
+		}, "[image]", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _ := encodeOut(t, req(tc.content), false)
+			got := items(t, out)
+			if got[1]["output"] != tc.want {
+				t.Errorf("output = %v，期望 %q", got[1]["output"], tc.want)
+			}
+			var parts []any
+			if len(got) == 3 {
+				parts, _ = got[2]["content"].([]any)
+			}
+			if len(got) != 2+min(tc.lifted, 1) || len(parts) != tc.lifted {
+				t.Errorf("抬出 %d 张图，期望 %d：%v", len(parts), tc.lifted, got)
+			}
+		})
+	}
 }
 
 func TestEncodeNilRequest(t *testing.T) {
@@ -803,6 +891,10 @@ func TestEncodeRequestLiftsImagesAfterAllToolOutputs(t *testing.T) {
 		if types[i] != want[i] {
 			t.Fatalf("项类型序列 = %v，期望 %v——抬出来的图夹进了两个工具结果中间", types, want)
 		}
+	}
+
+	if got := items(t, out); got[2]["output"] != "[image]" || got[3]["output"] != "第二个结果" {
+		t.Errorf("两个 output = %v / %v，期望 \"[image]\" / \"第二个结果\"", got[2]["output"], got[3]["output"])
 	}
 
 	// 抬图与普通图走同一个 part 编码器，detail 本该顺带就过去了——但「本该」不是断言。
