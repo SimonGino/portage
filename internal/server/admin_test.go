@@ -838,3 +838,67 @@ func TestAdminLogFacetsReflectRelayedCalls(t *testing.T) {
 		t.Fatalf("普通用户打管理端取值域 = %d %s，想要 403", st, body)
 	}
 }
+
+// 纳管模型与凭证的 PUT 体是 patch：没提的字段不动（#141）。此前 disabled / name
+// 是裸字段，三个只改别的字段的前端写点得回传它们，漏传一次就把停用的模型静默启用、
+// 把名字框清空后的一次停用变成「凭证名不能为空」400。回归钉在 HTTP 这道 seam 上：
+// bug 出在调用方发了什么，只有这里抓得住。
+func TestChannelModelPutIsAPatch(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	chID := gatewaytest.SeedChannel(t, db, "openai", "openai", "https://api.example.com", "sk-x")
+	modelID := gatewaytest.SeedChannelModel(t, db, chID, "gpt-4o")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+	path := "/panel/api/channel-models/" + itoa(modelID)
+
+	a.JSONInto(t, http.MethodPut, path, `{"disabled":true}`, nil)
+	// 只填价，不带 disabled：停用位不能被翻回去。
+	a.JSONInto(t, http.MethodPut, path, `{"prices":{"input":1,"output":2,"cache_read":null,"cache_write":null}}`, nil)
+	var disabled int
+	var priceIn float64
+	if err := db.QueryRow(`SELECT disabled, price_input FROM channel_models WHERE id = ?`, modelID).Scan(&disabled, &priceIn); err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if disabled != 1 || priceIn != 1 {
+		t.Errorf("填价后 disabled=%d price_input=%v，期望停用位不动、价落下", disabled, priceIn)
+	}
+	// 空 patch 是调用方的错。
+	if status, _ := a.Do(t, http.MethodPut, path, `{}`); status != http.StatusBadRequest {
+		t.Errorf("空 patch status=%d，期望 400", status)
+	}
+}
+
+func TestCredentialPutIsAPatch(t *testing.T) {
+	db := gatewaytest.NewDB(t)
+	chID := gatewaytest.SeedChannel(t, db, "openai", "openai", "https://api.example.com", "sk-x")
+	credID := gatewaytest.SeedNamedCredential(t, db, chID, "主力", "sk-y")
+	g := gatewaytest.Start(t, db)
+	a := g.LoggedIn(t)
+	path := "/panel/api/credentials/" + itoa(credID)
+
+	// 只停用，不带 name：不 400，名字不动。
+	a.JSONInto(t, http.MethodPut, path, `{"disabled":true}`, nil)
+	var name string
+	var disabled int
+	if err := db.QueryRow(`SELECT name, disabled FROM channel_keys WHERE id = ?`, credID).Scan(&name, &disabled); err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if name != "主力" || disabled != 1 {
+		t.Errorf("停用后 name=%q disabled=%d，期望名字不动、已停用", name, disabled)
+	}
+	// 只改名，不带 disabled：停用位不动。
+	a.JSONInto(t, http.MethodPut, path, `{"name":"备用"}`, nil)
+	if err := db.QueryRow(`SELECT name, disabled FROM channel_keys WHERE id = ?`, credID).Scan(&name, &disabled); err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if name != "备用" || disabled != 1 {
+		t.Errorf("改名后 name=%q disabled=%d，期望改了名、仍停用", name, disabled)
+	}
+	// 提了 name 但是空的，仍拒；空 patch 也拒。
+	if status, _ := a.Do(t, http.MethodPut, path, `{"name":"  "}`); status != http.StatusBadRequest {
+		t.Errorf("空名 status=%d，期望 400", status)
+	}
+	if status, _ := a.Do(t, http.MethodPut, path, `{}`); status != http.StatusBadRequest {
+		t.Errorf("空 patch status=%d，期望 400", status)
+	}
+}

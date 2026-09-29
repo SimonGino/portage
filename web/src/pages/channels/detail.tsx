@@ -476,7 +476,6 @@ function ModelProtocols({
     // 勾满归一成继承、留着失效项时不归零——规则与立论在 derive.normalizeProtocols。
     void mutate(() =>
       api.put(`/channel-models/${model.id}`, {
-        disabled: model.disabled,
         protocols: normalizeProtocols(next, channelProtocols),
       }),
     )
@@ -557,7 +556,7 @@ function ModelInputLimit({ model, channelID }: { model: ChannelModel; channelID:
     const n = limitToSave(val, limit)
     if (n === null) return
     void mutate(() =>
-      api.put(`/channel-models/${model.id}`, { disabled: model.disabled, max_input_tokens: n }),
+      api.put(`/channel-models/${model.id}`, { max_input_tokens: n }),
     )
   }
 
