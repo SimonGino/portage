@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -32,20 +31,6 @@ func TestResolveCarriesMaxInputTokensOnBothPaths(t *testing.T) {
 				t.Errorf("MaxInputTokens = %d, 期望 200000", cand.MaxInputTokens)
 			}
 		})
-	}
-}
-
-// 负数拒而不是当 0 用：0 已经是「不限」，负数只能是填错（同 max_concurrency 立论）。
-func TestSetChannelModelMaxInputTokensRejectsNegative(t *testing.T) {
-	db := openTestDB(t)
-	seedChannel(t, db, "openai", "")
-
-	err := SetChannelModelMaxInputTokens(context.Background(), db, 1, -1)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, 期望 ErrInvalidInput", err)
-	}
-	if err := SetChannelModelMaxInputTokens(context.Background(), db, 1, 0); err != nil {
-		t.Fatalf("清成不限失败: %v", err)
 	}
 }
 

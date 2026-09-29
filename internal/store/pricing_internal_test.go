@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -45,43 +44,14 @@ func TestResolveCarriesPricesOnBothPaths(t *testing.T) {
 	}
 }
 
-// 负数拒而不是收下：0 已经是「真免费」，清回未定价走 nil，负价只能是填错。
-func TestSetChannelModelPricesRejectsNegative(t *testing.T) {
-	db := openTestDB(t)
-	seedChannel(t, db, "openai", "")
-
-	bad := -0.1
-	err := SetChannelModelPrices(context.Background(), db, 1, ChannelModelPrices{Input: &bad})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, 期望 ErrInvalidInput", err)
-	}
-
-	// 整组覆盖：一次写俩、再一次全清回 NULL，都得是一笔到位。
-	in, out := 3.0, 15.0
-	if err := SetChannelModelPrices(context.Background(), db, 1,
-		ChannelModelPrices{Input: &in, Output: &out}); err != nil {
-		t.Fatalf("填价失败: %v", err)
-	}
-	if err := SetChannelModelPrices(context.Background(), db, 1, ChannelModelPrices{}); err != nil {
-		t.Fatalf("清回未定价失败: %v", err)
-	}
-	var got sql.NullFloat64
-	if err := db.QueryRow(`SELECT price_input FROM channel_models WHERE id = 1`).Scan(&got); err != nil {
-		t.Fatalf("读价: %v", err)
-	}
-	if got.Valid {
-		t.Errorf("清空后 price_input = %v，期望 NULL", got.Float64)
-	}
-}
-
 // ListChannels 要把四价与「有没有用量」一起端给管理端——未定价提醒的判据是
 // 「四价全 NULL 且有用量」（口径层 §2.10），两个输入缺一个前端就判不了。
 func TestListChannelsCarriesPricesAndHasUsage(t *testing.T) {
 	db := openTestDB(t)
 	seedChannel(t, db, "openai", "")
 	in := 3.0
-	if err := SetChannelModelPrices(context.Background(), db, 1,
-		ChannelModelPrices{Input: &in}); err != nil {
+	if err := UpdateChannelModel(context.Background(), db, 1,
+		ChannelModelPatch{Prices: &ChannelModelPrices{Input: &in}}); err != nil {
 		t.Fatalf("填价: %v", err)
 	}
 	// 一条报了 usage 的流水（input_tokens 非 NULL）；另插一条**没报 usage** 的

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
 )
 
@@ -288,19 +289,12 @@ func applyModels(ctx context.Context, tx *sql.Tx, channel string, channelID int6
 	for _, m := range list {
 		name := strings.TrimSpace(m.UpstreamModel)
 		keep[name] = true
-		// 四价照指针写（#74）：文件里没写的键落 NULL（未定价），显式 0 落 0（真免费）
-		// ——文件是总量，这里没有「不动那一列」的形态。
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO channel_models (channel_id, upstream_model, protocols, max_input_tokens,
-			                            price_input, price_output, price_cache_read, price_cache_write, disabled)
-			VALUES (?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(channel_id, upstream_model) DO UPDATE SET
-			  protocols = excluded.protocols, max_input_tokens = excluded.max_input_tokens,
-			  price_input = excluded.price_input, price_output = excluded.price_output,
-			  price_cache_read = excluded.price_cache_read, price_cache_write = excluded.price_cache_write,
-			  disabled = excluded.disabled`,
-			channelID, name, parseProtocols(m.Protocols), m.MaxInputTokens,
-			m.PriceInput, m.PriceOutput, m.PriceCacheRead, m.PriceCacheWrite, boolInt(m.Disabled)); err != nil {
+		// 走管理端同一扇写门（#141）：幂等插入占住自然键，再把文件里的整行当成全字段
+		// patch 写——文件是总量，每一列都「提了」，四价没写的键落 NULL（未定价）、显式 0
+		// 落 0（真免费），没有「不动那一列」的形态。负价 / 负上限 / 协议值域的闸从此两条
+		// 路共用；check.go 里的复述只为一次报全，不是第二份规则。
+		protocols := toProtocolSet(m.Protocols)
+		if err := store.AddChannelModel(ctx, tx, channelID, name, protocols); err != nil {
 			return nil, fmt.Errorf("写入渠道 %q 的纳管模型 %q：%w", channel, name, err)
 		}
 		var id int64
@@ -308,6 +302,18 @@ func applyModels(ctx context.Context, tx *sql.Tx, channel string, channelID int6
 			`SELECT id FROM channel_models WHERE channel_id = ? AND upstream_model = ?`,
 			channelID, name).Scan(&id); err != nil {
 			return nil, fmt.Errorf("读回纳管模型 %q 的 id：%w", name, err)
+		}
+		limit, disabled := m.MaxInputTokens, m.Disabled
+		if err := store.UpdateChannelModel(ctx, tx, id, store.ChannelModelPatch{
+			Disabled:       &disabled,
+			Protocols:      &protocols,
+			MaxInputTokens: &limit,
+			Prices: &store.ChannelModelPrices{
+				Input: m.PriceInput, Output: m.PriceOutput,
+				CacheRead: m.PriceCacheRead, CacheWrite: m.PriceCacheWrite,
+			},
+		}); err != nil {
+			return nil, fmt.Errorf("写入渠道 %q 的纳管模型 %q：%w", channel, name, err)
 		}
 		ids[store.QualifiedName(channel, name)] = id
 		if !before[name] {
@@ -531,4 +537,15 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// toProtocolSet 把文件里的协议列表变成写门要的集合；值域与折旧名归一在 writer 里做。
+func toProtocolSet(list []string) protocol.Set {
+	set := make(protocol.Set, 0, len(list))
+	for _, p := range list {
+		if p = strings.TrimSpace(p); p != "" {
+			set = append(set, protocol.Protocol(p))
+		}
+	}
+	return set
 }
