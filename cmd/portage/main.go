@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/SimonGino/portage/internal/admin"
 	"github.com/SimonGino/portage/internal/config"
 	"github.com/SimonGino/portage/internal/declcfg"
+	"github.com/SimonGino/portage/internal/selfupdate"
 	"github.com/SimonGino/portage/internal/server"
 	"github.com/SimonGino/portage/internal/store"
 )
@@ -29,7 +31,17 @@ var (
 	distro  = "binary"
 )
 
+// errRestart 是 run() 交给 main() 的哨兵：可执行文件已替换、收场已完，该 Exec 了。
+// 放在 run() 外面做 Exec 是为了让 run() 的 defer 链（db.Close 触发 WAL checkpoint）
+// 正常跑完——Exec 不跑 defer。
+var errRestart = errors.New("升级完成，需要自重启")
+
 func main() {
+	// 子命令在 flag.Parse 之前分流：它不认 -config 那套 flag（口径层 §3 CLI 例外）。
+	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
+		os.Exit(upgradeCmd(os.Args[2:]))
+	}
+
 	configPath := flag.String("config", "config.yaml", "启动配置文件路径，缺失时全用默认值")
 	// 声明文件路径**默认空**，空即「没挂」（口径层 §2.9 #34）。刻意不给隐式默认值：
 	// 自动去找 ./channels.yaml 会让「文件名打错」退化成静默走库配置——那时路径为空是
@@ -59,10 +71,67 @@ func main() {
 		*channelsPath = v
 	}
 
-	if err := run(*configPath, *channelsPath, log); err != nil {
+	err := run(*configPath, *channelsPath, log)
+	if errors.Is(err, errRestart) {
+		// os.Args 原样：-config 等 flag 才带得过去。Exec 成功不返回，PID 不变；listener 与
+		// SQLite 的 fd 全带 CLOEXEC，新进程重新绑定不撞 EADDRINUSE。
+		exe, xerr := os.Executable()
+		if xerr == nil {
+			log.Info("正在自重启", "exe", exe)
+			xerr = syscall.Exec(exe, os.Args, os.Environ())
+		}
+		// Exec 返回即失败：listener 已关、库已关，不能当没事继续服务。退出交 systemd
+		// Restart=always 拉起磁盘上那份（已是新版）。
+		log.Error("自重启失败，退出", "err", xerr)
+		os.Exit(1)
+	}
+	if err != nil {
 		log.Error("gateway 启动失败", "err", err)
 		os.Exit(1)
 	}
+}
+
+// upgradeCmd 是 `portage upgrade [版本]`（口径层 v1.38 ⑦）：与面板按钮共用 selfupdate，
+// 替换后**只打印「重启生效」不 Exec**——从 shell 跑的一次性进程 Exec 成网关不是想要的。
+func upgradeCmd(args []string) int {
+	fail := func(err error) int {
+		fmt.Fprintln(os.Stderr, "portage upgrade:", err)
+		return 1
+	}
+	if distro == "docker" {
+		return fail(errors.New("unsupported_distro: Docker 形态请在部署目录执行 docker compose pull && docker compose up -d"))
+	}
+	ctx := context.Background()
+	base := os.Getenv("PORTAGE_DOWNLOAD_BASE")
+	var v string
+	switch len(args) {
+	case 0:
+		latest, err := selfupdate.Latest(ctx, base)
+		if err != nil {
+			return fail(err)
+		}
+		if latest == version {
+			fmt.Printf("已是最新 v%s\n", version)
+			return 0
+		}
+		v = latest
+	case 1:
+		v = strings.TrimPrefix(args[0], "v")
+		if !selfupdate.Valid(v) {
+			return fail(fmt.Errorf("版本号须为 x.y.z，得到 %q", args[0]))
+		}
+	default:
+		return fail(errors.New("用法：portage upgrade [版本]"))
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fail(err)
+	}
+	if err := selfupdate.Apply(ctx, base, v, exe); err != nil {
+		return fail(err)
+	}
+	fmt.Printf("已替换为 v%s，重启生效：systemctl restart portage\n", v)
+	return 0
 }
 
 func run(configPath, channelsPath string, log *slog.Logger) error {
@@ -177,19 +246,35 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 		}()
 	}
 
+	upgraded := make(chan string, 1)
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		// PORTAGE_DUMP_DIR 是排障采样开关（server/dump.go），与 PORTAGE_CHANNELS 一样只走
 		// env：它是「这几分钟开一下」的东西，不该在 config.yaml 里有个会被忘掉的键。
-		Handler: server.New(cfg, db, log).WithDumpDir(os.Getenv("PORTAGE_DUMP_DIR")).Engine(),
+		Handler: server.New(cfg, db, log).
+			WithDumpDir(os.Getenv("PORTAGE_DUMP_DIR")).
+			// 升级接口替换成功后往这里报；缓冲 1 + 不阻塞，接口侧已挡并发第二次。
+			WithUpgraded(func(v string) {
+				select {
+				case upgraded <- v:
+				default:
+				}
+			}).
+			Engine(),
 		// 不设 WriteTimeout：它会掐断长 SSE 流。写超时改由 relay 用
 		// http.NewResponseController(w).SetWriteDeadline 逐次推进。
 		ReadHeaderTimeout: 20 * time.Second,
 	}
 
+	log.Info("gateway 已启动", "listen", cfg.Listen, "db", cfg.DBPath)
+	return serve(ctx, srv, upgraded, log)
+}
+
+// serve 跑 srv 直到出错、收到退出信号或一键升级替换成功。升级这一支同 SIGTERM 收场
+// （Shutdown 等在途请求，沿用 30s），然后回 errRestart 让 main 去 Exec。
+func serve(ctx context.Context, srv *http.Server, upgraded <-chan string, log *slog.Logger) error {
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("gateway 已启动", "listen", cfg.Listen, "db", cfg.DBPath)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -203,5 +288,14 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	case v := <-upgraded:
+		log.Info("已替换为 v" + v + "，等待在途请求结束后自重启")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		// 超时只记不拦：文件已是新版，拖着的长流不该挡住重启。
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Warn("收场超时，强制重启", "err", err)
+		}
+		return errRestart
 	}
 }

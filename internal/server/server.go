@@ -57,6 +57,8 @@ type Server struct {
 	countTokensLim *rate.Limiter
 	// dump 是 PORTAGE_DUMP_DIR 开的排障采样，nil 即没开（dump.go）。
 	dump *dumper
+	// upgraded 是一键升级成功后的通知（WithUpgraded），nil 即没人接。
+	upgraded func(version string)
 }
 
 // WithDumpDir 开启排障采样（dump.go），dir 为空即不开。只从环境变量 PORTAGE_DUMP_DIR
@@ -67,6 +69,12 @@ func (s *Server) WithDumpDir(dir string) *Server {
 		s.log.Warn("排障采样已开启：每次转发的请求体、上游请求体与响应字节都会全文落盘，用完请关",
 			"dir", dir)
 	}
+	return s
+}
+
+// WithUpgraded 接上一键升级成功后的通知（展开层 §7.11）：main 在这里收到信号后收场并 Exec。
+func (s *Server) WithUpgraded(fn func(version string)) *Server {
+	s.upgraded = fn
 	return s
 }
 
@@ -149,7 +157,7 @@ func (s *Server) Engine() *gin.Engine {
 		mountAdmin = has
 	}
 	if mountAdmin {
-		admin.New(s.db, s.log, s.cfg.Declarative, s.cfg.Version, s.cfg.Distro).Mount(r)
+		admin.New(s.db, s.log, s.cfg.Declarative, s.cfg.Version, s.cfg.Distro, s.upgraded).Mount(r)
 	}
 	return r
 }

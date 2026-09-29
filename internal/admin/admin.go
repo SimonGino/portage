@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/SimonGino/portage/internal/mail"
 	"github.com/SimonGino/portage/internal/store"
@@ -45,13 +46,21 @@ type Handler struct {
 	mail mail.Sender
 	// version / distro 只随已登录的 /session 下发（口径层 v1.38 ③）。
 	version, distro string
+	// 一键升级（展开层 §7.11）：apply 同 mail 一样持函数，测试换桩才不会真去替换测试二进制；
+	// onUpgraded 由 main 接上，替换成功后通知它收场并 Exec；upgrading 挡并发第二次。
+	apply      func(ctx context.Context, version string) error
+	onUpgraded func(version string)
+	upgrading  atomic.Bool
 }
 
-func New(db *sql.DB, log *slog.Logger, declarative bool, version, distro string) *Handler {
+func New(db *sql.DB, log *slog.Logger, declarative bool, version, distro string, onUpgraded func(version string)) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{db: db, log: log, declarative: declarative, mail: mail.DefaultSender, version: version, distro: distro}
+	return &Handler{
+		db: db, log: log, declarative: declarative, mail: mail.DefaultSender,
+		version: version, distro: distro, apply: applyUpgrade, onUpgraded: onUpgraded,
+	}
 }
 
 // Bootstrap 用配置里的明文密码初始化管理端密码，**且只在库里还没有密码时**。
@@ -191,6 +200,9 @@ func (h *Handler) Mount(r *gin.Engine) {
 		adm.PUT("/auth-settings", h.putAuthSettings)
 		adm.POST("/auth-settings/test-email", h.testEmail)
 	}
+
+	// 升级不是业务配置写，不进 cw 写闸：声明文件形态照常可用（展开层 §7.11）。
+	adm.POST("/upgrade", h.upgrade)
 
 	adm.GET("/channels", h.listChannels)
 	cw.POST("/channels", h.createChannel)

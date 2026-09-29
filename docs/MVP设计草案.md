@@ -2,6 +2,8 @@
 
 > 状态：草案 v1.66
 
+> vNEXT 变更（§7.11 自升级落地，[#150](https://github.com/SimonGino/portage/issues/150) 第四刀，修改人 jinpenga）：只记与 §7.11 字面不同的落点。①`internal/selfupdate` 导出 `Apply(ctx, base, version, exe)` / `Latest(ctx, base)` / `Valid` / `Asset` 与三个词表哨兵（`ErrDownload` / `ErrChecksum` / `ErrNotWritable`，`Error()` 即回前端的词）；哈希与解包走同一条流（`TeeReader`），**哈希不符优先于解包错误**报——下载被截断时 gzip 也会报错，那该说 `checksum_mismatch`；哈希对得上但包里不是恰好一个 `portage` 普通文件（多文件、`../portage`、同名目录、macOS tar 的 `._portage`）归 `download_failed`。②upgraded 信号：`server.WithUpgraded(func(version))` → `admin.New` 末参 `onUpgraded`，main 侧接一个缓冲 1 的 `chan string`（§7.11 写的是「关一个 channel」，改成带版本号的发送，好在收场日志里写 `已替换为 vX`）；select 抽成 `serve(ctx, srv, upgraded, log)`，单测对它做（`run()` 其余是配置与库的装配）。收场日志拆两行：`serve` 记「已替换为 vX，等待在途请求结束后自重启」，`main` 在 Exec 前记「正在自重启」。收场超时（长流拖过 30s）只 Warn 不拦，照样重启。③版本号入口校验：接口与子命令都只收纯 `x.y.z`（可带前导 `v`），否则 400「版本号须为 x.y.z」/ 子命令 exit 1——版本号要拼进 URL，这不是五词表里的升级失败而是请求本身不合法。④`portage upgrade` 无参且最新版即当前版时打印「已是最新 vX」exit 0，不重复下载。⑤接口的下载跟随请求 ctx：浏览器断开即中止、临时文件删除、旧文件不动。
+
 > v1.66 变更（口径层 v1.39 落地：版本号从 `v0.1.1` 重新起、发版号只认纯 `x.y.z`，[#150](https://github.com/SimonGino/portage/issues/150)，修改人 jinpenga）：§7.11「前端」两处——检测条件由 `version != "dev"` 改为「纯 `x.y.z`」（`web/src/release.ts` 的 `isRelease`，`test` 与 `-SNAPSHOT` 快照同样不查；`newer` 随之只比三段数字）；缓存由 `{tag, checkedAt}` 改为 `{tag, published, checkedAt}`，发布日是 DESIGN v0.65 版本对照行要显示的，此前两字段漏了它。原文留删除线。
 
 > v1.65 变更（§11.4 订正，[#150](https://github.com/SimonGino/portage/issues/150) 实现时发现，PO 2026-09-29 裁定改，修改人 jinpenga）：`.goreleaser.yaml` 的 `before.hooks` 由 `dir: web` 结构形式改为 `npm --prefix web …` 字符串——OSS 版全局 hooks 不认结构形式，`goreleaser check` 报 `cannot unmarshal !!map into string`。原文留删除线。调研草案（`research/goreleaser-release-pipeline` 分支 §6.1 / §7 第 1 条）同一处错，不回改，以本节为准。

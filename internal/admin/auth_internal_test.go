@@ -69,7 +69,8 @@ func (m *mailRec) last(t *testing.T) struct{ To, Subject, Body string } {
 }
 
 // newAuthServer 起一个只挂管理端的进程内服务。返回的 db 供用例直接摆数据。
-func newAuthServer(t *testing.T, declarative bool) (*httptest.Server, *sql.DB, *mailRec) {
+// tweak 在挂路由前改 Handler（换 apply 桩之类），多数用例不传。
+func newAuthServer(t *testing.T, declarative bool, tweak ...func(*Handler)) (*httptest.Server, *sql.DB, *mailRec) {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
@@ -79,9 +80,12 @@ func newAuthServer(t *testing.T, declarative bool) (*httptest.Server, *sql.DB, *
 	if _, err := Bootstrap(t.Context(), db, testAdminPassword); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative, "0.5.0", "binary")
+	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative, "0.5.0", "binary", nil)
 	rec := &mailRec{}
 	h.mail = rec.send
+	for _, f := range tweak {
+		f(h)
+	}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	h.Mount(r)
