@@ -42,3 +42,4 @@ gofmt -w .                # CI 有独立 gofmt 闸，未格式化即红（vet �
 - **Issue tracker**：GitHub Issues（`SimonGino/portage`，gh CLI）——[`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)
 - **Triage 标签**：五个默认角色标签 + 本仓库另加的 `blocked`——[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)
 - **Domain docs**：探索代码前先读的术语与决策——[`docs/agents/domain.md`](docs/agents/domain.md)
+- **PR AI review**：参审 reviewer 只有 CodeRabbit 与 Codex。Gemini 未接入本仓库（PO 2026-09-29 裁定去掉），不发 `/gemini review`、不等它，也不记作覆盖缺口
