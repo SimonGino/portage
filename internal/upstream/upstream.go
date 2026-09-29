@@ -44,10 +44,20 @@ type Client struct {
 	// 每个测试库里都从 1 开始，包级 map 会让两个用例共享同一个游标。
 	mu     sync.Mutex
 	cursor map[string]int
+
+	// idleReadTimeout 是响应头到了之后，上游流中途挂住（不 EOF、不发数据）的
+	// 空闲超时（issue #105，PO 裁决固定 300s，先不进 config.yaml）：两帧间隔，
+	// 读到数据续期。字段而非包级常量是为了让测试能钉一个跑得动的小值——真等
+	// 300s 的行为测试不现实（白盒测试改它，同 do_internal_test.go 的 fastClient）。
+	idleReadTimeout time.Duration
 }
 
+// defaultIdleReadTimeout 见 idleReadTimeout。Anthropic 长 thinking 会静默几分钟，
+// 300s 是「救得住真挂住、不误伤长 thinking」的折中（参考仓库阈值 180–600s 都有）。
+const defaultIdleReadTimeout = 300 * time.Second
+
 func NewClient(retry RetryPolicy) *Client {
-	return &Client{retry: retry, cursor: map[string]int{}, http: &http.Client{
+	return &Client{retry: retry, cursor: map[string]int{}, idleReadTimeout: defaultIdleReadTimeout, http: &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           newDialer().DialContext,
@@ -152,14 +162,24 @@ func (c *Client) do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuer
 // send 在**同一份凭证**上跑退避重试（口径层 v0.19），并把每次真实发送记进 at。
 func (c *Client) send(ctx context.Context, rt Route, cred Credential, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool, at *Attempt) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(rt.BaseURL, ep, rawQuery), bytes.NewReader(body))
+		// 每次尝试单独一个可取消 context：空闲超时只掐这一次尝试的读，不牵连外层
+		// 客户端 ctx（重试、换凭证都还要接着用它）。err!=nil 时没有 body 可挂
+		// cancel，这里立刻调用；resp!=nil 时 cancel 交给 idleTimeoutBody 的 Close。
+		reqCtx, cancel := context.WithCancel(ctx)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, buildURL(rt.BaseURL, ep, rawQuery), bytes.NewReader(body))
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		req.ContentLength = int64(len(body))
 		applyHeaders(req.Header, clientHdr, rt.Protocol, rt.AuthScheme, cred.Value, stream)
 
 		resp, err := c.http.Do(req)
+		if err != nil {
+			cancel()
+		} else {
+			resp.Body = newIdleTimeoutBody(resp.Body, cancel, c.idleReadTimeout)
+		}
 		at.Sends++
 		if attempt >= c.retry.MaxRetries || c.budgetOut(*at) || !retriable(ctx, resp, err) {
 			return resp, err
@@ -179,6 +199,68 @@ func (c *Client) send(ctx context.Context, rt Route, cred Credential, ep protoco
 			return nil, err
 		}
 	}
+}
+
+// errUpstreamIdleTimeout 是空闲超时触发后 Read 返回的错误原文（issue #105 裁决：
+// 落库要能一眼跟其他断流原文分开）。不裹传输错误本身——那条是 ctx 取消打断阻塞
+// 读之后拿到的通用文案（多半是 "context canceled" 一类），对着日志的人看不出这是
+// 「上游挂住了」还是「随便什么原因取消了」。
+var errUpstreamIdleTimeout = errors.New("upstream idle timeout")
+
+// idleTimeoutBody 在 resp.Body 外包一层「两帧间隔」空闲超时：每次 Read 到数据就
+// 续期定时器，到点调 cancel 掐断这次请求的 context——net/http 会据此打断正阻塞
+// 着的 Read，返回值统一改写成 errUpstreamIdleTimeout。
+//
+// 只包这一处就同时覆盖透传（Writer.Copy 直接读它）与转换（DecodeStream 读它）两条
+// 路径：两者读的是同一个 Body，改写发生在这一层，上面的读者一个字都不用改
+// （issue #105 裁决）。
+//
+// 用 cancel 而不是自己起一根定时器去关连接：http.Transport 早就把 ctx 取消接到了
+// 底层连接的中断上，不用再摸传输层。
+type idleTimeoutBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+	d      time.Duration
+
+	mu       sync.Mutex
+	timer    *time.Timer
+	timedOut bool
+}
+
+func newIdleTimeoutBody(rc io.ReadCloser, cancel context.CancelFunc, d time.Duration) *idleTimeoutBody {
+	b := &idleTimeoutBody{ReadCloser: rc, cancel: cancel, d: d}
+	b.timer = time.AfterFunc(d, func() {
+		b.mu.Lock()
+		b.timedOut = true
+		b.mu.Unlock()
+		cancel()
+	})
+	return b
+}
+
+// Read 续期或改写。timedOut 只可能由定时器回调在 b.mu 保护下置位，本次 Read 是不是
+// 在它触发前就已经拿到了数据，由「读完之后再看 timedOut」诚实回答——置位之后才
+// 返回的错误（多半是 ctx 取消打断阻塞读的通用文案）一律改判成超时导致。
+func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.mu.Lock()
+	if n > 0 && !b.timedOut {
+		b.timer.Reset(b.d)
+	}
+	timedOut := b.timedOut
+	b.mu.Unlock()
+	if err != nil && timedOut {
+		return n, errUpstreamIdleTimeout
+	}
+	return n, err
+}
+
+// Close 收场：停表、释放 context，再关底层 body。cancel 幂等，Close 与定时器回调
+// 谁先谁后都安全；drain / releasingBody / 正常读完都会走到这里，不会漏停表。
+func (b *idleTimeoutBody) Close() error {
+	b.timer.Stop()
+	b.cancel()
+	return b.ReadCloser.Close()
 }
 
 // switchCredential 判这次失败该不该换渠道内的下一份凭证。
