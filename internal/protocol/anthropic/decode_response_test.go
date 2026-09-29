@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,15 +20,7 @@ import (
 
 func collect(t *testing.T, raw string) []protocol.Event {
 	t.Helper()
-	ch, err := NewCodec().DecodeStream(strings.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var events []protocol.Event
-	for ev := range ch {
-		events = append(events, ev)
-	}
-	return events
+	return collectWith(t, NewCodec(), raw)
 }
 
 func types(events []protocol.Event) []protocol.EventType {
@@ -493,4 +486,120 @@ func TestStopReasonMappingsAreInverse(t *testing.T) {
 			t.Errorf("%q 映到 Anthropic 再映回来变成了 %q", canonical, got)
 		}
 	}
+}
+
+// 构造样本（#136，无真实转录）：上游自带网搜时响应里的 server_tool_use /
+// web_search_tool_result，加一个 redacted_thinking。形状照 Anthropic 协议文档。
+//
+// 修之前 server_tool_use 的 input_json_delta 会被当成工具入参放出去——A→CC 吐一条没有
+// id 与 name 的 tool_calls，A→R 吐一个 name 与 call_id 都空的 function_call（两个编码器
+// 都给没见过 Start 的 index 开槽）。
+const respServerToolStream = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_srv","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EmwKAhgBEgyREDACTED"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":[{"type":"web_search_result","url":"https://go.dev","title":"Go"}]}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: content_block_start
+data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"查到了"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":3}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+// assertServerToolDropped：认不得的块不漏出、有登记；redacted_thinking 归 thinking 档
+// （密文走 signature 通道，出口本就不外发），不登记（#136 裁决）。
+func assertServerToolDropped(t *testing.T, c *Codec, events []protocol.Event) {
+	t.Helper()
+	var thinking []protocol.Event
+	for _, ev := range events {
+		switch ev.Type {
+		case protocol.EvToolCallStart, protocol.EvToolArgsDelta, protocol.EvToolCallEnd:
+			t.Errorf("服务端工具块漏成了工具调用事件: %+v", ev)
+		case protocol.EvThinkingDelta:
+			thinking = append(thinking, ev)
+		}
+	}
+	if len(thinking) != 1 || thinking[0].Channel != protocol.ThinkingSignature || thinking[0].Text != "EmwKAhgBEgyREDACTED" {
+		t.Errorf("redacted_thinking 解成了 %+v，期望一条 signature 通道带 data", thinking)
+	}
+	if last := events[len(events)-1]; last.Type != protocol.EvDone || last.StopReason != "stop" {
+		t.Errorf("收尾 = %+v, 期望 EvDone/stop", last)
+	}
+	want := []string{"server_tool_use(#1)", "web_search_tool_result(#2)"}
+	got := c.ResponseDrops().Names()
+	if !slices.Equal(got, want) {
+		t.Errorf("ResponseDrops = %v, want %v", got, want)
+	}
+}
+
+func TestDecodeStreamDropsUnknownBlocks(t *testing.T) {
+	c := NewCodec()
+	assertServerToolDropped(t, c, collectWith(t, c, respServerToolStream))
+
+	// 每请求归零：同一实例再解一条干净流，上一轮的登记不能带过来。
+	collectWith(t, c, respTextStream)
+	if !c.ResponseDrops().Empty() {
+		t.Errorf("第二轮 ResponseDrops = %v，期望空", c.ResponseDrops().Names())
+	}
+}
+
+func TestDecodeFullBodyDropsUnknownBlocks(t *testing.T) {
+	c := NewCodec()
+	events, err := c.DecodeFullBody([]byte(`{
+		"id":"msg_srv","model":"claude-sonnet-5","type":"message","role":"assistant",
+		"content":[
+			{"type":"redacted_thinking","data":"EmwKAhgBEgyREDACTED"},
+			{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{"query":"go"}},
+			{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":[]},
+			{"type":"text","text":"查到了"}
+		],
+		"stop_reason":"end_turn",
+		"usage":{"input_tokens":5,"output_tokens":9}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertServerToolDropped(t, c, events)
+}
+
+func collectWith(t *testing.T, c *Codec, raw string) []protocol.Event {
+	t.Helper()
+	ch, err := c.DecodeStream(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []protocol.Event
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	return events
 }

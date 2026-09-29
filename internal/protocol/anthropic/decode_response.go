@@ -34,10 +34,11 @@ import (
 
 // DecodeStream 把上游 SSE 解成 canonical 事件流。
 func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
+	c.responseDrops = protocol.NameList{}
 	out := make(chan protocol.Event, 32)
 	go func() {
 		defer close(out)
-		st := &respState{}
+		st := &respState{drops: &c.responseDrops}
 		scanner := &protocol.FrameScanner{}
 		buf := make([]byte, 32<<10)
 		for {
@@ -76,6 +77,7 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 // 背书，形状是照协议文档 + 流式那半边的对称性写的。同一类缺口 R→CC 那边也有，记在
 // §9。
 func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
+	c.responseDrops = protocol.NameList{}
 	var payload struct {
 		ID         string            `json:"id"`
 		Model      string            `json:"model"`
@@ -112,6 +114,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 			Text      string          `json:"text"`
 			Thinking  string          `json:"thinking"`
 			Signature string          `json:"signature"`
+			Data      string          `json:"data"`
 			ID        string          `json:"id"`
 			Name      string          `json:"name"`
 			Input     json.RawMessage `json:"input"`
@@ -135,6 +138,10 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 					Type: protocol.EvThinkingDelta, Text: block.Signature, Channel: protocol.ThinkingSignature,
 				})
 			}
+		case "redacted_thinking":
+			if block.Data != "" {
+				events = append(events, redactedEvent(block.Data))
+			}
 		case "tool_use":
 			events = append(events,
 				protocol.Event{
@@ -144,6 +151,8 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 				protocol.Event{Type: protocol.EvToolArgsDelta, Index: i, Text: string(block.Input)},
 				protocol.Event{Type: protocol.EvToolCallEnd, Index: i},
 			)
+		default:
+			c.responseDrops.Add(dropLabel(block.Type, i))
 		}
 	}
 
@@ -212,13 +221,14 @@ func (u *usagePayload) canonical() *protocol.Usage {
 
 // respState 是流式解码的状态。
 //
-// 要记的只有两样：每个 content block index 是什么类型（content_block_stop 只给
-// index，得靠它判断该不该发 EvToolCallEnd），以及 stop_reason（它在 message_delta
-// 里给，而 EvDone 要等 message_stop 才发）。
+// 要记的有两样：每个 content block index 是什么类型（content_block_stop 与
+// input_json_delta 只给 index，得靠它判断该不该发工具事件），以及 stop_reason（它在
+// message_delta 里给，而 EvDone 要等 message_stop 才发）。drops 是登记的去处。
 type respState struct {
 	blockKind map[int]string
 	stop      string
 	done      bool
+	drops     *protocol.NameList // 指回 Codec.responseDrops
 }
 
 func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
@@ -240,6 +250,7 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 			Type string `json:"type"`
 			ID   string `json:"id"`
 			Name string `json:"name"`
+			Data string `json:"data"`
 		} `json:"content_block"`
 
 		Delta *struct {
@@ -284,13 +295,23 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 			st.blockKind = map[int]string{}
 		}
 		st.blockKind[ev.Index] = ev.ContentBlock.Type
-		if ev.ContentBlock.Type == "tool_use" {
+		switch ev.ContentBlock.Type {
+		case "text", "thinking":
+			// 正文靠后面的 delta 下发。
+		case "redacted_thinking":
+			// 密文整段在 start 里给，没有 delta。
+			if ev.ContentBlock.Data != "" {
+				out <- redactedEvent(ev.ContentBlock.Data)
+			}
+		case "tool_use":
 			out <- protocol.Event{
 				Type: protocol.EvToolCallStart, Index: ev.Index,
 				ToolID: ev.ContentBlock.ID, ToolName: ev.ContentBlock.Name,
 				// Anthropic 的 tool_use.input 恒是 JSON 对象，分片拼起来也是。
 				ArgsIsJSON: true,
 			}
+		default:
+			st.drops.Add(dropLabel(ev.ContentBlock.Type, ev.Index))
 		}
 
 	case "content_block_delta":
@@ -313,8 +334,13 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 				Type: protocol.EvThinkingDelta, Text: ev.Delta.Signature, Channel: protocol.ThinkingSignature,
 			}
 		case "input_json_delta":
-			out <- protocol.Event{
-				Type: protocol.EvToolArgsDelta, Index: ev.Index, Text: ev.Delta.PartialJSON,
+			// 只认 tool_use 块的：server_tool_use 也走这条 delta，放出去就成了一个没有
+			// id 与 name 的工具调用（两个 OpenAI 编码器都给没见过 Start 的 index 开槽，
+			// #136）。那种块在 content_block_start 已登记。
+			if st.blockKind[ev.Index] == "tool_use" {
+				out <- protocol.Event{
+					Type: protocol.EvToolArgsDelta, Index: ev.Index, Text: ev.Delta.PartialJSON,
+				}
 			}
 		}
 
@@ -391,3 +417,14 @@ func canonicalStopReason(reason string) string {
 		return "stop"
 	}
 }
+
+// redactedEvent 把 redacted_thinking 归入 thinking 档（#136，与请求侧 #99 对称）：它
+// 的 data 与 thinking 的 signature 是同一格——不给人看、只能回带给签发它的上游——所以
+// 走 signature 通道，跨协议出口按 OutboundThinkingText 本就不外发，也就不登记丢弃。
+func redactedEvent(data string) protocol.Event {
+	return protocol.Event{Type: protocol.EvThinkingDelta, Text: data, Channel: protocol.ThinkingSignature}
+}
+
+// dropLabel 是认不得的内容块的登记名：只记类型与 index，不存内容（口径层 ⑬）。index
+// 带 `#` 与 openairesponses 兜底用 output_index 时的形状一致。
+func dropLabel(kind string, index int) string { return fmt.Sprintf("%s(#%d)", kind, index) }
