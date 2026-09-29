@@ -252,10 +252,11 @@ func TestEncodeCompactionRefusesPartialSummary(t *testing.T) {
 		events     []protocol.Event
 		wantFinal  string
 		wantReason string
+		wantMsg    string // 只对 response.failed 的用例检查
 	}{
-		{"截断", summaryEvents("写了一半", "length"), "response.incomplete", "max_output_tokens"},
-		{"内容过滤", summaryEvents("写了一半", "content_filter"), "response.incomplete", "content_filter"},
-		{"空摘要", summaryEvents("", "stop"), "response.failed", ""},
+		{"截断", summaryEvents("写了一半", "length"), "response.incomplete", "max_output_tokens", ""},
+		{"内容过滤", summaryEvents("写了一半", "content_filter"), "response.incomplete", "content_filter", ""},
+		{"空摘要", summaryEvents("", "stop"), "response.failed", "", ""},
 		// 上游写了个开头就改去调工具：工具事件被吞掉（见下一条用例），但停在那儿的
 		// 半截正文同样不是一份摘要。rewriteAsSummarizer 剥了 tools，合规上游到不了
 		// 这里；自带服务端工具的兼容网关到得了。
@@ -265,7 +266,7 @@ func TestEncodeCompactionRefusesPartialSummary(t *testing.T) {
 			{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_1", ToolName: "web_search"},
 			{Type: protocol.EvToolCallEnd, Index: 0},
 			{Type: protocol.EvDone, StopReason: "tool_calls"},
-		}, "response.failed", ""},
+		}, "response.failed", "", ""},
 		// 断流是这批里唯一在 wire 上看不出破绽的一种：解码侧为了给下游一个合法取值，
 		// 会把断流兜成 stop_reason=stop（anthropic 的 emitDone、openaicc 的 finish），
 		// 只有 Truncated 位分得开。漏过去的话，半截摘要会带着 completed 装回历史。
@@ -273,17 +274,25 @@ func TestEncodeCompactionRefusesPartialSummary(t *testing.T) {
 			{Type: protocol.EvMessageStart, ID: "msg_1"},
 			{Type: protocol.EvTextDelta, Text: "写了一半"},
 			{Type: protocol.EvDone, StopReason: "stop", Truncated: true},
-		}, "response.failed", ""},
+		}, "response.failed", "", ""},
+		// 断流前见过工具调用：解码侧按 #172 改判 tool_calls，理由仍须报「断了」。
+		{"断流且见过工具调用", []protocol.Event{
+			{Type: protocol.EvMessageStart, ID: "msg_1"},
+			{Type: protocol.EvTextDelta, Text: "写了一半"},
+			{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_1", ToolName: "web_search"},
+			{Type: protocol.EvToolCallEnd, Index: 0},
+			{Type: protocol.EvDone, StopReason: "tool_calls", Truncated: true},
+		}, "response.failed", "", "压缩未完成：上游流在摘要收尾前断了"},
 		// 连兜底收尾都没有（调用方直接喂事件、或将来某个解码器不兜）。
 		{"压根没有收尾事件", []protocol.Event{
 			{Type: protocol.EvMessageStart, ID: "msg_1"},
 			{Type: protocol.EvTextDelta, Text: "写了一半"},
-		}, "response.failed", ""},
+		}, "response.failed", "", ""},
 		{"上游流内报错", []protocol.Event{
 			{Type: protocol.EvMessageStart, ID: "msg_1"},
 			{Type: protocol.EvTextDelta, Text: "写了一半"},
 			{Type: protocol.EvError, Status: 500, Message: "上游炸了"},
-		}, "response.failed", ""},
+		}, "response.failed", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,6 +308,11 @@ func TestEncodeCompactionRefusesPartialSummary(t *testing.T) {
 			last := frames[len(frames)-1]
 			if last.event != tc.wantFinal {
 				t.Fatalf("终帧要 %s，得到 %s", tc.wantFinal, last.event)
+			}
+			if tc.wantMsg != "" {
+				if msg := last.data["response"].(map[string]any)["error"].(map[string]any)["message"]; msg != tc.wantMsg {
+					t.Errorf("error.message 要 %s，得到 %v", tc.wantMsg, msg)
+				}
 			}
 			if tc.wantReason != "" {
 				details := last.data["response"].(map[string]any)["incomplete_details"].(map[string]any)

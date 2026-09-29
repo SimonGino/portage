@@ -63,7 +63,7 @@ func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) ([]string
 
 // pastTense 把 headers 那行（applyChannels 生成的「渠道 X 的额外出站头将被清空/改动」）
 // 改成完成时——Apply 已经提交，事情已经发生；其余条目本就不带时态，原样通过。Preview
-// 不经这层，原样拿「将被」。两条路共用同一次 eval（#160/#173），时态只在这个输出口分叉。
+// 不经这层，原样拿「将被」。两条路各自调用同一个 eval（#160/#173），时态只在这个输出口分叉。
 // 只认「渠道 」开头那一类、只换最后一个锚点：条目里夹着用户起的名字（API Key、渠道、
 // 接入点），整串替换会把名叫「将被停用」的 key 报成「新增 API Key 已停用」。
 func pastTense(changes []string) []string {
