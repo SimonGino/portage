@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#133。两个 choice（index 0 先出现）交错发推理、正文、工具调用与各自的 finish_reason，末帧是 choices 为空的 usage 帧。帧形照 golden/cc-stream-text 与 cc-stream-parallel-tools 写；真实 harness 不带 n>1，录不到多 choice。出处 magpie `ff4f730`（#168）。",
+  "synthetic": true
+}
