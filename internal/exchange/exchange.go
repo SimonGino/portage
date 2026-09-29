@@ -52,6 +52,11 @@ type Request struct {
 	// 转换路径不挂——那边非 2xx 的字节反正要读全（rec.UpstreamRejected），占了坑
 	// 反而让「先到先得」把同一段原文记两半。
 	TapErrorBody bool
+	// Resend 为真表示这是同一条流水的第二次交换（口径层 v1.29 的 max_tokens 下限
+	// 重发）：进门记一次 Resent；闸拒时 QueueRejected 清掉的出站端点要补回来——
+	// 第一次已经真的打到上游（拿到那个 400），「非空 ⟺ 打过上游」的不变量要它非空
+	//（PO 2026-09-29 裁定，#149）。拨号侧的 ledger 动词由本包独占，调用方不伸手。
+	Resend bool
 }
 
 // Result 是一次拿到响应头之后的交换现场：状态行加一个响应观察者。收场统一走
@@ -116,6 +121,9 @@ func (o *ResponseObserver) Close() {
 // 请求、压缩闸拒绝那些早退都停在进本函数之前，它们没打上游，那一格该空着。
 func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*Result, bool) {
 	rec := req.Rec
+	if req.Resend {
+		rec.Resent()
+	}
 	rec.Dialing(req.Endpoint.Path)
 	resp, at, err := x.Up.Do(ctx, upstream.Request{Route: req.Route, Endpoint: req.Endpoint, RawQuery: req.RawQuery, Body: req.Body, Header: req.Header, Stream: req.Stream})
 	rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
@@ -180,10 +188,16 @@ func transportStatus(err error, channel string) (int, string) {
 //
 // 认下的三档一律走 rec.QueueRejected：它顺带把出站端点清回空串（#20）——那一格在
 // Do 之前一刻就记上了，而闸在 Do 里面、拨号之前就回绝，这三档一个字节都没到上游，
-// 同 401 / 429 / 501 那批。返回 false 那档不走它，那是真打过上游之后的失败
-// （拨不通、读超时）。
+// 同 401 / 429 / 501 那批。**重发那次例外**（Request.Resend）：第一次已经打到上游，
+// 端点补回来。返回 false 那档不走它，那是真打过上游之后的失败（拨不通、读超时）。
 func (x *Client) writeQueueReject(w http.ResponseWriter, req Request, err error) bool {
 	rec, channel := req.Rec, req.Route.ChannelName
+	rejected := func(o calllog.Outcome) {
+		rec.QueueRejected(o)
+		if req.Resend {
+			rec.Dialing(req.Endpoint.Path)
+		}
+	}
 	var word calllog.Outcome
 	var msg string
 	switch {
@@ -195,7 +209,7 @@ func (x *Client) writeQueueReject(w http.ResponseWriter, req Request, err error)
 		// 客户端在排队途中自己断了：没人在听，不写错误体；状态记 499（nginx 的
 		// client closed request 惯例码），流水靠 error=queue_abandoned 归因，
 		// 与「打到上游后失败」（upstream_error）分开——这种请求没碰过上游。
-		rec.QueueRejected(calllog.QueueAbandoned)
+		rejected(calllog.QueueAbandoned)
 		x.Log.Info("排队途中客户端断开", "channel", channel,
 			"queue_wait_ms", rec.QueueWaitMs())
 		w.WriteHeader(499)
@@ -203,7 +217,7 @@ func (x *Client) writeQueueReject(w http.ResponseWriter, req Request, err error)
 	default:
 		return false
 	}
-	rec.QueueRejected(word)
+	rejected(word)
 	x.Log.Warn("渠道并发闸拒绝", "channel", channel, "reason", word.String(),
 		"queue_wait_ms", rec.QueueWaitMs())
 	// Retry-After 要赶在 WriteError 之前设（同 rateLimit）：那里面就 WriteHeader

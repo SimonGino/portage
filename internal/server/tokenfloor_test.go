@@ -1,10 +1,14 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/SimonGino/portage/internal/config"
 	"github.com/SimonGino/portage/internal/gatewaytest"
 )
 
@@ -67,4 +71,57 @@ func TestTokenFloorNotRetriedOnPassthrough(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest || up.Count() != 1 {
 		t.Errorf("status = %d, 上游收到 %d 次; 期望 400 且只 1 次", resp.StatusCode, up.Count())
 	}
+}
+
+// 重发撞上渠道并发闸（#149，PO 裁定「留着」）：第一次已经真的打到上游、拿到那个
+// 400，重发再被闸拒的那一行，出站端点**非空**——「非空 ⟺ 打过上游」，闸拒那档
+// 「一律空串」只是没打过的推论。retry_count 记那次重发。补回端点这件事由 exchange
+// 自己做，convert.go 不再伸手改 Recorder。
+func TestTokenFloorResendRejectedByGateKeepsUpstreamEndpoint(t *testing.T) {
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, ccUpstreamModel, openaiCredential)
+	gatewaytest.SetChannelConcurrency(t, db, 1, 1)
+	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{
+		Queue: config.Queue{Factor: 1, Wait: 300 * time.Millisecond, RetryAfter: 10 * time.Second},
+	})
+
+	// 占坑请求：拿到坑就挂住，直到用例收场。
+	hold := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(hold) }) })
+	const blockerRequest = `{"model":"gw-sonnet","max_tokens":100,"messages":[{"role":"user","content":"hold"}]}`
+	up.Handler = func(w http.ResponseWriter, r *http.Request) {
+		var q map[string]any
+		_ = json.Unmarshal(up.Last(t).Body, &q)
+		w.Header().Set("Content-Type", "application/json")
+		if n, _ := q["max_tokens"].(float64); n > 2 {
+			<-hold
+			_, _ = w.Write([]byte(`{"id":"c2","object":"chat.completion","model":"m","choices":[]}`))
+			return
+		}
+		// 第一次（max_tokens=1）：先让占坑请求排进闸的队列，再回 400 让网关重发。
+		// 坑一放，闸把它移交给排队的那位；重发只能排队，300ms 后超时被拒。
+		_ = postAsync(gw, context.Background(), blockerRequest)
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(tokenFloorError))
+	}
+
+	resp := gw.Post(t, "/v1/messages", tinyMaxTokensRequest, nil)
+	gatewaytest.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, 期望重发被闸拒 429", resp.StatusCode)
+	}
+	row := gw.LastCallRow(t)
+	if row.Error.String != "queue_timeout" {
+		t.Errorf("error = %q, 期望 queue_timeout", row.Error.String)
+	}
+	if row.RetryCount != 1 {
+		t.Errorf("retry_count = %d, 期望 1（那次重发）", row.RetryCount)
+	}
+	if row.UpstreamEndpoint == "" {
+		t.Errorf("出站端点被清空了：第一次已经打到上游，这一格该留着")
+	}
+	once.Do(func() { close(hold) })
 }
