@@ -472,6 +472,28 @@ func TestConvertedStreamAbortIsLoggedAsAborted(t *testing.T) {
 	}
 }
 
+// #98 PO 裁决：上游流干净 EOF 却没给终态（这里是 CC 上游既没 finish_reason 也没 [DONE]），
+// 收场并入 stream_aborted；客户端收到的是 A 的流内 error 帧，不是补出来的 message_stop。
+func TestConvertedStreamCleanEOFWithoutTerminalIsAborted(t *testing.T) {
+	gw, up := newConvertGateway(t)
+	first := ccStreamFrames()[0]
+	up.Handler = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, first)
+	}
+
+	resp := gw.Post(t, "/v1/messages", convertRequest, nil)
+	body, _ := io.ReadAll(resp.Body)
+
+	if line := gw.LastCall(t); line.Str("outcome") != "stream_aborted" {
+		t.Errorf("outcome = %q, 期望 stream_aborted", line.Str("outcome"))
+	}
+	if !strings.Contains(string(body), "event: error") || strings.Contains(string(body), "message_stop") {
+		t.Errorf("客户端应收到 error 帧而不是 message_stop:\n%s", body)
+	}
+}
+
 // 上游在流里回错误对象，与「读断了」不是一回事：那是把话说完了，只是说的是坏消息，
 // 透传路径记 ok。转换路径两者都成了 EvError，不许因此把前者一起降级——收场词表得跟
 // 透传路径对齐。

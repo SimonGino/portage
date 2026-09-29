@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -266,5 +267,101 @@ data: {"type":"content_block_stop","index":0}
 	}
 	if last := r.events[len(r.events)-1]; last != "response.incomplete" {
 		t.Errorf("终帧 = %s，期望 response.incomplete", last)
+	}
+}
+
+// #98 PO 裁决：上游流干净 EOF 却没给终态（Truncated），A / CC 出口改发各自的流内 error 帧，
+// 不再凭空补 message_stop / [DONE]；解码侧同时记一笔 StreamReadError，流水落 stream_aborted。
+// 三个上游各一条构造样本（手搭，形状同上）。
+func TestCleanEOFWithoutTerminalIsError(t *testing.T) {
+	const ccStream = `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"半截"}}]}
+
+`
+	const anthropicStream = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"半截"}}
+
+`
+	const responsesStream = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","model":"m","status":"in_progress","output":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"半截"}
+
+`
+	type decoder interface {
+		DecodeStream(r io.Reader) (<-chan protocol.Event, error)
+		StreamReadError() error
+	}
+	upstreams := map[string]struct {
+		codec  func() decoder
+		stream string
+	}{
+		"CC 上游":        {func() decoder { return openaicc.NewCodec() }, ccStream},
+		"Anthropic 上游": {func() decoder { return anthropic.NewCodec() }, anthropicStream},
+		"Responses 上游": {func() decoder { return openairesponses.NewCodec() }, responsesStream},
+	}
+	exits := map[string]struct {
+		encode    func(io.Writer, <-chan protocol.Event) error
+		forbidden string
+		last      string
+	}{
+		"A 出口":  {anthropic.NewCodec().EncodeStream, "message_stop", "event: error"},
+		"CC 出口": {openaicc.NewCodec().EncodeStream, "[DONE]", `data: {"error"`},
+	}
+	for up, u := range upstreams {
+		for ex, e := range exits {
+			t.Run(up+"→"+ex, func(t *testing.T) {
+				dec := u.codec()
+				ch, err := dec.DecodeStream(strings.NewReader(u.stream))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var buf bytes.Buffer
+				if err := e.encode(&buf, ch); err != nil {
+					t.Fatal(err)
+				}
+				out := buf.String()
+				if strings.Contains(out, e.forbidden) || strings.Contains(out, "end_turn") {
+					t.Errorf("没终态的流被补成了正常收尾:\n%s", out)
+				}
+				frames := strings.Split(strings.TrimSpace(out), "\n\n")
+				if last := frames[len(frames)-1]; !strings.HasPrefix(last, e.last) {
+					t.Errorf("终帧 = %q，期望 %s 开头", last, e.last)
+				}
+				if dec.StreamReadError() == nil {
+					t.Error("解码侧没记 StreamReadError，流水会落 ok")
+				}
+			})
+		}
+	}
+}
+
+// #98 裁决顺手修的判据：CC 上游发过 [DONE] 只是没给 finish_reason，不算截断。
+func TestCCDoneWithoutFinishReasonIsNotTruncated(t *testing.T) {
+	const stream = `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"好了"}}]}
+
+data: [DONE]
+
+`
+	dec := openaicc.NewCodec()
+	ch, err := dec.DecodeStream(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := anthropic.NewCodec().EncodeStream(&buf, ch); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, `"stop_reason":"end_turn"`) || !strings.Contains(out, "event: message_stop") {
+		t.Errorf("[DONE] 收尾应照常 end_turn + message_stop:\n%s", out)
+	}
+	if err := dec.StreamReadError(); err != nil {
+		t.Errorf("StreamReadError = %v，[DONE] 收尾不该记断流", err)
 	}
 }

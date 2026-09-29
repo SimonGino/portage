@@ -76,11 +76,16 @@ type RequestEncodeReporter interface {
 // relayBody 的返回值），两条路的收场词表因此对不齐。
 //
 // 只报**传输失败**，不报上游在流里回的错误对象：后者透传路径同样记 ok，硬要在这边
-// 降级会让两条路径再次分叉。
+// 降级会让两条路径再次分叉。「干净 EOF 却没给终态」（EvDone.Truncated）也算这一档，
+// 报 ErrStreamTruncated（#98 PO 裁决：收场并入 stream_aborted）。
 type StreamReadReporter interface {
 	// StreamReadError 返回读上游失败的原因；正常收尾（含上游回错误对象）为 nil。
 	StreamReadError() error
 }
+
+// ErrStreamTruncated 是上游流干净 EOF、却没给终态（EvDone.Truncated）时解码侧记的
+// StreamReadError，也是 A / CC 出口那一帧流内 error 的文案。
+var ErrStreamTruncated = errors.New("上游响应流没给终态就结束了")
 
 // StreamReadFlag 是 StreamReadReporter 的现成实现，各 codec 内嵌即可。
 //

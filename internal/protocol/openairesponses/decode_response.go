@@ -175,6 +175,9 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 			}
 		}
 		st.finish(out)
+		if st.truncated {
+			c.SetStreamReadError(protocol.ErrStreamTruncated)
+		}
 	}()
 	return out, nil
 }
@@ -221,6 +224,9 @@ type respStreamState struct {
 	// pendingOrder 记 index 的首次出现次序。收尾时按它冲缓冲，不按 index 数值排：
 	// index 不保证从 0 起、也不保证连续（§5 坑清单第一条）。
 	pendingOrder []int
+
+	// truncated：放出去的 EvDone 带了 Truncated，DecodeStream 据此记 StreamReadError（#98）。
+	truncated bool
 }
 
 // textSlot 是一段正文的身份：output item 的位置 + item 内部件的位置。
@@ -721,6 +727,7 @@ func (st *respStreamState) done(out chan<- protocol.Event) {
 	st.doneSent = true
 	stop := st.stop
 	truncated := stop == ""
+	st.truncated = truncated
 	if truncated {
 		// 同 CC 侧：Anthropic 非流式不接受空 stop_reason（§5 坑清单），默认值在解码
 		// 侧就给足；「上游没说就断了」这个事实另开 Truncated 带下去。
