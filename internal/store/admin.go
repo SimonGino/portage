@@ -293,6 +293,11 @@ type ChannelInput struct {
 // 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
 // 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
 func (in ChannelInput) normalized() (BaseURLs, error) {
+	// 判空看 trim 后的值（#144）：调用方都先 trim，但这道闸不能指望它——`"  "` 过了
+	// handler 再 trim 成空串落库，就是一个没名字、限定名也跟着坏的渠道。
+	if strings.TrimSpace(in.Name) == "" {
+		return BaseURLs{}, InvalidInput{Reason: "渠道名不能为空"}
+	}
 	if strings.Contains(in.Name, "/") {
 		return BaseURLs{}, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
 			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}

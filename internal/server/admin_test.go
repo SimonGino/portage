@@ -902,3 +902,24 @@ func TestCredentialPutIsAPatch(t *testing.T) {
 		t.Errorf("空 patch status=%d，期望 400", status)
 	}
 }
+
+// 渠道名只有空白也要挡（#144）：判空在 store 的 trim 之后，`"  "` 不能变成一个
+// 没名字的渠道落库。
+func TestAdminRejectsBlankChannelName(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
+		`{"name":"  ","base_url":{"anthropic":"https://api.anthropic.com"},"credential":"sk-x"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("空白渠道名应得 400，得到 %d：%s", status, body)
+	}
+	if !strings.Contains(body, "渠道名不能为空") {
+		t.Errorf("应点名渠道名为空，得到：%s", body)
+	}
+	var channels []adminChannel
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
+	if len(channels) != 0 {
+		t.Errorf("被挡下的渠道不该落库：%+v", channels)
+	}
+}
