@@ -1,0 +1,78 @@
+# GoReleaser 发版：push v* tag → 三个 tar.gz + checksums.txt + 自动 changelog 的 GitHub Release。
+# 本地过一遍（不发布、不需要 tag）：goreleaser release --snapshot --clean
+version: 2
+project_name: portage
+
+before:
+  hooks:
+    # hook 不走 shell，`cd web && …` 写不了；OSS 版全局 hooks 只收字符串（cmd/dir 结构形式
+    # 不认），用 npm --prefix 指目录。产物落 internal/webui/dist（见 web/vite.config.ts），
+    # 下面 tags: webui 才 embed 得到。
+    - npm --prefix web ci
+    - npm --prefix web run build
+
+builds:
+  - main: ./cmd/portage
+    binary: portage
+    env:
+      # GoReleaser 不默认关 CGO；modernc sqlite 纯 Go，关掉才是静态二进制。
+      - CGO_ENABLED=0
+    tags:
+      - webui
+    flags:
+      - -trimpath
+    # 自己写 ldflags 会整体替换默认值（默认还注 commit/date/builtBy，口径只要版本号一个字段）。
+    # {{ .Version }} 不带 v：v0.5.0 → 0.5.0，与 docker.yml 的镜像 tag 同源。
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - formats: [tar.gz]
+    # 与默认模板等价（没有 arm/mips/amd64 变体就没有后缀），写死是为了让 install.sh 与
+    # `portage upgrade` 拼 URL 的人不用去查 GoReleaser 默认值：
+    #   portage_0.5.0_linux_amd64.tar.gz / portage_0.5.0_linux_arm64.tar.gz / portage_0.5.0_darwin_arm64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # 包里只放二进制。默认会把根 README* 也塞进去；none* 是官方文档给的「什么都不加」写法。
+    files:
+      - none*
+
+checksum:
+  # 默认名带版本号（portage_0.5.0_checksums.txt），固定成 checksums.txt 才能用
+  # releases/latest/download/checksums.txt 这条不带版本的 URL 先拿到文件名再定版本。
+  # 行格式 `<sha256>  <文件名>`（两个空格），sha256sum -c / shasum -a 256 -c 直接可用。
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: git
+  sort: asc
+  # 只匹配提交标题首行，RE2 语法。仓库标题全是半角冒号 + 空格。
+  filters:
+    exclude:
+      - "^docs"
+      - "^chore"
+      - "^test"
+      - "^ci"
+      - "^build"
+      - "^Merge "
+  groups:
+    - title: 新功能
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: 修复
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: 其他
+      order: 999
+
+release:
+  github:
+    owner: SimonGino
+    name: portage
+  # 预发布 tag（v1.0.0-rc.1）自动标 prerelease，releases/latest 不会指到它。
+  prerelease: auto

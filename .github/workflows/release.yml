@@ -1,0 +1,50 @@
+# GitHub Release：与 docker.yml 同一个 v* tag 触发、各跑各的，互不依赖。
+#   - push v* tag → GoReleaser 建前端、编三平台 tar.gz + checksums.txt，建 Release，说明从提交标题生成
+#   - workflow_dispatch → 只走 --snapshot（不发布、不需要 tag），把 dist/ 传成 artifact 供下载验证
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    permissions:
+      # 建 Release、传资产要 write；其余默认。
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # changelog 要算「上一个 tag..这个 tag」，浅克隆拿不到上一个 tag。
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # before.hooks 里的 npm ci 用的就是这里装的 Node；22 与 Dockerfile 的 node:22-slim 对齐。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean ${{ github.event_name == 'workflow_dispatch' && '--snapshot' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 手动跑时把产物留下来看一眼；tag 触发时 Release 上已经有了，不重复传。
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: snapshot
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
