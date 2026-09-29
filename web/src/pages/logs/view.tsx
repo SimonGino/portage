@@ -77,6 +77,22 @@ function upstreamOf(l: CallLog) {
 }
 
 /**
+ * 非默认服务档 / fast mode 的小字（#165，PO 2026-09-29 裁决）：只在
+ * `speed=fast`，或 `service_tier` 为 `priority`/`flex` 时给出，原样显示上游值、
+ * 不归一。默认档（standard/default/auto/空）与其它未知值不摆。这几档的实际
+ * 计价偏离标准档（fast / priority 溢价、flex 折价），而成本列按标准价算，
+ * 摆出来就是提示「这行成本不准」。
+ */
+function tierNote(l: CallLog) {
+  return [
+    l.speed === 'fast' ? l.speed : null,
+    l.service_tier === 'priority' || l.service_tier === 'flex' ? l.service_tier : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/**
  * 这一行的额外细节：弹框，不是展开在表里的第二行（PO 2026-08-13 裁定）。
  *
  * 展开式的毛病是它动的是**表本身**：点开一行，它下面的所有行连同翻页按钮一起往下
@@ -646,6 +662,11 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
                       {l.reasoning_tokens ? (
                         <div className="sub">思考 {fmtInt(l.reasoning_tokens)}</div>
                       ) : null}
+                      {/* 服务档 / fast mode（#103 落流水，#165 页面展示，PO 2026-09-29
+                          裁决）：只在非默认档露出，原样显示上游值不归一。默认档
+                          （standard/default/auto/空）与老流水一样不摆——默认档
+                          就按标准价计，摆出来反倒暗示它值得关注。 */}
+                      {tierNote(l) ? <div className="sub">{tierNote(l)}</div> : null}
                     </td>
                     {/* 操作列（PO 2026-08-30）：详情从「状态」格里搬出来独立成列，
                         一来失败行不再比成功行高一截，二来这列钉在视口右边（sticky），
