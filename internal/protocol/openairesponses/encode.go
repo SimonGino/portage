@@ -717,6 +717,10 @@ func (e *streamEncoder) compactionNoItem() *compactionFailure {
 		return &compactionFailure{wireReason: "max_output_tokens", message: "压缩未完成：摘要被上游截断"}
 	case e.stop == "content_filter":
 		return &compactionFailure{wireReason: "content_filter", message: "压缩未完成：摘要被上游内容过滤拦下"}
+	case e.cutShort():
+		// 排在 tool_calls 前：断流且见过工具调用的，解码侧会按 #172 改判成 tool_calls，
+		// 但真正的理由是「断了」。
+		return &compactionFailure{message: "压缩未完成：上游流在摘要收尾前断了"}
 	case e.stop == "tool_calls":
 		// rewriteAsSummarizer 剥了 tools，合规上游到不了这里；但 event() 那条吞工具
 		// 事件的分支已经承认「上游照调不误」是可能的（兼容网关自带服务端工具），而
@@ -724,8 +728,6 @@ func (e *streamEncoder) compactionNoItem() *compactionFailure {
 		//
 		// 没有对得上的 incomplete_details.reason，所以留空走 response.failed。
 		return &compactionFailure{message: "压缩未完成：上游改去调工具了，摘要停在半截"}
-	case e.cutShort():
-		return &compactionFailure{message: "压缩未完成：上游流在摘要收尾前断了"}
 	case e.compactionText.Len() == 0:
 		return &compactionFailure{message: "压缩未完成：上游没有产出摘要正文"}
 	}

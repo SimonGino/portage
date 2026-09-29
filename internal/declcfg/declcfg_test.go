@@ -563,7 +563,7 @@ func TestChannelHeadersChangeIsListed(t *testing.T) {
 			"      openai: https://example.internal/v1\n",
 			"      openai: https://example.internal/v1\n    headers:\n      x-opencode-session: "+v+"\n", 1)
 	}
-	// Preview 与 Apply 共用同一次 eval（#160/#173），条目一一对应；唯一分叉是 headers
+	// Preview 与 Apply 各自调用同一个 eval（#160/#173），条目一一对应；唯一分叉是 headers
 	// 那行的时态——Preview 留「将被」（试算，还没发生），Apply 收场后换「已」（已提交）。
 	listed := func(db *sql.DB, yaml string) (preview, applied []string) {
 		t.Helper()
@@ -601,7 +601,7 @@ func TestChannelHeadersChangeIsListed(t *testing.T) {
 		if !slices.Equal(applied, tc.done) {
 			t.Errorf("%s：Apply 清单 = %q，想要 %q", tc.name, applied, tc.done)
 		}
-		for _, c := range append(preview, applied...) {
+		for _, c := range slices.Concat(preview, applied) {
 			for _, leak := range []string{"x-opencode", "s1", "s2", "s3"} {
 				if strings.Contains(c, leak) {
 					t.Errorf("%s：清单带出了头名或头值：%q", tc.name, c)
