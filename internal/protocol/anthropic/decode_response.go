@@ -111,6 +111,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 		events = append(events, protocol.Event{Type: protocol.EvUsage, Usage: u})
 	}
 
+	sawTool := false
 	for i, raw := range payload.Content {
 		var block struct {
 			Type      string          `json:"type"`
@@ -146,6 +147,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 				events = append(events, redactedEvent(block.Data))
 			}
 		case "tool_use":
+			sawTool = true
 			events = append(events,
 				protocol.Event{
 					Type: protocol.EvToolCallStart, Index: i,
@@ -169,7 +171,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 	// 这一处是手搓的，加字段时两边都要改。
 	return append(events, protocol.Event{
 		Type:       protocol.EvDone,
-		StopReason: canonicalStopReason(payload.StopReason),
+		StopReason: protocol.ToolStop(canonicalStopReason(payload.StopReason), sawTool),
 		Truncated:  payload.StopReason == "",
 	}), nil
 }
@@ -230,6 +232,7 @@ func (u *usagePayload) canonical() *protocol.Usage {
 type respState struct {
 	blockKind map[int]string
 	stop      string
+	sawTool   bool // 见过 tool_use 块，收尾按 protocol.ToolStop 改判停因（#172）
 	done      bool
 	drops     *protocol.NameList // 指回 Codec.responseDrops
 	// truncated：放出去的 EvDone 带了 Truncated，DecodeStream 据此记 StreamReadError（#98）。
@@ -309,6 +312,7 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 				out <- redactedEvent(ev.ContentBlock.Data)
 			}
 		case "tool_use":
+			st.sawTool = true
 			out <- protocol.Event{
 				Type: protocol.EvToolCallStart, Index: ev.Index,
 				ToolID: ev.ContentBlock.ID, ToolName: ev.ContentBlock.Name,
@@ -392,12 +396,12 @@ func (st *respState) emitDone(out chan<- protocol.Event, terminal bool) {
 	}
 	st.done = true
 	// 停因与 message_stop 都没到，这个收尾纯是上面 finish 兜出来的（#161 判据）。
-	// StopReason 照旧兜成 stop（下游要一个合法取值），另开 Truncated 把「上游没说话
-	// 就断了」这件事带下去。
+	// StopReason 照旧兜成 stop（下游要一个合法取值；见过 tool_use 块则按 #172 改判
+	// tool_calls），另开 Truncated 把「上游没说话就断了」这件事带下去。
 	st.truncated = protocol.StreamTruncated(st.stop != "", terminal)
 	out <- protocol.Event{
 		Type:       protocol.EvDone,
-		StopReason: canonicalStopReason(st.stop),
+		StopReason: protocol.ToolStop(canonicalStopReason(st.stop), st.sawTool),
 		Truncated:  st.truncated,
 	}
 }

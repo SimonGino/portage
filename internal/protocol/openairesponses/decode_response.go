@@ -686,13 +686,10 @@ func (st *respStreamState) stopReason(r *respPayload) string {
 		// stop——同 CC 侧 mapStopReason，宁可少说一句。
 		return "stop"
 	}
-	if st.sawTool {
-		// Responses 不像 CC 那样发 finish_reason=tool_calls，「这轮以工具调用收尾」
-		// 只能由 output 里有没有工具项判出来。漏了的话 A 出口会写 end_turn，
-		// 客户端就不知道该去执行工具了。
-		return "tool_calls"
-	}
-	if st.sawRefusal && r.Status == "completed" {
+	// 见过工具项的归调用方的 protocol.ToolStop 改判 tool_calls（#172）：Responses 不像
+	// CC 那样发 finish_reason=tool_calls，「这轮以工具调用收尾」只能由 output 里有没有
+	// 工具项判出来。工具调用优先于下面的拒答改判。
+	if st.sawRefusal && !st.sawTool && r.Status == "completed" {
 		// 拒答改判（issue #113，PO 2026-09-28 裁决）：status:"completed" 时本轮
 		// 出现过拒答正文，canonical 停因改判 content_filter，A 出口自动映成
 		// stop_reason:"refusal"。status 为空（非流式没声明收尾）照旧兜 stop +
@@ -732,6 +729,8 @@ func (st *respStreamState) done(out chan<- protocol.Event) {
 	stop := st.stop
 	truncated := protocol.StreamTruncated(stop != "", st.sawTerminal)
 	st.truncated = truncated
+	// 终帧 response 为 nil（stop 空）与为 {}（stopReason 给 stop）走同一条改判，两种一致（#172）。
+	stop = protocol.ToolStop(stop, st.sawTool)
 	if stop == "" {
 		// 同 CC 侧：Anthropic 非流式不接受空 stop_reason（§5 坑清单），默认值在解码
 		// 侧就给足；「上游没说就断了」这个事实另开 Truncated 带下去。
@@ -858,7 +857,7 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 	}
 
 	st := &respStreamState{sawTool: sawTool, sawRefusal: sawRefusal}
-	stop := st.stopReason(&payload)
+	stop := protocol.ToolStop(st.stopReason(&payload), sawTool)
 	// status 为空才算「上游没声明收尾」；completed / incomplete 都是明确的结束
 	// （同 anthropic/decode_response.go 用 StopReason 是否为空判 Truncated）。
 	events = append(events, protocol.Event{
