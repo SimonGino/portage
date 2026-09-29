@@ -476,6 +476,19 @@ func TestMaxInputTokensAppliesAndRejectsNegative(t *testing.T) {
 	}
 }
 
+// 协议子集值域的复述（#141）：apply 走 store.UpdateChannelModel 后 writer 首错即停，
+// 非法值不再能靠 Validate 合并报，闸一得自己点名——而且要与别的问题一次报全。
+func TestModelProtocolValueReportedAtOnce(t *testing.T) {
+	msg := applyErr(t, openDB(t), strings.Replace(goodFile,
+		"      - upstream_model: Qwen3-27B",
+		"      - upstream_model: Qwen3-27B\n        protocols: [gemini]\n        max_input_tokens: -1", 1))
+	for _, want := range []string{`protocols="gemini" 不合法`, "max_input_tokens=-1 是负数"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("报文里没有 %q（该一次报全）：\n%s", want, msg)
+		}
+	}
+}
+
 func TestAllowedModelsRejectsCommaInName(t *testing.T) {
 	got := applyErr(t, openDB(t), strings.Replace(goodFile,
 		"    key: sk-ptg-real-one",
