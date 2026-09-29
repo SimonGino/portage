@@ -153,3 +153,20 @@ data: [DONE]
 		})
 	}
 }
+
+// service_tier（#103）在 CC 的顶层，每个 chunk 都带；本库 CC 转录一份都没有这个键
+// （中转裁掉了），只能靠构造帧。
+func TestTapServiceTier(t *testing.T) {
+	const raw = `data: {"model":"gpt-5","service_tier":"priority","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"model":"gpt-5","service_tier":"priority","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4}}
+
+data: [DONE]
+
+`
+	want := protocol.Summary{Model: "gpt-5", InputTokens: 3, OutputTokens: 4,
+		StopReason: "stop", ServiceTier: "priority"}
+	if got := feed(t, NewTap(true), raw); got != want {
+		t.Errorf("Summary = %+v\n期望 = %+v", got, want)
+	}
+}

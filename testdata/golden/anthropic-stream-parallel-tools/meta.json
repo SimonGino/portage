@@ -12,6 +12,7 @@
     "CacheReadTokens": 0,
     "CacheWriteTokens": 0,
     "StopReason": "tool_use",
+    "ServiceTier": "standard",
     "Degraded": false
   },
   "verified": true

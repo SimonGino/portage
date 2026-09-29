@@ -13,6 +13,7 @@
     "CacheReadTokens": 3840,
     "CacheWriteTokens": 1024,
     "StopReason": "end_turn",
+    "ServiceTier": "standard",
     "Degraded": false
   },
   "expectCanonicalInputTokens": 4881

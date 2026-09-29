@@ -487,3 +487,22 @@ func TestRowCarriesNamesNeverSecrets(t *testing.T) {
 		t.Errorf("token 两格 = %v / %v", row.InputTokens, row.OutputTokens)
 	}
 }
+
+// 服务档与 fast mode（#103）从 Summary 原样进流水与 slog；没报就不打。
+func TestServiceTierAndSpeedReachRowAndLog(t *testing.T) {
+	h := newHarness()
+	h.rec.Summarized(protocol.Summary{ServiceTier: "priority", Speed: "fast"})
+	if row := h.row(t, 200); row.ServiceTier != "priority" || row.Speed != "fast" {
+		t.Errorf("service_tier/speed = %q/%q, 期望 priority/fast", row.ServiceTier, row.Speed)
+	}
+	if l := h.log(); !strings.Contains(l, "service_tier=priority") || !strings.Contains(l, "speed=fast") {
+		t.Errorf("slog 缺 service_tier/speed: %s", l)
+	}
+
+	h = newHarness()
+	h.rec.Summarized(protocol.Summary{})
+	h.row(t, 200)
+	if l := h.log(); strings.Contains(l, "service_tier=") || strings.Contains(l, " speed=") {
+		t.Errorf("上游没报，slog 不该带 service_tier/speed: %s", l)
+	}
+}

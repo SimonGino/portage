@@ -190,3 +190,21 @@ data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"out
 		t.Errorf("Summary = %+v\n期望 = %+v（超限帧之后的帧仍须解析）", got, want)
 	}
 }
+
+// fast mode（#103）：usage.speed 与 usage.service_tier 原样记下。本库真实转录里没有
+// fast mode 的样本（只有 service_tier:"standard"，golden 驱动覆盖），speed 这一格
+// 只能靠构造帧；流式下两者随 message_start 的 usage 一次给出。
+func TestTapServiceTierAndSpeed(t *testing.T) {
+	const raw = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-opus-5","content":[],"usage":{"input_tokens":5,"output_tokens":1,"service_tier":"priority","speed":"fast"}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}
+
+`
+	want := protocol.Summary{Model: "claude-opus-5", InputTokens: 5, OutputTokens: 9,
+		StopReason: "end_turn", ServiceTier: "priority", Speed: "fast"}
+	if got := feed(t, NewTap(true), raw); got != want {
+		t.Errorf("Summary = %+v\n期望 = %+v", got, want)
+	}
+}

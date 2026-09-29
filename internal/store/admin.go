@@ -1181,6 +1181,10 @@ type CallLogRow struct {
 	// string 而不是指针：库里这一列不可空（默认空串），「没走到上游」「上游没回这个
 	// 头」「v0.56 之前的老流水」三种情况在对账上是同一件事——都没有可用的 id。
 	UpstreamRequestID string `json:"upstream_request_id"`
+	// ServiceTier / Speed 是上游自报的服务档与 fast mode（#103），原样快照、只记不
+	// 计价。空串 = 上游没报或加列前的老行，同 UpstreamRequestID。
+	ServiceTier string `json:"service_tier"`
+	Speed       string `json:"speed"`
 }
 
 // CallLogFilter 是流水列表的筛选与翻页条件。
@@ -1275,7 +1279,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, queue_wait_ms, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, reasoning_tokens, cost,
-		       error, error_detail, upstream_request_id
+		       error, error_detail, upstream_request_id, service_tier, speed
 		FROM call_logs LEFT JOIN users u ON u.id = call_logs.user_id`+
 		clause+` ORDER BY call_logs.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -1292,7 +1296,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
 			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &reasoning,
-			&r.Cost, &errWord, &detail, &r.UpstreamRequestID); err != nil {
+			&r.Cost, &errWord, &detail, &r.UpstreamRequestID, &r.ServiceTier, &r.Speed); err != nil {
 			return nil, err
 		}
 		// NULL → 空串在 Go 侧抹，不在 SQL 里 COALESCE：这一列的可空性规则只该有

@@ -42,6 +42,14 @@ type Summary struct {
 	HasReasoningTokens bool
 	// StopReason 同样保留原生取值（end_turn / tool_calls / completed …）。
 	StopReason string
+	// ServiceTier 是上游自报这一笔走的服务档（#103），原样保留不归一：Anthropic 在
+	// usage.service_tier（standard / priority / batch），CC 在顶层 service_tier，
+	// Responses 在 response.service_tier（default / flex / priority …）。只记录、不
+	// 计价——优先档、flex 与标准档单价不同，流水得看得出这一笔走的哪一档。空串 = 没报。
+	ServiceTier string
+	// Speed 是 Anthropic fast mode 的回报（usage.speed，fast / standard），同样只记
+	// 不计价。OpenAI 两家没有这个字段，恒空。
+	Speed string
 	// Degraded 表示 Tap 主动放弃了解析（单帧超限，或解析途中 panic 被兜住）。
 	// 它只削弱这一行日志的可信度，永远不影响转发出去的字节。
 	Degraded bool

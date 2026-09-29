@@ -17,6 +17,7 @@
     "ReasoningTokens": 14,
     "HasReasoningTokens": true,
     "StopReason": "completed",
+    "ServiceTier": "default",
     "Degraded": false
   },
   "verified": true,

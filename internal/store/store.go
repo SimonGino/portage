@@ -122,6 +122,9 @@ func migrate(db *sql.DB) error {
 	if err := addPricingColumns(db); err != nil {
 		return err
 	}
+	if err := addServiceTierSpeed(db); err != nil {
+		return err
+	}
 	if err := expandBaseURLs(db); err != nil {
 		return err
 	}
@@ -479,6 +482,26 @@ func addReasoningTokens(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN reasoning_tokens INTEGER`); err != nil {
 		return fmt.Errorf("迁移 call_logs.reasoning_tokens: %w", err)
+	}
+	return nil
+}
+
+// addServiceTierSpeed 补 call_logs.service_tier / speed（#103）。
+//
+// 不可空、默认空串，同 upstream_request_id：「上游没报」与「加列前的老行」在这两列
+// 上是同一件事——不知道走的哪一档，分开没有用处。
+func addServiceTierSpeed(db *sql.DB) error {
+	for _, col := range []string{"service_tier", "speed"} {
+		has, err := hasColumn(db, "call_logs", col)
+		if err != nil {
+			return fmt.Errorf("检查 call_logs.%s: %w", col, err)
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("迁移 call_logs.%s: %w", col, err)
+		}
 	}
 	return nil
 }

@@ -27,6 +27,9 @@ type usage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// service_tier / speed 都住在 usage 里（#103），不在 message 顶层。
+	ServiceTier string `json:"service_tier"`
+	Speed       string `json:"speed"`
 	// OutputTokensDetails 装思考 token。**键名三家各不同形**：容器名与 Responses
 	// 一样（output_tokens_details）、字段名与 CC 一样（reasoning_tokens）——而这一侧
 	// 两个都不能照抄，Anthropic 叫 thinking_tokens（口径层 v0.79，实采字节 249/310）。
@@ -103,6 +106,12 @@ func applyUsage(sum *protocol.Summary, u *usage) {
 	}
 	if u.CacheCreationInputTokens != 0 {
 		sum.CacheWriteTokens = u.CacheCreationInputTokens
+	}
+	if u.ServiceTier != "" {
+		sum.ServiceTier = u.ServiceTier
+	}
+	if u.Speed != "" {
+		sum.Speed = u.Speed
 	}
 	// 思考 token 不受上面那条「只覆盖非零值」管：判据是**键在不在**，不是值是不是 0。
 	// 流式下这一格只在 message_delta 里出现（message_start 那帧没有这个容器），报 0

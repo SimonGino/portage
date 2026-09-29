@@ -141,3 +141,17 @@ func TestTapReasoningTokens(t *testing.T) {
 		})
 	}
 }
+
+// service_tier（#103）：created / in_progress 回显的是**请求**的档（auto），终态事件
+// 才是实际走的档（真实转录里 auto → default，golden 驱动覆盖完整流）。流在终态之前
+// 断掉时不能把请求值当成实际档记下。
+func TestTapServiceTierSkipsInProgressEcho(t *testing.T) {
+	const raw = `data: {"type":"response.queued","response":{"model":"m","status":"queued","service_tier":"auto"}}
+
+data: {"type":"response.created","response":{"model":"m","status":"in_progress","service_tier":"auto"}}
+
+`
+	if got := feed(t, NewTap(true), raw); got.ServiceTier != "" {
+		t.Errorf("ServiceTier = %q，queued / in_progress 的回显不该记", got.ServiceTier)
+	}
+}

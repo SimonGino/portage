@@ -492,6 +492,13 @@ func (r *Recorder) LogAttrs() []any {
 		if sum.HasReasoningTokens {
 			attrs = append(attrs, "reasoning_tokens", sum.ReasoningTokens)
 		}
+		// 服务档与 fast mode（#103）同 upstream_request_id 的惯例：有值才打。
+		if sum.ServiceTier != "" {
+			attrs = append(attrs, "service_tier", sum.ServiceTier)
+		}
+		if sum.Speed != "" {
+			attrs = append(attrs, "speed", sum.Speed)
+		}
 		if sum.Degraded {
 			attrs = append(attrs, "tap_degraded", true)
 		}
@@ -563,6 +570,7 @@ func (r *Recorder) Row() Row {
 		if r.summary.HasReasoningTokens {
 			row.ReasoningTokens = nullInt(r.summary.ReasoningTokens)
 		}
+		row.ServiceTier, row.Speed = r.summary.ServiceTier, r.summary.Speed
 		// cost 与 token 五列同一个判据（口径层 §2.10，#65）：有 summary 才有账，
 		// 没有就留 NULL——「没有用量可计」与「算出来是 0」不是一回事。算术
 		// （净 input、未定价按 0）全在 Prices.CostUSD，这里只把毛值口径的四个数
