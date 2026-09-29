@@ -14,9 +14,6 @@ import type {
   BaseURLs,
   Channel,
   ChannelModel,
-  PricingModelPrice,
-  PricingModels,
-  PricingProvider,
   Protocol,
 } from '../../api'
 import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Field, Toggle } from '../../ui'
@@ -28,6 +25,7 @@ import { BaseURLFields } from './baseurl'
 import { CredentialBlock } from './credentials'
 import { ModelPicker } from './picker'
 import { useChannel } from './useChannel'
+import { providerName, useProviders, useSuggested } from '../../prices'
 import {
   fmtTokens,
   limitToSave,
@@ -57,15 +55,6 @@ import {
  * 检测弹层（口径层 v0.96 ③）：发起、勾选、结果都在弹层里，关弹层即失——页面上
  * 不再有常驻探测区块。获取模型列表与手动添加落在「纳管模型」标题旁；启停在渠道名旁立刻生效。
  */
-// 厂商标注的显示名（v0.58）：库里存的是 models.dev 的 id（如 302ai），身份条上摆
-// 人话名（302 AI）。名单是发版内置的只读资产，进程里拉一次全局共用；拉失败就摆
-// id 本身——标注是可选项，不为它挂错误条（与设置表单里那次拉取同一姿态）。
-let providersOnce: Promise<PricingProvider[]> | null = null
-function fetchProvidersOnce() {
-  providersOnce ??= api.get<PricingProvider[]>('/pricing/providers').catch(() => [] as PricingProvider[])
-  return providersOnce
-}
-
 export function ChannelDetail({ id }: { id: number }) {
   const nav = useNavigate()
   // 状态全从 store 拿（#56）：渠道行、那一把 mutate、拉到的上游列表（裁决 1A——
@@ -75,38 +64,13 @@ export function ChannelDetail({ id }: { id: number }) {
   const [adding, setAdding] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
-  // models.dev 的建议价（口径层 §2.10，#74）：渠道标注了 provider 才拉，一渠道一发。
-  // 只做填表助手——建议不落库、不参与计价，人点「采纳」写进去的才算数。拉失败就当
-  // 没有建议（快照是发版内置资产，失败多半是版本不齐），不为它挂错误条。
-  const [suggested, setSuggested] = useState<Record<string, PricingModelPrice> | null>(null)
+  // models.dev 的建议价（口径层 §2.10，#74）：渠道标注了 provider 才拉，取法见 prices.ts。
   const provider = ch?.provider ?? ''
-  useEffect(() => {
-    setSuggested(null)
-    if (!provider) return
-    let gone = false
-    api
-      .get<PricingModels>(`/pricing/models?provider=${encodeURIComponent(provider)}`)
-      .then((r) => {
-        if (!gone) setSuggested(r.models)
-      })
-      .catch(() => {})
-    return () => {
-      gone = true
-    }
-  }, [provider])
-  // 厂商标注设了才在身份条上体现（v0.58，PO「设置了要在外面就能体现，没设置就算了」）。
-  const [providerName, setProviderName] = useState('')
-  useEffect(() => {
-    setProviderName('')
-    if (!provider) return
-    let gone = false
-    void fetchProvidersOnce().then((list) => {
-      if (!gone) setProviderName(list.find((p) => p.id === provider)?.name ?? provider)
-    })
-    return () => {
-      gone = true
-    }
-  }, [provider])
+  const suggested = useSuggested([provider])[provider]
+  // 厂商标注设了才在身份条上体现（v0.58，PO「设置了要在外面就能体现，没设置就算了」）：
+  // 库里存的是 models.dev 的 id（如 302ai），身份条上摆人话名（302 AI）；拉失败就摆
+  // id 本身——标注是可选项，不为它挂错误条。
+  const vendorName = providerName(useProviders().list, provider)
   // 设置表单有没有未保存的改动——只喂给 Dialog 的 guard：改到一半时遮罩误点不关框。
   // Esc 仍照 Dialog 的通则丢弃，弹框关了编辑就没了，不再有「收起还留着」的中间态。
   const [settingsDirty, setSettingsDirty] = useState(false)
@@ -140,9 +104,9 @@ export function ChannelDetail({ id }: { id: number }) {
             {protos.length === 0 && <span className="tag tag-warn">协议集为空</span>}
             {/* 厂商标注：设了才摆，未标注不摆一个「未标注」占位。描边空底与协议的
                 实心 chip 形制分开——同排两类，一眼要读得出「这不是又一个协议」。 */}
-            {ch.provider && providerName && (
+            {ch.provider && (
               <span className="tag tag-vendor" title={'厂商标注 · ' + ch.provider}>
-                {providerName}
+                {vendorName}
               </span>
             )}
             <Toggle

@@ -3,6 +3,11 @@
  * 「我的」模型页三处同一副读法，别各抄一遍再各自漂移。
  */
 
+import { useEffect, useState } from 'react'
+import { api } from './api'
+import type { PricingModelPrice, PricingModels, PricingProvider } from './api'
+import type { Option } from './fields'
+
 /** 单价显示：USD/百万 token 的定价惯用形（$3、$0.3、$3.75），不是金额展示的
  *  `$X.XX`——那条管的是算出来的钱，单价抹成两位会把 $0.075 写成 $0.08。 */
 export function fmtPrice(n: number | null | undefined): string {
@@ -30,4 +35,76 @@ export function isUnpriced(p: FourPrices): boolean {
 /** 四价全文，进 title 用：「入 $3，出 $15，缓读 —，缓写 —。USD/百万 token」。 */
 export function fmtFourTitle(p: FourPrices): string {
   return PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(p[k])}`).join('，') + '。USD/百万 token'
+}
+
+/*
+ * 厂商标注与 models.dev 建议价（口径层 §2.10，#74）的取法也收在这里（#143）：
+ * 设置表单、模型页身份条、定价页三处以前各拉各的，「快照名单外」规则已经分叉。
+ * 名单是发版内置的只读资产，进程里拉一次全局共用；失败要不要挂错误条由调用方定
+ * ——标注是可选项，多数地方不挂。
+ */
+
+let providersOnce: Promise<PricingProvider[]> | null = null
+
+/** models.dev 的 provider 名单。拉到之前是空数组；拉失败 error 非空且下次挂载重拉。 */
+export function useProviders(): { list: PricingProvider[]; error: string } {
+  const [list, setList] = useState<PricingProvider[]>([])
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let gone = false
+    providersOnce ??= api.get<PricingProvider[]>('/pricing/providers')
+    providersOnce
+      .then((l) => {
+        if (!gone) setList(l)
+      })
+      .catch((e: unknown) => {
+        providersOnce = null
+        if (!gone) setError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      gone = true
+    }
+  }, [])
+  return { list, error }
+}
+
+/** 标注选择器的选项：「未标注」打头；库里存的标注可能不在快照名单里（自由文本，快照随
+ *  发版才更新），补一项回去并注明——不补的话触发器显示「未标注」，而库里明明有值。 */
+export function providerOptions(list: PricingProvider[], current: string): Option<string>[] {
+  const opts: Option<string>[] = [{ value: '', label: '未标注' }]
+  if (current && !list.some((p) => p.id === current)) {
+    opts.push({ value: current, label: current, hint: '快照名单外' })
+  }
+  for (const p of list) opts.push({ value: p.id, label: p.name, hint: p.id })
+  return opts
+}
+
+/** provider id → 人话名（302ai → 302 AI）；名单里没有（或还没拉到）就摆 id 本身。 */
+export function providerName(list: PricingProvider[], id: string): string {
+  return list.find((p) => p.id === id)?.name ?? id
+}
+
+/** 各 provider 的建议价快照：provider id → 模型名 → 四价。空 id 不拉；拉失败当没有
+ *  建议（快照是发版内置资产，失败多半是版本不齐）。只做填表助手——建议不落库、
+ *  不参与计价，人点「采纳」写进去的才算数。 */
+export function useSuggested(providers: readonly string[]): Record<string, Record<string, PricingModelPrice>> {
+  const [map, setMap] = useState<Record<string, Record<string, PricingModelPrice>>>({})
+  // 按内容比较：调用方多半每次渲染都是新数组。
+  const key = JSON.stringify(providers)
+  useEffect(() => {
+    let gone = false
+    for (const p of JSON.parse(key) as string[]) {
+      if (!p) continue
+      api
+        .get<PricingModels>(`/pricing/models?provider=${encodeURIComponent(p)}`)
+        .then((r) => {
+          if (!gone) setMap((s) => ({ ...s, [p]: r.models }))
+        })
+        .catch(() => {})
+    }
+    return () => {
+      gone = true
+    }
+  }, [key])
+  return map
 }
