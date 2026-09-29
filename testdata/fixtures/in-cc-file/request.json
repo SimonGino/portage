@@ -1,0 +1,12 @@
+{
+  "model": "gpt-5.6-luna",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "读一下这份合同"},
+        {"type": "file", "file": {"filename": "contract.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"}}
+      ]
+    }
+  ]
+}

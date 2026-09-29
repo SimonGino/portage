@@ -1137,6 +1137,46 @@ func TestDecodeStreamRefusalBecomesText(t *testing.T) {
 	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("ResponseDrops = %v, want 空——拒答是发出去了的，不是丢弃", drops)
 	}
+	// issue #113：本轮出现过拒答内容，status:completed 的停因改判 content_filter
+	// （A 出口自动映成 stop_reason:"refusal"），不再是 stop/end_turn。
+	if last := events[len(events)-1]; last.Type != protocol.EvDone || last.StopReason != "content_filter" {
+		t.Errorf("末事件 = %+v, want EvDone content_filter", last)
+	}
+}
+
+// TestDecodeStreamRefusalKeepsLengthAndToolCalls：拒答改判让位给 length 与
+// tool_calls（issue #113 验收标准：优先级 length/tool_calls > 拒答改判）。
+func TestDecodeStreamRefusalKeepsLengthAndToolCalls(t *testing.T) {
+	t.Run("length优先", func(t *testing.T) {
+		raw := sseFrames(
+			`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant"}}`,
+			`data: {"type":"response.refusal.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"抱歉"}`,
+			`data: {"type":"response.incomplete","response":{"id":"r","model":"m","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`,
+		)
+		c := NewCodec()
+		events := collectWith(t, c, raw)
+		if stop := events[len(events)-1].StopReason; stop != "length" {
+			t.Errorf("StopReason = %q, want length（拒答同轮出现，length 仍优先）", stop)
+		}
+	})
+
+	t.Run("tool_calls优先", func(t *testing.T) {
+		raw := sseFrames(
+			`data: {"type":"response.created","response":{"id":"r","model":"m"}}`,
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant"}}`,
+			`data: {"type":"response.refusal.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"抱歉"}`,
+			`data: {"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup"}}`,
+			`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{}"}`,
+			`data: {"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup"}}`,
+			`data: {"type":"response.completed","response":{"id":"r","model":"m","status":"completed"}}`,
+		)
+		c := NewCodec()
+		events := collectWith(t, c, raw)
+		if stop := events[len(events)-1].StopReason; stop != "tool_calls" {
+			t.Errorf("StopReason = %q, want tool_calls（拒答同轮出现，tool_calls 仍优先）", stop)
+		}
+	})
 }
 
 // TestDecodeFullBodyRefusalPartBecomesText：非流式的 refusal 部件同样走正文。
@@ -1163,5 +1203,24 @@ func TestDecodeFullBodyRefusalPartBecomesText(t *testing.T) {
 	}
 	if drops := c.ResponseDrops().Names(); len(drops) != 0 {
 		t.Errorf("ResponseDrops = %v, want 空", drops)
+	}
+	// issue #113：非流式同规，status:completed 的停因改判 content_filter。
+	if last := events[len(events)-1]; last.Type != protocol.EvDone || last.StopReason != "content_filter" {
+		t.Errorf("末事件 = %+v, want EvDone content_filter", last)
+	}
+}
+
+// TestDecodeFullBodyRefusalWithoutStatusStaysTruncated：没声明收尾（status 为空）的
+// 非流式响应带拒答，照旧 stop + Truncated，不改判——同 CC 侧截断不改判（issue #113）。
+func TestDecodeFullBodyRefusalWithoutStatusStaysTruncated(t *testing.T) {
+	body := []byte(`{"id":"r","model":"m","output":[
+	  {"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"抱歉"}]}
+	]}`)
+	events, err := NewCodec().DecodeFullBody(body)
+	if err != nil {
+		t.Fatalf("DecodeFullBody: %v", err)
+	}
+	if last := events[len(events)-1]; last.StopReason != "stop" || !last.Truncated {
+		t.Errorf("末事件 = %+v, want stop + Truncated", last)
 	}
 }

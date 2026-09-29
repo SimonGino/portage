@@ -34,6 +34,47 @@ hash——往返验不了，而往返正是图片这格唯一值得测的东西�
 消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
 `internal/server/convert_image_test.go`（六格全链路 + 抬图）。
 
+## in-anthropic-toolresult-imageonly
+
+[#110](https://github.com/SimonGino/portage/issues/110)：tool_result 只有一张图、没有文本，**手工构造**——
+在 `in-anthropic-toolresult-image` 基础上去掉那段正文（真实 harness 至今没发过只带图不带文本的工具结果）。
+钉的是：CC 出口 role=tool 的 `content`、R 出口 `function_call_output.output` 在只有图被抬出时都发占位串
+`"[image]"`，不发空串——模型读到空 content 后紧跟一条图片消息会把因果关系搞错。图是 `tiny.png` 的真字节。
+
+消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
+`internal/server/convert_image_test.go`（`TestA2CCImageOnlyToolResultGetsImagePlaceholder`、
+`TestA2RImageOnlyToolResultGetsImagePlaceholder`）。
+
+## in-anthropic-redacted-thinking
+
+#99 的入站样本，**手工构造**：本库实采的 `in-anthropic-*` 与 `golden/in-anthropic-thinking-replay`
+只有明文 `thinking`，没有 `redacted_thinking`（Fable 5.1 不产，Opus/Sonnet 4.x 才产，本机无转录）。
+形状照 Anthropic extended-thinking 文档写：`{"type":"redacted_thinking","data":...}` 后接同轮
+`tool_use`，data 是编的 base64 串。
+
+钉的是：解码归一成 `BlockThinking`（密文落 `Extras["data"]`），三个出口一律丢并登记
+`DropThinking`，不落 `vendor_content`。Anthropic 出口也丢（口径层 v0.62 ③，回带一律丢），
+不原样回写——生产上 A→A 走透传到不了编码器；真录到带 redacted_thinking 的回放再进 `golden/`。
+
+消费方：`internal/protocol/canonical_coverage_test.go`（覆盖表）、
+`anthropic.TestDecodeRequestRedactedThinkingBecomesBlockThinking`、
+`anthropic.TestEncodeRequestDropsRedactedThinking`、
+`openaicc.TestEncodeRedactedThinkingDroppedAsThinking`、
+`openairesponses.TestEncodeRedactedThinkingDroppedAsThinking`。
+
+## in-anthropic-document / in-cc-file / in-responses-input-file
+
+[#100](https://github.com/SimonGino/portage/issues/100) 文件块记档，三份都是**手工构造**：实采入站样本里没有带文件的轮次。
+形状照三家官方文档写（A `document` + `source.base64` + `title`；CC `{type:file, file:{filename, file_data}}`；
+R `input_file` 的 `filename` + `file_data`），litellm 的 A→CC / A→R 适配器读写的是同一形状。PDF 载荷是
+`%PDF-1.4` / `%%EOF` 两行的真字节。A 与 R 两份另在工具结果里嵌一个文件块。
+
+钉的是：解码归一成 `BlockDocument`（载荷进 Extras），跨协议两个出口登记 `document` 档、不落
+`vendor_content`、载荷不外带；工具结果里那块单独也要登记（A→R / R→A 此前静默丢）。映成对端文件块
+不在本票，另见 [#101](https://github.com/SimonGino/portage/issues/101)。
+
+消费方：`internal/protocol/document_fixture_test.go`、`internal/protocol/canonical_coverage_test.go`（覆盖表）。
+
 ## anthropic-cache-hit / anthropic-stream-cache-hit
 
 补的是 #37 第 2 项的**一半**：`anthropic-*` 六份真实样本的 cache 计数全是 0（中转那侧压根
@@ -77,6 +118,17 @@ pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连�
 那条提交的单测，外加一段摘要与 `encrypted_content`，钉「摘要走 ThinkingSummary 在前、正文走
 ThinkingBody、密文不出」。消费方：`internal/protocol/openairesponses/decode_response_test.go`。
 
+## cc-stream-refusal / cc-refusal
+
+[#113](https://github.com/SimonGino/portage/issues/113)：CC 解码此前完全不认 `refusal` 字段
+（流式 `delta.refusal`、非流式 `message.refusal`），静默整段丢掉，客户端只收到空回复 + `end_turn`。
+**手工构造**——CC 侧目前没有任何真实拒答转录。流式那份照 `golden/cc-stream-text` 的帧序写
+（首帧只带 role，正文逐片下发，`finish_reason` 单独占一帧，usage 帧 `choices` 为空）；非流式
+那份是单帧 `message.refusal` + `finish_reason:"stop"`。形状依据 litellm
+`types/llms/openai.py` 的 `ChatCompletionResponseMessage` 与 OpenAI 官方 refusals 文档。
+钉「拒答当正文放出、`finish_reason:"stop"` 改判 canonical `content_filter`」。消费方：
+`internal/protocol/openaicc/decode_test.go`。
+
 ## responses-stream-done-only-text / responses-stream-done-only-tool
 
 [#108](https://github.com/SimonGino/portage/issues/108)：有的第三方 Responses 上游不发 delta，正文只在
@@ -85,3 +137,14 @@ ThinkingBody、密文不出」。消费方：`internal/protocol/openairesponses/
 `golden/responses-stream-text` 的帧序与键集写、删掉 delta；tool 那份是一路 `function_call`，
 done 帧键集照 sub2api `apicompat.ResponsesStreamEvent`。钉「done 帧按账补后缀、纯 done 时整段放出」。
 消费方：`internal/protocol/openairesponses/decode_response_test.go`。
+
+## cc-cache-write / cc-stream-cache-write / cc-stream-cache-write-bailian / cc-cache-write-both-keys / responses-cache-write
+
+[#111](https://github.com/SimonGino/portage/issues/111)：缓存写入量。OpenAI 官方报在 CC 的
+`prompt_tokens_details.cache_write_tokens` / R 的 `input_tokens_details.cache_write_tokens`（new-api
+`48068ce92`、sub2api `4a2b10c94`），阿里百炼报在 `prompt_tokens_details.cache_creation_input_tokens`
+（litellm `645b87fae1`）。**手工构造**——手上没有官方直连与百炼的转录。四份 CC 从 `golden/cc-text` /
+`golden/cc-stream-text` 派生、只改 usage 一处；R 那份键集照 `golden/responses-stream-text` 终帧（实采
+`cache_write_tokens` 恒 0），外壳裁成一条 message 的非流式响应。`cc-stream-cache-write` 取 new-api
+单测的数（prompt 3619 / cached 2921 / write 3616，cached + write > prompt），钉「原数照记、只钳 NetInput」；
+`both-keys` 钉「两键取大」。消费方：`internal/protocol/cachehit_fixture_test.go`（Tap、canonical、跨出口）。

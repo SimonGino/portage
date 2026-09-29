@@ -1,0 +1,23 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 64,
+  "messages": [
+    {
+      "role": "user",
+      "content": [{"type": "text", "text": "帮我查一下北京天气"}]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "redacted_thinking", "data": "EmwKAhgBEgy3va3pzix/LafPsn4aDDXx2zVGVqhCPnGqbxoM1WooTNZmqk1F8yaGIjDpX0y+ZLNwXt6QpUC9V4wKKMbXPvfLTLmvXfOKvQnZWk5pDLzE1oSZo6gepr0YVEwqEHNiRJDkQXcUJGO4CyIQTL8yGgAAAA=="},
+        {"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {"city": "北京"}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_01", "content": "晴，22℃"}
+      ]
+    }
+  ]
+}

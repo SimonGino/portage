@@ -508,8 +508,8 @@ func decodeToolInput(args string) (any, error) {
 // input_tokens 与两项缓存互不相交、客户端自己相加。不减等于把缓存重复计一遍。
 //
 // cache_creation_input_tokens / cache_read_input_tokens 恒写出来（哪怕是 0）：
-// Claude Code 读这两个字段算缓存命中率，缺键与 0 在它那里不是一回事。CC 出口只有
-// 缓存读没有缓存写，所以写入侧恒 0——这是协议差异，不是漏填。
+// Claude Code 读这两个字段算缓存命中率，缺键与 0 在它那里不是一回事。多数 CC 上游
+// 不报缓存写入（OpenAI 官方与百炼才报，见 openaicc.promptDetails），那时写入侧落 0。
 //
 // output_tokens_details.thinking_tokens **有数才写**，与上面那两项相反，理由同 CC
 // 出口的 completion_tokens_details（openaicc/encode_response.go）：缓存那两项的 0 是

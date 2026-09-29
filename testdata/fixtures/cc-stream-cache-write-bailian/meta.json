@@ -1,0 +1,19 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#111。从 golden/cc-stream-text 的真实转录派生，只改 usage 一处；阿里百炼形状 prompt_tokens_details.cache_creation_input_tokens（litellm 645b87fae1）；本仓库尚无百炼实采。",
+  "synthetic": true,
+  "expect": {
+    "Model": "gpt-5.6-luna",
+    "InputTokens": 4221,
+    "OutputTokens": 37,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 2048,
+    "StopReason": "stop",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 4221
+}

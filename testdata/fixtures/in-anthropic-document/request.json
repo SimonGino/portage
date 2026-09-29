@@ -1,0 +1,32 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 64,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "读一下这份合同，再把附件也拉下来"},
+        {"type": "document", "title": "contract.pdf", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0xLjQKJSVFT0YK"}}
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "tool_use", "id": "toolu_01Fetch", "name": "fetch_attachment", "input": {}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01Fetch",
+          "content": [
+            {"type": "text", "text": "附件已取回"},
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0xLjQKJSVFT0YK"}}
+          ]
+        }
+      ]
+    }
+  ]
+}

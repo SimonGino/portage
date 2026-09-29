@@ -48,6 +48,9 @@ const (
 	// 那条 Warn 里。名单记 call id——补了哪几路，日志上得看得见。
 	DropMissingResult = "missing_result" // 缺失的工具结果，已合成占位；名单记 call id
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
+	// DropDocument：CC file / Responses input_file 这类文件块（#100）。三协议都有自己的
+	// 文件块，是认得的语义而不是 vendor 私货，所以不记 vendor_content；映不映另见 #101。
+	DropDocument = "document"
 	// DropImageDetail 只此一家：CC 与 Responses 都原生有 detail 这一格，那两个出口
 	// 没有「丢弃」这回事，不必像 image_file_id 那样在三个 codec 里各镜像一份。
 	DropImageDetail = "image_detail" // CC / Responses 的图片精度提示，Anthropic 无对应的一格
@@ -55,6 +58,8 @@ const (
 	// 这一格**必须登记**（口径层 v0.62 ④）：客户端回放的是我们合成出来的、
 	// 没有 signature 的 thinking 块，多数客户端会补一个 `signature:""` 再发回来，
 	// 而 Anthropic 见空签名直接 400——第二轮就崩。丢是对的，但要看得见。
+	// redacted_thinking 也落这一档（decode 侧归一成 BlockThinking，#99）：密文只有签发
+	// 它的上游认，无状态选路下原样回写同样可能 400，与普通 thinking 同规丢弃。
 	DropThinking = "thinking" // 回带方向的 thinking 块正文与 signature
 	// DropThinkingParam 是**请求侧的思考参数**（口径层 v0.65 ⑤），与 DropThinking
 	// （内容块）和 DropVendorRequest（其余顶层字段）都不是一档：住户是思考开关本身
@@ -477,6 +482,9 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 				out = append(out, withCacheControl(img, b.Extras))
 			}
 
+		case protocol.BlockDocument:
+			drop(DropDocument)
+
 		default:
 			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，
 			// 装得下没见过的形态（CC 的 image_url / input_audio 就是这么留住的），
@@ -565,16 +573,22 @@ func encodeToolResult(res *protocol.ToolResult, drop func(string)) map[string]an
 	var blocks []map[string]any
 	hasImage := false
 	for _, b := range res.Content {
-		if b.Kind == protocol.BlockImage {
+		switch b.Kind {
+		case protocol.BlockImage:
 			if img, ok := encodeImage(b.Image, drop); ok {
 				blocks = append(blocks, img)
 				hasImage = true
 			}
-			continue
-		}
-		if b.Kind == protocol.BlockText && b.Text != "" {
-			textParts = append(textParts, b.Text)
-			blocks = append(blocks, map[string]any{"type": "text", "text": b.Text})
+		case protocol.BlockText:
+			if b.Text != "" {
+				textParts = append(textParts, b.Text)
+				blocks = append(blocks, map[string]any{"type": "text", "text": b.Text})
+			}
+		case protocol.BlockDocument:
+			drop(DropDocument)
+		default:
+			// 结果里的其余块同样发不出去，登记而不是静默丢（#100）。
+			drop(DropVendorContent)
 		}
 	}
 	var content any

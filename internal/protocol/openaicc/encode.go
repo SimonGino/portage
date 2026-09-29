@@ -33,6 +33,7 @@ const (
 	DropToolChoice    = "tool_choice"    // auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，名单记 mode
 	DropVendorContent = "vendor_content" // CC 认不得的内容块（多模态等）
 	DropImageFileID   = "image_file_id"  // file_id 是上游作用域句柄，跨协议搬不走
+	DropDocument      = "document"       // Anthropic document / Responses input_file 文件块（#100），认得的语义，不记 vendor_content
 	DropOrphanResult  = "orphan_result"  // 找不到对应 tool_call 的 tool_result（与 anthropic 出口同名同规）
 	// DropMissingResult 记的是**合成**而不是丢弃：有调用没结果时补了一条占位。出口侧
 	// 只有 protocol.Drops 这一条上报通道，借它把这件事带进 relay 那条 Warn 里。
@@ -296,14 +297,17 @@ func encodeNonAssistant(m protocol.Message, seen map[string]bool, drop func(stri
 		if _, ok := b.Extras["cache_control"]; ok {
 			drop(DropCacheControl)
 		}
+		// 先拼正文、再抬图，保持两者的丢弃登记顺序；占位看的是真抬出去的图（#110）。
+		text := joinBlocks(b.ToolResult.Content, drop)
+		parts := liftImageParts(b.ToolResult.Content, drop)
 		// tool_call_id 原样携带（§5 坑清单）：Anthropic 的 tool_use_id 与 CC 的
 		// tool_call_id 是同一个标识，重编号会让结果对不回调用。
 		out = append(out, map[string]any{
 			"role":         "tool",
 			"tool_call_id": b.ToolResult.ToolCallID,
-			"content":      joinBlocks(b.ToolResult.Content, drop),
+			"content":      protocol.ToolResultOutput(text, len(parts) > 0),
 		})
-		lifted = append(lifted, liftImageParts(b.ToolResult.Content, drop)...)
+		lifted = append(lifted, parts...)
 	}
 	if len(lifted) > 0 {
 		out = append(out, map[string]any{"role": "user", "content": lifted})
@@ -500,6 +504,8 @@ func encodeMessageContent(blocks []protocol.Block, drop func(string)) (any, bool
 			if part, ok := encodeImagePart(b.Image, drop); ok {
 				parts = append(parts, part)
 			}
+		case protocol.BlockDocument:
+			drop(DropDocument)
 		default:
 			drop(DropVendorContent)
 		}
@@ -589,6 +595,9 @@ func joinBlocks(blocks []protocol.Block, drop func(string)) string {
 				drop(DropImageFileID)
 			}
 			// 图由 encodeMessageContent / liftImages 另发；这里只拼正文。
+
+		case protocol.BlockDocument:
+			drop(DropDocument)
 
 		default:
 			// 认不得的块类型：跳过，**并且登记**。canonical 的 BlockKind 是字符串，

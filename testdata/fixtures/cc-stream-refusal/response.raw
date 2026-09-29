@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-cc-refusal-1","model":"gpt-5.6","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-cc-refusal-1","model":"gpt-5.6","choices":[{"index":0,"delta":{"refusal":"抱歉，"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-cc-refusal-1","model":"gpt-5.6","choices":[{"index":0,"delta":{"refusal":"我不能帮这个忙。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-cc-refusal-1","model":"gpt-5.6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-cc-refusal-1","model":"gpt-5.6","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":8}}
+
+data: [DONE]
+

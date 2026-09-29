@@ -58,6 +58,12 @@ type choiceBody struct {
 	// 所以按别名收（取值见 reasoningText）——不认的话这类上游的思考正文会被整段丢掉，
 	// 而且是静默丢：没有错误，只是 canonical 里一个 ThinkingDelta 都不出。
 	Reasoning string `json:"reasoning"`
+	// Refusal 是模型拒答的正文，流式在 choices[].delta.refusal、非流式在
+	// choices[].message.refusal（litellm types/llms/openai.py 的 ChatCompletionResponseMessage
+	// 与 OpenAI 官方 refusals 文档同形）。与 Content 不共用字段：上游把拒答另开一键，
+	// 之前这里没认，导致客户端收到空回复（issue #113）。PO 裁决（2026-09-28）：当
+	// 普通正文发出，不单独登记丢弃——同 R 侧 response.refusal.delta 的处理。
+	Refusal   string `json:"refusal"`
 	ToolCalls []struct {
 		Index    *int   `json:"index"`
 		ID       string `json:"id"`
@@ -80,11 +86,9 @@ func (b *choiceBody) reasoningText() string {
 }
 
 type usagePayload struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
+	PromptTokens        int            `json:"prompt_tokens"`
+	CompletionTokens    int            `json:"completion_tokens"`
+	PromptTokensDetails *promptDetails `json:"prompt_tokens_details"`
 	// 这里用值不用 *int（与 Tap 那侧不同）：canonical 的 Usage 零值就是「没报」，
 	// 「报了 0」与「没报」写出去的字节一样，不需要分。
 	CompletionTokensDetails *struct {
@@ -180,6 +184,9 @@ type streamState struct {
 	usage     *protocol.Usage
 	doneSent  bool
 	errorSent bool
+	// sawRefusal：本轮出现过拒答正文。finish() 据此把 finish_reason=="stop" 改判
+	// content_filter（issue #113）；length/tool_calls 已经在别的取值上，不受影响。
+	sawRefusal bool
 }
 
 // frame 处理一个 SSE 帧。
@@ -246,6 +253,12 @@ func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
 	if body.Content != "" {
 		out <- protocol.Event{Type: protocol.EvTextDelta, Text: body.Content}
 	}
+	if body.Refusal != "" {
+		// 拒答走正文出去，跳过等于让客户端看着空回复干等——同 R 侧
+		// response.refusal.delta 的理由。停因改判在 finish() 里统一处理。
+		out <- protocol.Event{Type: protocol.EvTextDelta, Text: body.Refusal}
+		st.sawRefusal = true
+	}
 	for _, call := range body.ToolCalls {
 		// index 缺省按 0 处理：单工具调用的上游有省略 index 的（协议上它可选）。
 		idx := 0
@@ -281,15 +294,14 @@ func (st *streamState) body(body *choiceBody, out chan<- protocol.Event) {
 //
 // 语义是累计快照而非增量（protocol/event.go）：非零字段覆盖先前值，消费方不做加法。
 // CC 的 prompt_tokens 本就是**毛值**（含缓存命中），与 canonical 的口径一致，直映即可
-// （protocol.Usage 的约定）；cached_tokens 是它的明细，不再往 InputTokens 上加。
+// （protocol.Usage 的约定）；缓存读、写两项是它的明细，不再往 InputTokens 上加。
 func (st *streamState) observeUsage(u *usagePayload, out chan<- protocol.Event) {
 	if st.usage == nil {
 		st.usage = &protocol.Usage{}
 	}
 	next := protocol.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
-	// CC 只有缓存命中（读）的概念，没有缓存写入，CacheWriteTokens 恒零。
 	if d := u.PromptTokensDetails; d != nil {
-		next.CacheReadTokens = d.CachedTokens
+		next.CacheReadTokens, next.CacheWriteTokens = d.CachedTokens, d.cacheWrite()
 	}
 	// 思考 token 是 completion_tokens 的明细，不从它里面减（口径层 v0.66）。
 	if d := u.CompletionTokensDetails; d != nil {
@@ -312,8 +324,17 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 		out <- protocol.Event{Type: protocol.EvMessageStart, ID: st.id, Model: st.model}
 	}
 	stop := st.stop
+	if stop == "stop" && st.sawRefusal && len(st.tools) == 0 {
+		// 拒答改判（issue #113，PO 2026-09-28 裁决）：finish_reason=="stop" 时本轮
+		// 出现过拒答正文，canonical 停因改判 content_filter，A 出口自动映成
+		// stop_reason:"refusal"。length/tool_calls 已经是别的取值，这里判不到；
+		// 带工具调用却报 stop 的上游也不改判——工具调用优先，同 R 侧先判 sawTool。
+		stop = "content_filter"
+	}
 	truncated := stop == ""
-	st.flushTools(out, truncated)
+	// length 同样没人担保：CC 没有逐条终止符，截断落在哪一路看不出来，并行调用一律
+	// 按半截交代（#127，PO 裁决的保守取舍）。
+	st.flushTools(out, truncated || stop == "length")
 	if truncated {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
@@ -335,8 +356,9 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 // 从 1 起都见过）。按首次出现次序排能保证「先说的先出」，这与客户端看到的顺序一致；
 // 而 canonical 事件的 Index 字段仍原样携带上游的 index，不重编号。
 //
-// truncated：流没等到 finish_reason 就断了，这些 End 是替上游补的，没人担保入参写完
-// ——End 上带 Truncated 让出口别把它当成品（#106，openairesponses 的 flushTool）。
+// truncated：流没等到 finish_reason 就断了（#106），或 finish_reason 是 length（#127），
+// 这些 End 没人担保入参写完——End 上带 Truncated 让出口别把它当成品（openairesponses
+// 的 flushTool）。
 func (st *streamState) flushTools(out chan<- protocol.Event, truncated bool) {
 	if len(st.tools) == 0 {
 		return

@@ -3,6 +3,8 @@ package openairesponses
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -603,5 +605,115 @@ func TestEncodeTruncatedTurnIsIncomplete(t *testing.T) {
 	}
 	if full["status"] != "incomplete" {
 		t.Errorf("非流式 status = %v，期望 incomplete", full["status"])
+	}
+}
+
+// #127：已收尾的调用压到下一个事件或收尾才放，停因定状态。custom 工具同规；非流式
+// 同一台状态机，同一个结论。
+func TestEncodeHeldToolCallFollowsStopReason(t *testing.T) {
+	events := func(stop string) []protocol.Event {
+		return []protocol.Event{
+			{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+			{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_x", ToolName: "exec"},
+			{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{"input":"rm -`},
+			{Type: protocol.EvToolCallEnd, Index: 0},
+			{Type: protocol.EvDone, StopReason: stop},
+		}
+	}
+	newCodec := func() *Codec {
+		c := NewCodec()
+		if _, err := c.DecodeRequest([]byte(`{"model":"m","tools":[{"type":"custom","name":"exec"}]}`), true); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for stop, want := range map[string]string{"length": "incomplete", "tool_calls": "completed", "stop": "completed"} {
+		t.Run(stop, func(t *testing.T) {
+			frames := encodeStream(t, newCodec(), events(stop)...)
+			var status any
+			inputDone := 0
+			for _, f := range frames {
+				switch f.event {
+				case "response.output_item.done":
+					status = f.data["item"].(map[string]any)["status"]
+				case "response.custom_tool_call_input.done":
+					inputDone++
+				}
+			}
+			if status != want {
+				t.Errorf("流式 item status = %v，期望 %s", status, want)
+			}
+			wantDone := 0
+			if want == "completed" {
+				wantDone = 1
+			}
+			if inputDone != wantDone {
+				t.Errorf("input.done 发了 %d 次，期望 %d", inputDone, wantDone)
+			}
+
+			body, err := newCodec().EncodeFullBody(events(stop))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var full struct{ Output []map[string]any }
+			if err := json.Unmarshal(body, &full); err != nil {
+				t.Fatal(err)
+			}
+			if len(full.Output) != 1 || full.Output[0]["status"] != want {
+				t.Errorf("非流式 output = %v，期望一个 %s 的 item", full.Output, want)
+			}
+		})
+	}
+}
+
+// 压着的已收尾调用：新调用（哪怕复用同一 index）与 EvError 到来都要先按 completed
+// 放出，id 不串（#127，构造样本）。
+func TestEncodeHeldToolCallReleasedByStartAndError(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_b", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolArgsDelta, Index: 0, Text: `{}`},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvError, Status: 500, Message: "上游炸了"},
+	)
+	var got []string
+	for _, f := range frames {
+		switch f.event {
+		case "response.output_item.done":
+			item := f.data["item"].(map[string]any)
+			got = append(got, fmt.Sprint(item["call_id"], ":", item["status"]))
+		case "response.failed":
+			got = append(got, "failed")
+		}
+	}
+	want := []string{"call_a:completed", "call_b:completed", "failed"}
+	if !slices.Equal(got, want) {
+		t.Errorf("放出序 = %v，期望 %v", got, want)
+	}
+}
+
+// index 被复用时另一路还压着：旧 index 的次序项不许留下来把新调用排到前面。
+func TestEncodeReusedIndexKeepsCallOrder(t *testing.T) {
+	frames := encodeStream(t, NewCodec(),
+		protocol.Event{Type: protocol.EvMessageStart, ID: "x", Model: "m"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_a", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 1, ToolID: "call_b", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallStart, Index: 0, ToolID: "call_c", ToolName: "read"},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 1},
+		protocol.Event{Type: protocol.EvToolCallEnd, Index: 0},
+		protocol.Event{Type: protocol.EvDone, StopReason: "tool_calls"},
+	)
+	var got []string
+	for _, f := range frames {
+		if f.event == "response.output_item.done" {
+			got = append(got, fmt.Sprint(f.data["item"].(map[string]any)["call_id"]))
+		}
+	}
+	if want := []string{"call_a", "call_b", "call_c"}; !slices.Equal(got, want) {
+		t.Errorf("放出序 = %v，期望 %v", got, want)
 	}
 }

@@ -1,0 +1,12 @@
+{
+  "id": "chatcmpl-cc-refusal-2",
+  "model": "gpt-5.6",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "refusal": "抱歉，我不能帮这个忙。"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 12, "completion_tokens": 8}
+}

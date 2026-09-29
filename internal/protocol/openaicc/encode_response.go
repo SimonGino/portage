@@ -433,18 +433,24 @@ type toolAccum struct {
 // total_tokens 由我们相加而不是等上游给：canonical 没有这个字段（它是冗余的），
 // 而 CC 客户端普遍读它。prompt_tokens_details.cached_tokens 恒写出来（哪怕是 0），
 // 理由同 anthropic 的 cache_read_input_tokens——缺键与 0 在读它算命中率的客户端
-// 那里不是一回事。CC 没有缓存写入的概念，CacheWriteTokens 在这一侧无处可去。
-// completion_tokens_details 与上面那句相反——**有数才写**（口径层 v0.66）。
+// 那里不是一回事。缓存写入写成 prompt_tokens_details.cache_write_tokens（OpenAI
+// 官方的键），**有数才写**（PO 2026-09-28 裁决）：多数 CC 上游不报这一项，恒写 0
+// 会把「没报」说成「没写」。
+// completion_tokens_details 同样**有数才写**（口径层 v0.66）。
 // cached_tokens 的 0 是真的「一次都没命中」，而这里的 0 会被读成「这次没思考」，
 // 可 canonical 侧零值即「上游没报」（上游整个 details 容器都不发时就是这一档，
 // A / CC 两侧都见得到）。宁可不说，不能瞎说；
 // 那笔成本的可见性由流水那一列兜底。它不从 completion_tokens 里减：是明细不是加数。
 func usageBody(u protocol.Usage) map[string]any {
+	details := map[string]any{"cached_tokens": u.CacheReadTokens}
+	if u.CacheWriteTokens != 0 {
+		details["cache_write_tokens"] = u.CacheWriteTokens
+	}
 	body := map[string]any{
 		"prompt_tokens":         u.InputTokens,
 		"completion_tokens":     u.OutputTokens,
 		"total_tokens":          u.InputTokens + u.OutputTokens,
-		"prompt_tokens_details": map[string]any{"cached_tokens": u.CacheReadTokens},
+		"prompt_tokens_details": details,
 	}
 	if u.ReasoningTokens != 0 {
 		body["completion_tokens_details"] = map[string]any{"reasoning_tokens": u.ReasoningTokens}

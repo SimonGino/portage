@@ -40,6 +40,8 @@ internal/webui/dist/
 # impeccable 设计工具的产物：产品上下文与本机会话/检测配置，不入库
 /PRODUCT.md
 .impeccable/
+# afk-team-workflow 的批次账本、handoff 与复盘报告，本机运行状态
+/.afk/
 
 # tsc -b 的增量缓存，机器本地状态
 web/tsconfig.tsbuildinfo

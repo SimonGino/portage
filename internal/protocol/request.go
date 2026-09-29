@@ -44,6 +44,10 @@ const (
 	BlockToolResult BlockKind = "tool_result"
 	// BlockImage 是跨协议图片块（#1）。载荷在 Image，三种来源各填一组字段。
 	BlockImage BlockKind = "image"
+	// BlockDocument 是三协议各有的文件块：Anthropic document、CC file、Responses
+	// input_file（#100）。目前只为跨协议丢弃时记对档（DropDocument），载荷原样留在
+	// Extras，不做对端映射——映不映另见 #101。
+	BlockDocument BlockKind = "document"
 )
 
 // Block 是内容块。
@@ -69,6 +73,8 @@ type Block struct {
 	//     tool_result 块上都有。它是**位置敏感**的——脱敏口径专门保住了它，
 	//     因为断点位置本身就是被测行为。
 	//   - signature：Anthropic thinking 块的签名。
+	//   - data：Anthropic redacted_thinking 块的不透明密文（无明文，Text 恒空，
+	//     issue #99）。跟 signature 是同一格的两种住户，跨协议同样丢。
 	//   - encrypted_content：Responses reasoning 的密文（摘要 / 明文进 Text）。
 	Extras map[string]any
 }
