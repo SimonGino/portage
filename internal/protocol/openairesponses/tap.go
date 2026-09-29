@@ -53,11 +53,16 @@ type event struct {
 }
 
 // observeEvent 返回这一帧是不是收尾帧：response.completed / incomplete，或流内错误
-// （response.failed、裸 error 帧），同解码侧（#162）。
-func observeEvent(sum *protocol.Summary, data []byte) bool {
+// （response.failed、裸 error 帧），同解码侧（#162）。JSON 里没写 type 时拿 SSE 的
+// event 名兜底，同解码侧 respStreamState.frame——否则那种上游转换路径记 ok、透传却
+// 记 stream_aborted。
+func observeEvent(sum *protocol.Summary, sseEvent string, data []byte) bool {
 	var e event
 	if json.Unmarshal(data, &e) != nil {
 		return false
+	}
+	if e.Type == "" {
+		e.Type = sseEvent
 	}
 	// output_text.delta 之类的增量事件没有 response 字段，不取值。
 	if e.Response != nil {

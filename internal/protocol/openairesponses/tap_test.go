@@ -155,3 +155,22 @@ data: {"type":"response.created","response":{"model":"m","status":"in_progress",
 		t.Errorf("ServiceTier = %q，queued / in_progress 的回显不该记", got.ServiceTier)
 	}
 }
+
+// 类型只写在 SSE event: 行上的终帧（线格允许，解码侧拿它兜底）同样算收尾（#162）：
+// 不认的话透传会把一条完整的流记成 stream_aborted，与转换路径分叉。
+func TestTapStreamTerminalTypeFromSSEEventLine(t *testing.T) {
+	const raw = `event: response.completed
+data: {"response":null}
+
+`
+	if got := feed(t, NewTap(true), raw); got.Truncated {
+		t.Errorf("终态只写在 event: 行时被判截断：%+v", got)
+	}
+	const cut = `event: response.output_text.delta
+data: {"delta":"你好"}
+
+`
+	if got := feed(t, NewTap(true), cut); !got.Truncated {
+		t.Errorf("断在终态之前应判截断：%+v", got)
+	}
+}
