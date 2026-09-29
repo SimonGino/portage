@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -551,6 +552,59 @@ func TestChannelHeadersApplyAndReject(t *testing.T) {
 	msg := applyErr(t, openDB(t), strings.Replace(withHeaders, "x-opencode-session: s1", "Host: example.com", 1))
 	if !strings.Contains(msg, `"Host"`) || !strings.Contains(msg, "渠道 \"qwen\" 的 headers") {
 		t.Errorf("保留头名该被点名拒，实际报文：\n%s", msg)
+	}
+}
+
+// 已有渠道的 headers 变化单报一条（#160）：旧文件导入把 headers 清空时，试算清单是
+// 唯一当场能看见的地方。清单不带头名与头值；Preview 与 Apply 走同一个 eval，清单一致。
+func TestChannelHeadersChangeIsListed(t *testing.T) {
+	withHeaders := func(v string) string {
+		return strings.Replace(goodFile,
+			"      openai: https://example.internal/v1\n",
+			"      openai: https://example.internal/v1\n    headers:\n      x-opencode-session: "+v+"\n", 1)
+	}
+	listed := func(db *sql.DB, yaml string) []string {
+		t.Helper()
+		f, err := declcfg.Parse([]byte(yaml), "test.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview, err := declcfg.Preview(context.Background(), db, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, err := declcfg.Apply(context.Background(), db, f, discardLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(preview, applied) {
+			t.Fatalf("Preview 与 Apply 清单不一致：\n%v\n%v", preview, applied)
+		}
+		return applied
+	}
+	db := openDB(t)
+	mustApply(t, db, withHeaders("s1"))
+
+	for _, tc := range []struct {
+		name, yaml string
+		want       []string
+	}{
+		{"不变", withHeaders("s1"), nil},
+		{"改值", withHeaders("secret-s2"), []string{"渠道 qwen 的额外出站头将被改动"}},
+		{"旧文件不写 headers", goodFile, []string{"渠道 qwen 的额外出站头将被清空"}},
+		{"空到有", withHeaders("s3"), []string{"渠道 qwen 的额外出站头将被改动"}},
+	} {
+		got := listed(db, tc.yaml)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s：清单 = %q，想要 %q", tc.name, got, tc.want)
+		}
+		for _, c := range got {
+			for _, leak := range []string{"x-opencode", "s1", "s2", "s3"} {
+				if strings.Contains(c, leak) {
+					t.Errorf("%s：清单带出了头名或头值：%q", tc.name, c)
+				}
+			}
+		}
 	}
 }
 

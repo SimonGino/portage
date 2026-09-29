@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -217,7 +218,8 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 			Headers:                   headers,
 		}
 		var id int64
-		switch err := tx.QueryRowContext(ctx, `SELECT id FROM channels WHERE name = ?`, name).Scan(&id); {
+		var oldHeaders string
+		switch err := tx.QueryRowContext(ctx, `SELECT id, headers FROM channels WHERE name = ?`, name).Scan(&id, &oldHeaders); {
 		case errors.Is(err, sql.ErrNoRows):
 			if id, err = store.CreateChannel(ctx, tx, in); err != nil {
 				return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
@@ -228,6 +230,17 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 		default:
 			if err := store.UpdateChannel(ctx, tx, id, in); err != nil {
 				return nil, nil, fmt.Errorf("写入渠道 %q：%w", name, err)
+			}
+			// 存量渠道的字段改动只有 headers 单报一条（#160）：headers 只在「上游设置」弹框
+			// 里看得到，旧文件导入把它清空时没人会逐个渠道去翻，试算清单是唯一当场看得见的地方；
+			// 其余字段页面上一眼可见，不报。
+			// 只报动没动，不带头名与头值（可能含会话 id）。
+			if old := store.DecodeHeaders(oldHeaders); !maps.Equal(old, headers) {
+				verb := "改动"
+				if len(headers) == 0 {
+					verb = "清空"
+				}
+				changes = append(changes, fmt.Sprintf("渠道 %s 的额外出站头将被%s", name, verb))
 			}
 		}
 		ids[name] = id
