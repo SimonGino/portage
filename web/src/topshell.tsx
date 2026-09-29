@@ -14,10 +14,13 @@ export function TopShell({
   tabs,
   right,
   width,
+  brandExtra,
   children,
 }: {
   tabs: ReactNode
   right: ReactNode
+  /** PROTOTYPE #153：品牌簇尾巴（变体 C 的版本号与 GitHub 图标）。定稿后删或转正。 */
+  brandExtra?: ReactNode
   width?: 'narrow' | 'wide'
   children: ReactNode
 }) {
@@ -27,6 +30,7 @@ export function TopShell({
         <span className="brand">
           <PortageMark size={20} />
           <b>Portage</b>
+          {brandExtra}
         </span>
         <nav className="topnav" aria-label="主导航">
           {tabs}

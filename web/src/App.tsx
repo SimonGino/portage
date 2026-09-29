@@ -19,6 +19,8 @@ import VerifyGate from './pages/auth/VerifyGate'
 import OAuthComplete from './pages/auth/OAuthComplete'
 import MySpace from './pages/my/MySpace'
 import { AvatarMenu, TopShell } from './topshell'
+// PROTOTYPE #153：三处挂点 + 底部切换条，定稿后整段摘掉。
+import { ProtoAvatarDot, ProtoBar, ProtoBrandSlot, ProtoMenuSlot, ProtoRightSlot } from './prototype/version'
 import { Confirm, Dialog, ErrorBar } from './ui'
 
 // 顶栏 tab 纯文字（v0.54）：左栏时代的六枚线性图标随左栏一起退役——横排里
@@ -343,6 +345,7 @@ function Shell({
   // 切 tab 时画布左右边缘跳来跳去，比省下的留白更扎眼。
   return (
     <TopShell
+      brandExtra={<ProtoBrandSlot />}
       tabs={NAV.map((item) => (
         <NavLink key={item.to} to={item.to}>
           {item.label}
@@ -350,6 +353,7 @@ function Shell({
       ))}
       right={
         <>
+          <ProtoRightSlot />
           {/* 「管理 ⇄ 我的」两空间切换（DESIGN §12）：两边顶栏右侧各摆对方的
               入口。只有带用户身份的会话才摆——纯密码时代的老会话没有「我的」。 */}
           {user && (
@@ -357,6 +361,7 @@ function Shell({
               我的
             </NavLink>
           )}
+          <ProtoAvatarDot>
           <AvatarMenu user={user}>
             {(close) => (
               <>
@@ -382,13 +387,16 @@ function Shell({
                 >
                   退出登录
                 </button>
+                <ProtoMenuSlot />
               </>
             )}
           </AvatarMenu>
+          </ProtoAvatarDot>
         </>
       }
       width="wide"
     >
+      <ProtoBar />
       <Routes>
         <Route path="/channels" element={<Channels />} />
         {/* 选中的渠道进 URL（口径层 v0.45 主从两栏）：刷新、回退都还留在同一个

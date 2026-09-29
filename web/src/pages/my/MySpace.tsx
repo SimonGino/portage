@@ -2,6 +2,8 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api } from '../../api'
 import type { User } from '../../api'
 import { AvatarMenu, TopShell } from '../../topshell'
+// PROTOTYPE #153：与 App.tsx 同一组挂点。
+import { ProtoAvatarDot, ProtoBar, ProtoBrandSlot, ProtoMenuSlot, ProtoRightSlot } from '../../prototype/version'
 import LogsView from '../logs/view'
 import MyKeys from './MyKeys'
 import MyUsage from './MyUsage'
@@ -34,6 +36,7 @@ export default function MySpace({
 
   return (
     <TopShell
+      brandExtra={<ProtoBrandSlot />}
       tabs={
         <>
           <NavLink to="/my" end>
@@ -49,6 +52,7 @@ export default function MySpace({
       }
       right={
         <>
+          <ProtoRightSlot />
           <QuotaChip quota={quota.data} />
           {isAdmin && (
             <NavLink className="btn btn-quiet" to="/channels">
@@ -57,8 +61,10 @@ export default function MySpace({
           )}
           {/* 菜单里只有退出：改密码、邮箱、OAuth 绑定都住在「账号」页，这里
               再摆一份就是同一件事两个入口。 */}
+          <ProtoAvatarDot>
           <AvatarMenu user={user}>
             {(close) => (
+              <>
               <button
                 type="button"
                 className="menu-item"
@@ -69,12 +75,16 @@ export default function MySpace({
               >
                 退出登录
               </button>
+              <ProtoMenuSlot />
+              </>
             )}
           </AvatarMenu>
+          </ProtoAvatarDot>
         </>
       }
       width={wide ? 'wide' : 'narrow'}
     >
+      <ProtoBar />
       <Routes>
         <Route path="/my" element={<MyKeys quota={quota} />} />
         <Route path="/my/logs" element={<LogsView mine />} />
