@@ -372,25 +372,18 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if maxConc != nil {
 		conc = *maxConc
 	}
+	c, s := capabilityBits(set.Has(protocol.OpenAIResponses), in.SupportsCompaction, in.SupportsStatefulResponses)
 	// 新建渠道的能力位默认否（PO 2026-08-13 裁定）：勾错成否只是一条明确的 400，
 	// 勾错成是会让 Codex 在长会话里静默 Fatal。
 	compaction := false
-	if in.SupportsCompaction != nil {
-		compaction = *in.SupportsCompaction
+	if c != nil {
+		compaction = *c
 	}
 	// 有状态续链位反过来，新建默认**是**（PO 裁定，口径层 v0.88）：关错的代价是打断
 	// 一条本来能用的续链，而开错只会让上游自己回一句客户端读得懂的 not_found。
 	stateful := true
-	if in.SupportsStatefulResponses != nil {
-		stateful = *in.SupportsStatefulResponses
-	}
-	// 协议不含 Responses 时两个位一律落默认值，请求体里带来的不作数（#33）：这两位
-	// 只对 openai_responses 有意义，UI 也只在勾了它时才渲染——不含协议还写着非默认值
-	// 的行是一个界面上看不见、也改不掉的状态。守在这里而不是指望前端不发，是因为
-	// 换个 UI 或直接打 API 就绕过去了。
-	if !set.Has(protocol.OpenAIResponses) {
-		compaction = false
-		stateful = true
+	if s != nil {
+		stateful = *s
 	}
 	credType := strings.TrimSpace(in.CredentialType)
 	if credType == "" {
@@ -469,27 +462,42 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 		sets += `, headers = ?`
 		args = append(args, encodeHeaders(in.Headers))
 	}
-	if set.Has(protocol.OpenAIResponses) {
-		if in.SupportsCompaction != nil {
-			sets += `, supports_compaction = ?`
-			args = append(args, boolInt(*in.SupportsCompaction))
-		}
-		if in.SupportsStatefulResponses != nil {
-			sets += `, supports_stateful_responses = ?`
-			args = append(args, boolInt(*in.SupportsStatefulResponses))
-		}
-	} else {
-		// 协议不含 Responses 时两个位强制归位默认值（#33，PO 2026-08-19 裁定选 A）：
-		// UI 只在勾了 Responses 时才渲染这两位，取消协议后前端整个不发字段，沿用
-		// 「nil = 整列不写」会把一个界面上再也够不着的旧值留在库里——哪天把协议勾
-		// 回来它原样复活，supports_compaction 残留 1 正是 v0.54 ⑨ 要杀的那格（上游
-		// 忽略 compaction_trigger，Codex 收 0 个 compaction item 即 Fatal）。归位值
-		// 各按各的默认：compaction 取否（v0.54 ⑨）、stateful 取是（v0.88 ②）。
-		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
-	}
+	sets, args = appendCapabilityBits(sets, args, set.Has(protocol.OpenAIResponses), in.SupportsCompaction, in.SupportsStatefulResponses)
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
 	return affectedOne(res, err)
+}
+
+// capabilityBits 定两个 Responses 能力位的写入值，是 #33 那条不变式的唯一落点（#145）：
+// 协议不含 Responses 时两位一律归位默认值——compaction 取否（v0.54 ⑨）、stateful
+// 取是（v0.88 ②）——请求体里带来的不作数；含 Responses 时原样透传，nil = 「没提这
+// 个字段」由调用方自己解释（Create 落默认、Update 整列不写）。
+//
+// 守在 store 而不是指望前端不发，是因为换个 UI 或直接打 API 就绕过去了：这两位只对
+// openai_responses 有意义，UI 也只在勾了它时才渲染——不含协议还写着非默认值的行是
+// 一个界面上看不见、也改不掉的状态（PO 2026-08-19 裁定选 A）。Update 侧若沿用
+// 「nil = 整列不写」，哪天把协议勾回来旧值原样复活，supports_compaction 残留 1 正是
+// v0.54 ⑨ 要杀的那格（上游忽略 compaction_trigger，Codex 收 0 个 compaction item 即 Fatal）。
+func capabilityBits(hasResponses bool, compaction, stateful *bool) (*bool, *bool) {
+	if hasResponses {
+		return compaction, stateful
+	}
+	off, on := false, true
+	return &off, &on
+}
+
+// appendCapabilityBits 是 capabilityBits 的 UPDATE 形：非 nil 的位追加进 SET 子句。
+func appendCapabilityBits(sets string, args []any, hasResponses bool, compaction, stateful *bool) (string, []any) {
+	c, s := capabilityBits(hasResponses, compaction, stateful)
+	if c != nil {
+		sets += `, supports_compaction = ?`
+		args = append(args, boolInt(*c))
+	}
+	if s != nil {
+		sets += `, supports_stateful_responses = ?`
+		args = append(args, boolInt(*s))
+	}
+	return sets, args
 }
 
 // ── 按意图的字段写（#48 批2）──────────────────────────────────────────────
@@ -510,9 +518,7 @@ func UpdateChannelBaseURLs(ctx context.Context, db Conn, id int64, urls BaseURLs
 	}
 	sets := `base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?`
 	args := []any{trimmed.OpenAI, trimmed.OpenAIResponses, trimmed.Anthropic}
-	if !trimmed.Protocols().Has(protocol.OpenAIResponses) {
-		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
-	}
+	sets, args = appendCapabilityBits(sets, args, trimmed.Protocols().Has(protocol.OpenAIResponses), nil, nil)
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
 	return affectedOne(res, err)
@@ -593,18 +599,7 @@ func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSett
 		sets += `, provider = ?`
 		args = append(args, strings.TrimSpace(*s.Provider))
 	}
-	if strings.TrimSpace(respURL) != "" {
-		if s.SupportsCompaction != nil {
-			sets += `, supports_compaction = ?`
-			args = append(args, boolInt(*s.SupportsCompaction))
-		}
-		if s.SupportsStatefulResponses != nil {
-			sets += `, supports_stateful_responses = ?`
-			args = append(args, boolInt(*s.SupportsStatefulResponses))
-		}
-	} else {
-		sets += `, supports_compaction = 0, supports_stateful_responses = 1`
-	}
+	sets, args = appendCapabilityBits(sets, args, strings.TrimSpace(respURL) != "", s.SupportsCompaction, s.SupportsStatefulResponses)
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
 	return affectedOne(res, err)
