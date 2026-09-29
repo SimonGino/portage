@@ -58,11 +58,12 @@ type event struct {
 	Usage *usage `json:"usage"` // message_delta
 }
 
-func observeEvent(sum *protocol.Summary, data []byte) {
+// observeEvent 返回这一帧是不是收尾帧：message_stop，或流内 error 帧（#162）。
+func observeEvent(sum *protocol.Summary, data []byte) bool {
 	var e event
 	if json.Unmarshal(data, &e) != nil {
 		// 心跳注释、ping、上游自定义事件都可能不是对象——不是错误，跳过即可。
-		return
+		return false
 	}
 	if e.Message != nil {
 		apply(sum, e.Message.Model, e.Message.StopReason, e.Message.Usage)
@@ -71,6 +72,7 @@ func observeEvent(sum *protocol.Summary, data []byte) {
 		setStopReason(sum, e.Delta.StopReason)
 	}
 	applyUsage(sum, e.Usage)
+	return e.Type == "message_stop" || e.Type == "error"
 }
 
 func observeBody(sum *protocol.Summary, body []byte) {

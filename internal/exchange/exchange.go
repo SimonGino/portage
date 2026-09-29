@@ -67,6 +67,13 @@ type Result struct {
 	*ResponseObserver
 }
 
+// StreamTruncated 报这条 2xx 流是否干净 EOF 却没给终态（Summary.Truncated，#162）。
+// 只给透传路径在转发循环正常返回后调：那条路上 Tap 的写都在调用方自己的读循环里，
+// 走到这里早已停止；Summary 幂等，Close 里再取一次无害。非 2xx 的错误体不是流，不判。
+func (r *Result) StreamTruncated() bool {
+	return r.Status/100 == 2 && r.tap != nil && r.tap.Summary().Truncated
+}
+
 // ResponseObserver 包住上游响应体与挂在它上面的观察者（Tap、LogBodies 收集器、
 // 错误原文旁路），并把 #8 的收场序做进构造：Close 一律按「先断上游 → 排空解码侧
 // 到通道关闭 → 才 Summarize」执行。此前这条序活在 abortDecode 的注释与调用顺序里，

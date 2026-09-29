@@ -91,7 +91,8 @@ var ErrStreamTruncated = errors.New("上游响应流没给终态就结束了")
 // stop_reason / CC finish_reason / R 终态 response 的 status）、也没见协议终态帧（A
 // message_stop / CC [DONE] / R response.completed·incomplete）才算截断，见过任一即不算
 // ——上游说了「完了」，只是没报为什么停。同 opencodex `src/adapters/anthropic.ts` 缺
-// message_stop 且没见过 stop_reason 才报错。转换路径三个流式解码器共用这一条（透传 Tap 待 #162 接入）。
+// message_stop 且没见过 stop_reason 才报错。转换路径三个流式解码器与透传 Tap
+// （TapCore，#162）共用这一条。
 func StreamTruncated(sawStop, sawTerminal bool) bool { return !sawStop && !sawTerminal }
 
 // StreamReadFlag 是 StreamReadReporter 的现成实现，各 codec 内嵌即可。
