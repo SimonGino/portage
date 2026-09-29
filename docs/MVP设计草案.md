@@ -5,6 +5,8 @@
 > vNEXT 变更（口径层 vNEXT 落地：`service_tier` / `speed` 落流水，[#103](https://github.com/SimonGino/portage/issues/103)，修改人 jinpenga）：①`protocol.Summary` 加 `ServiceTier` / `Speed` 两个字符串，三个 Tap 各自取：Anthropic 从 usage 取 `service_tier` / `speed`（流式在 message_start），CC 从顶层 `service_tier` 取，Responses 从 response 对象取且跳过 `status` 为 `in_progress` / `queued` 的事件（这些非终态事件回显的是请求值）；都是非空才覆盖。②`call_logs` 加 `service_tier`、`speed` 两列（TEXT NOT NULL DEFAULT ''，§7 DDL），迁移 `store.addServiceTierSpeed`；`calllog.Row` 与 `store.CallLogRow` 同名两格，管理端接口带出 `service_tier` / `speed`；slog 有值才打。前端不动。③请求侧不改代码，`extras_drop_test.go` 加一例，锁住跨协议时这两个键落 `vendor_request`。golden：22 份 Anthropic / Responses 转录与 2 份 Anthropic 缓存命中构造样本的 `meta.json` expect 补上 `ServiceTier`（Anthropic `standard`，Responses `default`）；CC 转录没有这个键，Anthropic `speed` 也没有真实样本，这两处用构造帧测。
 
 > vNEXT 变更（口径层 vNEXT 落地：⑬ 扩到 Anthropic 上游响应，[#136](https://github.com/SimonGino/portage/issues/136)，修改人 jinpenga）：只记落点。`anthropic.Codec` 加 `responseDrops` / `ResponseDrops()`，`DecodeStream` / `DecodeFullBody` 开头各归零，`respState.drops` 回指它；`server.warnResponseDrops` 按鸭子类型自动接通，server 不改。流式 `content_block_start` 与非流式 content 数组对 text / thinking / redacted_thinking / tool_use 之外的块登记 `类型(#index)`；`input_json_delta` 只在 `blockKind[index]=="tool_use"` 时下发。`redacted_thinking` 的 `data` 发成 `ThinkingSignature` 通道的 `EvThinkingDelta`（`redactedEvent`），出口经 `OutboundThinkingText` 丢。用例 `decode_response_test.go` 的 `…DropsUnknownBlocks` 两条（构造样本，流式含每请求归零）。golden 零改动。
+>
+> 同块另记（[#105](https://github.com/SimonGino/portage/issues/105) 落地：上游流中途挂住加 300s 空闲读超时，收场归 `stream_aborted`，修改人 jinpenga）：PO 2026-09-29 裁决——`upstream.Client.Do` 返回的 `resp.Body` 外包 `idleTimeoutBody`，读到数据续期，到点取消本次尝试的 context；阈值固定 300s 不进 config.yaml；复用 `stream_aborted`，原文 `upstream idle timeout`；`ResponseHeaderTimeout` 120s 不动。落点见 §6.1「空闲读超时补一层」与 §7.5「拥塞期零改动」① 的补注。
 
 > v1.55 变更（口径层 v1.33 落地：转换路径的 Anthropic 出口自动打缓存断点，[#132](https://github.com/SimonGino/portage/issues/132)，修改人 jinpenga）：①`anthropic/encode_request.go` 在序列化前经 `markCacheBreakpoints` 打两个 `ephemeral`：system 末块（无 system 落最后一个工具）、最后一条消息里最后一个非 thinking / redacted_thinking 的块；编出来的请求里已有任何 `cache_control` 就一个不补。流式与非流式同一条路径。②**补上 §2「cache_control 仅出口为 Anthropic 时保留」的落地缺口**：此前 A 出口不读 `Block.Extras` / `Tool.Extras`，CC 入口带来的断点在 CC→A 上静默丢失；现经 `withCacheControl` 在 text / image / tool_use / tool_result 块与工具声明上原样带出（值为 `null` 不带）。载体按入口解码的落点读：content part 在 `Block.Extras`，CC `tool_calls[]` 条目在 `ToolCall.Extras`，CC `role=tool` 消息在 `Message.Extras`（litellm `factory.py` 同认这三处）。Responses 的 `function_call_output` 一类 item 上的 `cache_control` 解码时已丢，Responses 协议无此字段、也无客户端样本，不追。用例 `internal/protocol/cachebreakpoint_test.go`，12 份 `in-cc-*` / `in-responses-*` golden 经 canonical 编到 A 出口断言断点位置与个数，另加无 system（有 / 无工具）、thinking 结尾、客户端已带断点四格。
 
@@ -717,6 +719,8 @@ logging：无论成败异步落 call_logs
 
 **超时分层，不设 `http.Client.Timeout`**——它覆盖整个 body 读取周期，长流必被拦腰掐断。改设 `DialContext` 的 `net.Dialer.Timeout`（TCP 拨号，10s 量级）、`TLSHandshakeTimeout`、`ResponseHeaderTimeout`（等上游首个响应头，120s 量级）、`IdleConnTimeout`。**拨号这一层不能漏（v0.20 补）**：零值 `http.Transport` 用的是无超时的 `net.Dialer`，而后面几个超时都在 TCP 连上之后才起算——渠道地址被黑洞（丢包不回 RST）时，请求会一直挂到操作系统放弃（75s 量级）而不是及时回 502。向客户端写出前用 `http.NewResponseController(w).SetWriteDeadline` 每次推进（30s 量级），防慢客户端把 handler 永久挂住。客户端断连靠把 `c.Request.Context()` 传给上游 request 自动传播取消。
 
+> **空闲读超时补一层（vNEXT，issue #105）**：`ResponseHeaderTimeout` 只等首字节，响应头到了之后上游中途挂住不发数据此前没有上限。`upstream.Client.Do` 返回的 `resp.Body` 外包一层「两帧间隔」空闲超时（固定 300s，先不进 config.yaml）：读到数据续期，到点取消这次请求；同时覆盖透传（`Writer.Copy`）与转换（`SetStreamReadError`）两条路径——两者读的是同一个 `Body`。触发时复用既有 `stream_aborted` 收场，不加新词，原文落 `upstream idle timeout`，便于和其他断流原文区分。§7.5「拥塞期零改动」① 说 `ResponseHeaderTimeout` 120s 是卡死请求占闸坑的兜底——它只封住首字节之前；首字节之后中途挂住的坑由这层空闲超时封顶，那一条已原地补注。修改人 jinpenga。
+
 ## 7. 配置与数据模型
 
 ### 启动配置（config.yaml，最小）
@@ -984,7 +988,7 @@ SSE 响应上盖 `X-Accel-Buffering: no`。nginx 认这个头，见到就对本�
 - **排队（v0.50）**：闸满时在信号量获取处等待，带两个界——队列上限（默认 = 并发上限 ×1）与等待超时（默认 30s），都是 config.yaml 全局项，**不进渠道表**；配置项名与形态已定（portage-legacy#60）：`concurrency_queue` 块下 `factor`（倍数形态，队列上限 = 并发上限 × factor，显式 0 = 不排队）/ `wait` / `retry_after`，样例见 §7 顶部。等待用带 ctx 的获取：**客户端断连即出队释放**，不转发也不占位；不承诺严格 FIFO（等待者按到达序移交即可，个人网关无公平性诉求）。排队发生在向上游转发之前、任何字节写回客户端之前，SSE 无关。信号量不用现成库而是手写移交式（`internal/upstream/gate.go`）：上限每次获取时从渠道配置带入，改配置不用重启，缩小上限靠「移交前先查新上限」自然排空——通用库的固定容量做不到。
 - **队满/超时的 429**：复用「按入口协议原生格式回错」的既有路径，文案我方固定词表（如「渠道并发已满」），`Retry-After` 固定默认 10s（config 可调）。这个 429 是网关自产的，与上游透传的 429 在流水里要分得开——归因字段随观测票落。
 - **ttft 不动**：`rec.start` 在 callLog 中间件（请求到达）就打了，排队时间天然计入 `ttft_ms` 与 `total_ms`，这正是 v0.50 要的体感语义，一行代码都不用改；「纯上游耗时」等观测票加排队时长字段后相减。
-- **拥塞期零改动（v0.51）**：熔断/探活/重试收敛都不做，`retry.go` 一行不动。支撑这个「零」的三个既有事实，改到任何一个都要回头复核 v0.51 的立论：①`Transport.ResponseHeaderTimeout = 120s`（`upstream.go:53`）是「卡死请求最多占闸坑 120s」的兜底——若调大或删掉，拥塞期闸坑可能被永久占满；②超时不重试（`retry.go:59`）是「拥塞无重试放大」的前提；③重试在同一闸坑内（本节「持有区间」条）是「503 重试放大被闸封顶」的前提。
+- **拥塞期零改动（v0.51）**：熔断/探活/重试收敛都不做，`retry.go` 一行不动。支撑这个「零」的三个既有事实，改到任何一个都要回头复核 v0.51 的立论：①`Transport.ResponseHeaderTimeout = 120s`（`upstream.go:53`）是「卡死请求最多占闸坑 120s」的兜底——若调大或删掉，拥塞期闸坑可能被永久占满（vNEXT 补注，#105：它只管首字节之前；首字节之后上游中途挂住，占坑上限是 `idleTimeoutBody` 的 300s 空闲读超时——同样改到要回头复核）；②超时不重试（`retry.go:59`）是「拥塞无重试放大」的前提；③重试在同一闸坑内（本节「持有区间」条）是「503 重试放大被闸封顶」的前提。
 
 **观测与验收（v0.52，口径已收敛，本节可整体开工）**：
 
