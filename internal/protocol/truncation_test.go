@@ -343,7 +343,8 @@ data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"d
 }
 
 // 截断判据三家对称（#161 PO 裁决，#98 CC 那条的推广）：见过停因或协议终态帧（A message_stop /
-// CC [DONE] / R 终态事件）任一即不算截断，照常收尾、流水落 ok。三条构造样本（手搭）。
+// CC [DONE] / R 终态事件）任一即不算截断，照常收尾、流水落 ok；到 R 出口发 response.completed
+// （不是 incomplete），压缩合成照常产出那一个 item。三条构造样本（手搭）。
 // 反面「两者皆无的干净 EOF」由 TestCleanEOFWithoutTerminalIsError 钉。
 func TestTerminalFrameWithoutStopReasonIsNotTruncated(t *testing.T) {
 	type decoder interface {
@@ -351,15 +352,15 @@ func TestTerminalFrameWithoutStopReasonIsNotTruncated(t *testing.T) {
 		StreamReadError() error
 	}
 	cases := map[string]struct {
-		codec  decoder
+		codec  func() decoder
 		stream string
 	}{
-		"CC [DONE] 无 finish_reason": {openaicc.NewCodec(), `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"好了"}}]}
+		"CC [DONE] 无 finish_reason": {func() decoder { return openaicc.NewCodec() }, `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"好了"}}]}
 
 data: [DONE]
 
 `},
-		"A message_stop 无 stop_reason": {anthropic.NewCodec(), `event: message_start
+		"A message_stop 无 stop_reason": {func() decoder { return anthropic.NewCodec() }, `event: message_start
 data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
 
 event: content_block_start
@@ -378,7 +379,7 @@ event: message_stop
 data: {"type":"message_stop"}
 
 `},
-		"R 终帧缺 response 对象": {openairesponses.NewCodec(), `event: response.created
+		"R 终帧缺 response 对象": {func() decoder { return openairesponses.NewCodec() }, `event: response.created
 data: {"type":"response.created","response":{"id":"resp_1","model":"m","status":"in_progress","output":[]}}
 
 event: response.output_text.delta
@@ -391,10 +392,16 @@ data: {"type":"response.completed"}
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			ch, err := c.codec.DecodeStream(strings.NewReader(c.stream))
-			if err != nil {
-				t.Fatal(err)
+			decode := func() (decoder, <-chan protocol.Event) {
+				dec := c.codec()
+				ch, err := dec.DecodeStream(strings.NewReader(c.stream))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return dec, ch
 			}
+
+			dec, ch := decode()
 			var buf bytes.Buffer
 			if err := anthropic.NewCodec().EncodeStream(&buf, ch); err != nil {
 				t.Fatal(err)
@@ -402,8 +409,27 @@ data: {"type":"response.completed"}
 			if out := buf.String(); !strings.Contains(out, `"stop_reason":"end_turn"`) || !strings.Contains(out, "event: message_stop") {
 				t.Errorf("终态帧收尾应照常 end_turn + message_stop:\n%s", out)
 			}
-			if err := c.codec.StreamReadError(); err != nil {
+			if err := dec.StreamReadError(); err != nil {
 				t.Errorf("StreamReadError = %v，见过终态帧不该记断流", err)
+			}
+
+			_, ch = decode()
+			if r := encodeToResponses(t, ch); r.events[len(r.events)-1] != "response.completed" {
+				t.Errorf("R 出口终帧 = %v，期望 response.completed", r.events)
+			}
+
+			// 压缩合成：R 出口 codec 先解一遍带 compaction_trigger 的请求进合成模式。
+			exit := openairesponses.NewCodec()
+			if _, err := exit.DecodeRequest([]byte(`{"model":"m","input":[{"type":"message","role":"user","content":"hi"},{"type":"compaction_trigger"}]}`), true); err != nil || !exit.CompactionTurn() {
+				t.Fatalf("没进压缩合成模式: err=%v", err)
+			}
+			_, ch = decode()
+			buf.Reset()
+			if err := exit.EncodeStream(&buf, ch); err != nil {
+				t.Fatal(err)
+			}
+			if out := buf.String(); !strings.Contains(out, `"type":"compaction"`) || !strings.Contains(out, "event: response.completed") {
+				t.Errorf("压缩合成应照常产出 compaction item 并 completed:\n%s", out)
 			}
 		})
 	}
