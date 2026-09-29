@@ -148,3 +148,22 @@ done 帧键集照 sub2api `apicompat.ResponsesStreamEvent`。钉「done 帧按�
 `cache_write_tokens` 恒 0），外壳裁成一条 message 的非流式响应。`cc-stream-cache-write` 取 new-api
 单测的数（prompt 3619 / cached 2921 / write 3616，cached + write > prompt），钉「原数照记、只钳 NetInput」；
 `both-keys` 钉「两键取大」。消费方：`internal/protocol/cachehit_fixture_test.go`（Tap、canonical、跨出口）。
+
+## cc-stream-multi-choice / cc-stream-multi-choice-first-index1 / cc-stream-choice-index-string / cc-multi-choice
+
+[#133](https://github.com/SimonGino/portage/issues/133)：上游回多个 choice（客户端带 `n>1`，或中转站交错发不同
+index）时，转换路径的 CC 解码只跟**第一个出现的 choice index**（口径层 vNEXT，出处 magpie `ff4f730`）。
+**手工构造**——真实 harness 不带 `n>1`，九份 `cc-*` 转录每帧都只有 `index:0` 一个 choice。帧形照
+`golden/cc-stream-text`、`cc-stream-parallel-tools`、`cc-text` 写。
+
+- `cc-stream-multi-choice`：index 0 先出现，两个 choice 交错发推理、正文、工具调用与各自的
+  finish_reason（index 1 先报 `stop`），末帧是 `choices` 为空的 usage 帧——钉「index 1 的一个字都不进流、
+  停因取 index 0 的 `tool_calls`、usage 照旧」。
+- `cc-stream-multi-choice-first-index1`：第一个出现的是 index 1；其后的 index 0 与缺 index（按 0 算）
+  的帧都丢，连同后者带的 `length`。
+- `cc-stream-choice-index-string`：中转站把 index 发成字符串。`"0"` 认作 0，`"1"` 丢，解析不了的 `"x"`
+  与缺 index 都按 0 算、留下。
+- `cc-multi-choice`：非流式，`choices` 数组里 index 1 排在前，按「第一个出现」跟它，index 0 的
+  message 与 finish_reason 丢。
+
+消费方：`internal/protocol/openaicc/multichoice_test.go`（含透传 Tap 对字符串 index 的 usage 嗅探）。

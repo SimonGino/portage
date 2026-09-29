@@ -30,9 +30,12 @@ type chunkPayload struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Delta        *choiceBody `json:"delta"`
-		Message      *choiceBody `json:"message"`
-		FinishReason string      `json:"finish_reason"`
+		// Index 收原始字节：中转站有把它发成字符串（"0"）的，定成 int 会让整帧
+		// 反序列化失败、连同帧里的 usage 一起丢。取值见 choiceIndex。
+		Index        json.RawMessage `json:"index"`
+		Delta        *choiceBody     `json:"delta"`
+		Message      *choiceBody     `json:"message"`
+		FinishReason string          `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *usagePayload `json:"usage"`
 	Error *struct {
@@ -187,6 +190,23 @@ type streamState struct {
 	// sawRefusal：本轮出现过拒答正文。finish() 据此把 finish_reason=="stop" 改判
 	// content_filter（issue #113）；length/tool_calls 已经在别的取值上，不受影响。
 	sawRefusal bool
+	// choice 是第一个出现的 choice index，choiceSet 表示已锁定。
+	choice    int
+	choiceSet bool
+}
+
+// choiceIndex 取 choice 的 index：数字或能解析的数字字符串（"0"）就认，缺失或解析
+// 不了按 0（#133 口径）。
+func choiceIndex(raw json.RawMessage) int {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		raw = json.RawMessage(s)
+	}
+	var n int
+	if json.Unmarshal(raw, &n) != nil {
+		return 0
+	}
+	return n
 }
 
 // frame 处理一个 SSE 帧。
@@ -224,6 +244,14 @@ func (st *streamState) payload(payload *chunkPayload, out chan<- protocol.Event)
 	}
 
 	for _, choice := range payload.Choices {
+		// 只跟第一个出现的 choice（#133）：canonical 流只有一条回复，上游回多个
+		// choice（n>1 或中转站交错发）时其余的一律忽略，否则出口会串流。
+		idx := choiceIndex(choice.Index)
+		if !st.choiceSet {
+			st.choice, st.choiceSet = idx, true
+		} else if idx != st.choice {
+			continue
+		}
 		body := choice.Delta
 		if body == nil {
 			body = choice.Message

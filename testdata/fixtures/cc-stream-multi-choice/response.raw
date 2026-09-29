@@ -1,0 +1,16 @@
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"先想"},"finish_reason":null},{"index":1,"delta":{"role":"assistant","reasoning_content":"别的想法"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":1,"delta":{"content":"乙"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"甲"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_keep","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]},"finish_reason":null},{"index":1,"delta":{"tool_calls":[{"index":0,"id":"call_drop","type":"function","function":{"name":"get_time","arguments":"{}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":1,"delta":{},"finish_reason":"stop"},{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"北京\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-mc1","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":48,"total_tokens":168,"prompt_tokens_details":{"cached_tokens":64}}}
+
+data: [DONE]
+

@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-mc2","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":1,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc2","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"不是我的"},"finish_reason":null},{"index":1,"delta":{"content":"lo"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-mc2","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"delta":{"content":"缺 index 当 0"},"finish_reason":"length"}]}
+
+data: {"id":"chatcmpl-mc2","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[{"index":1,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-mc2","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":30,"completion_tokens":5,"total_tokens":35}}
+
+data: [DONE]
+
