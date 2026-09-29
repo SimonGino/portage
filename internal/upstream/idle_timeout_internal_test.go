@@ -28,20 +28,19 @@ func TestIdleTimeoutBodyFiresOnStall(t *testing.T) {
 	c := NewClient(RetryPolicy{})
 	c.idleReadTimeout = 30 * time.Millisecond
 
-	resp, _, err := c.Do(context.Background(), up.route("a"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, true)
+	// 独立兜底超时：空闲超时一旦回归，挂住的 Read 由它掐断，断言照常报错而不是卡死整个测试。
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resp, _, err := c.Do(ctx, up.route("a"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
 	buf := make([]byte, 64)
-	deadline := time.Now().Add(2 * time.Second)
 	var readErr error
-	for time.Now().Before(deadline) {
+	for readErr == nil {
 		_, readErr = resp.Body.Read(buf)
-		if readErr != nil {
-			break
-		}
 	}
 	if !errors.Is(readErr, errUpstreamIdleTimeout) {
 		t.Fatalf("读错误 = %v，期望 errUpstreamIdleTimeout", readErr)
