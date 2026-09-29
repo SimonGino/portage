@@ -1,0 +1,30 @@
+# Portage 的 systemd 样例（二进制形态，install.sh 装到 /usr/local/bin 之后）。拷到
+# /etc/systemd/system/portage.service，改掉路径与用户，然后 systemctl enable --now portage。
+#
+# 面板里的「一键升级」是进程原地 exec 自己：PID 不变，这个 unit 看到的还是同一个实例，
+# 不会触发 Restart=。Restart=always 兜的是另外两件事——exec 失败、以及新版本自己起不来
+# （此时磁盘上已经是新文件，systemd 反复拉起，回退用 install.sh 钉旧版）。
+[Unit]
+Description=Portage AI model gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=portage
+Group=portage
+ExecStart=/usr/local/bin/portage -config /etc/portage/config.yaml
+Restart=always
+RestartSec=2
+# 网关收到 SIGTERM 后最多等 30 秒在途请求结束；systemd 的表必须比它长，否则先 SIGKILL。
+TimeoutStopSec=35
+# 纯转发形态：把导出的声明文件路径放开这一行。
+# Environment=PORTAGE_CHANNELS=/etc/portage/channels.yaml
+# 国内机器：面板一键升级与 portage upgrade 下载 Release 时拼在 GitHub 地址前的代理前缀。
+# Environment=PORTAGE_DOWNLOAD_BASE=https://ghfast.top/
+# 库目录要归 portage 用户所有：install -d -o portage -g portage /var/lib/portage
+ReadWritePaths=/var/lib/portage
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

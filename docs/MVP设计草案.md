@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.63
+> 状态：草案 v1.64
+
+> v1.64 变更（口径层 v1.38 落地：版本注入、新版检测与自升级、GitHub Release 与 curl 安装，wayfinder [#150](https://github.com/SimonGino/portage/issues/150)，修改人 jinpenga）：新增 §7.11（`-X main.version` / `main.distro` 注入、`/session` 加 `version` `distro` 两字段、`POST /panel/api/upgrade` 与错误词表、`internal/selfupdate` 的下载 → sha256 → 同目录临时文件 → rename 序列、`errRestart` 哨兵出 `run()` 后在 `main()` 里 `syscall.Exec`、`portage upgrade` 子命令、前端检测与轮询、测试方案）与 §11.4（`.goreleaser.yaml` / `release.yml` 要点、`install.sh` 行为、`deploy/portage.service`）。事实依据 [#151](https://github.com/SimonGino/portage/issues/151) / [#152](https://github.com/SimonGino/portage/issues/152)。
 
 > v1.63 变更（[#149](https://github.com/SimonGino/portage/issues/149) 落地：max_tokens 下限重发的 ledger 记法收进 exchange，2026-09-29，修改人 jinpenga）：PO 裁定「重发被闸拒的那一行，出站端点留着」——第一次已经真的打到上游（拿到那个 400），recorder.go 的不变量「非空 ⟺ 打过上游」本就要它非空，「队满一律空串」只是没打过时的推论。落点：`exchange.Request` 加 `Resend` 位，`exchange.Do` 进门自己记 `Resent`、`writeQueueReject` 三档闸拒后按这一位把端点补回；`server.retryTokenFloor` 只置位不再伸手改 Recorder（7235af0 引入的那两行越界删除）。用例 `tokenfloor_test.go` 补「重发 × 闸拒」一格（占坑请求排进队列后回 400 触发重发，重发排队超时 → 429 `queue_timeout`、`retry_count=1`、`upstream_endpoint` 非空）。不合并 exchange 与 upstream。
 
@@ -1158,6 +1160,19 @@ api_keys:
 - 声明形态互斥：挂文件时用户路由 404、多用户库导入（含试算）拒绝、多用户库导出跳过用户 key 并回跳过名单、apply 删用户 key。
 - 往返闸（§7.9）在含无主 key 与「全归第一个 admin」的库上仍字节相等；含非 admin 用户 key 的库导出跳过那几把（名单回给调用方点名）、跳过后往返仍字节相等；导入闸在同库上仍拒绝并点名。
 
+### 7.11 版本注入、新版检测与自升级（口径层 v1.38，[#150](https://github.com/SimonGino/portage/issues/150)）
+
+口径十二项在口径层 §2.7 该条，这里只写落点。事实依据 [#152](https://github.com/SimonGino/portage/issues/152)（自替换 / Exec / 浏览器检测）与 [#151](https://github.com/SimonGino/portage/issues/151)（版本注入）。
+
+- **注入**：`cmd/portage/main.go` 包级 `var version = "dev"`、`var distro = "binary"`——**必须是常量字符串初始化**，`-X` 对带函数调用的初始化静默不生效。GoReleaser 路径 `-ldflags "-s -w -X main.version={{ .Version }}"`（不注 `distro`，默认即 binary）；Dockerfile 在**编译 stage 内**声明 `ARG VERSION=dev`，`-ldflags="-s -w -X main.version=${VERSION} -X main.distro=docker"`（现有 `-ldflags='-s -w'` 是单引号，变量不展开，必须换双引号）；`docker.yml` 加 `build-args: VERSION=${{ steps.meta.outputs.version }}`（semver 规则优先级最高，`v0.5.0` → `0.5.0`；`workflow_dispatch` 得 `test`）。`portage -version` 打印 `portage 0.5.0 (binary)` 退出 0，在 `flag.Parse` 之后、读配置之前处理。
+- **接口**：`GET /panel/api/session` 在 `authenticated=true` 时多 `version`、`distro` 两字段，未登录响应**一字不带**（口径 ③）。新增 `POST /panel/api/upgrade`（admin，body `{"version":"0.5.0"}`），**同步**执行下载 → 校验 → 替换，成功 `200 {"ok":true}` 之后进程进入收场；失败 4xx/5xx，`error` 词表五个：`unsupported_distro`（docker 形态，400）、`not_writable`（可执行文件目录不可写，409）、`download_failed`（502）、`checksum_mismatch`（502）、`already_running`（并发第二次，409）。声明文件形态（`cfg.Declarative`）下**照常可用**——升级不是业务配置写，不走 409「以声明文件为准」那道闸。
+- **下载 → 校验 → 替换**（新包 `internal/selfupdate`，**手写不引库**——三个现成库只覆盖 rename 那几十行且都带签名 / 多 SDK 这些已否的东西）：URL = `PORTAGE_DOWNLOAD_BASE` 前缀 + `https://github.com/SimonGino/portage/releases/download/v<ver>/<资产名>`，资产名 `checksums.txt` 与 `portage_<ver>_<os>_<arch>.tar.gz`（`<os>`/`<arch>` 取 `runtime.GOOS`/`runtime.GOARCH`）。序列：①先取 `checksums.txt`，按文件名找到本平台那行（两个空格分隔），找不到即 `download_failed`；②`os.Executable()` 取路径（Go 已剥 ` (deleted)` 后缀），在**同目录**建临时文件 `.portage-*.new`（同目录避 `EXDEV`；目录不可写在这一步即报 `permission denied` → `not_writable`）；③下载 tar.gz 边写边算 sha256，只解包里那**一个**名为 `portage` 的条目写进临时文件，其余条目拒绝；④哈希不符即删临时文件 → `checksum_mismatch`；⑤`Chmod(0o755)`（`CreateTemp` 是 0600，rename 不继承旧权限）、`Sync`、`Close`（**必须先 Close 再 rename/exec**，否则 `ETXTBSY`），`os.Rename` 一次覆盖（Linux 原地写运行中的文件报 `ETXTBSY`，macOS 原地写撞签名缓存，rename 两平台都对；旧 inode 由运行中的进程 mmap 着，旧代码继续跑不崩）。Linux / macOS 同一套代码，无平台分支；Go 链接器自带 darwin/arm64 ad-hoc 签名，curl / Go 下载不打 quarantine。
+- **收场与 Exec（接法 B，贴现有 `run()` 结构）**：`run()` 的 `select` 加第三支 `case <-upgraded:`（升级 handler 替换成功后关一个 channel），同 SIGTERM 路径调 `srv.Shutdown(30s)`，然后 `return errRestart`；`run()` 的 defer 链正常跑完（**`db.Close()` 让 WAL checkpoint——Exec 不跑 defer，漏了下次打开要恢复**）；`main()` 收到 `errors.Is(err, errRestart)` → `log.Info("已替换为 vX，正在自重启")`（Exec 成功后旧镜像没机会再写日志）→ `syscall.Exec(exe, os.Args, os.Environ())`（`os.Args` 原样，`-config` 等 flag 才带得过去）；**Exec 返回即失败** → 记日志 `os.Exit(1)`，交 systemd `Restart=always` 拉起磁盘上那份。listener 与 SQLite fd 全带 CLOEXEC、`Listen` 默认 `SO_REUSEADDR`，新进程重新绑定不撞 `EADDRINUSE`，**不需要**任何额外 socket 处理；信号处置随 exec 重置，新进程自己装。
+- **分发形态双判**：`distro == "docker"` → 接口直接回 `unsupported_distro`、面板不出按钮；binary 下建临时文件失败 → `not_writable`（用户自己装进 root 目录又用普通用户跑的情形）。
+- **`portage upgrade [版本]` 子命令**：`os.Args[1] == "upgrade"` 在 `flag.Parse` 之前分流，用同一个 `selfupdate` 包；无参时先取 `releases/latest/download/checksums.txt` 从行里解析版本（不打 API，免 60 次/时限额）；成功打印「已替换为 vX，重启生效：`systemctl restart portage`」退出 0，**不 Exec**；失败退出 1，stderr 打同一套错误词。docker 镜像里没有 shell 也不该有人跑它，`distro == docker` 直接拒。
+- **前端**：`/session` 拿到 `version` / `distro`；`role == admin && version != "dev"` 时请求 `https://api.github.com/repos/SimonGino/portage/releases/latest`（`Accept: application/vnd.github+json`，CORS `*`、简单 GET 不预检）；`localStorage` 存 `{tag, checkedAt}` 24h，**非 2xx 不写缓存**（仓库尚无 Release 时是 404，缓存它就是把「查不到」缓存成「已是最新」）；比对 = `tag_name` 去 `v` 与 `version` 做**语义化比较**（本地比远端新也算无新版，不是字符串相等）。「重新检查」清缓存重查。升级流程：`Confirm` 举起 → `POST upgrade` → 200 后每 2s 轮询 `/session`，`version` 变了即 `location.reload()`；60s 没变露出「刷新页面」按钮兜底；非 2xx 按词表落三种失败文案（DESIGN v0.65）。
+- **测试**：`selfupdate` 包对 `httptest` 假 Release（`checksums.txt` + tar.gz）跑四例——成功替换 / 哈希不符（临时文件已删）/ 目录只读（`not_writable`）/ 缺本平台条目；tar 解包只认单文件 `portage`，多文件与路径穿越条目拒。`run()` 的 `errRestart` 分支单测到「关 `upgraded` 后 `Shutdown` 被调、返回哨兵」为止，`Exec` 不进测试。前端语义化比较与 404 不缓存各一例（vitest）。
+
 ## 8. 最小管理接口
 
 - `GET /healthz`
@@ -1573,6 +1588,16 @@ Responses 出口的帧序照 `responses-stream-reasoning-turn1` 与 opencodex `s
 **全局限流不在这一层**：口径层 §2.7 已裁定全局令牌桶（10 QPS / 突发 20，v0.81 起两只——生成面一只、`count_tokens` 一只）做在网关自己里，nginx 的 `limit_req` 会变成重复一层。实现见 §7.2。
 
 **网关自己会发 `X-Accel-Buffering: no`**（口径层 v0.30，见 §7.3）：样例里的 `proxy_buffering off` 因此是双保险，真正的用处是覆盖那些不由我们维护的 nginx。
+
+### 11.4 GitHub Release 与 curl 安装（口径层 v1.38，[#150](https://github.com/SimonGino/portage/issues/150)）
+
+事实依据 [#151](https://github.com/SimonGino/portage/issues/151)（`.goreleaser.yaml` 与 `release.yml` 草案在其调研文档 §6，落地直接抄）。
+
+- **`.goreleaser.yaml`**（仓库根，`version: 2`）：`before.hooks` **不走 shell**，`cd web && npm ci` 写不了，用 `dir: web` 分两条 `npm ci` / `npm run build`（产物落 `internal/webui/dist`，dirty 校验在 hooks 之前且产物已在 `.gitignore`）；`builds`：`main: ./cmd/portage`、`env: [CGO_ENABLED=0]`（GoReleaser 不默认关）、`tags: [webui]`（自动拼 `-tags=webui`）、`flags: [-trimpath]`（不是默认）、`ldflags: [-s -w -X main.version={{ .Version }}]`（自定义 ldflags **整体替换**默认值）、`goos: [linux, darwin]` × `goarch: [amd64, arm64]` + `ignore: darwin/amd64`（默认矩阵含 windows/386，必须显式覆盖）；`archives`：`formats: [tar.gz]`、`name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`、`files: [none*]`（默认会把根 `README*` 打进包）；`checksum`：`name_template: checksums.txt`（默认名带版本，固定才有 `releases/latest/download/checksums.txt` 这条不带版本的 URL）、行格式 `<sha256>␠␠<文件名>`，`sha256sum -c` 直接吃；`changelog`：`use: git`、`sort: asc`、排 `^docs` `^chore` `^test` `^ci` `^build` `^Merge `，分「新功能 / 修复 / 其他」三组（scope 用 `\(.+\)` 不用 `[[:word:]]`，后者不匹配中文），中文标题无编码坑；`release.prerelease: auto`（rc tag 不污染 `latest`）。本地验证 `goreleaser check` 与 `goreleaser release --snapshot --clean`。
+- **`.github/workflows/release.yml`**：`on.push.tags: ["v*"]` + `workflow_dispatch`（只走 `--snapshot`，产物传 artifact）；`permissions: contents: write`（`GITHUB_TOKEN` 够用，不需要 PAT）；`actions/checkout@v7` **`fetch-depth: 0`**（changelog 要算上一 tag 到本 tag 的区间）；`setup-go@v7`（`go-version-file: go.mod`）；`setup-node@v7`（`node-version: 22`、`cache: npm`、`cache-dependency-path: web/package-lock.json`）；`goreleaser/goreleaser-action@v7`（`version: "~> v2"`、`args: release --clean`）。与 `docker.yml` 同一 tag 触发、各跑各的 runner，无耦合；GoReleaser 用 `GITHUB_TOKEN` 建 Release 不会反向触发别的 workflow。根 `dist/` 与 `.gitignore` / `.dockerignore` 里的 `/dist` 同名是好事：前者免 dirty，后者免本地 snapshot 产物进构建上下文。
+- **`install.sh`**（仓库根，POSIX sh）：`uname -s` → `linux` / `darwin`，`uname -m` 映射 `x86_64`→`amd64`、`aarch64`/`arm64`→`arm64`，其余退出 1；版本取 `$1` 或 `PORTAGE_VERSION`，缺省拉 `releases/latest/download/checksums.txt` 从行里解析；下载对应 tar.gz 到临时目录，`sha256sum -c` / `shasum -a 256 -c` 校验，解出 `portage` 放 `PORTAGE_INSTALL_DIR`（默认 `/usr/local/bin`，不可写时提示 `sudo`，脚本本身不提权）；所有 GitHub URL 前拼 `PORTAGE_DOWNLOAD_BASE`（前缀语义，缺省空）；结尾打印 `portage -version` 结果与下一步（`deploy/config.example.yaml`、`deploy/portage.service`）。**不注册 systemd、不建用户、不建目录**。
+- **`deploy/portage.service`**（样例，拷走即用）：`Type=simple`、`User=portage`、`ExecStart=/usr/local/bin/portage -config /etc/portage/config.yaml`、`Restart=always`、`RestartSec=2`、**`TimeoutStopSec=35`**（`srv.Shutdown` 等 30s，systemd 的表得比它长，否则 `systemctl stop` 先 SIGKILL）、`Environment=PORTAGE_CHANNELS=` 注释给出。面板一键升级后 unit 仍 `active (running)`、`MainPID` 不变（exec 不换 PID）；`Restart=always` 只兜 Exec 失败与新版起不来两种情形。
+- **已知边界**：经代理下载时 `checksums.txt` 与包同源同代理，代理作恶两份一起改（口径 ⑪）；新版自身起不来时无自动回退，`install.sh <旧版本>` 后 `systemctl restart`；公共代理域名会过期，部署文档只列当日活着的并注明日期。
 
 ## 12. 参考对照
 

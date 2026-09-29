@@ -2,7 +2,7 @@
 
 [English](deploy.md) · [简体中文](deploy.zh-CN.md)
 
-同一个二进制跑两种形态。这份文档一次讲完：形态怎么分、正经路子的三步、次要的手写路径、源码构建、公网暴露，以及两份配置文件各管什么。客户端怎么指过来（Claude Code / Codex CLI）不在这里，见 [README](../README.zh-CN.md#接-claude-code)。
+同一个二进制跑两种形态。这份文档一次讲完：形态怎么分、正经路子的三步、不用 Docker 的二进制安装与升级、次要的手写路径、源码构建、公网暴露，以及两份配置文件各管什么。客户端怎么指过来（Claude Code / Codex CLI）不在这里，见 [README](../README.zh-CN.md#接-claude-code)。
 
 ## 两种形态
 
@@ -99,6 +99,77 @@ compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密
 道、冒出个不认识的字段、`api_keys` 是空的——一律拒绝启动，退出码 1，而且**一次把问题全报出
 来**，不在第一个上停：反正修的办法只有「改文件重启」这一条。容器里这表现为重启循环，这正是
 要的效果——另一种活法是 exit 0 然后无声无息地消失。
+
+## 4. 二进制安装（curl，不用 Docker）
+
+自 v0.5.0 起每个 `v*` tag 同时出 GitHub Release：`linux/amd64`、`linux/arm64`、`darwin/arm64` 三个
+tar.gz 加一份 `checksums.txt`。不想跑 Docker 的机器（或者本地那台 Mac）一条命令装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh
+```
+
+脚本只干四件事：探平台、下载对应包、按 `checksums.txt` 校 sha256、把 `portage` 放进
+`/usr/local/bin`（目录不可写会提示你加 `sudo`，脚本自己不提权）。**不注册 systemd、不建用户、
+不建目录**——那些是下一步，脚本结尾会把要做的打印出来。钉版本给个参数：
+`… | sh -s 0.5.0`，或设 `PORTAGE_VERSION`。装到别处设 `PORTAGE_INSTALL_DIR`。
+
+**国内机器**：GitHub Release 与 raw 都慢，唯一的机制是一个 URL 前缀。把公共 GitHub 代理的地址
+放进 `PORTAGE_DOWNLOAD_BASE`，脚本会把它拼在每个 GitHub 地址前面；拉脚本那一行自己也拼同一个前缀：
+
+```bash
+export PORTAGE_DOWNLOAD_BASE=https://ghfast.top/
+curl -fsSL "${PORTAGE_DOWNLOAD_BASE}https://raw.githubusercontent.com/SimonGino/portage/main/install.sh" | sh
+```
+
+2026-09-29 还活着的几个：`https://ghfast.top/`、`https://gh-proxy.com/`、`https://ghproxy.net/`。
+这类站点几个月一换，死了就换一个，脚本不替你探测也不内置任何一个。校验文件与包经同一个代理下
+载，代理作恶两份一起改——这是已知边界，信任根就是 TLS + GitHub。
+
+跑起来是 systemd 的事：[`deploy/portage.service`](../deploy/portage.service) 是拷走即用的样例
+（`Restart=always`、`TimeoutStopSec=35`——网关收场最多等 30 秒在途请求，systemd 的表必须比它长），
+配置文件照 [`deploy/config.example.yaml`](../deploy/config.example.yaml) 放到 `/etc/portage/config.yaml`，
+声明文件走 `PORTAGE_CHANNELS` 环境变量（unit 里有注释掉的那一行）。
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin portage
+sudo install -d -o portage -g portage /var/lib/portage /etc/portage
+sudo cp deploy/config.example.yaml /etc/portage/config.yaml     # 把 db_path 改成 /var/lib/portage/gateway.db
+sudo cp deploy/portage.service /etc/systemd/system/
+sudo systemctl enable --now portage
+portage -version
+```
+
+## 升级
+
+**先说会发生什么**：不管哪种形态，升级都要重启进程，**正在串流的会话会被打断**。网关会先停收新请求、
+等在途请求结束（最多 30 秒）再重启，但等不完的照样断。挑个没人在跑长任务的时候。
+
+面板登录后左上角品牌旁就是当前版本号；有新版时 admin 会看到一枚「新版 vX.Y.Z」胶囊，点开是
+「版本与升级」弹框。检查是浏览器直接问 GitHub 的，网关自己不联网、不上报。
+
+**Docker 形态**（GHCR / ACR 镜像）：网关替换不了自己所在的镜像，弹框只给命令，到部署目录执行：
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+钉了版本（`PORTAGE_IMAGE=…:0.4.9`）的先把版本号改掉再执行。
+
+**二进制形态**（`install.sh` 装的）两条路，效果一样：
+
+- 面板里点「升级到 vX.Y.Z」，二次确认后网关自己下载、校验、替换可执行文件、等在途请求、原地重启
+  （PID 不变，systemd 看到的还是同一个实例）。页面会自己刷新。
+- 机器上跑 `portage upgrade`（或 `portage upgrade 0.5.0` 钉版本），它只替换文件，然后
+  `sudo systemctl restart portage`。没有面板的纯转发机只有这条路。
+
+两条路下载都认 `PORTAGE_DOWNLOAD_BASE`——面板那条读的是**网关进程**的环境变量，写进 unit 的
+`Environment=` 才生效。
+
+**失败与回退**：下载失败、校验不符、目录不可写三种都在替换之前，旧版本原封不动，弹框与命令行会说明
+是哪一种。替换之后新版本自己起不来，systemd 会反复拉起它——这时磁盘上已经没有旧版本了，**没有降级
+按钮**，回退就是 `install.sh` 钉旧版本再 `systemctl restart`。库的迁移只前向，跨版本回退前先备份
+`gateway.db`。
 
 ## 后面要改配置
 
