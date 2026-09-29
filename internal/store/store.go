@@ -104,6 +104,9 @@ func migrate(db *sql.DB) error {
 	if err := addAuthScheme(db); err != nil {
 		return err
 	}
+	if err := addChannelHeaders(db); err != nil {
+		return err
+	}
 	if err := addSupportsStatefulResponses(db); err != nil {
 		return err
 	}
@@ -561,6 +564,21 @@ func addAuthScheme(db *sql.DB) error {
 	return nil
 }
 
+// addChannelHeaders 补 channels.headers（#137）。存量行落空串 = 不带额外头，即现行为。
+func addChannelHeaders(db *sql.DB) error {
+	has, err := hasColumn(db, "channels", "headers")
+	if err != nil {
+		return fmt.Errorf("检查 channels.headers: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN headers TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 channels.headers: %w", err)
+	}
+	return nil
+}
+
 // addSupportsStatefulResponses 补 v0.88 的 channels.supports_stateful_responses。
 //
 // 默认 1（支持），存量行一律落 1——与上面那位的「存量一律落否」**相反**，是 PO 明确
@@ -876,6 +894,8 @@ type Candidate struct {
 	// AuthScheme 是渠道级的上游认证头写法（口径层 v1.13，#82）：default（按协议
 	// 惯例）/ bearer / raw。怎么写头是 upstream applyHeaders 的事，这里只带值。
 	AuthScheme string
+	// Headers 是渠道级额外出站头（#137），nil = 没有。同上，只带值。
+	Headers map[string]string
 }
 
 // 渠道级的凭证选取模式（口径层 v0.11）。库里的默认值是 polling，认不得的取值一律
@@ -942,7 +962,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -956,11 +976,14 @@ const (
 // 四价直接扫进 *float64（driver 对 REAL 的 NULL 会置 nil）——calllog.Prices 的
 // 指针语义与列的可空性正好是同一件事，不必过一手 sql.NullFloat64 再翻。
 func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *string) error {
-	return row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
+	var headers string
+	err := row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
 		&c.MaxInputTokens,
 		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
-		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses)
+		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses, &headers)
+	c.Headers = DecodeHeaders(headers)
+	return err
 }
 
 // finishCandidate 是谓词的 Go 半边加收尾：凭证复查、协议交集、定出站根地址。

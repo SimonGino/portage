@@ -22,6 +22,7 @@ func routeOf(cand store.Candidate) upstream.Route {
 		Protocol:       cand.Protocol,
 		BaseURL:        cand.BaseURL,
 		AuthScheme:     cand.AuthScheme,
+		Headers:        cand.Headers,
 		KeyMode:        cand.KeyMode,
 		Credentials:    creds,
 		MaxConcurrency: cand.MaxConcurrency,

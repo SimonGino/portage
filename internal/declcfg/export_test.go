@@ -28,6 +28,8 @@ const exampleFile = "../../channels.example.yaml"
 //   - 纳管模型带**部分定价且含显式 0**（#74）——示范里只有「四价全给」的正常形状；
 //     只有「写 0」与「没写」在往返两侧都保持两态（0 照写、nil 不写），改价字段成
 //     裸 float64 或丢 omitempty 都会在这里翻车。
+//   - 渠道带**两个**额外出站头、键故意不按字母序给（#137）——库里存排序 JSON、
+//     导出按键排，往返两侧才字节稳定。
 func roundtripFixture() *declcfg.File {
 	f := declcfg.Example()
 	// 示范里那把是出厂占位 key，直接 apply 会被 #28 的闸拒掉。往返要的是**结构**
@@ -50,6 +52,7 @@ func roundtripFixture() *declcfg.File {
 		// provider 标注也要能往返；示范里 anthropic 渠道已带一份，这里钉一个
 		// 「标注与渠道名毫无关系」的值——它本就不校验、不参与路由。
 		Provider: "openrouter",
+		Headers:  map[string]string{"x-opencode-session": "s1", "User-Agent": "portage/1"},
 		Disabled: true,
 	})
 	f.AccessPoints = append(f.AccessPoints, declcfg.AccessPoint{
@@ -105,7 +108,7 @@ func TestExportRoundtripsByteForByte(t *testing.T) {
 		t.Errorf("两次导出不相等\n--- 第一次 ---\n%s\n--- 第二次 ---\n%s", one, two)
 	}
 	// 防呆：往返相等这条断言在两边都是空文件时也成立。
-	for _, want := range []string{"anthropic", "自建-vllm", "停用的接入点", "sk-ptg-roundtrip"} {
+	for _, want := range []string{"anthropic", "自建-vllm", "停用的接入点", "sk-ptg-roundtrip", "x-opencode-session"} {
 		if !strings.Contains(string(one), want) {
 			t.Errorf("导出物里没有 %q，往返闸测的是两份空文件相等", want)
 		}

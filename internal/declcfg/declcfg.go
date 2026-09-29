@@ -55,9 +55,13 @@ type Channel struct {
 	Name string `yaml:"name"`
 	// BaseURL 是每协议出站根地址（口径层 v0.96 ②）：键是协议名，填了即声明该协议，
 	// 至少一个。同一上游共用前缀就是几个键填同一个值；地址仍是协议子路径之前的前缀。
-	BaseURL        store.BaseURLs `yaml:"base_url"`
-	CredentialType string         `yaml:"credential_type"`
-	KeyMode        string         `yaml:"key_mode"`
+	BaseURL store.BaseURLs `yaml:"base_url"`
+	// Headers 是渠道级额外出站头（#137）：有的上游不给固定头就拒（opencode-go 缺
+	// x-opencode-session 回 400）。静态值，转发、检测、拉模型列表三条路都带。紧跟
+	// base_url（导出按字段声明序写）；omitempty——没声明的渠道导出物与老文件逐字节相同。
+	Headers        map[string]string `yaml:"headers,omitempty"`
+	CredentialType string            `yaml:"credential_type"`
+	KeyMode        string            `yaml:"key_mode"`
 	// AuthScheme 是上游认证头写法 default/bearer/raw（口径层 v1.13，#82）。omitempty
 	// ——default 是绝大多数渠道的常态，导出时写空（不背一行）、apply 落 default，
 	// 往返闸两边对得上。

@@ -41,7 +41,7 @@ func checkChannels(f *File) []string {
 		default:
 			seen[name] = true
 		}
-		// 下面四条 writer（store.ChannelInput，#48 起 apply 走它）都会拦，这里逐条
+		// 下面五条 writer（store.ChannelInput，#48 起 apply 走它）都会拦，这里逐条
 		// 重述**只为一次报全**：writer 的报错首错即停、且要等闸一全过才见得到——
 		// 掉出闸一意味着「一把 key 都没有」这种错反而盖住了它们，一次重启变两次。
 		// 措辞跟 writer 保持同一套，人两边看到的是同一句话。
@@ -62,6 +62,9 @@ func checkChannels(f *File) []string {
 		// 会让他下次写 -5 时困惑（同 store 的既有立论）。
 		if ch.MaxConcurrency < 0 {
 			p = append(p, fmt.Sprintf("渠道 %q 的 max_concurrency=%d 是负数：0 表示不限，正整数才是上限", name, ch.MaxConcurrency))
+		}
+		if err := store.ValidateHeaders(ch.Headers); err != nil {
+			p = append(p, fmt.Sprintf("渠道 %q 的 headers：%v", name, err))
 		}
 		p = append(p, checkCredentials(name, ch.Credentials)...)
 		p = append(p, checkModels(name, ch.Models)...)
