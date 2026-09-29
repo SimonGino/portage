@@ -368,8 +368,8 @@ func (st *streamState) finish(out chan<- protocol.Event) bool {
 		// 带工具调用却报 stop 的上游也不改判——工具调用优先，同 R 侧先判 sawTool。
 		stop = "content_filter"
 	}
-	// 没 finish_reason 但发过 [DONE]：上游说完了，只是没报停因，照 stop 收（#98）。
-	truncated := stop == "" && !st.sawDone
+	// 没 finish_reason 但发过 [DONE]：上游说完了，只是没报停因，照 stop 收（#98、#161）。
+	truncated := protocol.StreamTruncated(stop != "", st.sawDone)
 	if stop == "" {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
