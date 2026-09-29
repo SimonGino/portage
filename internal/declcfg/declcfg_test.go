@@ -563,42 +563,45 @@ func TestChannelHeadersChangeIsListed(t *testing.T) {
 			"      openai: https://example.internal/v1\n",
 			"      openai: https://example.internal/v1\n    headers:\n      x-opencode-session: "+v+"\n", 1)
 	}
-	listed := func(db *sql.DB, yaml string) []string {
+	// Preview 与 Apply 共用同一次 eval（#160/#173），条目一一对应；唯一分叉是 headers
+	// 那行的时态——Preview 留「将被」（试算，还没发生），Apply 收场后换「已」（已提交）。
+	listed := func(db *sql.DB, yaml string) (preview, applied []string) {
 		t.Helper()
 		f, err := declcfg.Parse([]byte(yaml), "test.yaml")
 		if err != nil {
 			t.Fatal(err)
 		}
-		preview, err := declcfg.Preview(context.Background(), db, f)
-		if err != nil {
+		if preview, err = declcfg.Preview(context.Background(), db, f); err != nil {
 			t.Fatal(err)
 		}
-		applied, err := declcfg.Apply(context.Background(), db, f, discardLogger())
-		if err != nil {
+		if applied, err = declcfg.Apply(context.Background(), db, f, discardLogger()); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(preview, applied) {
-			t.Fatalf("Preview 与 Apply 清单不一致：\n%v\n%v", preview, applied)
-		}
-		return applied
+		return preview, applied
 	}
 	db := openDB(t)
 	mustApply(t, db, withHeaders("s1"))
 
 	for _, tc := range []struct {
-		name, yaml string
-		want       []string
+		name, yaml    string
+		preview, done []string
 	}{
-		{"不变", withHeaders("s1"), nil},
-		{"改值", withHeaders("secret-s2"), []string{"渠道 qwen 的额外出站头将被改动"}},
-		{"旧文件不写 headers", goodFile, []string{"渠道 qwen 的额外出站头将被清空"}},
-		{"空到有", withHeaders("s3"), []string{"渠道 qwen 的额外出站头将被改动"}},
+		{"不变", withHeaders("s1"), nil, nil},
+		{"改值", withHeaders("secret-s2"), []string{"渠道 qwen 的额外出站头将被改动"}, []string{"渠道 qwen 的额外出站头已改动"}},
+		{"旧文件不写 headers", goodFile, []string{"渠道 qwen 的额外出站头将被清空"}, []string{"渠道 qwen 的额外出站头已清空"}},
+		{"空到有", withHeaders("s3"), []string{"渠道 qwen 的额外出站头将被改动"}, []string{"渠道 qwen 的额外出站头已改动"}},
+		// 时态只换 headers 那行：用户起的名字里带「将被」原样保留。
+		{"名字带将被", strings.NewReplacer("name: laptop", "name: 将被停用", "sk-ptg-real-one", "sk-ptg-real-two").Replace(withHeaders("s3")),
+			[]string{"新增 API Key 将被停用", "删除 API Key laptop"}, []string{"新增 API Key 将被停用", "删除 API Key laptop"}},
 	} {
-		got := listed(db, tc.yaml)
-		if !slices.Equal(got, tc.want) {
-			t.Errorf("%s：清单 = %q，想要 %q", tc.name, got, tc.want)
+		preview, applied := listed(db, tc.yaml)
+		if !slices.Equal(preview, tc.preview) {
+			t.Errorf("%s：试算清单 = %q，想要 %q", tc.name, preview, tc.preview)
 		}
-		for _, c := range got {
+		if !slices.Equal(applied, tc.done) {
+			t.Errorf("%s：Apply 清单 = %q，想要 %q", tc.name, applied, tc.done)
+		}
+		for _, c := range append(preview, applied...) {
 			for _, leak := range []string{"x-opencode", "s1", "s2", "s3"} {
 				if strings.Contains(c, leak) {
 					t.Errorf("%s：清单带出了头名或头值：%q", tc.name, c)

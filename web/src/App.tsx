@@ -175,14 +175,23 @@ type ImportPreview =
   | { state: 'error'; message: string }
   | { state: 'ok'; changes: string[] }
 
-// 汇总行的新增/删除计数按清单动词前缀数。清单格式（「新增渠道 X」「删除 API Key Y」）
-// 是后端 reconcile 的输出、前后端同仓：后端改动词这里会悄悄归零，别只改一边。
+// 汇总行按清单动词前缀数。清单格式（「新增渠道 X」「删除 API Key Y」）是后端
+// reconcile 的输出、前后端同仓：后端改动词这里会悄悄归零，别只改一边。
+// others 兜「新增/删除」前缀之外的行（如 headers 改动/清空，#160）——不数它们
+// 汇总句就会在清单明明列着一行时读成「新增 0 项、删除 0 项」（#173）。
 const adds = (changes: string[]) => changes.filter((c) => c.startsWith('新增')).length
 const dels = (changes: string[]) => changes.filter((c) => c.startsWith('删除')).length
+const others = (changes: string[]) => changes.length - adds(changes) - dels(changes)
+
+// 清空额外出站头是静默破坏性的（headers 只在「上游设置」弹框里看得到，旧文件导入
+// 把它清空时没人会逐个渠道去翻），单独判危险——「改动」headers 不算，只有「清空」
+// 那一行加 danger 着色（#173，PO 2026-09-29 裁决）。
+const isHeaderClear = (c: string) => c.startsWith('渠道 ') && c.endsWith('的额外出站头将被清空')
 
 // 清单按动词分两摞摆（v0.55）：后端 reconcile 的输出按实体类型交错，混排时人得
 // 逐行扫动词才拼得出「哪些会没」。删除是覆盖导入里真正危险的那半，组头着警示色。
-// 动词对不上号的行（后端加了新动词而这里没跟上）兜进末尾无头组，掉出清单才是事故。
+// 动词对不上号的行（后端加了新动词而这里没跟上）兜进末尾无头组，掉出清单才是事故；
+// 组内单行若命中 isHeaderClear 再单独着色（组头没法覆盖到「只清空这一条危险」）。
 function ImportChanges({ changes }: { changes: string[] }) {
   const added = changes.filter((c) => c.startsWith('新增'))
   const deleted = changes.filter((c) => c.startsWith('删除'))
@@ -203,7 +212,9 @@ function ImportChanges({ changes }: { changes: string[] }) {
           )}
           <ul className="import-changes">
             {g.items.map((c) => (
-              <li key={c}>{c}</li>
+              <li key={c} className={isHeaderClear(c) ? 'import-group-danger' : undefined}>
+                {c}
+              </li>
             ))}
           </ul>
         </div>
@@ -288,7 +299,9 @@ function ImportButton() {
                   试算 <b>{pending.name}</b>：
                   {preview.changes.length === 0
                     ? '配置无变化——文件内容与当前配置一致。'
-                    : `将新增 ${adds(preview.changes)} 项、删除 ${dels(preview.changes)} 项。`}
+                    : others(preview.changes) > 0
+                      ? `将新增 ${adds(preview.changes)} 项、删除 ${dels(preview.changes)} 项、改动 ${others(preview.changes)} 项。`
+                      : `将新增 ${adds(preview.changes)} 项、删除 ${dels(preview.changes)} 项。`}
                 </p>
                 {preview.changes.length > 0 && <ImportChanges changes={preview.changes} />}
               </>
