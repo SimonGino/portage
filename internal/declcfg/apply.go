@@ -56,9 +56,28 @@ func Apply(ctx context.Context, db *sql.DB, f *File, log *slog.Logger) ([]string
 		log.Info("声明文件已生效，配置无变化")
 		return nil, nil
 	}
+	changes = pastTense(changes)
 	log.Info("声明文件已生效", "变更", strings.Join(changes, "；"))
 	return changes, nil
 }
+
+// pastTense 把 headers 那行（applyChannels 生成的「渠道 X 的额外出站头将被清空/改动」）
+// 改成完成时——Apply 已经提交，事情已经发生；其余条目本就不带时态，原样通过。Preview
+// 不经这层，原样拿「将被」。两条路共用同一次 eval（#160/#173），时态只在这个输出口分叉。
+// 只认「渠道 」开头那一类、只换最后一个锚点：条目里夹着用户起的名字（API Key、渠道、
+// 接入点），整串替换会把名叫「将被停用」的 key 报成「新增 API Key 已停用」。
+func pastTense(changes []string) []string {
+	out := slices.Clone(changes)
+	for i, c := range out {
+		if j := strings.LastIndex(c, headersPending); j >= 0 && strings.HasPrefix(c, "渠道 ") {
+			out[i] = c[:j] + "的额外出站头已" + c[j+len(headersPending):]
+		}
+	}
+	return out
+}
+
+// headersPending 是 headers 那行的时态锚点：applyChannels 用它生成，pastTense 按它回找。
+const headersPending = "的额外出站头将被"
 
 // Preview 把「导入这份文件会发生什么」试算给人看（口径层 v1.03，管理端导入确认框的
 // dry-run）：走 Apply 同一条链路（eval：闸一 → 事务内 reconcile → 闸二），事务只开
@@ -240,7 +259,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 				if len(headers) == 0 {
 					verb = "清空"
 				}
-				changes = append(changes, fmt.Sprintf("渠道 %s 的额外出站头将被%s", name, verb))
+				changes = append(changes, "渠道 "+name+" "+headersPending+verb)
 			}
 		}
 		ids[name] = id
