@@ -506,6 +506,13 @@ export interface CallLog {
    * 可用的 id。故前端只判空串，不判 null。
    */
   upstream_request_id: string
+  /**
+   * 上游自报的服务档与 fast mode（#103），原样快照、只记不计价。空串 = 上游
+   * 没报或加列前的老行，同 upstream_request_id。流水页只在非默认档时露出
+   * （#165）：`speed=fast`，或 `service_tier` 为 `priority`/`flex`。
+   */
+  service_tier: string
+  speed: string
 }
 
 /** 用量汇总的一行。label 按聚合维度取值：模型名 / 网关 key 名 / 上游凭证名 / 用户。 */
