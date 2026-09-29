@@ -115,14 +115,14 @@ repo checkout needed:
 
 ```text
 portage/
-├── docker-compose.forward.yml   ← copied from deploy/
+├── compose.yaml                 ← copied from deploy/forward/
 ├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
 └── channels.yaml                ← the export from step 2
 ```
 
 ```bash
 mkdir -p data && sudo chown 65532:65532 data
-docker compose -f docker-compose.forward.yml up -d
+docker compose up -d
 ```
 
 With a file mounted, that file is the only source of truth for business configuration;

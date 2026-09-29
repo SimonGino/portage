@@ -36,8 +36,9 @@ PORTAGE_ADMIN_PASSWORD='想好的密码' \
 已有密码后改它不生效。
 
 上面这条命令是给有仓库检出的机器的（本机构建）。没有检出、又要跑管理端形态的机器，改用
-[`deploy/docker-compose.admin.yml`](../deploy/docker-compose.admin.yml)：拉 GHCR 镜像，
-拷它和一份 `config.yaml`（以 `deploy/config.example.yaml` 为底改）到部署目录即可，密码
+[`deploy/admin/compose.yaml`](../deploy/admin/compose.yaml)：拉 GHCR 镜像，
+拷它（**文件名保持 `compose.yaml`**，命令就不用 `-f`）和一份 `config.yaml`（以
+`deploy/config.example.yaml` 为底改）到部署目录即可，国内机器再按第 3 步放 `.env`。密码
 同样走环境变量，用法见文件头注释。
 
 ## 2. 导出 `channels.yaml`
@@ -55,21 +56,21 @@ API Key 全在里面——运行期状态一样不带，所以你在本地撞出
 
 镜像不用在部署机上构建：CI 在每次打 `v*` tag 后把双架构（amd64/arm64）镜像发到 GHCR，公开可
 拉，不用登录。`latest` 指向最新发布版，`1.2.3` 这样的版本号 tag 钉具体版本。国内服务器拉
-GHCR 不稳的话，同一次构建也双推了阿里云 ACR，tag 集合完全一致，`PORTAGE_IMAGE` 指过去即可：
-`crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage`。
+GHCR 不稳的话，同一次构建也双推了阿里云 ACR，tag 集合完全一致，见下面的 `.env`。
 
 部署机上只要一个目录、三个文件，全部从仓库或第 2 步来，不需要检出：
 
 ```text
-portage/                         ← 部署目录，名字随意
-├── docker-compose.forward.yml   ← 从 deploy/ 拷来
-├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
-└── channels.yaml                ← 第 2 步导出的那份
+portage/            ← 部署目录，名字随意
+├── compose.yaml    ← 拷自 deploy/forward/compose.yaml，名字就叫这个，命令才不用 -f
+├── config.yaml     ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
+├── channels.yaml   ← 第 2 步导出的那份
+└── .env            ← 只有国内机器放，见下
 ```
 
 ```bash
 mkdir -p data && sudo chown 65532:65532 data   # Linux 必做：库落这儿，属主必须是容器运行身份
-docker compose -f docker-compose.forward.yml up -d
+docker compose up -d
 ```
 
 `chown 65532` 只在 **Linux** 服务器上需要——容器以 uid 65532 跑，绑定挂载直通宿主权限，
@@ -77,17 +78,19 @@ docker compose -f docker-compose.forward.yml up -d
 Docker Desktop 对绑定挂载自己做了权限映射，这步可以省。库落在 `./data/gateway.db`，
 备份就是拷这个目录。
 
-**换镜像源 / 钉版本**都走 `PORTAGE_IMAGE` 环境变量，不用改 compose 文件。默认是 GHCR 的
-`latest`；国内服务器换 ACR、或钉具体版本：
+**国内机器 / 钉版本**都走同目录的 `.env`，不改 compose 文件。默认拉 GHCR 的 `latest`；国内
+服务器把 [`deploy/cn.env`](../deploy/cn.env) 拷到部署目录改名 `.env`，镜像就改走阿里云 ACR：
 
 ```bash
-# 国内源 + 钉版本（推荐）
-PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.1 \
-  docker compose -f docker-compose.forward.yml up -d
-
-# 每次都带前缀太长的话，写进同目录 .env 文件（compose 自动读）：
-# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.1
+PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:latest
 ```
+
+compose 启动时自动读 `.env`，命令照旧不带 `-f`。钉版本就把末尾的 `latest` 换成版本号（如
+`0.1.1`），海外机器要钉版本也是写这一行，镜像地址换成 `ghcr.io/simongino/portage:0.1.1`。
+
+**从旧文件名迁过来**：部署目录里原来是 `docker-compose.admin.yml` / `docker-compose.forward.yml`
+的，改名成 `compose.yaml` 即可（`mv docker-compose.admin.yml compose.yaml`）。目录没变，compose
+项目名就没变，容器还是原来那个、数据原样。
 
 compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密码一个都没设——这正
 是纯转发形态。不在容器里跑就是 `-channels` 参数，`PORTAGE_CHANNELS` 覆盖它。容器里必须走

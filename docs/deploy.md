@@ -50,10 +50,11 @@ the database on first boot; once a password is stored, changing the variable doe
 
 The command above is for a machine with a repo checkout (it builds locally). To run the
 console shape on a machine without one, use
-[`deploy/docker-compose.admin.yml`](../deploy/docker-compose.admin.yml) instead: it pulls
-the GHCR image; copy it and a `config.yaml` (start from `deploy/config.example.yaml`)
-into a deployment directory, password via the same environment variable — usage is in
-the file's header comment.
+[`deploy/admin/compose.yaml`](../deploy/admin/compose.yaml) instead: it pulls
+the GHCR image; copy it (**keep the name `compose.yaml`** so no command needs `-f`) and a
+`config.yaml` (start from `deploy/config.example.yaml`) into a deployment directory; servers
+in mainland China also add the `.env` from step 3. Password via the same environment
+variable — usage is in the file's header comment.
 
 ## 2. Export `channels.yaml`
 
@@ -74,22 +75,22 @@ There is nothing to build on the deployment machine: CI publishes a multi-arch
 (amd64/arm64) image to GHCR on every `v*` tag, public, no login needed. `latest`
 points at the newest release, and version tags like `1.2.3` pin an exact release.
 For servers in mainland China where GHCR is unreliable, the same build is also pushed
-to Alibaba Cloud ACR with an identical tag set — point `PORTAGE_IMAGE` at
-`crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage`.
+to Alibaba Cloud ACR with an identical tag set — see the `.env` below.
 
 The deployment machine needs one directory and three files, all from the repo or from
 step 2 — no checkout required:
 
 ```text
-portage/                         ← deployment directory, any name
-├── docker-compose.forward.yml   ← copied from deploy/
-├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
-└── channels.yaml                ← the export from step 2
+portage/            ← deployment directory, any name
+├── compose.yaml    ← copied from deploy/forward/compose.yaml; keep this name so commands need no -f
+├── config.yaml     ← start from deploy/config.example.yaml (global rate limit lives here)
+├── channels.yaml   ← the export from step 2
+└── .env            ← mainland China servers only, see below
 ```
 
 ```bash
 mkdir -p data && sudo chown 65532:65532 data   # required on Linux: the database lands here; owner must be the container uid
-docker compose -f docker-compose.forward.yml up -d
+docker compose up -d
 ```
 
 The `chown 65532` is needed on **Linux** servers only — the container runs as uid 65532
@@ -99,18 +100,23 @@ database. Docker Desktop on macOS does its own permission mapping for bind mount
 the step can be skipped there. The database lives at `./data/gateway.db`; backing up is
 copying that directory.
 
-**Switching the image source and pinning a version** both go through the
-`PORTAGE_IMAGE` environment variable — no compose edits. The default is GHCR `latest`;
-for a server in mainland China, or to pin an exact release:
+**Mainland China servers and version pinning** both go through a `.env` file next to
+the compose file — no compose edits. The default is GHCR `latest`; on a server in
+mainland China, copy [`deploy/cn.env`](../deploy/cn.env) into the deployment directory as
+`.env` and the image switches to Alibaba Cloud ACR:
 
 ```bash
-# domestic mirror + pinned version (recommended)
-PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0 \
-  docker compose -f docker-compose.forward.yml up -d
-
-# tired of the prefix? put it in a .env file next to the compose file (compose reads it automatically):
-# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0
+PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:latest
 ```
+
+Compose reads `.env` automatically, so commands still need no `-f`. To pin a release,
+replace the trailing `latest` with a version such as `0.1.1`; outside China write the same
+line with `ghcr.io/simongino/portage:0.1.1`.
+
+**Migrating from the old file names**: if the deployment directory still has
+`docker-compose.admin.yml` / `docker-compose.forward.yml`, rename it to `compose.yaml`
+(`mv docker-compose.admin.yml compose.yaml`). Same directory means the same compose project
+name, so it is the same container with the same data.
 
 The compose file already points `PORTAGE_CHANNELS` at the mounted `channels.yaml` and
 sets no admin password anywhere — which is exactly the forwarding-only shape. Outside a

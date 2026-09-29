@@ -1,18 +1,18 @@
 # 带管理端形态的部署 compose——给没有仓库检出、又要跑管理端的机器用
-# （有检出的开发机用 docker-compose.yml 本机构建）。一个目录、两个文件：
+# （有检出的开发机用 deploy/docker-compose.yml 本机构建）。拷到部署目录时**文件名保持
+# compose.yaml**：那是 docker compose 默认认的名字，之后所有命令都不用 -f。
 #
-#   portage/                       ← 部署目录，名字随意
-#   ├── docker-compose.admin.yml   ← 本文件
-#   └── config.yaml                ← 进程级配置（全局限流/端口/重试/保留期），
-#                                    以 config.example.yaml 为底拷出来改
+#   portage/            ← 部署目录，名字随意（它也是 compose 项目名）
+#   ├── compose.yaml    ← 本文件
+#   ├── config.yaml     ← 进程级配置（全局限流/端口/重试/保留期），以 config.example.yaml 为底改
+#   └── .env            ← 只有国内机器放：拷 deploy/cn.env 改名，镜像改走阿里云 ACR
 #
 #   mkdir -p data && sudo chown 65532:65532 data   # Linux 必做；macOS Docker Desktop 可省
-#   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose -f docker-compose.admin.yml up -d
+#   PORTAGE_ADMIN_PASSWORD='想好的密码' docker compose up -d
+#   升级：docker compose pull && docker compose up -d
 #
-# 镜像默认从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版。换镜像源/钉版本都
-# 走 PORTAGE_IMAGE（也可写进同目录 .env），国内服务器用 ACR，两边 tag 完全一致：
-#   PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.1 \
-#     docker compose -f docker-compose.admin.yml up -d
+# 镜像默认从 GHCR 拉（每次打 v* tag 发布），latest 指向最新发布版。换镜像源 / 钉版本都
+# 走 PORTAGE_IMAGE，写在同目录 .env 里（compose 自动读），不改本文件。
 #
 # 这份文件是**拷走用的**：拷到部署目录之后就是你的配置，端口收窄这类改动直接改。
 #
@@ -32,7 +32,7 @@ services:
       # 宿主上没设这个变量时是空串，等于没设——那就成了没有管理端的纯转发形态。
       PORTAGE_ADMIN_PASSWORD: ${PORTAGE_ADMIN_PASSWORD:-}
     ports:
-      # 发布给所有网卡。公网 IP 机器上的风险与改法同 docker-compose.forward.yml
+      # 发布给所有网卡。公网 IP 机器上的风险与改法同 deploy/forward/compose.yaml
       # 的 ports 注释：Docker 发布端口绕过 ufw/firewalld，要么写死内网网卡地址，
       # 要么绑 127.0.0.1 挂 nginx 收 TLS。管理端形态还多一条：会话 cookie 在明文
       # HTTP 下不带 Secure，同网段能被嗅到，管理端别走公网明文。

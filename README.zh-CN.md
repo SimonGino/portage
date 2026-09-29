@@ -106,14 +106,14 @@ PORTAGE_ADMIN_PASSWORD='想好的密码' \
 
 ```text
 portage/
-├── docker-compose.forward.yml   ← 从 deploy/ 拷来
+├── compose.yaml                 ← 拷自 deploy/forward/
 ├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
 └── channels.yaml                ← 第 2 步导出的那份
 ```
 
 ```bash
 mkdir -p data && sudo chown 65532:65532 data
-docker compose -f docker-compose.forward.yml up -d
+docker compose up -d
 ```
 
 挂了文件，这份文件就是业务配置的唯一事实源；配置里静态就能判出的错一律拒绝启动，退出码 1，

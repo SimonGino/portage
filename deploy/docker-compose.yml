@@ -1,6 +1,6 @@
 # 开发机（有仓库检出）的本机构建 compose。**部署不用这份**：没有检出的机器拉 GHCR
-# 镜像，纯转发形态用 docker-compose.forward.yml，带管理端形态用 docker-compose.admin.yml，
-# 两份都是拷走即用。
+# 镜像，纯转发形态用 deploy/forward/compose.yaml，带管理端形态用 deploy/admin/compose.yaml，
+# 两份都是拷走即用（国内机器再拷一份 deploy/cn.env 改名 .env）。
 #
 # 用法（在仓库根目录）：
 #
