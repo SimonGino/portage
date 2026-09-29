@@ -373,11 +373,12 @@ func TestDecodeStreamRefusalKeepsLengthAndToolCalls(t *testing.T) {
 		}
 	})
 
-	t.Run("带工具调用的stop不改判", func(t *testing.T) {
+	// #172 起带工具调用的 stop 改判 tool_calls（原期望 stop），拒答改判照旧让位。
+	t.Run("带工具调用的stop判工具停因", func(t *testing.T) {
 		raw := `data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n" +
 			`data: {"choices":[{"index":0,"delta":{"refusal":"抱歉","tool_calls":[{"index":0,"id":"call_a","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"stop"}]}` + "\n\n"
-		if got := doneReason(decodeStream(t, []byte(raw))); got != "stop" {
-			t.Errorf("StopReason = %q, want stop（有工具调用时不改判 content_filter）", got)
+		if got := doneReason(decodeStream(t, []byte(raw))); got != "tool_calls" {
+			t.Errorf("StopReason = %q, want tool_calls（有工具调用时不改判 content_filter）", got)
 		}
 	})
 }

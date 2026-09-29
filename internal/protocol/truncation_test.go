@@ -14,6 +14,12 @@ import (
 	"github.com/SimonGino/portage/internal/protocol/openairesponses"
 )
 
+// decoder 是流式解码器外加断流记账（StreamReadReporter），下面几组跨上游用例共用。
+type decoder interface {
+	DecodeStream(r io.Reader) (<-chan protocol.Event, error)
+	StreamReadError() error
+}
+
 // #106：上游流在工具参数中途干净 EOF（没有 finish_reason / message_delta），R 出口
 // 不许发 response.completed，也不许把半截入参当成品放出。
 //
@@ -294,10 +300,6 @@ event: response.output_text.delta
 data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"半截"}
 
 `
-	type decoder interface {
-		DecodeStream(r io.Reader) (<-chan protocol.Event, error)
-		StreamReadError() error
-	}
 	upstreams := map[string]struct {
 		codec  func() decoder
 		stream string
@@ -347,10 +349,6 @@ data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"d
 // （不是 incomplete），压缩合成照常产出那一个 item。三条构造样本（手搭）。
 // 反面「两者皆无的干净 EOF」由 TestCleanEOFWithoutTerminalIsError 钉。
 func TestTerminalFrameWithoutStopReasonIsNotTruncated(t *testing.T) {
-	type decoder interface {
-		DecodeStream(r io.Reader) (<-chan protocol.Event, error)
-		StreamReadError() error
-	}
 	cases := map[string]struct {
 		codec  func() decoder
 		stream string
@@ -430,6 +428,112 @@ data: {"type":"response.completed"}
 			}
 			if out := buf.String(); !strings.Contains(out, `"type":"compaction"`) || !strings.Contains(out, "event: response.completed") {
 				t.Errorf("压缩合成应照常产出 compaction item 并 completed:\n%s", out)
+			}
+		})
+	}
+}
+
+// #172 PO 裁决：本轮见过工具调用、停因为空或为 stop 时，三家解码器统一改判 tool_calls——A 出口
+// 写 tool_use，只凭停因决定执行工具的客户端才会去执行。终态帧照常收（不算截断）。R 终帧缺
+// response 与 response 为 {} 两种结果一致。构造样本（手搭，形状同上）。
+func TestToolCallsWithoutToolStopReasonIsToolStop(t *testing.T) {
+	const ccTool = `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":"{\"path\":\"a\"}"}}]}}]}
+
+`
+	const aHead = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_a","name":"read","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+`
+	rStream := func(terminal string) string {
+		return `event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","model":"m","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a","name":"read","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\"a\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"a\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_a","name":"read","arguments":"{\"path\":\"a\"}"}}
+
+event: response.completed
+data: ` + terminal + `
+
+`
+	}
+	cases := map[string]struct {
+		codec  func() decoder
+		stream string
+	}{
+		"CC [DONE] 无 finish_reason": {func() decoder { return openaicc.NewCodec() }, ccTool + "data: [DONE]\n\n"},
+		"CC 显式 stop": {func() decoder { return openaicc.NewCodec() }, ccTool +
+			`data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n"},
+		"A message_stop 无 stop_reason": {func() decoder { return anthropic.NewCodec() }, aHead + `event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":null,"stop_sequence":null},"usage":{"output_tokens":2}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`},
+		"R 终帧缺 response 对象":  {func() decoder { return openairesponses.NewCodec() }, rStream(`{"type":"response.completed"}`)},
+		"R 终帧 response 为 {}": {func() decoder { return openairesponses.NewCodec() }, rStream(`{"type":"response.completed","response":{}}`)},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dec := c.codec()
+			ch, err := dec.DecodeStream(strings.NewReader(c.stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if err := anthropic.NewCodec().EncodeStream(&buf, ch); err != nil {
+				t.Fatal(err)
+			}
+			if out := buf.String(); !strings.Contains(out, `"stop_reason":"tool_use"`) || !strings.Contains(out, "event: message_stop") {
+				t.Errorf("见过工具调用应收成 tool_use + message_stop:\n%s", out)
+			}
+			if err := dec.StreamReadError(); err != nil {
+				t.Errorf("StreamReadError = %v，见过终态帧不该记断流", err)
+			}
+		})
+	}
+}
+
+// #172 非流式同判：A 缺 stop_reason 带 tool_use、R status 缺失带 function_call → tool_calls；
+// Truncated 照停因原值另算，不受改判影响。构造样本。
+func TestFullBodyToolCallsWithoutStopReasonIsToolStop(t *testing.T) {
+	type fullDecoder interface {
+		DecodeFullBody(body []byte) ([]protocol.Event, error)
+	}
+	cases := map[string]struct {
+		codec fullDecoder
+		body  string
+	}{
+		"A":          {anthropic.NewCodec(), `{"id":"msg_1","model":"m","type":"message","content":[{"type":"tool_use","id":"toolu_a","name":"read","input":{"path":"a"}}]}`},
+		"R":          {openairesponses.NewCodec(), `{"id":"resp_1","model":"m","output":[{"type":"function_call","call_id":"call_a","name":"read","arguments":"{}"}]}`},
+		"CC 显式 stop": {openaicc.NewCodec(), `{"id":"c","model":"m","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":"{}"}}]},"finish_reason":"stop"}]}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			events, err := c.codec.DecodeFullBody([]byte(c.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if done := events[len(events)-1]; done.Type != protocol.EvDone || done.StopReason != "tool_calls" {
+				t.Errorf("EvDone = %+v，期望 StopReason tool_calls", done)
 			}
 		})
 	}

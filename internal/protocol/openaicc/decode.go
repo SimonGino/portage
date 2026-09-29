@@ -365,11 +365,13 @@ func (st *streamState) finish(out chan<- protocol.Event) bool {
 		// 拒答改判（issue #113，PO 2026-09-28 裁决）：finish_reason=="stop" 时本轮
 		// 出现过拒答正文，canonical 停因改判 content_filter，A 出口自动映成
 		// stop_reason:"refusal"。length/tool_calls 已经是别的取值，这里判不到；
-		// 带工具调用却报 stop 的上游也不改判——工具调用优先，同 R 侧先判 sawTool。
+		// 带工具调用的归下面 ToolStop——工具调用优先，同 R 侧。
 		stop = "content_filter"
 	}
-	// 没 finish_reason 但发过 [DONE]：上游说完了，只是没报停因，照 stop 收（#98、#161）。
+	// 没 finish_reason 但发过 [DONE]：上游说完了，只是没报停因（#98、#161）。
 	truncated := protocol.StreamTruncated(stop != "", st.sawDone)
+	// 见过工具调用而停因为空或 stop（含上游明说 stop 却带 tool_calls）改判 tool_calls（#172）。
+	stop = protocol.ToolStop(stop, len(st.tools) > 0)
 	if stop == "" {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。

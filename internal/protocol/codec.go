@@ -95,6 +95,20 @@ var ErrStreamTruncated = errors.New("上游响应流没给终态就结束了")
 // （TapCore，#162）共用这一条。
 func StreamTruncated(sawStop, sawTerminal bool) bool { return !sawStop && !sawTerminal }
 
+// ToolStop 是三家解码器收尾共用的停因改判（#172 PO 裁决）：本轮见过工具调用，而 canonical
+// 停因为空（上游没报）或为 stop（含未知值兜成的 stop）时改判 tool_calls——否则 A 出口写
+// end_turn，只凭停因决定执行工具的客户端会停在工具调用回合。length / content_filter 等
+// 其余停因不动。同 litellm `streaming_handler.py`（`finish_reason == "stop" and
+// self.tool_call` 改判 tool_calls，该文件自 1bef6457c7 起）、sub2api
+// `chatFinishReasonToAnthropicStopReason`、opencodex
+// `src/claude/outbound.ts`（sawToolUse）。Truncated 与本判据无关，照停因原值另算。
+func ToolStop(stop string, sawTool bool) string {
+	if sawTool && (stop == "" || stop == "stop") {
+		return "tool_calls"
+	}
+	return stop
+}
+
 // StreamReadFlag 是 StreamReadReporter 的现成实现，各 codec 内嵌即可。
 //
 // 上锁不是多余的：写在解码 goroutine 里，读在调用方。读的时机看着总在事件流收尾
