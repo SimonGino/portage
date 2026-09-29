@@ -152,7 +152,7 @@ done 帧键集照 sub2api `apicompat.ResponsesStreamEvent`。钉「done 帧按�
 ## cc-stream-multi-choice / cc-stream-multi-choice-first-index1 / cc-stream-choice-index-string / cc-multi-choice
 
 [#133](https://github.com/SimonGino/portage/issues/133)：上游回多个 choice（客户端带 `n>1`，或中转站交错发不同
-index）时，转换路径的 CC 解码只跟**第一个出现的 choice index**（口径层 vNEXT，出处 magpie `ff4f730`）。
+index）时，转换路径的 CC 解码只跟**第一个出现的 choice index**（口径层 v1.32，出处 magpie `ff4f730`）。
 **手工构造**——真实 harness 不带 `n>1`，九份 `cc-*` 转录每帧都只有 `index:0` 一个 choice。帧形照
 `golden/cc-stream-text`、`cc-stream-parallel-tools`、`cc-text` 写。
 
