@@ -23,8 +23,9 @@ func NewTap(stream bool) *Tap {
 }
 
 type chunk struct {
-	Model   string `json:"model"`
-	Choices []struct {
+	Model       string `json:"model"`
+	ServiceTier string `json:"service_tier"` // #103，顶层，每个 chunk 都带
+	Choices     []struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
@@ -64,6 +65,9 @@ func observe(sum *protocol.Summary, data []byte) {
 	}
 	if c.Model != "" {
 		sum.Model = c.Model
+	}
+	if c.ServiceTier != "" {
+		sum.ServiceTier = c.ServiceTier
 	}
 	for _, ch := range c.Choices {
 		if ch.FinishReason != "" {

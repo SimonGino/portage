@@ -22,6 +22,7 @@ func NewTap(stream bool) *Tap {
 type response struct {
 	Model             string `json:"model"`
 	Status            string `json:"status"` // completed | incomplete | failed | in_progress
+	ServiceTier       string `json:"service_tier"`
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
@@ -78,6 +79,12 @@ func apply(sum *protocol.Summary, r *response) {
 		sum.StopReason = d.Reason
 	} else if r.Status != "" && r.Status != "in_progress" {
 		sum.StopReason = r.Status
+	}
+	// service_tier 同理（#103）：created / in_progress（后台模式还有 queued）回显的
+	// 是请求里的档（常见 auto），终态事件才报实际走的档（真实转录 auto → default；
+	// sub2api upstream_response_model.go 同一判据）。流断在终态之前就宁可留空。
+	if r.ServiceTier != "" && r.Status != "in_progress" && r.Status != "queued" {
+		sum.ServiceTier = r.ServiceTier
 	}
 	u := r.Usage
 	if u == nil {

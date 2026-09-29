@@ -33,6 +33,9 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 		metaThinking = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"},"thinking":{"type":"enabled","budget_tokens":1024}` + tail
 		userOnly     = `{"model":"m","max_tokens":16,"user":"u"` + tail
 		metaUser     = `{"model":"m","max_tokens":16,"metadata":{"user_id":"u"},"user":"u"` + tail
+		// service_tier / speed 跨协议不映（#103，PO 2026-09-29）：取值域各家不同，
+		// 映射要靠模型能力表，一律落 vendor_request。
+		tierSpeed = `{"model":"m","max_tokens":16,"service_tier":"auto","speed":"fast"` + tail
 	)
 
 	// 三个出口都有 metadata 这一档（#19 补齐 anthropic 出口：此前落 vendor_request，
@@ -50,6 +53,15 @@ func TestExtrasDropsRegisteredOncePerKind(t *testing.T) {
 				"openaicc":        {"metadata"},
 				"openairesponses": {"metadata"},
 				"anthropic":       {"metadata"},
+			},
+		},
+		{
+			name: "service_tier + speed 同落 vendor_request",
+			body: tierSpeed,
+			want: map[string][]string{
+				"openaicc":        {"vendor_request"},
+				"openairesponses": {"vendor_request"},
+				"anthropic":       {"vendor_request"},
 			},
 		},
 		{

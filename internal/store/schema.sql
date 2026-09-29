@@ -307,6 +307,12 @@ CREATE TABLE IF NOT EXISTS call_logs (
   -- 的 id」，分开没有排障价值——前者看 status 就知道。它同时也回传给客户端（响应头
   -- 原样透传，见 upstream.CopyResponseHeaders），这里只是留一份可查询的副本。
   upstream_request_id TEXT NOT NULL DEFAULT '',
+  -- 上游自报的服务档与 fast mode（#103），原样快照，只记不计价。Anthropic 取
+  -- usage.service_tier / usage.speed，CC 取顶层 service_tier，Responses 取终态事件的
+  -- response.service_tier（created / in_progress 回显的是请求值，不算）。OpenAI 两家
+  -- 没有 speed。不可空、默认空串，同 upstream_request_id：没报与老行是同一件事。
+  service_tier TEXT NOT NULL DEFAULT '',
+  speed TEXT NOT NULL DEFAULT '',
   -- 这一次调用的成本（口径层 §2.10 计价，#65/#74），USD。落库时点按选中渠道纳管
   -- 条目的四价算死：净 input（毛值减缓存两项）、output、cache_read、cache_write
   -- 各乘各的单价 ÷ 1e6 求和；reasoning_tokens 是 output 的明细不另计。之后改价

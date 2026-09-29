@@ -2,6 +2,8 @@
 
 > 状态：草案 v1.55
 
+> vNEXT 变更（口径层 vNEXT 落地：`service_tier` / `speed` 落流水，[#103](https://github.com/SimonGino/portage/issues/103)，修改人 jinpenga）：①`protocol.Summary` 加 `ServiceTier` / `Speed` 两个字符串，三个 Tap 各自取：Anthropic 从 usage 取 `service_tier` / `speed`（流式在 message_start），CC 从顶层 `service_tier` 取，Responses 从 response 对象取且跳过 `status` 为 `in_progress` / `queued` 的事件（这些非终态事件回显的是请求值）；都是非空才覆盖。②`call_logs` 加 `service_tier`、`speed` 两列（TEXT NOT NULL DEFAULT ''，§7 DDL），迁移 `store.addServiceTierSpeed`；`calllog.Row` 与 `store.CallLogRow` 同名两格，管理端接口带出 `service_tier` / `speed`；slog 有值才打。前端不动。③请求侧不改代码，`extras_drop_test.go` 加一例，锁住跨协议时这两个键落 `vendor_request`。golden：22 份 Anthropic / Responses 转录与 2 份 Anthropic 缓存命中构造样本的 `meta.json` expect 补上 `ServiceTier`（Anthropic `standard`，Responses `default`）；CC 转录没有这个键，Anthropic `speed` 也没有真实样本，这两处用构造帧测。
+
 > vNEXT 变更（口径层 vNEXT 落地：⑬ 扩到 Anthropic 上游响应，[#136](https://github.com/SimonGino/portage/issues/136)，修改人 jinpenga）：只记落点。`anthropic.Codec` 加 `responseDrops` / `ResponseDrops()`，`DecodeStream` / `DecodeFullBody` 开头各归零，`respState.drops` 回指它；`server.warnResponseDrops` 按鸭子类型自动接通，server 不改。流式 `content_block_start` 与非流式 content 数组对 text / thinking / redacted_thinking / tool_use 之外的块登记 `类型(#index)`；`input_json_delta` 只在 `blockKind[index]=="tool_use"` 时下发。`redacted_thinking` 的 `data` 发成 `ThinkingSignature` 通道的 `EvThinkingDelta`（`redactedEvent`），出口经 `OutboundThinkingText` 丢。用例 `decode_response_test.go` 的 `…DropsUnknownBlocks` 两条（构造样本，流式含每请求归零）。golden 零改动。
 
 > v1.55 变更（口径层 v1.33 落地：转换路径的 Anthropic 出口自动打缓存断点，[#132](https://github.com/SimonGino/portage/issues/132)，修改人 jinpenga）：①`anthropic/encode_request.go` 在序列化前经 `markCacheBreakpoints` 打两个 `ephemeral`：system 末块（无 system 落最后一个工具）、最后一条消息里最后一个非 thinking / redacted_thinking 的块；编出来的请求里已有任何 `cache_control` 就一个不补。流式与非流式同一条路径。②**补上 §2「cache_control 仅出口为 Anthropic 时保留」的落地缺口**：此前 A 出口不读 `Block.Extras` / `Tool.Extras`，CC 入口带来的断点在 CC→A 上静默丢失；现经 `withCacheControl` 在 text / image / tool_use / tool_result 块与工具声明上原样带出（值为 `null` 不带）。载体按入口解码的落点读：content part 在 `Block.Extras`，CC `tool_calls[]` 条目在 `ToolCall.Extras`，CC `role=tool` 消息在 `Message.Extras`（litellm `factory.py` 同认这三处）。Responses 的 `function_call_output` 一类 item 上的 `cache_control` 解码时已丢，Responses 协议无此字段、也无客户端样本，不追。用例 `internal/protocol/cachebreakpoint_test.go`，12 份 `in-cc-*` / `in-responses-*` golden 经 canonical 编到 A 出口断言断点位置与个数，另加无 system（有 / 无工具）、thinking 结尾、客户端已带断点四格。
@@ -887,7 +889,7 @@ CREATE TABLE call_logs (
                                        -- 网关侧错误，v0.28 纪律），detail 却有值——管理端「可展开」的判据
                                        -- 因此是 status >= 400。可空是为了分开「没存」与「上游回了 4xx 但
                                        -- 体是空的」（存空串），后者本身就是排障信息
-  upstream_request_id TEXT NOT NULL DEFAULT ''  -- 上游响应头 request-id 的原样快照（口径层 v0.56，#2）：
+  upstream_request_id TEXT NOT NULL DEFAULT '', -- 上游响应头 request-id 的原样快照（口径层 v0.56，#2）：
                                        -- 拿它去找上游对账，官方文档报障时要的就是这个 id。取头名 `request-id`
                                        -- （Anthropic 官方拼写），兜底 `x-request-id`（中转常用）。**不可空**：
                                        -- 这一列上「没走到上游」与「上游没回这个头」都读作「没有可用的 id」，
@@ -896,6 +898,8 @@ CREATE TABLE call_logs (
                                        -- 这正是那颗按钮的判据不能只看 status >= 400 的原因
                                        -- 取值三档（口径层 v0.74）：request-id 头 → 错误体里的 request_id → x-request-id 头。
                                        -- 中间那档只有失败行有货，且复用 error_detail 已读进来的字节
+  service_tier TEXT NOT NULL DEFAULT '', -- 上游自报的服务档（口径层 vNEXT，#103），原样快照，只记不计价。
+  speed TEXT NOT NULL DEFAULT ''       -- Anthropic fast mode（usage.speed），同上；OpenAI 两家恒空
 );
 CREATE INDEX idx_call_logs_created_at ON call_logs(created_at);
 

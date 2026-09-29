@@ -77,6 +77,10 @@ type Row struct {
 	// UpstreamRequestID 是上游响应头 request-id 的原样快照（口径层 v0.56，#2），
 	// 拿去找上游对账用。没走到上游、或上游没回这个头时是空串——这一列上两者同档。
 	UpstreamRequestID string
+	// ServiceTier / Speed 是上游自报的服务档与 fast mode（#103），取自 Tap 的
+	// Summary 原样，只记不计价。没有 summary 或上游没报都是空串。
+	ServiceTier string
+	Speed       string
 	// ErrorDetail 是上游错误原文的前 2KB（口径层 v0.53），只在失败时有值。
 	//
 	// 与 Error 分列：Error 是网关的固定词表（可枚举、可 group by），这一列是上游

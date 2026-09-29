@@ -16,6 +16,7 @@
     "ReasoningTokens": 0,
     "HasReasoningTokens": true,
     "StopReason": "end_turn",
+    "ServiceTier": "standard",
     "Degraded": false
   },
   "verified": true,

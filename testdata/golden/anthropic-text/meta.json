@@ -12,6 +12,7 @@
     "CacheReadTokens": 0,
     "CacheWriteTokens": 0,
     "StopReason": "end_turn",
+    "ServiceTier": "standard",
     "Degraded": false
   },
   "verified": true
