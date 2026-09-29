@@ -5,6 +5,9 @@ import {
   channelMark,
   filterChannels,
   fmtTokens,
+  headerRows,
+  headersOf,
+  headersDirty,
   limitToSave,
   listComplete,
   listedOn,
@@ -34,6 +37,7 @@ function ch(over: Partial<Channel>): Channel {
     supports_stateful_responses: true,
     provider: '',
     disabled: false,
+    headers: {},
     enabled_keys: 1,
     disabled_keys: 0,
     models: [],
@@ -211,5 +215,52 @@ describe('上游设置表单', () => {
     expect(settingsDirty(c, same, false)).toBe(false)
     expect(settingsDirty(c, same, true)).toBe(true)
     expect(settingsDirty(c, { ...same, compaction: false, name: 'renamed' }, false)).toBe(true)
+  })
+})
+
+describe('额外出站头', () => {
+  it('行按头名排序，空集合出零行', () => {
+    expect(headerRows({})).toEqual([])
+    expect(headerRows({ b: '2', a: '1' })).toEqual([
+      { name: 'a', value: '1' },
+      { name: 'b', value: '2' },
+    ])
+  })
+
+  it('去首尾空白、整行空的丢掉；半空行照发交服务端闸报', () => {
+    const r = headersOf([
+      { name: ' x-a ', value: ' 1 ' },
+      { name: '', value: '' },
+      { name: 'x-b', value: '' },
+    ])
+    expect(r).toEqual({ headers: { 'x-a': '1', 'x-b': '' }, dup: '' })
+  })
+
+  it('同名两行报出来，不静默吞掉一行', () => {
+    expect(headersOf([
+      { name: 'x-a', value: '1' },
+      { name: 'x-a', value: '2' },
+    ]).dup).toBe('x-a')
+  })
+
+  it('Object 原型上的名字只是普通头名', () => {
+    const r = headersOf([
+      { name: 'constructor', value: '1' },
+      { name: '__proto__', value: '2' },
+    ])
+    expect(r.dup).toBe('')
+    expect(JSON.stringify(r.headers)).toBe('{"constructor":"1","__proto__":"2"}')
+  })
+
+  it('改动判据不看行序与整行空行', () => {
+    const saved = { 'x-a': '1', 'x-b': '2' }
+    expect(headersDirty(saved, [
+      { name: 'x-b', value: '2' },
+      { name: 'x-a', value: '1' },
+      { name: '', value: '' },
+    ])).toBe(false)
+    expect(headersDirty(saved, [{ name: 'x-a', value: '1' }])).toBe(true)
+    expect(headersDirty(saved, [...headerRows(saved), { name: 'x-c', value: '3' }])).toBe(true)
+    expect(headersDirty({}, [{ name: '', value: '' }])).toBe(false)
   })
 })

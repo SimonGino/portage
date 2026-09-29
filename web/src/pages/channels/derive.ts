@@ -238,3 +238,45 @@ export function settingsDirty(channel: Channel, d: SettingsDraft, showCapabiliti
       (d.compaction !== channel.supports_compaction || d.stateful !== channel.supports_stateful_responses))
   )
 }
+
+// ── 额外出站头（#167）──────────────────────────────────────────────────────
+
+/** 额外出站头编辑的一行。 */
+export interface HeaderRow {
+  name: string
+  value: string
+}
+
+/** 库里的头集合摆成编辑行，按头名排序（与服务端落库的键序一致）。 */
+export function headerRows(h: Record<string, string>): HeaderRow[] {
+  return Object.keys(h)
+    .sort()
+    .map((name) => ({ name, value: h[name] }))
+}
+
+/**
+ * 编辑行收成要提交的头集合：去首尾空白，整行空的丢掉。只填了一半的行照发——
+ * 空头名、空值由服务端 ValidateHeaders 报原文，前端不另写一套闸。唯一在这里拦的是
+ * **完全同名**的两行：对象键一合并就静默丢掉一行，服务端根本看不见。
+ */
+export function headersOf(rows: HeaderRow[]): { headers: Record<string, string>; dup: string } {
+  // 无原型：头名填 constructor / __proto__ 也只是普通键，不误报重名、不改原型。
+  const headers: Record<string, string> = Object.create(null)
+  let dup = ''
+  for (const r of rows) {
+    const name = r.name.trim()
+    const value = r.value.trim()
+    if (name === '' && value === '') continue
+    if (name in headers && !dup) dup = name
+    headers[name] = value
+  }
+  return { headers, dup }
+}
+
+/** 编辑行与库里的头集合是否不同（不看行序与整行空行）。 */
+export function headersDirty(saved: Record<string, string>, rows: HeaderRow[]): boolean {
+  const { headers, dup } = headersOf(rows)
+  if (dup) return true
+  const keys = Object.keys(headers)
+  return keys.length !== Object.keys(saved).length || keys.some((k) => saved[k] !== headers[k])
+}

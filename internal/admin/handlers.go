@@ -384,6 +384,25 @@ func (h *Handler) putChannelSettings(c *gin.Context) {
 	})
 }
 
+// putChannelHeaders 整组覆盖渠道额外出站头（#167）。校验全在 store.ValidateHeaders，
+// 与声明文件同一道闸，拒因原文回前端。
+func (h *Handler) putChannelHeaders(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		return store.UpdateChannelHeaders(ctx, tx, id, in.Headers)
+	})
+}
+
 // probeInput 是一次检测的入参（口径层 v0.96 ③）：点哪把凭证用哪把（含已停用）、
 // 全部纳管模型或单选一个、勾了哪几个协议。勾选不落库，结果也不落库。
 type probeInput struct {

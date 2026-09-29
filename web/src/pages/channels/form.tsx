@@ -5,7 +5,9 @@ import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
-import { maxConcurrencyOf, settingsDirty } from './derive'
+import { headerRows, headersDirty, headersOf, maxConcurrencyOf, settingsDirty } from './derive'
+import type { HeaderRow } from './derive'
+import { IconX } from '../../icons/acts'
 import { providerOptions, useProviders } from '../../prices'
 
 /**
@@ -37,6 +39,7 @@ export function ChannelForm({
   onSaved,
   onDirtyChange,
   onDelete,
+  onHeadersSaved,
 }: {
   channel: Channel | null
   /** 新建时是「放弃新建」；编辑时不给（弹框自己有关闭）。 */
@@ -46,6 +49,11 @@ export function ChannelForm({
   onDirtyChange?: (dirty: boolean) => void
   /** 编辑时给：删除渠道跟设置同住一个弹框，坐在保存对面。 */
   onDelete?: () => void
+  /**
+   * 编辑时给：头那一笔已落库、后面设置那一笔失败时调，让调用方重拉渠道。不重拉的话
+   * 弹框关了再开会摆出旧头，下次改头再把旧值整组写回去（#167）。
+   */
+  onHeadersSaved?: () => void
 }) {
   const [name, setName] = useState(channel?.name ?? '')
   // API 地址是一份共用前缀 + 协议勾选（DESIGN v0.46，口径层 v1.04）；落库前由
@@ -73,6 +81,8 @@ export function ChannelForm({
   // 认证头写法（口径层 v1.13，#82）。default 即老行为；raw 给 PAI-EAS 这类只认
   // 裸 Authorization 的网关——错配的表象是清一色 401，人会先怀疑凭证本身。
   const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? 'default')
+  // 额外出站头（#137 / #167）：只在编辑态出现，单独一笔 PUT，其余字段写不碰它。
+  const [headerList, setHeaderList] = useState<HeaderRow[]>(() => headerRows(channel?.headers ?? {}))
   // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
   const providers = useProviders().list
   const [error, setError] = useState('')
@@ -92,13 +102,19 @@ export function ChannelForm({
   // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。
   const showStateful = showCompaction
 
-  const dirty =
+  const settingsChanged =
     channel !== null &&
     settingsDirty(
       channel,
       { name, maxConcurrency: maxConcValue, provider, authScheme, compaction, stateful },
       showCompaction,
     )
+  const headersChanged = channel !== null && headersDirty(channel.headers, headerList)
+  const dirty = settingsChanged || headersChanged
+
+  function setHeaderRow(i: number, patch: Partial<HeaderRow>) {
+    setHeaderList((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  }
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -118,19 +134,30 @@ export function ChannelForm({
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
+    let headersSaved = false
     try {
       if (channel) {
+        // 额外出站头是自己那一笔（#167），改了才发、先于设置发：它最可能被闸打回，
+        // 打回时什么都还没写。
+        if (headersChanged) {
+          const { headers, dup } = headersOf(headerList)
+          if (dup) throw new Error(`额外出站头 "${dup}" 写了两行，同名只会剩一个`)
+          await api.put(`/channels/${channel.id}/headers`, { headers })
+          headersSaved = true
+        }
         // 编辑走「上游设置」这一笔意图写（#48 批2）：只发这张表单上有的字段，
         // base_url / key_mode / disabled 各有各的写点，这里不回传也回传不了。
         // 能力位只有露着才传（不传 = 那一列不动）。
-        await api.put(`/channels/${channel.id}/settings`, {
-          name,
-          max_concurrency: maxConcValue,
-          provider,
-          auth_scheme: authScheme,
-          ...(showCompaction ? { supports_compaction: compaction } : {}),
-          ...(showStateful ? { supports_stateful_responses: stateful } : {}),
-        })
+        if (settingsChanged) {
+          await api.put(`/channels/${channel.id}/settings`, {
+            name,
+            max_concurrency: maxConcValue,
+            provider,
+            auth_scheme: authScheme,
+            ...(showCompaction ? { supports_compaction: compaction } : {}),
+            ...(showStateful ? { supports_stateful_responses: stateful } : {}),
+          })
+        }
         onSaved(channel.id)
       } else {
         const created = await api.post<{ id: number }>('/channels', {
@@ -147,6 +174,7 @@ export function ChannelForm({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      if (headersSaved) onHeadersSaved?.()
     } finally {
       setBusy(false)
     }
@@ -224,6 +252,54 @@ export function ChannelForm({
       >
         <Segmented value={authScheme} options={AUTH_SCHEME_OPTIONS} onChange={setAuthScheme} />
       </Field>
+
+      {/* 额外出站头（#167，DESIGN §5.1）：键值对逐行，值旁删行微钮，底下「添加一行」。
+          闸全在服务端 ValidateHeaders，拒因原文进 ErrorBar。不用 Field：它是 <label>，
+          一个 label 里装多个输入框会把点击都导向第一个。 */}
+      {channel && (
+        <div className="field">
+          <span className="field-label">额外出站头</span>
+          {headerList.map((r, i) => (
+            <div className="header-row" key={i}>
+              <input
+                className="mono"
+                aria-label="头名"
+                placeholder="头名，如 x-opencode-session"
+                value={r.name}
+                onChange={(e) => setHeaderRow(i, { name: e.target.value })}
+              />
+              <input
+                aria-label="值"
+                placeholder="值"
+                value={r.value}
+                onChange={(e) => setHeaderRow(i, { value: e.target.value })}
+              />
+              <button
+                type="button"
+                className="act-icon"
+                aria-label="删掉这一行"
+                title="删掉这一行"
+                onClick={() => setHeaderList((rows) => rows.filter((_, j) => j !== i))}
+              >
+                <IconX />
+              </button>
+            </div>
+          ))}
+          <div>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => setHeaderList((rows) => [...rows, { name: '', value: '' }])}
+            >
+              添加一行
+            </button>
+          </div>
+          <span className="field-hint">
+            固定随转发、检测、拉模型列表一起发给上游的请求头，给「缺某个头就拒」的上游用（如 OpenCode Go 的
+            x-opencode-session）；凭证、Content-Type、Host 这类网关自己写的头不能填。值明文显示，不是放密钥的地方
+          </span>
+        </div>
+      )}
 
       {/* 端点设置（DESIGN v0.46，口径层 v1.04）：一份共用前缀 + 协议勾选即声明，
           个别协议要不同前缀时在预览行上单独填。地址存的是「协议子路径之前」的前缀，
