@@ -553,3 +553,20 @@ func TestChannelHeadersApplyAndReject(t *testing.T) {
 		t.Errorf("保留头名该被点名拒，实际报文：\n%s", msg)
 	}
 }
+
+// 文件里渠道 name 只有空白，selfCheck 要点名（#144）——与管理端那条同一道闸。
+func TestBlankChannelNameIsReported(t *testing.T) {
+	msg := applyErr(t, openDB(t), `
+channels:
+  - name: "  "
+    base_url:
+      openai: https://example.internal/v1
+    credentials:
+      - name: k
+        credential: sk-x
+api_keys: []
+`)
+	if !strings.Contains(msg, "channels[0] 没有 name") {
+		t.Errorf("空白渠道名没被点名。实际报文：\n%s", msg)
+	}
+}

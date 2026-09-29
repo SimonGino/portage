@@ -284,10 +284,6 @@ func (h *Handler) createChannel(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
-	if in.Name == "" {
-		fail(c, http.StatusBadRequest, "渠道名不能为空")
-		return
-	}
 	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
 		input, err := in.toStore()
 		if err != nil {
