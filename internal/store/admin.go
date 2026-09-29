@@ -281,6 +281,10 @@ type ChannelInput struct {
 	// 取值不校验——快照随发版才更新，拿会过期的世面数据拦保存不值当。
 	Provider *string `json:"provider"`
 	Disabled bool    `json:"disabled"`
+	// Headers 是渠道级额外出站头（#137）。nil = 没提，建渠道时落空、改渠道时不动；
+	// 非 nil（含空 map）即整组覆盖。只有声明文件那条路写它（每次都给非 nil），
+	// 管理端不露这个字段，所以 json:"-"——管理端保存渠道不会把它清掉。
+	Headers map[string]string `json:"-"`
 }
 
 // normalized 校验并归一化每协议地址：去空格，一个协议都没填直接拒——「删掉最后
@@ -396,13 +400,16 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if in.Provider != nil {
 		provider = strings.TrimSpace(*in.Provider)
 	}
+	if err := ValidateHeaders(in.Headers); err != nil {
+		return 0, err
+	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
 		                      credential_type, key_mode, auth_scheme, max_concurrency,
-		                      supports_compaction, supports_stateful_responses, provider, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      supports_compaction, supports_stateful_responses, provider, disabled, headers)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, scheme, conc,
-		boolInt(compaction), boolInt(stateful), provider, boolInt(in.Disabled))
+		boolInt(compaction), boolInt(stateful), provider, boolInt(in.Disabled), encodeHeaders(in.Headers))
 	if err != nil {
 		return 0, err
 	}
@@ -454,6 +461,13 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	if in.Provider != nil {
 		sets += `, provider = ?`
 		args = append(args, strings.TrimSpace(*in.Provider))
+	}
+	if in.Headers != nil {
+		if err := ValidateHeaders(in.Headers); err != nil {
+			return err
+		}
+		sets += `, headers = ?`
+		args = append(args, encodeHeaders(in.Headers))
 	}
 	if set.Has(protocol.OpenAIResponses) {
 		if in.SupportsCompaction != nil {
@@ -610,6 +624,8 @@ type ProbeTarget struct {
 	// AuthScheme 是渠道的认证头写法（#82）：检测与拉模型列表复用转发那套头，问的
 	// 就是「按我们发请求的方式打过去通不通」，认证档位自然也得跟着。
 	AuthScheme string
+	// Headers 是渠道级额外出站头（#137），理由同 AuthScheme：检测与拉列表得带转发那批头。
+	Headers map[string]string
 	// Credentials 含**已停用**的凭证（口径层 v0.96 承接 v0.38 的立论）：恢复是
 	// 纯人工的，「这把停用的凭证还坏不坏」除了发一次请求没有别的办法回答——
 	// 检测就得能选中它。
@@ -630,10 +646,12 @@ type ProbeCredential struct {
 // ChannelProbeTarget 按 id 取检测目标。
 func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget, error) {
 	var t ProbeTarget
+	var headers string
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme
+		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme, ch.headers
 		FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme)
+		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme, &headers)
+	t.Headers = DecodeHeaders(headers)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound
 	}

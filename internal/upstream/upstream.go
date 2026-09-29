@@ -172,7 +172,7 @@ func (c *Client) send(ctx context.Context, rt Route, cred Credential, ep protoco
 			return nil, err
 		}
 		req.ContentLength = int64(len(body))
-		applyHeaders(req.Header, clientHdr, rt.Protocol, rt.AuthScheme, cred.Value, stream)
+		applyHeaders(req.Header, clientHdr, rt.Protocol, rt.AuthScheme, cred.Value, stream, rt.Headers)
 
 		resp, err := c.http.Do(req)
 		if err != nil {
@@ -429,7 +429,16 @@ func redactedText(e error) (string, bool) {
 // scheme 是渠道级的认证头写法（口径层 v1.13，#82）：bearer / raw 改写认证头本身，
 // 协议头（anthropic-version 等）与认证档位无关照发；default 与认不得的取值都走按
 // 协议惯例那条老路——这一列可能是手写 SQL 灌的，读侧宽容与 KeyMode 同一条理由。
-func applyHeaders(dst, client http.Header, p protocol.Protocol, scheme, credential string, stream bool) {
+//
+// extra 是渠道声明的额外出站头（#137），静态值原样发。保留头名写侧已拒，这里再跳一次
+// 是给手写 SQL 灌进来的行兜底：网关自己的头不让渠道盖，也就不靠 map 遍历顺序定谁赢。
+func applyHeaders(dst, client http.Header, p protocol.Protocol, scheme, credential string, stream bool, extra map[string]string) {
+	for name, v := range extra {
+		if !store.ReservedHeader(name) {
+			dst.Set(name, v)
+		}
+	}
+
 	if ct := client.Get("Content-Type"); ct != "" {
 		dst.Set("Content-Type", ct)
 	} else {

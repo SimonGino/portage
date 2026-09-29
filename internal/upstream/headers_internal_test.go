@@ -1,7 +1,9 @@
 package upstream
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -32,7 +34,7 @@ func TestApplyHeadersAuthScheme(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := http.Header{}
-			applyHeaders(h, http.Header{}, tc.proto, tc.scheme, "sk-x", false)
+			applyHeaders(h, http.Header{}, tc.proto, tc.scheme, "sk-x", false, nil)
 			if got := h.Get("x-api-key"); got != tc.xAPIKey {
 				t.Errorf("x-api-key = %q，期望 %q", got, tc.xAPIKey)
 			}
@@ -43,5 +45,39 @@ func TestApplyHeadersAuthScheme(t *testing.T) {
 				t.Error("anthropic-version 不该随认证档位丢：它是协议头，与认证无关")
 			}
 		})
+	}
+}
+
+// 渠道额外出站头（#137）：静态值原样发；保留头名（手写 SQL 绕过写侧闸灌进来的）跳过，
+// 网关自己的头不让渠道盖。
+func TestApplyHeadersExtra(t *testing.T) {
+	h := http.Header{}
+	applyHeaders(h, http.Header{}, protocol.OpenAI, "", "sk-x", false, map[string]string{
+		"x-opencode-session": "s1", "User-Agent": "portage/1", "Authorization": "Bearer evil",
+	})
+	if got := h.Get("x-opencode-session"); got != "s1" {
+		t.Errorf("x-opencode-session = %q", got)
+	}
+	if got := h.Get("User-Agent"); got != "portage/1" {
+		t.Errorf("User-Agent = %q", got)
+	}
+	if got := h.Get("Authorization"); got != "Bearer sk-x" {
+		t.Errorf("保留头被渠道盖了：Authorization = %q", got)
+	}
+}
+
+// 检测与拉模型列表走同一批头：否则那两条路的结论会和真实转发不一致。
+func TestProbeAndListModelsSendExtraHeaders(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-opencode-session"))
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	extra := map[string]string{"x-opencode-session": "s1"}
+	ProbeModel(context.Background(), srv.URL, protocol.OpenAI, "", "sk-x", "m", extra)
+	ListModelsFor(context.Background(), store.BaseURLs{OpenAI: srv.URL}, "", "sk-x", extra)
+	if len(got) != 2 || got[0] != "s1" || got[1] != "s1" {
+		t.Errorf("上游收到的 x-opencode-session = %q，期望两次都是 s1", got)
 	}
 }

@@ -22,6 +22,8 @@ type Route struct {
 	BaseURL string
 	// AuthScheme 是认证头写法（口径层 v1.13）：default / bearer / raw，词表在 store。
 	AuthScheme string
+	// Headers 是渠道级额外出站头（#137），applyHeaders 原样带上；nil = 没有。
+	Headers map[string]string
 	// KeyMode 是凭证选取模式：polling（默认）/ random，词表在 store。
 	KeyMode string
 	// Credentials 是渠道当下全部启用凭证，按 id 升序（口径层 v0.38）。用哪一份、

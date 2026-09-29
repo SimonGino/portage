@@ -193,6 +193,11 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 		compaction := ch.SupportsCompaction
 		stateful := ch.SupportsStatefulResponses == nil || *ch.SupportsStatefulResponses
 		provider := strings.TrimSpace(ch.Provider)
+		// 文件是总量：没写 headers 也得给非 nil，writer 才会把库里旧的那组清掉。
+		headers := ch.Headers
+		if headers == nil {
+			headers = map[string]string{}
+		}
 		in := store.ChannelInput{
 			Name: name,
 			BaseURLs: store.BaseURLs{
@@ -208,6 +213,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 			SupportsStatefulResponses: &stateful,
 			Provider:                  &provider,
 			Disabled:                  ch.Disabled,
+			Headers:                   headers,
 		}
 		var id int64
 		switch err := tx.QueryRowContext(ctx, `SELECT id FROM channels WHERE name = ?`, name).Scan(&id); {

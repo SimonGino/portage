@@ -510,3 +510,33 @@ func TestApplyLogsChangesWithoutSecrets(t *testing.T) {
 		}
 	}
 }
+
+// 渠道额外出站头（#137）：文件是总量——写了就落库，删了就清掉；保留头名被 selfCheck
+// 点名拒（一次报全，不等 writer 首错即停）。
+func TestChannelHeadersApplyAndReject(t *testing.T) {
+	withHeaders := strings.Replace(goodFile,
+		"      openai: https://example.internal/v1\n",
+		"      openai: https://example.internal/v1\n    headers:\n      x-opencode-session: s1\n", 1)
+	db := openDB(t)
+	read := func() string {
+		t.Helper()
+		var got string
+		if err := db.QueryRow(`SELECT headers FROM channels WHERE name = 'qwen'`).Scan(&got); err != nil {
+			t.Fatalf("读 headers: %v", err)
+		}
+		return got
+	}
+	mustApply(t, db, withHeaders)
+	if got := read(); got != `{"x-opencode-session":"s1"}` {
+		t.Fatalf("headers = %s", got)
+	}
+	mustApply(t, db, goodFile)
+	if got := read(); got != "" {
+		t.Fatalf("文件里删掉 headers 后库里该清空，实得 %s", got)
+	}
+
+	msg := applyErr(t, openDB(t), strings.Replace(withHeaders, "x-opencode-session: s1", "Host: example.com", 1))
+	if !strings.Contains(msg, `"Host"`) || !strings.Contains(msg, "渠道 \"qwen\" 的 headers") {
+		t.Errorf("保留头名该被点名拒，实际报文：\n%s", msg)
+	}
+}

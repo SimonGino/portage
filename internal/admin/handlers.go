@@ -475,7 +475,7 @@ func (h *Handler) fetchChannelModels(c *gin.Context) {
 	}
 	// 各协议打各的出站根地址（口径层 v0.96 ②，#49）：哪个协议用哪个地址的知识在
 	// upstream 里，这儿只把整份映射递过去。
-	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, target.AuthScheme, cred)
+	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, target.AuthScheme, cred, target.Headers)
 	// 只报渠道名与拉到几组，不报 base_url，更不报凭证值。
 	h.log.Info("拉上游模型列表", "channel", target.Name, "groups", len(results))
 	c.JSON(http.StatusOK, gin.H{"results": results})

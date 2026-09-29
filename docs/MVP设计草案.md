@@ -9,6 +9,8 @@
 > 同块另记（[#105](https://github.com/SimonGino/portage/issues/105) 落地：上游流中途挂住加 300s 空闲读超时，收场归 `stream_aborted`，修改人 jinpenga）：PO 2026-09-29 裁决——`upstream.Client.Do` 返回的 `resp.Body` 外包 `idleTimeoutBody`，读到数据续期，到点取消本次尝试的 context；阈值固定 300s 不进 config.yaml；复用 `stream_aborted`，原文 `upstream idle timeout`；`ResponseHeaderTimeout` 120s 不动。落点见 §6.1「空闲读超时补一层」与 §7.5「拥塞期零改动」① 的补注。
 >
 > 同块另记（口径层 vNEXT 落地：干净 EOF 无终态并入 `stream_aborted`，[#98](https://github.com/SimonGino/portage/issues/98)，修改人 jinpenga）：①三个解码器在放出 `EvDone{Truncated}` 的那条流上记 `SetStreamReadError(protocol.ErrStreamTruncated)`，`server/convert.go` 既有的 `StreamReadReporter` 那一刀就把收场记成 `stream_aborted`，不加新通道。②A / CC 出口收到 `EvDone.Truncated` 即走各自的 `writeError`（`sawErrored` 闸挡住后续 `message_stop` / `[DONE]`）；R 出口不动。③`openaicc` 解码记 `[DONE]`（`sawDone`），发过 `[DONE]` 却没 `finish_reason` 的流不置 `Truncated`。④非流式不动：`DecodeFullBody` 的 `Truncated` 仍只给压缩合成用。验收：`protocol/truncation_test.go` 三上游 × 两出口矩阵与 `[DONE]` 反例、`server/convert_test.go` 流水一条。
+>
+> 同块另记（口径层 vNEXT 落地：渠道级额外出站头，[#137](https://github.com/SimonGino/portage/issues/137)，修改人 jinpenga）：§6.1 请求头重建白名单补一条「渠道声明的额外头」；§7 `channels` 表补 `headers` 列（键排序 JSON，空串 = 没有；老库由 `store.addChannelHeaders` 补列）。客户端请求头白名单本身**不放宽**：额外头是运维人配的，不是转发客户端指纹。管理端不展示也不写这一列（`ChannelInput.Headers` 为 `json:"-"`，管理端四笔字段写都不碰它），只有声明文件 apply 与管理端导入写——那条路文件是总量，文件里没写 `headers` 即清库。
 
 > v1.55 变更（口径层 v1.33 落地：转换路径的 Anthropic 出口自动打缓存断点，[#132](https://github.com/SimonGino/portage/issues/132)，修改人 jinpenga）：①`anthropic/encode_request.go` 在序列化前经 `markCacheBreakpoints` 打两个 `ephemeral`：system 末块（无 system 落最后一个工具）、最后一条消息里最后一个非 thinking / redacted_thinking 的块；编出来的请求里已有任何 `cache_control` 就一个不补。流式与非流式同一条路径。②**补上 §2「cache_control 仅出口为 Anthropic 时保留」的落地缺口**：此前 A 出口不读 `Block.Extras` / `Tool.Extras`，CC 入口带来的断点在 CC→A 上静默丢失；现经 `withCacheControl` 在 text / image / tool_use / tool_result 块与工具声明上原样带出（值为 `null` 不带）。载体按入口解码的落点读：content part 在 `Block.Extras`，CC `tool_calls[]` 条目在 `ToolCall.Extras`，CC `role=tool` 消息在 `Message.Extras`（litellm `factory.py` 同认这三处）。Responses 的 `function_call_output` 一类 item 上的 `cache_control` 解码时已丢，Responses 协议无此字段、也无客户端样本，不追。用例 `internal/protocol/cachebreakpoint_test.go`，12 份 `in-cc-*` / `in-responses-*` golden 经 canonical 编到 A 出口断言断点位置与个数，另加无 system（有 / 无工具）、thinking 结尾、客户端已带断点四格。
 
@@ -677,6 +679,7 @@ logging：无论成败异步落 call_logs
 - Anthropic 渠道额外：`anthropic-version` 取自客户端、未给时默认 `2023-06-01`；`anthropic-beta` 客户端给了就原样转发（Claude Code 靠它开 1M 上下文、computer use 等能力，丢了会静默退化）。
 - 一律不转发：hop-by-hop 头（`Connection`/`Keep-Alive`/`TE`/`Trailer`/`Transfer-Encoding`/`Upgrade`/`Proxy-*`）、`Host`、`Content-Length`（Go 按 body 重设）、`Cookie`，以及**客户端自带的 `Authorization` / `x-api-key`——M1 起那里放的是网关下发的 API Key，绝不能漏到上游**。
 - `Accept-Encoding` 不转发客户端值，流式请求显式设 `identity`（避免上游压缩引入分块缓冲、拖长首字延迟）；不注入 `X-Forwarded-*`（个人自用零收益且泄露内网信息）。
+- **渠道声明的额外头**（vNEXT，口径层 vNEXT，[#137](https://github.com/SimonGino/portage/issues/137)）：声明文件渠道的 `headers` 静态值原样发出，与客户端无关——它是运维人配的头（可含 `User-Agent`），不是把客户端指纹加白，下面「白名单不放宽」的结论不受影响。`applyHeaders` 先写额外头、再写上面几条网关自己的头；保留头名（凭证载体、`Content-Type` / `Accept` / `Accept-Encoding` / `anthropic-version` / `anthropic-beta`、`Host`、`Content-Length`、逐跳头）写侧 `store.ValidateHeaders` 拒，发送侧再跳一次兜手写 SQL，谁赢不靠 map 遍历顺序。模型级检测与拉模型列表同样带。
 
 > **白名单实测复核（M0 验收，2026-08-06）**：用一次性反代录下 Codex CLI 实际发出的全部请求头，逐条对照上面的白名单。结论是**白名单不放宽**，依据两条：① Codex 的私有头（`X-Codex-*` 一族、session/turn 标识等）全部被丢弃，整轮工具调用照样跑通——上游不需要它们；② 其中 `X-Codex-Turn-Metadata` 携带 `installation_id`，属于客户端安装标识，转发出去等于把本机指纹泄露给上游，个人自用场景零收益。若日后某个 harness 因缺头而降级，按「哪个头、丢了坏什么」逐个加白，不做整类放行。
 
@@ -783,6 +786,7 @@ CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职
   max_concurrency INTEGER NOT NULL DEFAULT 0,  -- 渠道并发上限（口径层 v0.49）：in-flight 上限，0 = 不限；老库靠 store.migrate 的既有 ALTER 模式补列。见 §7.5
   supports_compaction INTEGER NOT NULL DEFAULT 0,  -- 上游认不认 Codex 的 compaction_trigger（口径层 v0.54）：默认 0 = 不认，存量行同。只在 Responses 透传路径上被问到。见 §7.6
   supports_stateful_responses INTEGER NOT NULL DEFAULT 1,  -- 上游认不认 Responses 的有状态语义 previous_response_id（口径层 v0.88）：默认 1 = 认，存量行随迁移一律落 1（与上一列默认值相反，理由是代价不对称的方向相反）。只在 Responses 透传路径上被问到，转换路径无条件拒。见 §7.8
+  headers TEXT NOT NULL DEFAULT '',  -- 渠道级额外出站头（口径层 vNEXT，#137）：键排序的 JSON 对象，空串 = 没有；只由声明文件 / 导入写，管理端不露。见 §6.1
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

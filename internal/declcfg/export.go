@@ -161,7 +161,7 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, name, base_url_openai, base_url_openai_responses, base_url_anthropic,
 		       credential_type, key_mode, auth_scheme,
-		       max_concurrency, supports_compaction, supports_stateful_responses, provider, disabled
+		       max_concurrency, supports_compaction, supports_stateful_responses, provider, disabled, headers
 		FROM channels ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("读渠道：%w", err)
@@ -173,11 +173,13 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 		var id int64
 		var ch Channel
 		var compaction, stateful, disabled int
+		var headers string
 		if err := rows.Scan(&id, &ch.Name, &ch.BaseURL.OpenAI, &ch.BaseURL.OpenAIResponses,
 			&ch.BaseURL.Anthropic, &ch.CredentialType,
-			&ch.KeyMode, &ch.AuthScheme, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled); err != nil {
+			&ch.KeyMode, &ch.AuthScheme, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled, &headers); err != nil {
 			return nil, err
 		}
+		ch.Headers = store.DecodeHeaders(headers)
 		// default 不背一行（omitempty 只略过空串）：apply 侧 orDefault 会补回来，
 		// 往返闸两边对得上。
 		if ch.AuthScheme == store.AuthSchemeDefault {
