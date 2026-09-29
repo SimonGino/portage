@@ -369,8 +369,11 @@ func contextTooLong(status int, msg, code string) bool {
 func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, res *exchange.Result) {
 	events, err := outCodec.DecodeStream(res.Body)
 	if err != nil {
-		rec.Failed(calllog.UpstreamError, "")
-		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", err)
+		// 与 bufferConverted 各失败支同一口径（#163 的兄弟路径，
+		// issue #170）：落库的原文就是脱敏后的错误本身（v0.53），不传空串。
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", detail)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流无法解析")
 		return
 	}
