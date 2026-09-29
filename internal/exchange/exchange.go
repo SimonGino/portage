@@ -117,7 +117,7 @@ func (o *ResponseObserver) Close() {
 func (x *Client) Do(ctx context.Context, w http.ResponseWriter, req Request) (*Result, bool) {
 	rec := req.Rec
 	rec.Dialing(req.Endpoint.Path)
-	resp, at, err := x.Up.Do(ctx, req.Route, req.Endpoint, req.RawQuery, req.Body, req.Header, req.Stream)
+	resp, at, err := x.Up.Do(ctx, upstream.Request{Route: req.Route, Endpoint: req.Endpoint, RawQuery: req.RawQuery, Body: req.Body, Header: req.Header, Stream: req.Stream})
 	rec.Attempted(at.Retries(), at.Credential, at.QueueWait)
 	if err != nil {
 		if x.writeQueueReject(w, req, err) {
