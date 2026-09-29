@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": false,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#133。非流式两个 choice 的 message，数组里 index 1 排在前（第一个出现的是它），index 0 的正文、推理与 finish_reason 该丢。形状照 golden/cc-text 与 cc-tool 写；真实 harness 不带 n>1，录不到多 choice。出处 magpie `ff4f730`（#168）。",
+  "synthetic": true
+}

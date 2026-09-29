@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#133。第一个出现的 choice 是 index 1（中转站编号不从 0 起），其后夹一个 index 0 与一个缺 index（按 0 算）的帧，都该丢。帧形照 golden/cc-stream-text 写；真实 harness 录不到多 choice。出处 magpie `ff4f730`（#168）。",
+  "synthetic": true
+}

@@ -1,0 +1,9 @@
+{
+  "direction": "upstream",
+  "protocol": "openai",
+  "stream": true,
+  "endpoint": "/v1/chat/completions",
+  "status": 200,
+  "source": "构造样本（非转录）：#133。中转站把 choice index 发成字符串：\"0\" 认作 0，\"1\" 丢，解析不了的 \"x\" 与缺 index 都按 0 算。帧形照 golden/cc-stream-text 写；手上没有这类中转站的转录。出处 magpie `ff4f730`（#168）。",
+  "synthetic": true
+}
