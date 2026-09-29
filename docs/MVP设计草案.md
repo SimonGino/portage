@@ -6,6 +6,8 @@
 
 > v1.66 变更（口径层 v1.39 落地：版本号从 `v0.1.1` 重新起、发版号只认纯 `x.y.z`，[#150](https://github.com/SimonGino/portage/issues/150)，修改人 jinpenga）：§7.11「前端」两处——检测条件由 `version != "dev"` 改为「纯 `x.y.z`」（`web/src/release.ts` 的 `isRelease`，`test` 与 `-SNAPSHOT` 快照同样不查；`newer` 随之只比三段数字）；缓存由 `{tag, checkedAt}` 改为 `{tag, published, checkedAt}`，发布日是 DESIGN v0.65 版本对照行要显示的，此前两字段漏了它。原文留删除线。
 
+> vNEXT 变更（[#167](https://github.com/SimonGino/portage/issues/167) 落地：渠道额外出站头进管理端，口径层 vNEXT，2026-09-29）：`headers` 单独一笔意图写 `PUT /panel/api/channels/:id/headers`（body `{headers:{名:值}}`，整组覆盖，空对象 / null = 清空），落 `store.UpdateChannelHeaders`，闸是声明文件同一个 `ValidateHeaders`、拒因原文 400；在写闸组里，声明文件形态 409。其余四笔（settings / base-url / key-mode / disabled）照旧不碰这一列，`ChannelInput.Headers` 仍 `json:"-"`（那扇门只给声明文件）。`GET /channels` 每个渠道带 `headers`（没有时是 `{}`）。前端「上游设置」弹框一次保存最多两笔：头改了先发 headers（最可能被闸打回，打回时什么都还没写），设置改了再发 settings，两笔不同事务——头成了、设置败了时弹框留着报错并重拉渠道，免得关了再开摆出旧头；完全同名的两行在前端拦（对象键合并会静默丢一行，服务端看不见）。用例：`internal/server/authscheme_test.go` 三条（管理端写后转发 / 检测 / 拉列表三路带新值且读接口带出；保留头名 400 原文回显不落库；其余四笔不动 headers），只读闸清单补这条路由；`derive.test.ts` 补行↔集合互转与改动判据。修改人 jinpenga。
+
 > v1.65 变更（§11.4 订正，[#150](https://github.com/SimonGino/portage/issues/150) 实现时发现，PO 2026-09-29 裁定改，修改人 jinpenga）：`.goreleaser.yaml` 的 `before.hooks` 由 `dir: web` 结构形式改为 `npm --prefix web …` 字符串——OSS 版全局 hooks 不认结构形式，`goreleaser check` 报 `cannot unmarshal !!map into string`。原文留删除线。调研草案（`research/goreleaser-release-pipeline` 分支 §6.1 / §7 第 1 条）同一处错，不回改，以本节为准。
 
 > v1.64 变更（口径层 v1.38 落地：版本注入、新版检测与自升级、GitHub Release 与 curl 安装，wayfinder [#150](https://github.com/SimonGino/portage/issues/150)，修改人 jinpenga）：新增 §7.11（`-X main.version` / `main.distro` 注入、`/session` 加 `version` `distro` 两字段、`POST /panel/api/upgrade` 与错误词表、`internal/selfupdate` 的下载 → sha256 → 同目录临时文件 → rename 序列、`errRestart` 哨兵出 `run()` 后在 `main()` 里 `syscall.Exec`、`portage upgrade` 子命令、前端检测与轮询、测试方案）与 §11.4（`.goreleaser.yaml` / `release.yml` 要点、`install.sh` 行为、`deploy/portage.service`）。事实依据 [#151](https://github.com/SimonGino/portage/issues/151) / [#152](https://github.com/SimonGino/portage/issues/152)。
@@ -801,7 +803,7 @@ CREATE TABLE channels (            -- 渠道只管连通性，不承担路由职
   max_concurrency INTEGER NOT NULL DEFAULT 0,  -- 渠道并发上限（口径层 v0.49）：in-flight 上限，0 = 不限；老库靠 store.migrate 的既有 ALTER 模式补列。见 §7.5
   supports_compaction INTEGER NOT NULL DEFAULT 0,  -- 上游认不认 Codex 的 compaction_trigger（口径层 v0.54）：默认 0 = 不认，存量行同。只在 Responses 透传路径上被问到。见 §7.6
   supports_stateful_responses INTEGER NOT NULL DEFAULT 1,  -- 上游认不认 Responses 的有状态语义 previous_response_id（口径层 v0.88）：默认 1 = 认，存量行随迁移一律落 1（与上一列默认值相反，理由是代价不对称的方向相反）。只在 Responses 透传路径上被问到，转换路径无条件拒。见 §7.8
-  headers TEXT NOT NULL DEFAULT '',  -- 渠道级额外出站头（口径层 v1.37，#137）：键排序的 JSON 对象，空串 = 没有；只由声明文件 / 导入写，管理端不露。见 §6.1
+  headers TEXT NOT NULL DEFAULT '',  -- 渠道级额外出站头（口径层 v1.37，#137）：键排序的 JSON 对象，空串 = 没有；声明文件 / 导入写，管理端 vNEXT（#167）起经 PUT /channels/:id/headers 可写。见 §6.1
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -1208,6 +1210,7 @@ api_keys:
 | GET POST | `/panel/api/channels/:id/credentials` | 凭证逐条 CRUD；GET 只回名字/状态/时间/停用原因，**永不回凭证值**；POST 支持一次贴多份（语义为追加） |
 | PUT DELETE | `/panel/api/credentials/:id` | 改名 / 停用 / 启用 / 删除；改凭证值也走 PUT，同样没有对应的读 |
 | POST | `/panel/api/channels/:id/models` | 加纳管模型；PUT DELETE `/channel-models/:id` 停用/删除。两者的 body 都可带 `protocols`（v0.38，协议子集；PUT 不传该字段=不动它，传空数组=清成继承）；PUT 另可带 `max_input_tokens`（v1.18，`*int`：不传=不动，0=清成不限，负数 400） |
+| PUT | `/panel/api/channels/:id/headers` | 渠道额外出站头整组覆盖（vNEXT，#167）：body `{headers:{名:值}}`，空对象 = 清空；闸同声明文件 `store.ValidateHeaders`，拒因原文 400。渠道的其余字段写不碰这一列 |
 | POST | `/panel/api/channels/:id/fetch-models` | 拉上游 `/v1/models` 给表单做预勾选（v0.38）。**POST 而非 GET**：它朝上游发真请求、花上游的配额，不该被浏览器或中间层当可缓存的读操作重放。回一组 `{protocols, models, status, detail}`，**不落库、不进路由** |
 | POST | `/panel/api/channels/:id/probe` | 模型级检测（v1.13/口径层 v0.96 ①③）：body `{credential_id, model, protocols}`——凭证按 id 指定（**允许已停用**）、`model` 空串 = 全部启用中的纳管模型、`protocols` 必须 ⊆ 已声明协议（越出 400 且**零请求**——参数错误不该花钱）。每格发带模型名的最小真实请求，回 `{credential, models}` 三态矩阵（2xx 通 / 404、405 不通 / 其余说不清，我方固定词表不带上游原文）；**不落库、不进路由、无任何自动触发** |
 | GET POST | `/panel/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |

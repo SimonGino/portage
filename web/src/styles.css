@@ -597,6 +597,14 @@ button.acct-avatar:hover {
   margin-top: 2px;
 }
 
+/* 额外出站头的一行（#167）：头名 + 值 + 删行微钮，值略宽——头名短、值常是一串 id。 */
+.header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 26px;
+  gap: 6px;
+  align-items: center;
+}
+
 .models-empty {
   margin: 8px 0;
 }

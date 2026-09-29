@@ -139,6 +139,9 @@ type Channel struct {
 	// 建议与图标分组，不参与路由。空串 = 未标注。
 	Provider string `json:"provider"`
 	Disabled bool   `json:"disabled"`
+	// Headers 是渠道级额外出站头（#137；#167 起管理端可读可写）：键和值都照发——额外头
+	// 不是凭证。没有时是空对象不是 null，前端不用判空。
+	Headers map[string]string `json:"headers"`
 	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
 	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
 	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
@@ -154,7 +157,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
 		       ch.key_mode, ch.auth_scheme, ch.max_concurrency,
-		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled,
+		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled, ch.headers,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
 		FROM channels ch ORDER BY ch.id`)
@@ -167,11 +170,16 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	byID := map[int64]int{}
 	for rows.Next() {
 		var c Channel
+		var headers string
 		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
 			&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency,
-			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled,
+			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled, &headers,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err
+		}
+		c.Headers = DecodeHeaders(headers)
+		if c.Headers == nil {
+			c.Headers = map[string]string{}
 		}
 		// 协议集是地址的推导值（口径层 v0.96）：一个地址都没填就是空数组，页面上
 		// 显示「无协议」，人去补地址即可。真正拦下它的是启动闸。
@@ -282,8 +290,8 @@ type ChannelInput struct {
 	Provider *string `json:"provider"`
 	Disabled bool    `json:"disabled"`
 	// Headers 是渠道级额外出站头（#137）。nil = 没提，建渠道时落空、改渠道时不动；
-	// 非 nil（含空 map）即整组覆盖。只有声明文件那条路写它（每次都给非 nil），
-	// 管理端不露这个字段，所以 json:"-"——管理端保存渠道不会把它清掉。
+	// 非 nil（含空 map）即整组覆盖。这里只有声明文件那条路写它（每次都给非 nil）；
+	// 管理端改它走自己那一笔 UpdateChannelHeaders（#167），所以仍是 json:"-"。
 	Headers map[string]string `json:"-"`
 }
 
@@ -538,6 +546,16 @@ func UpdateChannelKeyMode(ctx context.Context, db Conn, id int64, mode string) e
 		return InvalidInput{Reason: "凭证选取模式只能是 polling（轮询）或 random（随机）"}
 	}
 	res, err := db.ExecContext(ctx, `UPDATE channels SET key_mode = ? WHERE id = ?`, mode, id)
+	return affectedOne(res, err)
+}
+
+// UpdateChannelHeaders 单写渠道额外出站头（#167，「上游设置」弹框）：整组覆盖，
+// nil 或空 map = 不带额外头。闸与声明文件那条路同一个 ValidateHeaders。
+func UpdateChannelHeaders(ctx context.Context, db Conn, id int64, h map[string]string) error {
+	if err := ValidateHeaders(h); err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE channels SET headers = ? WHERE id = ?`, encodeHeaders(h), id)
 	return affectedOne(res, err)
 }
 

@@ -150,6 +150,7 @@ export function ChannelDetail({ id }: { id: number }) {
               void reload()
             }}
             onDirtyChange={setSettingsDirty}
+            onHeadersSaved={() => void reload()}
             onDelete={() => {
               void mutate(() => api.del(`/channels/${ch.id}`)).then((ok) => {
                 if (ok) nav('/channels', { replace: true })

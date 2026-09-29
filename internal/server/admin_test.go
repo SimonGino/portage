@@ -697,6 +697,7 @@ func TestDeclarativeModeMakesBusinessConfigReadOnly(t *testing.T) {
 		{http.MethodPut, "/panel/api/channels/1/key-mode"},
 		{http.MethodPut, "/panel/api/channels/1/disabled"},
 		{http.MethodPut, "/panel/api/channels/1/settings"},
+		{http.MethodPut, "/panel/api/channels/1/headers"},
 		{http.MethodDelete, "/panel/api/channels/1"},
 		{http.MethodPost, "/panel/api/channels/1/credentials"},
 		{http.MethodPut, "/panel/api/credentials/1"},
