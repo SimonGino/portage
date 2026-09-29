@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"testing"
 	"time"
-
-	"github.com/SimonGino/portage/internal/protocol"
 )
 
 // 阈值钉成毫秒级而不是真等 300s（issue #105 的验收要求）：idleReadTimeout 是私有
@@ -31,7 +29,7 @@ func TestIdleTimeoutBodyFiresOnStall(t *testing.T) {
 	// 独立兜底超时：空闲超时一旦回归，挂住的 Read 由它掐断，断言照常报错而不是卡死整个测试。
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	resp, _, err := c.Do(ctx, up.route("a"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, true)
+	resp, _, err := c.Do(ctx, streamReq(up.route("a")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +64,7 @@ func TestIdleTimeoutBodySurvivesTrickle(t *testing.T) {
 	c := NewClient(RetryPolicy{})
 	c.idleReadTimeout = 60 * time.Millisecond // 总耗时(~90ms) > 阈值，但每帧间隔(~15ms) 远小于阈值
 
-	resp, _, err := c.Do(context.Background(), up.route("a"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, true)
+	resp, _, err := c.Do(context.Background(), streamReq(up.route("a")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,4 +77,11 @@ func TestIdleTimeoutBodySurvivesTrickle(t *testing.T) {
 	if string(got) != "xxxxxx" {
 		t.Fatalf("body = %q，期望 6 个 x", got)
 	}
+}
+
+// streamReq 同 chatReq，但 Stream 置真：空闲超时看的是流式读。
+func streamReq(rt Route) Request {
+	r := chatReq(rt)
+	r.Stream = true
+	return r
 }

@@ -45,6 +45,11 @@ func (f *fakeUpstream) route(creds ...string) Route {
 	return rt
 }
 
+// chatReq 是用例的最小 Request：只关心 Route，其余取零值。
+func chatReq(rt Route) Request {
+	return Request{Route: rt, Endpoint: protocol.EndpointChatCompletions, Body: []byte(`{}`), Header: http.Header{}}
+}
+
 func fastClient(retry RetryPolicy) *Client {
 	c := NewClient(retry)
 	c.retry.BaseDelay, c.retry.MaxDelay = time.Millisecond, 5*time.Millisecond
@@ -60,7 +65,7 @@ func TestDoSwitchesCredentialOn401(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	c := fastClient(RetryPolicy{MaxRetries: 2, MaxAttempts: 6})
-	resp, at, err := c.Do(context.Background(), up.route("a", "b"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp, at, err := c.Do(context.Background(), chatReq(up.route("a", "b")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +83,7 @@ func TestDoDoesNotSwitchCredentialOn5xx(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
 	c := fastClient(RetryPolicy{MaxRetries: 1, MaxAttempts: 6})
-	resp, at, err := c.Do(context.Background(), up.route("a", "b"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp, at, err := c.Do(context.Background(), chatReq(up.route("a", "b")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +105,7 @@ func TestDoGlobalBudgetCapsAcrossCredentials(t *testing.T) {
 	})
 	// 每把最多 1+2 次、三把共 9 次，全局预算封在 4。
 	c := fastClient(RetryPolicy{MaxRetries: 2, MaxAttempts: 4})
-	resp, at, err := c.Do(context.Background(), up.route("a", "b", "c"), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp, at, err := c.Do(context.Background(), chatReq(up.route("a", "b", "c")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +121,7 @@ func TestDoPollingRotatesStartCredential(t *testing.T) {
 	rt := up.route("a", "b")
 	rt.KeyMode = store.KeyModePolling
 	for _, want := range []string{"Bearer a", "Bearer b", "Bearer a"} {
-		resp, _, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+		resp, _, err := c.Do(context.Background(), chatReq(rt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +134,7 @@ func TestDoPollingRotatesStartCredential(t *testing.T) {
 
 func TestDoWithoutCredentialsFailsBeforeSending(t *testing.T) {
 	up := newFakeUpstream(t, func(_ int, w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	_, at, err := fastClient(RetryPolicy{}).Do(context.Background(), up.route(), protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	_, at, err := fastClient(RetryPolicy{}).Do(context.Background(), chatReq(up.route()))
 	if err == nil || at.Sends != 0 || len(up.auth) != 0 {
 		t.Fatalf("零凭证应报错且一个请求都不发：err=%v attempt=%+v sent=%d", err, at, len(up.auth))
 	}
@@ -145,12 +150,12 @@ func TestDoHoldsGateSlotUntilBodyClosed(t *testing.T) {
 	c.Queue = QueuePolicy{Factor: 0, Wait: time.Second}
 	rt := up.route("a")
 	rt.MaxConcurrency = 1
-	resp, _, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp, _, err := c.Do(context.Background(), chatReq(rt))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 第二次：坑被占、队列容量 0 → 立即 ErrQueueFull，且一个字节不打上游。
-	if _, _, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false); err != ErrQueueFull {
+	if _, _, err := c.Do(context.Background(), chatReq(rt)); err != ErrQueueFull {
 		t.Fatalf("坑占着时第二次 Do err = %v，期望 ErrQueueFull", err)
 	}
 	if len(up.auth) != 1 {
@@ -162,7 +167,7 @@ func TestDoHoldsGateSlotUntilBodyClosed(t *testing.T) {
 	}
 	resp.Body.Close()
 	resp.Body.Close() // 重复 Close 不能把同一个坑还两次
-	resp2, _, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp2, _, err := c.Do(context.Background(), chatReq(rt))
 	if err != nil {
 		t.Fatalf("Close 之后坑应已还回：%v", err)
 	}
@@ -179,12 +184,12 @@ func TestDoQueueTimeoutReportsWait(t *testing.T) {
 	c.Queue = QueuePolicy{Factor: 1, Wait: 10 * time.Millisecond}
 	rt := up.route("a")
 	rt.MaxConcurrency = 1
-	resp, _, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	resp, _, err := c.Do(context.Background(), chatReq(rt))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	_, at, err := c.Do(context.Background(), rt, protocol.EndpointChatCompletions, "", []byte(`{}`), http.Header{}, false)
+	_, at, err := c.Do(context.Background(), chatReq(rt))
 	if err != ErrQueueTimeout || at.QueueWait < 10*time.Millisecond {
 		t.Fatalf("err=%v attempt=%+v，期望 ErrQueueTimeout 且 QueueWait ≥ 10ms", err, at)
 	}

@@ -102,6 +102,19 @@ func (a Attempt) Retries() int {
 	return a.Sends - 1
 }
 
+// Request 是一次 Do 的全部输入（#148）：渠道侧的 Route 加客户端侧的端点、查询串、
+// 原始请求体、请求头与流式标志。exchange.Request 的同名字段逐一映射过来。
+type Request struct {
+	Route    Route
+	Endpoint protocol.Endpoint
+	// RawQuery 是客户端 URL 上的查询串，整串照抄给上游（见 buildURL）。
+	RawQuery string
+	Body     []byte
+	// Header 是客户端请求头，只按白名单取用（见 applyHeaders）。
+	Header http.Header
+	Stream bool
+}
+
 // Do 把 body 原样透传给 Route 指向的渠道，返回实时响应与这次的尝试过程。
 // 调用方负责 Close resp.Body。
 //
@@ -116,22 +129,21 @@ func (a Attempt) Retries() int {
 // 无论是重试耗尽、凭证耗尽还是撞上全局尝试上限，返回的都是**最后一次**上游响应的
 // 原字节，网关不改写不吞：M0 已验证的 429 逐字节透传，不能因为加了这两层而失效。
 //
-// rawQuery 是客户端 URL 上的查询串，整串照抄给上游（见 buildURL）。
-//
 // 渠道并发闸（口径层 v0.49/v0.50）拦在最外面：设了上限的渠道先占坑，闸满有界
 // 排队，队满/等超时返回 ErrQueueFull / ErrQueueTimeout（不带响应，由 server 译成
 // 429）。**一次 Do 只占一个坑**——里面的退避重试与换凭证全在同一个坑里发生，坑
 // 一直占到响应体读完（Close）才还，上游还在生成流时并发就是还占着的。
-func (c *Client) Do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
+func (c *Client) Do(ctx context.Context, req Request) (*http.Response, Attempt, error) {
+	rt := req.Route
 	if rt.MaxConcurrency <= 0 {
-		return c.do(ctx, rt, ep, rawQuery, body, clientHdr, stream)
+		return c.do(ctx, req)
 	}
 	g, limit := c.gateFor(rt.ChannelID), rt.MaxConcurrency
 	waited, err := g.acquire(ctx, limit, limit*c.Queue.Factor, c.Queue.Wait)
 	if err != nil {
 		return nil, Attempt{QueueWait: waited}, err
 	}
-	resp, at, err := c.do(ctx, rt, ep, rawQuery, body, clientHdr, stream)
+	resp, at, err := c.do(ctx, req)
 	at.QueueWait = waited
 	if resp == nil {
 		// 没有响应体可挂，坑当场还掉——包括 err != nil 与「凭证为空」两种收场。
@@ -143,12 +155,12 @@ func (c *Client) Do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuer
 }
 
 // do 是闸内的主体：凭证外环 + 同凭证退避内环。
-func (c *Client) do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool) (*http.Response, Attempt, error) {
-	creds := c.order(rt)
+func (c *Client) do(ctx context.Context, req Request) (*http.Response, Attempt, error) {
+	creds := c.order(req.Route)
 	var at Attempt
 	for i, cred := range creds {
 		at.Credential = cred.Name
-		resp, err := c.send(ctx, rt, cred, ep, rawQuery, body, clientHdr, stream, &at)
+		resp, err := c.send(ctx, req, cred, &at)
 		if !switchCredential(err, resp) || i == len(creds)-1 || c.budgetOut(at) {
 			return resp, at, err
 		}
@@ -160,21 +172,22 @@ func (c *Client) do(ctx context.Context, rt Route, ep protocol.Endpoint, rawQuer
 }
 
 // send 在**同一份凭证**上跑退避重试（口径层 v0.19），并把每次真实发送记进 at。
-func (c *Client) send(ctx context.Context, rt Route, cred Credential, ep protocol.Endpoint, rawQuery string, body []byte, clientHdr http.Header, stream bool, at *Attempt) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, req Request, cred Credential, at *Attempt) (*http.Response, error) {
+	rt := req.Route
 	for attempt := 0; ; attempt++ {
 		// 每次尝试单独一个可取消 context：空闲超时只掐这一次尝试的读，不牵连外层
 		// 客户端 ctx（重试、换凭证都还要接着用它）。err!=nil 时没有 body 可挂
 		// cancel，这里立刻调用；resp!=nil 时 cancel 交给 idleTimeoutBody 的 Close。
 		reqCtx, cancel := context.WithCancel(ctx)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, buildURL(rt.BaseURL, ep, rawQuery), bytes.NewReader(body))
+		hr, err := http.NewRequestWithContext(reqCtx, http.MethodPost, buildURL(rt.BaseURL, req.Endpoint, req.RawQuery), bytes.NewReader(req.Body))
 		if err != nil {
 			cancel()
 			return nil, err
 		}
-		req.ContentLength = int64(len(body))
-		applyHeaders(req.Header, clientHdr, rt.Protocol, rt.AuthScheme, cred.Value, stream, rt.Headers)
+		hr.ContentLength = int64(len(req.Body))
+		applyHeaders(hr.Header, req.Header, rt.Protocol, rt.AuthScheme, cred.Value, req.Stream, rt.Headers)
 
-		resp, err := c.http.Do(req)
+		resp, err := c.http.Do(hr)
 		if err != nil {
 			cancel()
 		} else {
