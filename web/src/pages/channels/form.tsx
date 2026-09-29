@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, AUTH_SCHEME_OPTIONS, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs } from '../../api'
-import type { AuthScheme, BaseURLDraft, BaseURLs, Channel, PricingProvider } from '../../api'
+import type { AuthScheme, BaseURLDraft, BaseURLs, Channel } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
-import type { Option } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
 import { maxConcurrencyOf, settingsDirty } from './derive'
+import { providerOptions, useProviders } from '../../prices'
 
 /**
  * joinURL 复刻服务端 `upstream.buildURL` 的拼法：右侧去尾斜杠，直接接子路径。
@@ -73,25 +73,12 @@ export function ChannelForm({
   // 认证头写法（口径层 v1.13，#82）。default 即老行为；raw 给 PAI-EAS 这类只认
   // 裸 Authorization 的网关——错配的表象是清一色 401，人会先怀疑凭证本身。
   const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? 'default')
-  const [providers, setProviders] = useState<PricingProvider[]>([])
+  // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
+  const providers = useProviders().list
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
-    api.get<PricingProvider[]>('/pricing/providers').then(setProviders).catch(() => {})
-  }, [])
-
-  const providerOptions = useMemo<Option<string>[]>(() => {
-    const opts: Option<string>[] = [{ value: '', label: '未标注' }]
-    // 库里存的标注可能不在快照名单里（自由文本，快照随发版才更新）：补一项回去并注明，
-    // 不补的话触发器显示「未标注」，而库里明明有值。
-    if (provider && !providers.some((p) => p.id === provider)) {
-      opts.push({ value: provider, label: provider, hint: '快照名单外' })
-    }
-    for (const p of providers) opts.push({ value: p.id, label: p.name, hint: p.id })
-    return opts
-  }, [providers, provider])
+  const options = useMemo(() => providerOptions(providers, provider), [providers, provider])
 
   // 空串与非数字都归 0（= 不限）：输入框是 type=number，正常路径进不来非数字。
   const maxConcValue = maxConcurrencyOf(maxConc)
@@ -225,7 +212,7 @@ export function ChannelForm({
         label="厂商标注"
         hint="这个上游对应 models.dev 的哪一家，只用来给模型页出建议价与图标分组，不影响转发；中转站对不上就留「未标注」"
       >
-        <Picker value={provider} options={providerOptions} onChange={setProvider} placeholder="未标注" />
+        <Picker value={provider} options={options} onChange={setProvider} placeholder="未标注" />
       </Field>
 
       {/* 认证头写法（口径层 v1.13，#82）。默认按协议惯例（anthropic 发 x-api-key、

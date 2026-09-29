@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import type { Channel, ChannelModel, PricingModelPrice, PricingModels, PricingProvider } from '../api'
+import type { Channel, ChannelModel } from '../api'
 import { Card, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
 import { Segmented } from '../fields'
 import { Picker } from '../fields'
-import type { Option } from '../fields'
 import { ChannelIcon, ModelIcon } from '../icons'
 import { ModelPrices } from './channels/modelprices'
-import { isUnpriced } from '../prices'
+import { isUnpriced, providerName, providerOptions, useProviders, useSuggested } from '../prices'
 
 /**
  * 定价页（口径层 v1.10 立、v1.11 改可编辑；#81；DESIGN §5.4）：全渠道纳管模型 ×
@@ -47,17 +46,11 @@ function ProviderDialog({
   onClose: () => void
   onSaved: () => Promise<unknown>
 }) {
-  const providers = useList(() => api.get<PricingProvider[]>('/pricing/providers'))
+  const providers = useProviders()
   const [value, setValue] = useState(ch.provider)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const options = useMemo<Option<string>[]>(
-    () => [
-      { value: '', label: '未标注' },
-      ...(providers.data ?? []).map((p) => ({ value: p.id, label: p.name })),
-    ],
-    [providers.data],
-  )
+  const options = useMemo(() => providerOptions(providers.list, value), [providers.list, value])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -103,29 +96,11 @@ export default function Pricing() {
   const [annotating, setAnnotating] = useState<Channel | null>(null)
   // provider id → 人话名（302ai → 302 AI），标注列显名字——与身份条上那颗 tag
   // 同一副读法。拉失败就显 id，标注是可选项不为它挂错误条。
-  const providerNames = useList(() => api.get<PricingProvider[]>('/pricing/providers').catch(() => []))
-  // models.dev 建议价：按渠道标注过的 provider 各拉一次快照，喂给定价胶囊的
-  // chip-suggest。拉失败当没有建议（快照是发版内置资产），不为它挂错误条。
-  const [suggested, setSuggested] = useState<Record<string, Record<string, PricingModelPrice>>>({})
-  const providers = useMemo(
-    () => [...new Set((channels.data ?? []).map((c) => c.provider).filter(Boolean))],
-    [channels.data],
+  const providerList = useProviders().list
+  // models.dev 建议价：按渠道标注过的 provider 各拉一次快照，喂给定价胶囊的 chip-suggest。
+  const suggested = useSuggested(
+    useMemo(() => [...new Set((channels.data ?? []).map((c) => c.provider).filter(Boolean))], [channels.data]),
   )
-  useEffect(() => {
-    let gone = false
-    for (const p of providers) {
-      if (suggested[p]) continue
-      api
-        .get<PricingModels>(`/pricing/models?provider=${encodeURIComponent(p)}`)
-        .then((r) => {
-          if (!gone) setSuggested((s) => ({ ...s, [p]: r.models }))
-        })
-        .catch(() => {})
-    }
-    return () => {
-      gone = true
-    }
-  }, [providers, suggested])
 
   // 写操作统一走这一个口（同 AccessPoints 的成例）：失败上 ErrorBar，成功后整表
   // 重拉——定价胶囊与置顶排序都吃列表数据，改完就该看到新样子。
@@ -235,7 +210,7 @@ export default function Pricing() {
                         title={`models.dev 标注 · ${r.ch.provider}。点击修改`}
                         onClick={() => setAnnotating(r.ch)}
                       >
-                        {providerNames.data?.find((p) => p.id === r.ch.provider)?.name ?? r.ch.provider}
+                        {providerName(providerList, r.ch.provider)}
                       </button>
                     ) : (
                       <button
