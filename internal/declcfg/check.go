@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
 )
 
@@ -107,13 +108,23 @@ func checkModels(channel string, models []Model) []string {
 		default:
 			seen[name] = true
 		}
+		// 协议子集值域（#141）：apply 走 store.UpdateChannelModel，认不得的取值会被 writer
+		// 首错即停地拒掉；这里复述只为一次报全。空列表是「继承渠道全集」这个最常见的
+		// 正常值，不是错。措辞与 store.checkModelProtocols 那条对齐。
+		if set := toProtocolSet(m.Protocols); len(set) > 0 {
+			if _, err := protocol.ParseSet(set.String()); err != nil {
+				p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 protocols=%q 不合法：%v"+
+					"（取值 anthropic/openai/openai_responses；留空表示继承渠道全集）",
+					channel, name, set.String(), err))
+			}
+		}
 		// 拒而不是当 0 用，理由同 max_concurrency 那条。
 		if m.MaxInputTokens < 0 {
 			p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 max_input_tokens=%d 是负数：0 表示不限，正整数才是上限",
 				channel, name, m.MaxInputTokens))
 		}
 		// 四价拒负（#74）：0 是真免费、不写是未定价（落 NULL），负数只能是填错。
-		// apply 写的是 raw SQL，管理端那条 SetChannelModelPrices 的校验守不到这里。
+		// apply 走的 store.UpdateChannelModel 同样会拦（#141），这里复述只为一次报全。
 		for _, pr := range []struct {
 			key string
 			v   *float64
@@ -250,20 +261,4 @@ func quoteAll(names []string) string {
 		out[i] = fmt.Sprintf("%q", n)
 	}
 	return strings.Join(out, " 与 ")
-}
-
-// parseProtocols 把文件里的协议列表拼成 DDL 那一列的逗号分隔形态。
-//
-// **不在这里校值域**：protocols 的合法性归 store.Validate 的 checkChannelFields /
-// checkModelProtocols，它们已经逐项 ParseSet 过且措辞讲究（尤其纳管模型那一列，空串
-// 是「继承渠道全集」这个最常见的正常值）。这里只做形态转换，把非法值原样送进库让
-// 那道闸去报——两道闸的 problems 由 Apply 合并报，人看到的仍是一次报全。
-func parseProtocols(list []string) string {
-	trimmed := make([]string, 0, len(list))
-	for _, s := range list {
-		if s = strings.TrimSpace(s); s != "" {
-			trimmed = append(trimmed, s)
-		}
-	}
-	return strings.Join(trimmed, ",")
 }

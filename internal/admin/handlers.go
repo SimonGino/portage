@@ -631,30 +631,15 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
-	if in.Disabled == nil && in.Protocols == nil && in.MaxInputTokens == nil && in.Prices == nil {
-		fail(c, http.StatusBadRequest, "没有要改的字段")
-		return
+	patch := store.ChannelModelPatch{
+		Disabled: in.Disabled, MaxInputTokens: in.MaxInputTokens, Prices: in.Prices,
+	}
+	if in.Protocols != nil {
+		set := toProtocolSet(*in.Protocols)
+		patch.Protocols = &set
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		if in.Disabled != nil {
-			if err := store.SetChannelModelDisabled(ctx, tx, id, *in.Disabled); err != nil {
-				return err
-			}
-		}
-		if in.MaxInputTokens != nil {
-			if err := store.SetChannelModelMaxInputTokens(ctx, tx, id, *in.MaxInputTokens); err != nil {
-				return err
-			}
-		}
-		if in.Prices != nil {
-			if err := store.SetChannelModelPrices(ctx, tx, id, *in.Prices); err != nil {
-				return err
-			}
-		}
-		if in.Protocols == nil {
-			return nil
-		}
-		return store.SetChannelModelProtocols(ctx, tx, id, toProtocolSet(*in.Protocols))
+		return store.UpdateChannelModel(ctx, tx, id, patch)
 	})
 }
 

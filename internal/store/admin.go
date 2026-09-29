@@ -714,7 +714,7 @@ func DeleteChannel(ctx context.Context, db Conn, id int64) error {
 // AddChannelModel 给渠道加一个纳管模型。重复添加视为幂等成功。
 //
 // protocols 是这个模型的协议子集（口径层 v0.40），空集合表示继承渠道全集——那是常态。
-// 幂等这条对它有个后果：重复添加时协议子集也不会被改写，改子集走 SetChannelModelProtocols。
+// 幂等这条对它有个后果：重复添加时协议子集也不会被改写，改子集走 UpdateChannelModel。
 func AddChannelModel(ctx context.Context, db Conn, channelID int64, upstreamModel string, protocols protocol.Set) error {
 	raw, err := normalizeModelProtocols(protocols)
 	if err != nil {
@@ -724,39 +724,6 @@ func AddChannelModel(ctx context.Context, db Conn, channelID int64, upstreamMode
 		INSERT INTO channel_models (channel_id, upstream_model, protocols) VALUES (?, ?, ?)
 		ON CONFLICT(channel_id, upstream_model) DO NOTHING`, channelID, upstreamModel, raw)
 	return err
-}
-
-// SetChannelModelDisabled 停用/启用一个纳管模型。
-func SetChannelModelDisabled(ctx context.Context, db Conn, id int64, disabled bool) error {
-	res, err := db.ExecContext(ctx,
-		`UPDATE channel_models SET disabled = ? WHERE id = ?`, boolInt(disabled), id)
-	return affectedOne(res, err)
-}
-
-// SetChannelModelProtocols 改一个纳管模型的协议子集（口径层 v0.40）。
-//
-// **不校验它是不是渠道协议集的子集**，这是有意的：渠道协议集缩小时级联清理这一列，
-// 等于拿「配置任何时刻自洽」换「你改渠道时我替你删配置」，而删掉的填法回不来。存原样，
-// 路由时取交集（store.pickProtocol），渠道把协议勾回来这一行自动重新生效。
-func SetChannelModelProtocols(ctx context.Context, db Conn, id int64, protocols protocol.Set) error {
-	raw, err := normalizeModelProtocols(protocols)
-	if err != nil {
-		return err
-	}
-	res, err := db.ExecContext(ctx,
-		`UPDATE channel_models SET protocols = ? WHERE id = ?`, raw, id)
-	return affectedOne(res, err)
-}
-
-// SetChannelModelMaxInputTokens 改一个纳管模型的输入上限（估算）（口径层 v0.99）。
-// 0 = 清成不限；负数拒——0 已经是「不限」，负数只能是填错。
-func SetChannelModelMaxInputTokens(ctx context.Context, db Conn, id int64, limit int) error {
-	if limit < 0 {
-		return InvalidInput{Reason: "输入上限不能是负数：0 表示不限，正整数才是上限"}
-	}
-	res, err := db.ExecContext(ctx,
-		`UPDATE channel_models SET max_input_tokens = ? WHERE id = ?`, limit, id)
-	return affectedOne(res, err)
 }
 
 // ChannelModelPrices 是填价那一笔的入参（口径层 §2.10，#74）：四价整组覆盖。
@@ -770,18 +737,62 @@ type ChannelModelPrices struct {
 	CacheWrite *float64 `json:"cache_write"`
 }
 
-// SetChannelModelPrices 改一条纳管条目的四价。负数拒——0 已经是「真免费」，负价
-// 只能是填错；NULL（清回未定价）走 nil 不走负数暗号。
-func SetChannelModelPrices(ctx context.Context, db Conn, id int64, p ChannelModelPrices) error {
-	for _, v := range []*float64{p.Input, p.Output, p.CacheRead, p.CacheWrite} {
-		if v != nil && *v < 0 {
-			return InvalidInput{Reason: "单价不能是负数：0 表示真免费，留空（null）表示未定价"}
-		}
+// ChannelModelPatch 是改一条纳管模型时可写的东西（#141）：每个字段 nil = 不动那一列。
+//
+// 一扇写门而不是四个单列 setter：管理端一次保存与声明文件一次 apply 都从这里过，
+// 负价 / 负上限 / 协议子集归一只在这一处——此前 declcfg 裸 upsert 绕开 setter，
+// 这些闸在那条路上守不到。
+type ChannelModelPatch struct {
+	Disabled *bool
+	// Protocols 空集合 = 显式改回「继承渠道全集」，与 nil（不动）是两态。
+	// **不校验它是不是渠道协议集的子集**，这是有意的：渠道协议集缩小时级联清理这一列，
+	// 等于拿「配置任何时刻自洽」换「你改渠道时我替你删配置」，而删掉的填法回不来。存原样，
+	// 路由时取交集（store.pickProtocol），渠道把协议勾回来这一行自动重新生效。
+	Protocols *protocol.Set
+	// MaxInputTokens 0 = 清成不限；负数拒——0 已经是「不限」，负数只能是填错。
+	MaxInputTokens *int
+	// Prices 整组覆盖；组内 nil = 清回未定价，负数拒（0 已经是「真免费」）。
+	Prices *ChannelModelPrices
+}
+
+// UpdateChannelModel 按 patch 改一条纳管模型。全 nil 是调用方的错，拒。
+func UpdateChannelModel(ctx context.Context, db Conn, id int64, p ChannelModelPatch) error {
+	var sets []string
+	var args []any
+	if p.Disabled != nil {
+		sets = append(sets, `disabled = ?`)
+		args = append(args, boolInt(*p.Disabled))
 	}
-	res, err := db.ExecContext(ctx, `
-		UPDATE channel_models SET price_input = ?, price_output = ?,
-		       price_cache_read = ?, price_cache_write = ? WHERE id = ?`,
-		p.Input, p.Output, p.CacheRead, p.CacheWrite, id)
+	if p.Protocols != nil {
+		raw, err := normalizeModelProtocols(*p.Protocols)
+		if err != nil {
+			return err
+		}
+		sets = append(sets, `protocols = ?`)
+		args = append(args, raw)
+	}
+	if p.MaxInputTokens != nil {
+		if *p.MaxInputTokens < 0 {
+			return InvalidInput{Reason: "输入上限不能是负数：0 表示不限，正整数才是上限"}
+		}
+		sets = append(sets, `max_input_tokens = ?`)
+		args = append(args, *p.MaxInputTokens)
+	}
+	if p.Prices != nil {
+		for _, v := range []*float64{p.Prices.Input, p.Prices.Output, p.Prices.CacheRead, p.Prices.CacheWrite} {
+			if v != nil && *v < 0 {
+				return InvalidInput{Reason: "单价不能是负数：0 表示真免费，留空（null）表示未定价"}
+			}
+		}
+		sets = append(sets, `price_input = ?, price_output = ?, price_cache_read = ?, price_cache_write = ?`)
+		args = append(args, p.Prices.Input, p.Prices.Output, p.Prices.CacheRead, p.Prices.CacheWrite)
+	}
+	if len(sets) == 0 {
+		return InvalidInput{Reason: "没有要改的字段"}
+	}
+	args = append(args, id)
+	res, err := db.ExecContext(ctx,
+		`UPDATE channel_models SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	return affectedOne(res, err)
 }
 
@@ -847,7 +858,7 @@ func BulkPriceChannelModels(ctx context.Context, db Conn, channelID int64, overw
 			out.SkippedPriced++
 			continue
 		}
-		if err := SetChannelModelPrices(ctx, db, e.id, p); err != nil {
+		if err := UpdateChannelModel(ctx, db, e.id, ChannelModelPatch{Prices: &p}); err != nil {
 			return out, err
 		}
 		out.Filled++

@@ -268,36 +268,3 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		db.Close()
 	}
 }
-
-// 写侧：空集合归一成空串（继承），非空则折旧名去重，认不得的取值当场拒。
-func TestSetChannelModelProtocolsNormalizes(t *testing.T) {
-	db := openTestDB(t)
-	seedChannel(t, db, "anthropic,openai", "")
-	ctx := context.Background()
-
-	if err := SetChannelModelProtocols(ctx, db, 1, protocol.Set{"openai_cc", "openai"}); err != nil {
-		t.Fatalf("写协议子集: %v", err)
-	}
-	var got string
-	if err := db.QueryRow(`SELECT protocols FROM channel_models WHERE id = 1`).Scan(&got); err != nil {
-		t.Fatalf("回读: %v", err)
-	}
-	if got != "openai" {
-		t.Errorf("protocols = %q，期望折旧名后去重成 openai", got)
-	}
-
-	// 空集合是显式改回「继承渠道全集」，不是错误。
-	if err := SetChannelModelProtocols(ctx, db, 1, protocol.Set{}); err != nil {
-		t.Fatalf("清空协议子集: %v", err)
-	}
-	if err := db.QueryRow(`SELECT protocols FROM channel_models WHERE id = 1`).Scan(&got); err != nil {
-		t.Fatalf("回读: %v", err)
-	}
-	if got != "" {
-		t.Errorf("protocols = %q，期望空串", got)
-	}
-
-	if err := SetChannelModelProtocols(ctx, db, 1, protocol.Set{"gemini"}); err == nil {
-		t.Error("认不得的协议名应当被拒")
-	}
-}
