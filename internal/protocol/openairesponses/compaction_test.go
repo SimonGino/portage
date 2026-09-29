@@ -136,7 +136,7 @@ func TestDecodeCompactionItemRestored(t *testing.T) {
 	if codec.CompactionTurn() {
 		t.Fatal("回带的压缩产物被误判成了新的压缩 turn——那会让每一轮都变成总结")
 	}
-	if len(codec.CompactionDrops()) != 0 {
+	if !codec.CompactionDrops().Empty() {
 		t.Errorf("解得开却记了丢弃: %v", codec.CompactionDrops())
 	}
 	text := lastText(t, req)
@@ -164,7 +164,7 @@ func TestDecodeCompactionItemOpaqueDegrades(t *testing.T) {
 	if got := lastText(t, req); got != opaqueCompactionNote {
 		t.Errorf("没降级成占位: %q", got)
 	}
-	if drops := codec.CompactionDrops(); len(drops) != 1 || drops[0] != itemCompactionSummary {
+	if drops := codec.CompactionDrops().Names(); len(drops) != 1 || drops[0] != itemCompactionSummary {
 		t.Errorf("丢弃没登记: %v", drops)
 	}
 }
@@ -187,7 +187,7 @@ func TestDecodeContextCompactionMarkerSkipped(t *testing.T) {
 	if got := lastText(t, req); got != "继续" {
 		t.Errorf("本地压缩标记被当成了内容: %q", got)
 	}
-	if len(codec.CompactionDrops()) != 0 {
+	if !codec.CompactionDrops().Empty() {
 		t.Errorf("不带密文的标记不该记丢弃: %v", codec.CompactionDrops())
 	}
 }
