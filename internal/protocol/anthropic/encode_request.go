@@ -168,11 +168,71 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 		drop(DropVendorRequest)
 	}
 
+	markCacheBreakpoints(out)
+
 	body, err := json.Marshal(out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("anthropic: 序列化请求体: %w", err)
 	}
 	return body, dropped, nil
+}
+
+// markCacheBreakpoints 给转换出来的请求补两个缓存断点（#132）。
+//
+// Anthropic 只缓存到带 cache_control 的块为止，而 CC / Responses 入口重编出来的请求
+// 一个断点都没有——Codex 这类客户端走 Claude 上游时每轮都要全价重算整段对话。两处：
+//
+//  1. system 末块（每轮不变的前缀：tools 在 system 之前，一并缓存）；没有 system 就打在
+//     最后一个工具上。
+//  2. 最后一条消息里最后一个能打的块：下一轮只在它后面追加，前缀从缓存读。thinking /
+//     redacted_thinking 不收 cache_control，跳过往前找。
+//
+// 上限 4 个，这里最多用 2 个。只有编码路径会走到这里，透传路径不进 codec，不受影响。
+//
+// 客户端自己带了断点（withCacheControl 已原样带上）就一个不补：它比我们更清楚前缀
+// 在哪，补上去还可能把它推过 4 个的上限。
+func markCacheBreakpoints(out map[string]any) {
+	system, _ := out["system"].([]map[string]any)
+	tools, _ := out["tools"].([]map[string]any)
+	msgs, _ := out["messages"].([]map[string]any)
+	if hasCacheControl(system) || hasCacheControl(tools) {
+		return
+	}
+	for _, m := range msgs {
+		if content, _ := m["content"].([]map[string]any); hasCacheControl(content) {
+			return
+		}
+	}
+
+	ephemeral := map[string]any{"type": "ephemeral"}
+	if len(system) > 0 {
+		system[len(system)-1]["cache_control"] = ephemeral
+	} else if len(tools) > 0 {
+		tools[len(tools)-1]["cache_control"] = ephemeral
+	}
+	if len(msgs) == 0 {
+		return
+	}
+	content, _ := msgs[len(msgs)-1]["content"].([]map[string]any)
+	for i := len(content) - 1; i >= 0; i-- {
+		if t := content[i]["type"]; t != "thinking" && t != "redacted_thinking" {
+			content[i]["cache_control"] = ephemeral
+			return
+		}
+	}
+}
+
+func hasCacheControl(blocks []map[string]any) bool {
+	return slices.ContainsFunc(blocks, func(b map[string]any) bool { return b["cache_control"] != nil })
+}
+
+// withCacheControl 把客户端自己打的断点（CC / Responses 入口落在 Extras 里的
+// cache_control）原样带上。thinking 不走这里——它在出口整块丢弃。
+func withCacheControl(block, extras map[string]any) map[string]any {
+	if cc := extras["cache_control"]; cc != nil {
+		block["cache_control"] = cc
+	}
+	return block
 }
 
 // clampTemperature 把 OpenAI 侧的 0~2 收进 Anthropic 的 0~1（展开层 §2）。
@@ -309,6 +369,10 @@ func encodeMessages(msgs []protocol.Message, dropped *protocol.Drops) []map[stri
 		if len(blocks) == 0 {
 			continue
 		}
+		if m.Role == protocol.RoleTool {
+			// CC 的 role=tool 消息整条就是一个 tool_result，客户端的断点挂在消息上。
+			withCacheControl(blocks[0], m.Extras)
+		}
 		blocks = flushPending(role, blocks)
 		appendMsg(role, blocks)
 		if role == string(protocol.RoleAssistant) {
@@ -383,7 +447,7 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			if b.Text == "" {
 				continue
 			}
-			out = append(out, map[string]any{"type": "text", "text": b.Text})
+			out = append(out, withCacheControl(map[string]any{"type": "text", "text": b.Text}, b.Extras))
 
 		case protocol.BlockThinking:
 			// 回带方向一律丢弃（口径层 §2.6），但**要登记**（v0.62 ④）。
@@ -400,7 +464,8 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			if b.ToolCall == nil {
 				continue
 			}
-			out = append(out, encodeToolUse(b.ToolCall))
+			// 客户端打在调用条目上的断点，入口解码落在 ToolCall.Extras 而不是块上。
+			out = append(out, withCacheControl(encodeToolUse(b.ToolCall), b.ToolCall.Extras))
 
 		case protocol.BlockToolResult:
 			if b.ToolResult == nil {
@@ -410,11 +475,11 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 				drop(DropOrphanResult)
 				continue
 			}
-			out = append(out, encodeToolResult(b.ToolResult, drop))
+			out = append(out, withCacheControl(encodeToolResult(b.ToolResult, drop), b.Extras))
 
 		case protocol.BlockImage:
 			if img, ok := encodeImage(b.Image, drop); ok {
-				out = append(out, img)
+				out = append(out, withCacheControl(img, b.Extras))
 			}
 
 		case protocol.BlockDocument:
@@ -574,7 +639,7 @@ func encodeTools(tools []protocol.Tool, dropped *protocol.Drops) (out []map[stri
 		default:
 			tool["input_schema"] = json.RawMessage(`{"type":"object"}`)
 		}
-		out = append(out, tool)
+		out = append(out, withCacheControl(tool, t.Extras))
 		declared = append(declared, t.Name)
 	}
 	return out, declared, droppedTools
