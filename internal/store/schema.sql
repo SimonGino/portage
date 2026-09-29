@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS channels (
   -- x-api-key，openai 侧发 Authorization: Bearer）；bearer = 一律 Bearer；raw =
   -- 一律 Authorization: <凭证原文>（PAI-EAS 这类网关只认裸 token，Bearer 前缀反而不通）。
   auth_scheme TEXT NOT NULL DEFAULT 'default',
-  -- 渠道级额外出站头（口径层 vNEXT，#137）：键排序的 JSON 对象，空串 = 没有。静态值，
+  -- 渠道级额外出站头（口径层 v1.37，#137）：键排序的 JSON 对象，空串 = 没有。静态值，
   -- 三条出站路径（转发、检测、拉模型列表）都带；网关自己管的头名写侧拒（ValidateHeaders）。
   headers TEXT NOT NULL DEFAULT '',
   -- 渠道级最大并发（in-flight）上限（口径层 v0.49）：0 = 不限（默认）。闸在网关

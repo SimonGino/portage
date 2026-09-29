@@ -17,7 +17,7 @@ import (
 // 让渠道声明它们就成了「map 遍历顺序决定谁赢」；②Go 会静默忽略或重算的——Host、
 // Content-Length 与逐跳头，放行只会让配置看上去生效、实际没生效。
 //
-// User-Agent 不在里面：它是运维人自己配的头，不是转发客户端指纹（口径层 vNEXT）。
+// User-Agent 不在里面：它是运维人自己配的头，不是转发客户端指纹（口径层 v1.37）。
 var reservedHeaders = map[string]bool{
 	"authorization": true, "x-api-key": true,
 	"content-type": true, "accept": true, "accept-encoding": true,
