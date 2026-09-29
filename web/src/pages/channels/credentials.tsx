@@ -229,7 +229,7 @@ function CredentialRow({
         onChange={(e) => setName(e.target.value)}
         onBlur={() => {
           if (name.trim() && name !== cred.name) {
-            void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: cred.disabled }))
+            void mutate(() => api.put(`/credentials/${cred.id}`, { name }))
           }
         }}
       />
@@ -267,7 +267,7 @@ function CredentialRow({
             onClick={() => {
               setArmedOff(false)
               void mutate(() =>
-                withChannelOff(() => api.put(`/credentials/${cred.id}`, { name, disabled: true })),
+                withChannelOff(() => api.put(`/credentials/${cred.id}`, { disabled: true })),
               )
             }}
           >
@@ -282,7 +282,7 @@ function CredentialRow({
                 setArmedOff(true)
                 return
               }
-              void mutate(() => api.put(`/credentials/${cred.id}`, { name, disabled: !on }))
+              void mutate(() => api.put(`/credentials/${cred.id}`, { disabled: !on }))
             }}
           />
         )}

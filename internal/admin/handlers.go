@@ -537,7 +537,8 @@ func (h *Handler) addCredentials(c *gin.Context) {
 	})
 }
 
-// updateCredential 改名 / 换值 / 停用 / 启用。credential 留空即不动值——页面上读不到
+// updateCredential 改名 / 换值 / 停用 / 启用。请求体是 patch：没提的字段不动
+// （指针，同 updateChannelModel 那条），credential 留空即不动值——页面上读不到
 // 原值，改个名字还要重贴一遍 key 等于每次都换一把。
 func (h *Handler) updateCredential(c *gin.Context) {
 	id, ok := pathID(c)
@@ -545,9 +546,9 @@ func (h *Handler) updateCredential(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Name       string `json:"name"`
-		Credential string `json:"credential"`
-		Disabled   bool   `json:"disabled"`
+		Name       *string `json:"name"`
+		Credential string  `json:"credential"`
+		Disabled   *bool   `json:"disabled"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
@@ -612,7 +613,9 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Disabled bool `json:"disabled"`
+		// 整个请求体是 patch：每个字段的指针 nil = 不动那一列。disabled 曾是裸 bool，
+		// 逼着三个只改别的字段的前端写点回传它，漏传一次就把停用的模型静默启用。
+		Disabled *bool `json:"disabled"`
 		// 指针是为了分清「没提这个字段」和「提了、要清空」（口径层 v0.40）：
 		// nil 不动那一列，空数组则是显式改回「继承渠道全集」。同 key_mode 那条
 		// 理由——PUT 整体覆盖时，老前端不传的字段不该被静默改掉。
@@ -628,9 +631,15 @@ func (h *Handler) updateChannelModel(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	if in.Disabled == nil && in.Protocols == nil && in.MaxInputTokens == nil && in.Prices == nil {
+		fail(c, http.StatusBadRequest, "没有要改的字段")
+		return
+	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		if err := store.SetChannelModelDisabled(ctx, tx, id, in.Disabled); err != nil {
-			return err
+		if in.Disabled != nil {
+			if err := store.SetChannelModelDisabled(ctx, tx, id, *in.Disabled); err != nil {
+				return err
+			}
 		}
 		if in.MaxInputTokens != nil {
 			if err := store.SetChannelModelMaxInputTokens(ctx, tx, id, *in.MaxInputTokens); err != nil {

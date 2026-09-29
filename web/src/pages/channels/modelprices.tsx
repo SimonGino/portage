@@ -42,7 +42,7 @@ export function ModelPrices({
   const unpriced = PRICE_FIELDS.every(([k]) => current[k] === null)
 
   function put(prices: Record<string, number | null>) {
-    void mutate(() => api.put(`/channel-models/${model.id}`, { disabled: model.disabled, prices }))
+    void mutate(() => api.put(`/channel-models/${model.id}`, { prices }))
   }
 
   function save() {

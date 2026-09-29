@@ -120,42 +120,55 @@ func defaultCredentialName(ctx context.Context, db Conn, channelID int64) (strin
 	return "", InvalidInput{Reason: "自动起名失败，请自己给这份凭证起个名字"}
 }
 
-// CredentialUpdate 是改一份凭证时可写的东西。
+// CredentialUpdate 是改一份凭证时可写的东西——一个 patch：指针 nil = 不动那一列。
 //
-// Value 为空即**不动凭证值**——改名和停用是最常见的两种改动，让它们必须重贴一遍
-// key 是荒唐的（页面上根本读不到原值，重贴就等于每次都换一把）。
+// 三个写点各只碰一个字段（改名、换值、启停），让它们回传自己没编辑的字段等于
+// 逼每个调用方替这一行背整份现场：名字框清空再点停用，就会被「凭证名不能为空」
+// 拦下一次与名字无关的停用。Value 为空即**不动凭证值**（页面上根本读不到原值，
+// 重贴就等于每次都换一把），它是唯一不用指针的：空串本来就不是合法的凭证值。
 type CredentialUpdate struct {
-	Name     string
+	Name     *string
 	Value    string
-	Disabled bool
+	Disabled *bool
 }
 
-// UpdateCredential 改名 / 换值 / 停用 / 启用。
+// UpdateCredential 改名 / 换值 / 停用 / 启用。全 nil 是调用方的错，拒。
 //
 // 启用（Disabled=false）时顺手清掉停用原因与时刻：那两列描述的是「当下为什么停
 // 着」，凭证恢复了还挂着一句停用原因只会误导下一个看日志的人。
 func UpdateCredential(ctx context.Context, db Conn, id int64, in CredentialUpdate) error {
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return InvalidInput{Reason: "凭证名不能为空"}
+	var sets []string
+	var args []any
+	name := ""
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+		if name == "" {
+			return InvalidInput{Reason: "凭证名不能为空"}
+		}
+		sets = append(sets, `name = ?`)
+		args = append(args, name)
 	}
-	// COALESCE 而不是直接赋值：老库里这份凭证可能还带着 v0.95 之前 401 自动摘除写下
-	// 的原因与时刻，人再点一次「停用」不该把那个现场抹成「人工停用」。
-	state := `disabled = 1,
-	          disabled_reason = COALESCE(disabled_reason, '人工停用'),
-	          disabled_at     = COALESCE(disabled_at, CURRENT_TIMESTAMP)`
-	if !in.Disabled {
-		state = `disabled = 0, disabled_reason = NULL, disabled_at = NULL`
-	}
-	args := []any{name}
-	set := `name = ?`
 	if value := strings.TrimSpace(in.Value); value != "" {
-		set += `, credential = ?`
+		sets = append(sets, `credential = ?`)
 		args = append(args, value)
+	}
+	if in.Disabled != nil {
+		if *in.Disabled {
+			// COALESCE 而不是直接赋值：老库里这份凭证可能还带着 v0.95 之前 401 自动摘除
+			// 写下的原因与时刻，人再点一次「停用」不该把那个现场抹成「人工停用」。
+			sets = append(sets, `disabled = 1,
+			          disabled_reason = COALESCE(disabled_reason, '人工停用'),
+			          disabled_at     = COALESCE(disabled_at, CURRENT_TIMESTAMP)`)
+		} else {
+			sets = append(sets, `disabled = 0, disabled_reason = NULL, disabled_at = NULL`)
+		}
+	}
+	if len(sets) == 0 {
+		return InvalidInput{Reason: "没有要改的字段"}
 	}
 	args = append(args, id)
 	res, err := db.ExecContext(ctx,
-		`UPDATE channel_keys SET `+set+`, `+state+` WHERE id = ?`, args...)
+		`UPDATE channel_keys SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return credentialNameConflict(err, name)
 	}
