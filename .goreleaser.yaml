@@ -22,7 +22,7 @@ builds:
     flags:
       - -trimpath
     # 自己写 ldflags 会整体替换默认值（默认还注 commit/date/builtBy，口径只要版本号一个字段）。
-    # {{ .Version }} 不带 v：v0.5.0 → 0.5.0，与 docker.yml 的镜像 tag 同源。
+    # {{ .Version }} 不带 v：v0.1.1 → 0.1.1，与 docker.yml 的镜像 tag 同源。
     ldflags:
       - -s -w -X main.version={{ .Version }}
     goos: [linux, darwin]
@@ -35,14 +35,14 @@ archives:
   - formats: [tar.gz]
     # 与默认模板等价（没有 arm/mips/amd64 变体就没有后缀），写死是为了让 install.sh 与
     # `portage upgrade` 拼 URL 的人不用去查 GoReleaser 默认值：
-    #   portage_0.5.0_linux_amd64.tar.gz / portage_0.5.0_linux_arm64.tar.gz / portage_0.5.0_darwin_arm64.tar.gz
+    #   portage_0.1.1_linux_amd64.tar.gz / portage_0.1.1_linux_arm64.tar.gz / portage_0.1.1_darwin_arm64.tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     # 包里只放二进制。默认会把根 README* 也塞进去；none* 是官方文档给的「什么都不加」写法。
     files:
       - none*
 
 checksum:
-  # 默认名带版本号（portage_0.5.0_checksums.txt），固定成 checksums.txt 才能用
+  # 默认名带版本号（portage_0.1.1_checksums.txt），固定成 checksums.txt 才能用
   # releases/latest/download/checksums.txt 这条不带版本的 URL 先拿到文件名再定版本。
   # 行格式 `<sha256>  <文件名>`（两个空格），sha256sum -c / shasum -a 256 -c 直接可用。
   name_template: checksums.txt

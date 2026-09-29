@@ -82,11 +82,11 @@ Docker Desktop 对绑定挂载自己做了权限映射，这步可以省。库�
 
 ```bash
 # 国内源 + 钉版本（推荐）
-PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0 \
+PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.1 \
   docker compose -f docker-compose.forward.yml up -d
 
 # 每次都带前缀太长的话，写进同目录 .env 文件（compose 自动读）：
-# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.0
+# PORTAGE_IMAGE=crpi-02g5kpg27o6b5u8n.cn-hangzhou.personal.cr.aliyuncs.com/simongino/portage:0.1.1
 ```
 
 compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密码一个都没设——这正
@@ -102,7 +102,7 @@ compose 里 `PORTAGE_CHANNELS` 已指向挂进去的 `channels.yaml`，管理密
 
 ## 4. 二进制安装（curl，不用 Docker）
 
-自 v0.5.0 起每个 `v*` tag 同时出 GitHub Release：`linux/amd64`、`linux/arm64`、`darwin/arm64` 三个
+自 v0.1.1 起每个 `v*` tag 同时出 GitHub Release：`linux/amd64`、`linux/arm64`、`darwin/arm64` 三个
 tar.gz 加一份 `checksums.txt`。不想跑 Docker 的机器（或者本地那台 Mac）一条命令装：
 
 ```bash
@@ -112,7 +112,7 @@ curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh |
 脚本只干四件事：探平台、下载对应包、按 `checksums.txt` 校 sha256、把 `portage` 放进
 `/usr/local/bin`（目录不可写会提示你加 `sudo`，脚本自己不提权）。**不注册 systemd、不建用户、
 不建目录**——那些是下一步，脚本结尾会把要做的打印出来。钉版本给个参数：
-`… | sh -s 0.5.0`，或设 `PORTAGE_VERSION`。装到别处设 `PORTAGE_INSTALL_DIR`。
+`… | sh -s 0.1.1`，或设 `PORTAGE_VERSION`。装到别处设 `PORTAGE_INSTALL_DIR`。
 
 **国内机器**：GitHub Release 与 raw 都慢，唯一的机制是一个 URL 前缀。把公共 GitHub 代理的地址
 放进 `PORTAGE_DOWNLOAD_BASE`，脚本会把它拼在每个 GitHub 地址前面；拉脚本那一行自己也拼同一个前缀：
@@ -154,13 +154,13 @@ portage -version
 docker compose pull && docker compose up -d
 ```
 
-钉了版本（`PORTAGE_IMAGE=…:0.4.9`）的先把版本号改掉再执行。
+钉了版本（`PORTAGE_IMAGE=…:0.1.1`）的先把版本号改掉再执行。
 
 **二进制形态**（`install.sh` 装的）两条路，效果一样：
 
 - 面板里点「升级到 vX.Y.Z」，二次确认后网关自己下载、校验、替换可执行文件、等在途请求、原地重启
   （PID 不变，systemd 看到的还是同一个实例）。页面会自己刷新。
-- 机器上跑 `portage upgrade`（或 `portage upgrade 0.5.0` 钉版本），它只替换文件，然后
+- 机器上跑 `portage upgrade`（或 `portage upgrade 0.1.1` 钉版本），它只替换文件，然后
   `sudo systemctl restart portage`。没有面板的纯转发机只有这条路。
 
 两条路下载都认 `PORTAGE_DOWNLOAD_BASE`——面板那条读的是**网关进程**的环境变量，写进 unit 的

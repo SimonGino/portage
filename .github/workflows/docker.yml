@@ -68,7 +68,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 版本号进二进制：semver 那条 tag 规则优先级最高，v0.5.0 → 0.5.0；
+          # 版本号进二进制：semver 那条 tag 规则优先级最高，v0.1.1 → 0.1.1；
           # workflow_dispatch 只有 test 那条，version 就是 test，正好标出这不是发版。
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}

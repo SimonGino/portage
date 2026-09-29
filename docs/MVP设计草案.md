@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.65
+> 状态：草案 v1.66
+
+> v1.66 变更（口径层 v1.39 落地：版本号从 `v0.1.1` 重新起、发版号只认纯 `x.y.z`，[#150](https://github.com/SimonGino/portage/issues/150)，修改人 jinpenga）：§7.11「前端」两处——检测条件由 `version != "dev"` 改为「纯 `x.y.z`」（`web/src/release.ts` 的 `isRelease`，`test` 与 `-SNAPSHOT` 快照同样不查；`newer` 随之只比三段数字）；缓存由 `{tag, checkedAt}` 改为 `{tag, published, checkedAt}`，发布日是 DESIGN v0.65 版本对照行要显示的，此前两字段漏了它。原文留删除线。
 
 > v1.65 变更（§11.4 订正，[#150](https://github.com/SimonGino/portage/issues/150) 实现时发现，PO 2026-09-29 裁定改，修改人 jinpenga）：`.goreleaser.yaml` 的 `before.hooks` 由 `dir: web` 结构形式改为 `npm --prefix web …` 字符串——OSS 版全局 hooks 不认结构形式，`goreleaser check` 报 `cannot unmarshal !!map into string`。原文留删除线。调研草案（`research/goreleaser-release-pipeline` 分支 §6.1 / §7 第 1 条）同一处错，不回改，以本节为准。
 
@@ -1172,7 +1174,7 @@ api_keys:
 - **收场与 Exec（接法 B，贴现有 `run()` 结构）**：`run()` 的 `select` 加第三支 `case <-upgraded:`（升级 handler 替换成功后关一个 channel），同 SIGTERM 路径调 `srv.Shutdown(30s)`，然后 `return errRestart`；`run()` 的 defer 链正常跑完（**`db.Close()` 让 WAL checkpoint——Exec 不跑 defer，漏了下次打开要恢复**）；`main()` 收到 `errors.Is(err, errRestart)` → `log.Info("已替换为 vX，正在自重启")`（Exec 成功后旧镜像没机会再写日志）→ `syscall.Exec(exe, os.Args, os.Environ())`（`os.Args` 原样，`-config` 等 flag 才带得过去）；**Exec 返回即失败** → 记日志 `os.Exit(1)`，交 systemd `Restart=always` 拉起磁盘上那份。listener 与 SQLite fd 全带 CLOEXEC、`Listen` 默认 `SO_REUSEADDR`，新进程重新绑定不撞 `EADDRINUSE`，**不需要**任何额外 socket 处理；信号处置随 exec 重置，新进程自己装。
 - **分发形态双判**：`distro == "docker"` → 接口直接回 `unsupported_distro`、面板不出按钮；binary 下建临时文件失败 → `not_writable`（用户自己装进 root 目录又用普通用户跑的情形）。
 - **`portage upgrade [版本]` 子命令**：`os.Args[1] == "upgrade"` 在 `flag.Parse` 之前分流，用同一个 `selfupdate` 包；无参时先取 `releases/latest/download/checksums.txt` 从行里解析版本（不打 API，免 60 次/时限额）；成功打印「已替换为 vX，重启生效：`systemctl restart portage`」退出 0，**不 Exec**；失败退出 1，stderr 打同一套错误词。docker 镜像里没有 shell 也不该有人跑它，`distro == docker` 直接拒。
-- **前端**：`/session` 拿到 `version` / `distro`；`role == admin && version != "dev"` 时请求 `https://api.github.com/repos/SimonGino/portage/releases/latest`（`Accept: application/vnd.github+json`，CORS `*`、简单 GET 不预检）；`localStorage` 存 `{tag, checkedAt}` 24h，**非 2xx 不写缓存**（仓库尚无 Release 时是 404，缓存它就是把「查不到」缓存成「已是最新」）；比对 = `tag_name` 去 `v` 与 `version` 做**语义化比较**（本地比远端新也算无新版，不是字符串相等）。「重新检查」清缓存重查。升级流程：`Confirm` 举起 → `POST upgrade` → 200 后每 2s 轮询 `/session`，`version` 变了即 `location.reload()`；60s 没变露出「刷新页面」按钮兜底；非 2xx 按词表落三种失败文案（DESIGN v0.65）。
+- **前端**：`/session` 拿到 `version` / `distro`；`role == admin && version` 为纯 `x.y.z`（v1.66：~~`version != "dev"`~~，`test` 与带后缀的构建同样不查）时请求 `https://api.github.com/repos/SimonGino/portage/releases/latest`（`Accept: application/vnd.github+json`，CORS `*`、简单 GET 不预检）；`localStorage` 存 ~~`{tag, checkedAt}`~~ `{tag, published, checkedAt}`（v1.66：弹框要显示发布日，DESIGN v0.65 版本对照行）24h，**非 2xx 不写缓存**（仓库尚无 Release 时是 404，缓存它就是把「查不到」缓存成「已是最新」）；比对 = `tag_name` 去 `v` 与 `version` 做**语义化比较**（本地比远端新也算无新版，不是字符串相等）。「重新检查」清缓存重查。升级流程：`Confirm` 举起 → `POST upgrade` → 200 后每 2s 轮询 `/session`，`version` 变了即 `location.reload()`；60s 没变露出「刷新页面」按钮兜底；非 2xx 按词表落三种失败文案（DESIGN v0.65）。
 - **测试**：`selfupdate` 包对 `httptest` 假 Release（`checksums.txt` + tar.gz）跑四例——成功替换 / 哈希不符（临时文件已删）/ 目录只读（`not_writable`）/ 缺本平台条目；tar 解包只认单文件 `portage`，多文件与路径穿越条目拒。`run()` 的 `errRestart` 分支单测到「关 `upgraded` 后 `Shutdown` 被调、返回哨兵」为止，`Exec` 不进测试。前端语义化比较与 404 不缓存各一例（vitest）。
 
 ## 8. 最小管理接口

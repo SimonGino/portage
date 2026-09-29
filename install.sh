@@ -3,7 +3,7 @@
 # 只做这四步：不注册 systemd、不建用户、不建目录，结尾打印下一步。
 #
 #   curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh -s -- 0.5.0   # 钉版本
+#   curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh -s -- 0.1.1   # 钉版本
 #
 # 环境变量：
 #   PORTAGE_VERSION        要装的版本（与第一个参数等价，参数优先）；缺省取最新 Release
