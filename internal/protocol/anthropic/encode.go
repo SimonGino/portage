@@ -144,6 +144,11 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return nil
 
 	case protocol.EvDone:
+		if ev.Truncated {
+			// 上游没给终态就断了：不凭空补 end_turn + message_stop，发流内 error，
+			// 与透传时客户端同样收不到终态对齐（#98 PO 裁决）。
+			return e.writeError(protocol.Event{Message: protocol.ErrStreamTruncated.Error()})
+		}
 		e.stop = ev.StopReason
 		return nil
 

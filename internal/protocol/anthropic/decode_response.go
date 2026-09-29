@@ -63,6 +63,9 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 			}
 		}
 		st.finish(out)
+		if st.truncated {
+			c.SetStreamReadError(protocol.ErrStreamTruncated)
+		}
 	}()
 	return out, nil
 }
@@ -229,6 +232,8 @@ type respState struct {
 	stop      string
 	done      bool
 	drops     *protocol.NameList // 指回 Codec.responseDrops
+	// truncated：放出去的 EvDone 带了 Truncated，DecodeStream 据此记 StreamReadError（#98）。
+	truncated bool
 }
 
 func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
@@ -385,13 +390,14 @@ func (st *respState) emitDone(out chan<- protocol.Event) {
 		return
 	}
 	st.done = true
+	st.truncated = st.stop == ""
 	// st.stop 空 = message_delta 里那个 stop_reason 一次都没到，这个收尾纯是上面
 	// finish 兜出来的。StopReason 照旧兜成 stop（下游要一个合法取值），另开
 	// Truncated 把「上游没说话就断了」这件事带下去。
 	out <- protocol.Event{
 		Type:       protocol.EvDone,
 		StopReason: canonicalStopReason(st.stop),
-		Truncated:  st.stop == "",
+		Truncated:  st.truncated,
 	}
 }
 

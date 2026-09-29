@@ -134,7 +134,9 @@ func (c *Codec) DecodeStream(r io.Reader) (<-chan protocol.Event, error) {
 				break
 			}
 		}
-		st.finish(out)
+		if st.finish(out) {
+			c.SetStreamReadError(protocol.ErrStreamTruncated)
+		}
 	}()
 	return out, nil
 }
@@ -193,6 +195,9 @@ type streamState struct {
 	// choice 是第一个出现的 choice index，choiceSet 表示已锁定。
 	choice    int
 	choiceSet bool
+	// sawDone：上游发过 [DONE]。没给 finish_reason 但说了 [DONE] 的流是说完了的，
+	// 不算截断（#98 PO 裁决）。
+	sawDone bool
 }
 
 // choiceIndex 取 choice 的 index：数字或能解析的数字字符串（"0"）就认，缺失或解析
@@ -212,7 +217,11 @@ func choiceIndex(raw json.RawMessage) int {
 // frame 处理一个 SSE 帧。
 func (st *streamState) frame(frame []byte, out chan<- protocol.Event) {
 	_, data := protocol.SSEFields(frame)
-	if len(data) == 0 || string(data) == "[DONE]" {
+	if string(data) == "[DONE]" {
+		st.sawDone = true
+		return
+	}
+	if len(data) == 0 {
 		return
 	}
 	var payload chunkPayload
@@ -340,10 +349,10 @@ func (st *streamState) observeUsage(u *usagePayload, out chan<- protocol.Event) 
 	out <- protocol.Event{Type: protocol.EvUsage, Usage: &snapshot}
 }
 
-// finish 收尾：放出攒着的工具调用，再放 EvDone。
-func (st *streamState) finish(out chan<- protocol.Event) {
+// finish 收尾：放出攒着的工具调用，再放 EvDone。返回这个 EvDone 是否 Truncated。
+func (st *streamState) finish(out chan<- protocol.Event) bool {
 	if st.errorSent || st.doneSent {
-		return
+		return false
 	}
 	st.doneSent = true
 	if !st.started {
@@ -359,11 +368,9 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 		// 带工具调用却报 stop 的上游也不改判——工具调用优先，同 R 侧先判 sawTool。
 		stop = "content_filter"
 	}
-	truncated := stop == ""
-	// length 同样没人担保：CC 没有逐条终止符，截断落在哪一路看不出来，并行调用一律
-	// 按半截交代（#127，PO 裁决的保守取舍）。
-	st.flushTools(out, truncated || stop == "length")
-	if truncated {
+	// 没 finish_reason 但发过 [DONE]：上游说完了，只是没报停因，照 stop 收（#98）。
+	truncated := stop == "" && !st.sawDone
+	if stop == "" {
 		// Anthropic 非流式响应不接受空 stop_reason（§5 坑清单）。默认值在这里就
 		// 给足，编码侧不必各自兜底。
 		//
@@ -371,7 +378,11 @@ func (st *streamState) finish(out chan<- protocol.Event) {
 		// Truncated 单独带下去（protocol.Event 的字段注释）。
 		stop = "stop"
 	}
+	// length 同样没人担保：CC 没有逐条终止符，截断落在哪一路看不出来，并行调用一律
+	// 按半截交代（#127，PO 裁决的保守取舍）。
+	st.flushTools(out, truncated || stop == "length")
 	out <- protocol.Event{Type: protocol.EvDone, StopReason: stop, Truncated: truncated}
+	return truncated
 }
 
 // flushTools 按**首次出现的次序**放出每个工具调用的 Start / ArgsDelta / End。

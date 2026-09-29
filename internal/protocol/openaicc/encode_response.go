@@ -135,6 +135,11 @@ func (e *streamEncoder) event(ev protocol.Event) error {
 		return nil
 
 	case protocol.EvDone:
+		if ev.Truncated {
+			// 上游没给终态就断了：不补 finish_reason 与 [DONE]，发流内 error（#98 PO
+			// 裁决，理由同 anthropic 出口）。
+			return e.writeError(protocol.Event{Message: protocol.ErrStreamTruncated.Error()})
+		}
 		e.stop = ev.StopReason
 		return nil
 

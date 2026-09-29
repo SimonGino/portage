@@ -207,7 +207,8 @@ type Event struct {
 	// 单开一位而不是让 StopReason 留空：留空这条路被上面那个兜底堵死了，而「上游
 	// 说它停了」与「上游没说话就没了」在压缩合成上是生死之别——半截摘要会被 Codex
 	// 当作**替换历史**装回去（openairesponses 的 finishCompaction）。Responses 出口
-	// 的普通收尾同样读它，发 response.incomplete 而不是 completed（#106）。
+	// 的普通收尾同样读它，发 response.incomplete 而不是 completed（#106）；A / CC 出口
+	// 读它发流内 error 帧，解码侧同时记 ErrStreamTruncated 让流水落 stream_aborted（#98）。
 	//
 	// EvToolCallEnd 上也可能带这一位：openaicc 解码侧在断流或 length 收尾时放的 End
 	// （CC 没有逐条终止符），表示这一路入参没人担保写完。
