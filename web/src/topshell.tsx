@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { User } from './api'
 import { PortageMark } from './brand'
+import { BrandVersion, type Build } from './version'
 
 /**
  * 统一顶栏壳（DESIGN §2，v0.54）：管理与「我的」两空间共用这一只壳——品牌 +
@@ -14,8 +15,11 @@ export function TopShell({
   tabs,
   right,
   width,
+  build,
   children,
 }: {
+  /** 品牌簇里的版本号、新版胶囊与 GitHub 图标（DESIGN §2 v0.65），两空间同形。 */
+  build: Build
   tabs: ReactNode
   right: ReactNode
   width?: 'narrow' | 'wide'
@@ -27,6 +31,7 @@ export function TopShell({
         <span className="brand">
           <PortageMark size={20} />
           <b>Portage</b>
+          <BrandVersion {...build} />
         </span>
         <nav className="topnav" aria-label="主导航">
           {tabs}

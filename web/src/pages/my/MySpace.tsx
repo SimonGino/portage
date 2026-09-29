@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api } from '../../api'
 import type { User } from '../../api'
 import { AvatarMenu, TopShell } from '../../topshell'
+import type { Build } from '../../version'
 import LogsView from '../logs/view'
 import MyKeys from './MyKeys'
 import MyUsage from './MyUsage'
@@ -17,10 +18,12 @@ import { QuotaChip, useQuota } from './quota'
 export default function MySpace({
   user,
   isAdmin,
+  build,
   onLogout,
   onRefresh,
 }: {
   user: User
+  build: Build
   /** admin 逛自己的空间时顶栏给「管理」回程；普通用户没有这一格。 */
   isAdmin: boolean
   onLogout: () => void
@@ -34,6 +37,7 @@ export default function MySpace({
 
   return (
     <TopShell
+      build={build}
       tabs={
         <>
           <NavLink to="/my" end>

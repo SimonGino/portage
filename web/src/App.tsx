@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api, download, importConfig, previewImport, setUnauthorizedHandler } from './api'
-import type { SessionState, User } from './api'
+import type { SessionState } from './api'
 import Login from './pages/Login'
 import Channels from './pages/Channels'
 import AccessPoints from './pages/AccessPoints'
@@ -84,12 +84,20 @@ export default function App() {
   // admin 从左栏顶部的「管理 | 我的」切进来，路径进 /my 即换壳。
   const isAdmin = session.user?.role === 'admin'
   if (session.user && (!isAdmin || loc.pathname === '/my' || loc.pathname.startsWith('/my/'))) {
-    return <MySpace user={session.user} isAdmin={isAdmin} onLogout={refresh} onRefresh={refresh} />
+    return (
+      <MySpace
+        user={session.user}
+        isAdmin={isAdmin}
+        build={{ version: session.version, distro: session.distro, admin: isAdmin }}
+        onLogout={refresh}
+        onRefresh={refresh}
+      />
+    )
   }
 
   return (
     <>
-      <Shell user={session.user} onPassword={() => setPwOpen(true)} onLogout={refresh} />
+      <Shell session={session} onPassword={() => setPwOpen(true)} onLogout={refresh} />
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} onChanged={refresh} />}
     </>
   )
@@ -331,18 +339,21 @@ function ImportButton() {
 }
 
 function Shell({
-  user,
+  session,
   onPassword,
   onLogout,
 }: {
-  user?: User
+  session: SessionState
   onPassword: () => void
   onLogout: () => void
 }) {
+  const user = session.user
   // 管理空间六页统一 wide 档（v0.55）：此前按「吃宽与否」分 920/1320 两档，
   // 切 tab 时画布左右边缘跳来跳去，比省下的留白更扎眼。
   return (
     <TopShell
+      // 进得了管理空间就是 admin：纯密码时代的老会话没有 user，也只有管理员拿得到。
+      build={{ version: session.version, distro: session.distro, admin: true }}
       tabs={NAV.map((item) => (
         <NavLink key={item.to} to={item.to}>
           {item.label}

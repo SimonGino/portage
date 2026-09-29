@@ -177,6 +177,142 @@ button, input, textarea, select {
   letter-spacing: -0.03em;
 }
 
+/* 品牌簇尾巴（DESIGN §2 v0.65）：版本号 → 新版胶囊 → GitHub 图标。版本号是标识符，
+   走等宽 12px --mute；可点时（admin 且无新版）才有悬停底。字标与版本号之间的 10px
+   gap 偏松，收一点让它读成字标的下标而不是另一个控件。 */
+.brand-ver {
+  margin-left: -4px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+
+button.brand-ver {
+  cursor: pointer;
+}
+
+button.brand-ver:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* §9「胶囊标注普通元数据」的唯一例外：它是一个动作，且无新版时根本不出现。
+   褐点是非颜色线索之外的那一点提示，文字本身已经说清「新版」。 */
+.brand-newpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.brand-newpill:hover {
+  color: var(--ink);
+}
+
+.brand-newpill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn-text);
+}
+
+.brand-gh {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--mute);
+}
+
+.brand-gh:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* 「版本与升级」弹框：版本对照一行可折；三步清单的圈只在完成 / 失败时上底色。 */
+.ver-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+}
+
+/* 「发布说明」走墨蓝文字链接（§4 白名单 ②），同 .login-sub a。 */
+.ver-line a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.ver-line a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.upgrade-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.upgrade-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--faint);
+}
+
+.upgrade-steps .is-now {
+  color: var(--ink);
+}
+
+.upgrade-steps .is-done {
+  color: var(--ink-2);
+}
+
+.upgrade-steps .is-fail {
+  color: var(--err-text);
+}
+
+.upgrade-step-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.is-done .upgrade-step-mark {
+  border-color: var(--sunken);
+  background: var(--sunken);
+}
+
+.is-fail .upgrade-step-mark {
+  border-color: var(--err-line);
+  background: var(--err-bg);
+}
+
+.upgrade-busy {
+  margin-right: auto;
+  font-size: 13px;
+}
+
 /* 顶栏钉在视口顶上：页面改整窗滚动之后，滚掉的第一样东西不该是导航。
    底色必须不透明（--paper），不然内容会从它底下透出来。 */
 .topbar {
