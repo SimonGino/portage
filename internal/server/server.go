@@ -149,7 +149,7 @@ func (s *Server) Engine() *gin.Engine {
 		mountAdmin = has
 	}
 	if mountAdmin {
-		admin.New(s.db, s.log, s.cfg.Declarative).Mount(r)
+		admin.New(s.db, s.log, s.cfg.Declarative, s.cfg.Version, s.cfg.Distro).Mount(r)
 	}
 	return r
 }

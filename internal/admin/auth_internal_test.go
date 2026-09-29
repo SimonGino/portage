@@ -79,7 +79,7 @@ func newAuthServer(t *testing.T, declarative bool) (*httptest.Server, *sql.DB, *
 	if _, err := Bootstrap(t.Context(), db, testAdminPassword); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative)
+	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative, "0.5.0", "binary")
 	rec := &mailRec{}
 	h.mail = rec.send
 	gin.SetMode(gin.TestMode)
@@ -771,5 +771,23 @@ func TestAuthSettingsSecretsNeverEcho(t *testing.T) {
 		if status, _, _ = cl.do(t, http.MethodPut, "/panel/api/auth-settings", bad); status != http.StatusBadRequest {
 			t.Errorf("坏配置 %s = %d，期望 400", bad, status)
 		}
+	}
+}
+
+// 版本与分发形态只随已登录会话下发（口径层 v1.38 ③）：未登录的 /session 连键都不出现。
+func TestSessionCarriesVersionOnlyWhenAuthenticated(t *testing.T) {
+	srv, _, _ := newAuthServer(t, false)
+	cl := newClient(t, srv)
+
+	_, body, _ := cl.do(t, http.MethodGet, "/panel/api/session", "")
+	if strings.Contains(body, `"version"`) || strings.Contains(body, `"distro"`) {
+		t.Fatalf("未登录 session 带出了版本或形态：%s", body)
+	}
+
+	cl.login(t, store.FirstAdminEmail, testAdminPassword)
+	_, body, _ = cl.do(t, http.MethodGet, "/panel/api/session", "")
+	var got struct{ Version, Distro string }
+	if err := json.Unmarshal([]byte(body), &got); err != nil || got.Version != "0.5.0" || got.Distro != "binary" {
+		t.Fatalf("已登录 session = %s，期望 version=0.5.0 distro=binary", body)
 	}
 }

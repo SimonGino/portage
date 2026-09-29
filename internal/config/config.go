@@ -36,6 +36,12 @@ type Config struct {
 	// 形态是进程属性、闸不看库，与 AdminPassword 那道形态闸同一条立论。
 	Declarative bool `yaml:"-"`
 
+	// Version / Distro 是构建时烤进二进制的版本号与分发形态（口径层 v1.38 ①②），同
+	// Declarative 一样不是 config.yaml 字段：事实源是 main 包那两个 -X 注入的变量，
+	// main 在这里转交给管理端的 /session。
+	Version string `yaml:"-"`
+	Distro  string `yaml:"-"`
+
 	// RateLimitQPS / RateLimitBurst 是全局令牌桶（口径层 §2.7，v0.15 定 10/20）。
 	// **配 0 即关闭限流**；只配了 qps 时 burst 由 newLimiter 兜底。
 	// v0.81 起桶是两只（生成面一只、count_tokens 一只，见 server.pickLimiter），

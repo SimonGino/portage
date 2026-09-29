@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,14 @@ import (
 	"github.com/SimonGino/portage/internal/store"
 )
 
+// version 与 distro 由构建时 -ldflags -X 注入（口径层 v1.38 ①②）：GoReleaser 只注
+// version（distro 默认即 binary），Dockerfile 两个都注。**必须是常量字符串初始化**——
+// 初始化式里带函数调用时 -X 静默不生效。
+var (
+	version = "dev"
+	distro  = "binary"
+)
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "启动配置文件路径，缺失时全用默认值")
 	// 声明文件路径**默认空**，空即「没挂」（口径层 §2.9 #34）。刻意不给隐式默认值：
@@ -27,7 +36,14 @@ func main() {
 	// 合法的，Load 里那道「非空却读不到就拒启」的闸根本不触发，人看到的是一切正常、
 	// 实际跑的是库里的旧配置。这正是要躲的 litellm 那个坑。
 	channelsPath := flag.String("channels", "", "声明文件路径（业务配置）；不给即不挂，配置以 DB 为准")
+	showVersion := flag.Bool("version", false, "打印版本号与分发形态后退出")
 	flag.Parse()
+
+	// 读配置之前处理：纯转发机没有管理面，看版本只有这一条路（口径层 §3 CLI 例外）。
+	if *showVersion {
+		fmt.Printf("portage %s (%s)\n", version, distro)
+		return
+	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
@@ -64,6 +80,7 @@ func run(configPath, channelsPath string, log *slog.Logger) error {
 	// 在这里填而不是在 config.Load 里——声明文件的路径本就不进 config.yaml（#34），
 	// 只有 main 同时看得见两边。
 	cfg.Declarative = file != nil
+	cfg.Version, cfg.Distro = version, distro
 
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {

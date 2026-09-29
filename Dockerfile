@@ -42,8 +42,15 @@ COPY --from=webbuild /internal/webui/dist ./internal/webui/dist
 # 前端那层同理，且 JS 产物本就与平台无关。
 ARG TARGETOS
 ARG TARGETARCH
+# 版本号由 docker.yml 经 --build-arg VERSION 传入（metadata-action 已去掉 v 前缀，与
+# GoReleaser 的 {{ .Version }} 同源）；本地裸 docker build 不传就是 dev。ARG 必须声明在
+# 这个 stage 里，写在第一个 FROM 之前只对 FROM 行可见。-ldflags 用双引号：单引号里
+# ${VERSION} 不展开。main.distro=docker 是分发形态标记：面板据此不出升级按钮。
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -tags webui -trimpath -ldflags='-s -w' -o /out/portage ./cmd/portage
+    go build -tags webui -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.distro=docker" \
+    -o /out/portage ./cmd/portage
 
 # 空的 /data 也得在镜像里先存在且属主正确：Docker 建命名卷时会照搬镜像里同路径的
 # 属主，镜像里没有这个目录，卷就归 root，而我们以 65532 跑——症状是启动即

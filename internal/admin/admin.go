@@ -43,13 +43,15 @@ type Handler struct {
 	// mail 是发信出口（#72）。持函数不直连 mail.Send，注册/验证/重置的流程测试
 	// 才能把真 SMTP 换成记录桩。
 	mail mail.Sender
+	// version / distro 只随已登录的 /session 下发（口径层 v1.38 ③）。
+	version, distro string
 }
 
-func New(db *sql.DB, log *slog.Logger, declarative bool) *Handler {
+func New(db *sql.DB, log *slog.Logger, declarative bool, version, distro string) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{db: db, log: log, declarative: declarative, mail: mail.DefaultSender}
+	return &Handler{db: db, log: log, declarative: declarative, mail: mail.DefaultSender, version: version, distro: distro}
 }
 
 // Bootstrap 用配置里的明文密码初始化管理端密码，**且只在库里还没有密码时**。

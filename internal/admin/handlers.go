@@ -120,6 +120,9 @@ func (h *Handler) session(c *gin.Context) {
 			return
 		}
 		out["user"] = u
+		// 未登录一字不带：不向未鉴权方泄露版本与形态（口径层 v1.38 ③）。
+		out["version"] = h.version
+		out["distro"] = h.distro
 	}
 	c.JSON(http.StatusOK, out)
 }

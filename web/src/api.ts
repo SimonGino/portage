@@ -618,6 +618,9 @@ export interface SessionState {
   password_set: boolean
   /** #72 起登着时带出「我是谁」：按角色分壳、按验证态锁功能都靠它。 */
   user?: User
+  /** 口径层 v1.38 ③：只在已登录时带。version 去 v（`0.5.0`），本地构建为 `dev`。 */
+  version?: string
+  distro?: 'binary' | 'docker'
 }
 
 /** 登录页「有哪些门」：注册开不开、OAuth 有哪几家（GET /auth-config，不鉴权）。 */
