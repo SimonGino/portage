@@ -79,17 +79,17 @@ type TapCore struct {
 	scanner  FrameScanner
 	body     []byte
 	sum      Summary
-	onFrame  func(*Summary, []byte) bool
+	onFrame  func(*Summary, string, []byte) bool
 	onBody   func(*Summary, []byte)
 	finished bool
 	// ended：见过收尾帧（协议终态帧或流内错误帧），Truncated 判据的一半。
 	ended bool
 }
 
-// NewTapCore 组装骨架。onFrame 收到的是单帧的 data 负载，返回这一帧是不是收尾帧
-// （A message_stop / CC [DONE] / R response.completed·incomplete，或流内错误帧）；
-// onBody 收到的是完整响应体。
-func NewTapCore(stream bool, onFrame func(*Summary, []byte) bool, onBody func(*Summary, []byte)) TapCore {
+// NewTapCore 组装骨架。onFrame 收到的是单帧的 SSE event 名与 data 负载，返回这一帧
+// 是不是收尾帧（A message_stop / CC [DONE] / R response.completed·incomplete，或流内
+// 错误帧）；event 名给那些解码侧也拿它兜底帧类型的协议用（R）。onBody 收到的是完整响应体。
+func NewTapCore(stream bool, onFrame func(*Summary, string, []byte) bool, onBody func(*Summary, []byte)) TapCore {
 	return TapCore{stream: stream, onFrame: onFrame, onBody: onBody}
 }
 
@@ -130,7 +130,7 @@ func (t *TapCore) consume(p []byte) {
 // 流的最后一帧。就地 recover 才真的做到「放弃的是那一帧」。
 func (t *TapCore) feed(frame []byte) {
 	defer t.guard()
-	if _, data := SSEFields(frame); len(data) > 0 && t.onFrame(&t.sum, data) {
+	if event, data := SSEFields(frame); len(data) > 0 && t.onFrame(&t.sum, event, data) {
 		t.ended = true
 	}
 }

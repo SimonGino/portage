@@ -18,7 +18,9 @@ type Tap struct {
 
 func NewTap(stream bool) *Tap {
 	t := &Tap{}
-	t.TapCore = protocol.NewTapCore(stream, observe, func(sum *protocol.Summary, body []byte) { observe(sum, body) })
+	t.TapCore = protocol.NewTapCore(stream,
+		func(sum *protocol.Summary, _ string, data []byte) bool { return observe(sum, data) },
+		func(sum *protocol.Summary, body []byte) { observe(sum, body) })
 	return t
 }
 

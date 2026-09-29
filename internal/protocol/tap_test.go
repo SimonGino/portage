@@ -8,7 +8,7 @@ import (
 // Tap 挂在 io.TeeReader 上：Write 一旦报错，TeeReader 会把它变成读错误、直接打断
 // 转发。所以哪怕字段提取代码炸了，Write 也必须返回 (len(p), nil)。
 func TestTapCoreSwallowsPanicFromExtractor(t *testing.T) {
-	core := NewTapCore(true, func(*Summary, []byte) bool { panic("字段提取炸了") }, nil)
+	core := NewTapCore(true, func(*Summary, string, []byte) bool { panic("字段提取炸了") }, nil)
 
 	n, err := core.Write([]byte("data: {\"x\":1}\n\n"))
 
@@ -25,7 +25,7 @@ func TestTapCoreSwallowsPanicFromExtractor(t *testing.T) {
 // 其后所有帧都出不来——而 Anthropic 的 output_tokens 就在流的最后一帧。
 func TestTapCorePanicOnOneFrameDoesNotPoisonTheRest(t *testing.T) {
 	var seen []string
-	core := NewTapCore(true, func(_ *Summary, data []byte) bool {
+	core := NewTapCore(true, func(_ *Summary, _ string, data []byte) bool {
 		seen = append(seen, string(data))
 		if string(data) == "bad" {
 			panic("这一帧炸了")

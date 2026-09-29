@@ -59,7 +59,7 @@ type event struct {
 }
 
 // observeEvent 返回这一帧是不是收尾帧：message_stop，或流内 error 帧（#162）。
-func observeEvent(sum *protocol.Summary, data []byte) bool {
+func observeEvent(sum *protocol.Summary, _ string, data []byte) bool {
 	var e event
 	if json.Unmarshal(data, &e) != nil {
 		// 心跳注释、ping、上游自定义事件都可能不是对象——不是错误，跳过即可。
