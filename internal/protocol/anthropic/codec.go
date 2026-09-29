@@ -32,7 +32,16 @@ type Codec struct {
 	opts Options
 	// StreamReadFlag 记「流式解码途中读上游读断了」，由 DecodeStream 填。
 	protocol.StreamReadFlag
+	// responseDrops 记上游响应里认不得的内容块（形如 `server_tool_use(#1)`），由
+	// DecodeStream / DecodeFullBody 填，消费方见 ResponseDrops。
+	responseDrops protocol.NameList
 }
+
+// ResponseDrops 列出解码上游响应时放不出去的内容块，server 层按鸭子类型接去打 Warn
+// （口径层 §2.6 ⑬，#136）。形制与并发约定同 openairesponses.Codec.ResponseDrops：
+// 只登记类型与 index、不存内容，不合成 server_tool_use；流式下由解码 goroutine 写，
+// 调用方在事件通道关闭之后读。
+func (c *Codec) ResponseDrops() protocol.NameList { return c.responseDrops }
 
 // NewCodec 建一个 Anthropic Codec。
 //
