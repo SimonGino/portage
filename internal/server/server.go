@@ -375,7 +375,8 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		upstream.CopyResponseHeaders(c.Writer.Header(), res.Header)
 		// 只在这一处偏离「原样透传上游响应头」：SSE 时补 X-Accel-Buffering: no。
 		// 补在 CopyResponseHeaders 之后是有意的——上游若自己发了这个头，以我们的为准。
-		if isEventStream(c.Writer.Header().Get("Content-Type")) {
+		sse := isEventStream(c.Writer.Header().Get("Content-Type"))
+		if sse {
 			setNoBuffering(c.Writer.Header())
 		}
 		// 收场记账（Succeeded / 首字节 / stream_aborted）在 Writer 里按构造走，这里只管断连。
@@ -388,6 +389,13 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			// 响应头已发出，格式承诺已生效：不改写、不重发，只能断连并记日志（§6）。
 			s.log.Warn("首字节写出后透传中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 			panic(http.ErrAbortHandler)
+		}
+		// 干净 EOF 却没给终态：与转换路径同一个词 stream_aborted（#98、#162）。只改流水，
+		// 客户端字节已原样转完，一个不补（透传保真）。只判真 SSE 响应：上游无视 stream:true
+		// 回整包 JSON 时 Tap 找不到 SSE 终态帧，那不是断流。
+		if sse && res.StreamTruncated() {
+			w.Abort(protocol.ErrStreamTruncated)
+			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", protocol.ErrStreamTruncated)
 		}
 	}
 }

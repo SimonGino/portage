@@ -48,16 +48,26 @@ type response struct {
 // 流式下每个生命周期事件都裹一层 response 对象，最终值来自 response.completed /
 // response.incomplete / response.failed。
 type event struct {
+	Type     string    `json:"type"`
 	Response *response `json:"response"`
 }
 
-func observeEvent(sum *protocol.Summary, data []byte) {
+// observeEvent 返回这一帧是不是收尾帧：response.completed / incomplete，或流内错误
+// （response.failed、裸 error 帧），同解码侧（#162）。
+func observeEvent(sum *protocol.Summary, data []byte) bool {
 	var e event
-	if json.Unmarshal(data, &e) != nil || e.Response == nil {
-		// output_text.delta 之类的增量事件没有 response 字段，跳过。
-		return
+	if json.Unmarshal(data, &e) != nil {
+		return false
 	}
-	apply(sum, e.Response)
+	// output_text.delta 之类的增量事件没有 response 字段，不取值。
+	if e.Response != nil {
+		apply(sum, e.Response)
+	}
+	switch e.Type {
+	case "response.completed", "response.incomplete", "response.failed", "error":
+		return true
+	}
+	return false
 }
 
 func observeBody(sum *protocol.Summary, body []byte) {
@@ -74,10 +84,11 @@ func apply(sum *protocol.Summary, r *response) {
 	}
 	// Responses 没有独立的 stop_reason 字段，终止信息在 status 上；截断时具体原因
 	// （max_output_tokens 等）在 incomplete_details.reason 里，取更具体的那个。
-	// in_progress 是中间态，不当终止原因记。
+	// in_progress / queued 是中间态，不当终止原因记——记了会让截断判据（#162）把
+	// 断在终态之前的流当成报过停因。
 	if d := r.IncompleteDetails; d != nil && d.Reason != "" {
 		sum.StopReason = d.Reason
-	} else if r.Status != "" && r.Status != "in_progress" {
+	} else if r.Status != "" && r.Status != "in_progress" && r.Status != "queued" {
 		sum.StopReason = r.Status
 	}
 	// service_tier 同理（#103）：created / in_progress（后台模式还有 queued）回显的

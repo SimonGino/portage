@@ -209,6 +209,83 @@ func TestCallLogMarksStreamAbortedAfterFirstByte(t *testing.T) {
 	}
 }
 
+// #162：同协议透传上游干净 EOF 却没给终态，流水与转换路径对齐记 stream_aborted，
+// 客户端字节与上游逐字节相同（透传保真）。判据同 #161：停因、终态帧见过任一，或流内
+// 回了错误帧，都算说完了、记 ok。样本是照协议形状手工构造的，不是转录。
+func TestPassthroughCleanEOFWithoutTerminalIsAborted(t *testing.T) {
+	const (
+		aReq  = `{"model":"` + accessPointModel + `","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+		ccReq = `{"model":"` + accessPointModel + `","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+		rReq  = `{"model":"` + accessPointModel + `","stream":true,"input":"hi"}`
+	)
+	ccChunk := func(delta string) string {
+		return "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":" + delta + "}]}\n\n"
+	}
+	rEvent := func(typ, rest string) string {
+		return sseFrame(typ, `{"type":"`+typ+`"`+rest+`}`)
+	}
+	for _, tc := range []struct {
+		name, proto, path, req, upstream, outcome string
+	}{
+		{"A 断在 message_delta 之前", "anthropic", "/v1/messages", aReq,
+			anthropicStreamFrames()[0] + anthropicStreamFrames()[1], "stream_aborted"},
+		{"A 流内 error 帧", "anthropic", "/v1/messages", aReq,
+			anthropicStreamFrames()[0] + sseFrame("error", `{"type":"error","error":{"type":"overloaded_error","message":"x"}}`), "ok"},
+		{"CC 既没 finish_reason 也没 [DONE]", "openai", "/v1/chat/completions", ccReq,
+			ccChunk(`{"role":"assistant","content":"你好"}`), "stream_aborted"},
+		{"CC 没 finish_reason 但发了 [DONE]", "openai", "/v1/chat/completions", ccReq,
+			ccChunk(`{"content":"你好"}`) + "data: [DONE]\n\n", "ok"},
+		{"R 断在 response.completed 之前", "openai_responses", "/v1/responses", rReq,
+			rEvent("response.created", `,"response":{"model":"m","status":"in_progress"}`) +
+				rEvent("response.output_text.delta", `,"delta":"你好"`), "stream_aborted"},
+		{"R response.failed", "openai_responses", "/v1/responses", rReq,
+			rEvent("response.created", `,"response":{"model":"m","status":"in_progress"}`) +
+				rEvent("response.failed", `,"response":{"status":"failed","error":{"message":"x"}}`), "ok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			up := gatewaytest.NewUpstream(t)
+			db := gatewaytest.NewDB(t)
+			gatewaytest.SeedPassthrough(t, db, accessPointModel, tc.proto, up.URL, upstreamModel, anthropicCredential)
+			gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
+			up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "text/event-stream"}, tc.upstream)
+
+			body := gatewaytest.ReadBody(t, gw.Post(t, tc.path, tc.req, nil))
+
+			if body != tc.upstream {
+				t.Errorf("透传字节被改了\n上游: %q\n客户端: %q", tc.upstream, body)
+			}
+			line := gw.LastCall(t)
+			if line.Str("outcome") != tc.outcome {
+				t.Errorf("outcome = %q, 期望 %s", line.Str("outcome"), tc.outcome)
+			}
+			if line.Int64("status") != http.StatusOK {
+				t.Errorf("status = %d, 期望 200", line.Int64("status"))
+			}
+		})
+	}
+}
+
+// #162 的截断判据只对真 SSE 响应成立：上游无视 stream:true 回整包 JSON 时，透传
+// 此前记 ok，不能因为 Tap 在 JSON 里找不到 SSE 终态帧就改判 stream_aborted。
+func TestPassthroughNonSSEBodyOnStreamRequestStaysOk(t *testing.T) {
+	const upstreamBody = `{"id":"c1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"你好"},"finish_reason":"stop"}]}`
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, accessPointModel, "openai", up.URL, upstreamModel, anthropicCredential)
+	gw := gatewaytest.StartWith(t, db, gatewaytest.Options{})
+	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"}, upstreamBody)
+
+	body := gatewaytest.ReadBody(t, gw.Post(t, "/v1/chat/completions",
+		`{"model":"`+accessPointModel+`","stream":true,"messages":[{"role":"user","content":"hi"}]}`, nil))
+
+	if body != upstreamBody {
+		t.Errorf("透传字节被改了: %q", body)
+	}
+	if got := gw.LastCall(t).Str("outcome"); got != "ok" {
+		t.Errorf("outcome = %q, 期望 ok（非 SSE 响应不判截断）", got)
+	}
+}
+
 // Tap 的缓冲上限只许影响日志字段，绝不许碰转发字节。这条得在主接缝上验：单测只
 // 证明了 Tap 自己会降级，证明不了「客户端收到的还是原样」。
 func TestOversizedFrameDegradesLogButNotRelayedBytes(t *testing.T) {

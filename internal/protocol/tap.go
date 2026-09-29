@@ -50,6 +50,11 @@ type Summary struct {
 	// Speed 是 Anthropic fast mode 的回报（usage.speed，fast / standard），同样只记
 	// 不计价。OpenAI 两家没有这个字段，恒空。
 	Speed string
+	// Truncated 是流式下「上游干净 EOF，却既没报停因、也没发协议终态帧」（#162）：
+	// 判据与转换路径同一条 StreamTruncated（#161），流内错误帧算说完了（同转换路径，
+	// 透传与转换都记 ok）。透传路径据此把收场记 stream_aborted，客户端字节不动。
+	// 非流式恒 false；读断（传输错误）不靠它，那是转发循环自己的返回值。
+	Truncated bool
 	// Degraded 表示 Tap 主动放弃了解析（单帧超限，或解析途中 panic 被兜住）。
 	// 它只削弱这一行日志的可信度，永远不影响转发出去的字节。
 	Degraded bool
@@ -74,13 +79,17 @@ type TapCore struct {
 	scanner  FrameScanner
 	body     []byte
 	sum      Summary
-	onFrame  func(*Summary, []byte)
+	onFrame  func(*Summary, []byte) bool
 	onBody   func(*Summary, []byte)
 	finished bool
+	// ended：见过收尾帧（协议终态帧或流内错误帧），Truncated 判据的一半。
+	ended bool
 }
 
-// NewTapCore 组装骨架。onFrame 收到的是单帧的 data 负载，onBody 收到的是完整响应体。
-func NewTapCore(stream bool, onFrame, onBody func(*Summary, []byte)) TapCore {
+// NewTapCore 组装骨架。onFrame 收到的是单帧的 data 负载，返回这一帧是不是收尾帧
+// （A message_stop / CC [DONE] / R response.completed·incomplete，或流内错误帧）；
+// onBody 收到的是完整响应体。
+func NewTapCore(stream bool, onFrame func(*Summary, []byte) bool, onBody func(*Summary, []byte)) TapCore {
 	return TapCore{stream: stream, onFrame: onFrame, onBody: onBody}
 }
 
@@ -121,8 +130,8 @@ func (t *TapCore) consume(p []byte) {
 // 流的最后一帧。就地 recover 才真的做到「放弃的是那一帧」。
 func (t *TapCore) feed(frame []byte) {
 	defer t.guard()
-	if _, data := SSEFields(frame); len(data) > 0 {
-		t.onFrame(&t.sum, data)
+	if _, data := SSEFields(frame); len(data) > 0 && t.onFrame(&t.sum, data) {
+		t.ended = true
 	}
 }
 
@@ -139,6 +148,7 @@ func (t *TapCore) finish() {
 	t.finished = true
 	if t.stream {
 		t.scanner.Flush(t.feed)
+		t.sum.Truncated = StreamTruncated(t.sum.StopReason != "", t.ended)
 	} else if len(t.body) > 0 {
 		t.onBody(&t.sum, t.body)
 	}

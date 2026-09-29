@@ -18,7 +18,7 @@ type Tap struct {
 
 func NewTap(stream bool) *Tap {
 	t := &Tap{}
-	t.TapCore = protocol.NewTapCore(stream, observe, observe)
+	t.TapCore = protocol.NewTapCore(stream, observe, func(sum *protocol.Summary, body []byte) { observe(sum, body) })
 	return t
 }
 
@@ -38,6 +38,8 @@ type chunk struct {
 			ReasoningTokens *int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
 	} `json:"usage"`
+	// Error 是流内错误对象：见了就算说完了（#162，同解码侧 errorSent）。
+	Error *struct{} `json:"error"`
 }
 
 // promptDetails 是 prompt_tokens_details，Tap 与 codec 共用：缓存写入的两种键
@@ -57,11 +59,16 @@ func (d *promptDetails) cacheWrite() int {
 	return max(d.CacheWriteTokens, d.CacheCreationInputTokens)
 }
 
-func observe(sum *protocol.Summary, data []byte) {
+// observe 返回这一帧是不是收尾帧：[DONE]，或带错误对象的 chunk（#162）。
+func observe(sum *protocol.Summary, data []byte) bool {
+	// data: [DONE] 是流的正常收尾，不是 JSON。
+	if string(data) == "[DONE]" {
+		return true
+	}
 	var c chunk
-	// data: [DONE] 是流的正常收尾，不是 JSON——解不动就跳过，不算降级。
+	// 解不动就跳过，不算降级。
 	if json.Unmarshal(data, &c) != nil {
-		return
+		return false
 	}
 	if c.Model != "" {
 		sum.Model = c.Model
@@ -77,7 +84,7 @@ func observe(sum *protocol.Summary, data []byte) {
 	if c.Usage == nil {
 		// 流式下 usage 只在带 stream_options.include_usage 时才出现，且在最后
 		// 一个 choices 为空的 chunk 里。客户端没开就是没有——降级为零值，不报错。
-		return
+		return c.Error != nil
 	}
 	if c.Usage.PromptTokens != 0 {
 		sum.InputTokens = c.Usage.PromptTokens
@@ -98,4 +105,5 @@ func observe(sum *protocol.Summary, data []byte) {
 	if d := c.Usage.CompletionTokensDetails; d != nil && d.ReasoningTokens != nil {
 		sum.ReasoningTokens, sum.HasReasoningTokens = *d.ReasoningTokens, true
 	}
+	return c.Error != nil
 }
