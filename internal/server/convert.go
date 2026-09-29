@@ -417,22 +417,30 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 func (s *Server) bufferConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, src io.Reader) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		rec.Failed(calllog.UpstreamError, "")
-		s.log.Error("读上游响应失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
+		// 与流式路径同源（v0.53）：落库的原文就是脱敏后的错误本身。这一支此前
+		// 传空串，#105 的 idle timeout 落这条路时流水里完全看不出是空闲超时还是
+		// 断连（issue #163）。
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("读上游响应失败", "channel", cand.ChannelName, "err", detail)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应读取失败")
 		return
 	}
 	events, err := outCodec.DecodeFullBody(raw)
 	if err != nil {
-		rec.Failed(calllog.UpstreamError, "")
-		s.log.Error("上游响应解码失败", "channel", cand.ChannelName, "err", err)
+		// 同一原则：不带上游 key / base_url。Redact 只认传输错误的外壳，解码错误
+		// 原样透过，这里统一走一遍单纯是不必对每个失败分支各判一次。
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("上游响应解码失败", "channel", cand.ChannelName, "err", detail)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法解析")
 		return
 	}
 	out, err := inCodec.EncodeFullBody(events)
 	if err != nil {
-		rec.Failed(calllog.UpstreamError, "")
-		s.log.Error("响应编码失败", "inbound", ep.Proto, "err", err)
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("响应编码失败", "inbound", ep.Proto, "err", detail)
 		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法转换")
 		return
 	}

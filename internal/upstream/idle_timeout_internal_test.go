@@ -85,3 +85,32 @@ func streamReq(rt Route) Request {
 	r.Stream = true
 	return r
 }
+
+// TestIdleTimeoutRedactedTextOnBufferedRead 钉 issue #163 验收值的真实来源：非流式
+// 转换路径 bufferConverted 用 io.ReadAll 读这份 body，落库的是 Redact(err).Error()。
+// 走真实 Client（部分 body 后挂住、阈值注入），证明那段原文恰为验收值——不带
+// url.Error 外壳、不带上游地址。server 包的白盒用例只钉「读错误原文照落」那一半。
+func TestIdleTimeoutRedactedTextOnBufferedRead(t *testing.T) {
+	up := newFakeUpstream(t, func(_ int, w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"partial`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+
+	c := NewClient(RetryPolicy{})
+	c.idleReadTimeout = 30 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resp, _, err := c.Do(ctx, chatReq(up.route("a")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	_, err = io.ReadAll(resp.Body)
+	if got := Redact(err); got == nil || got.Error() != "upstream idle timeout" {
+		t.Fatalf("Redact(ReadAll 错误) = %v，期望 %q", got, "upstream idle timeout")
+	}
+}
