@@ -182,6 +182,60 @@ func TestAnthropicOutletKeepsClientBreakpoints(t *testing.T) {
 			t.Errorf("cache_control = %v，期望客户端原值", block["cache_control"])
 		}
 	})
+	// CC 的工具调用与工具结果不是 content part：断点挂在 tool_calls[] 条目与 role=tool
+	// 消息上（litellm factory.py 同样认这两处）。由 in-cc-tool-turn2 真实发包派生，只注入
+	// 一个 cache_control。
+	for _, tc := range []struct{ name, inject string }{
+		{"工具调用", "tool_calls"},
+		{"工具结果", "tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "golden", "in-cc-tool-turn2", "request.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatal(err)
+			}
+			var target map[string]any
+			for _, m := range body["messages"].([]any) {
+				msg := m.(map[string]any)
+				if tc.inject == "tool" && msg["role"] == "tool" {
+					target = msg
+				}
+				if calls, ok := msg["tool_calls"].([]any); ok && tc.inject == "tool_calls" {
+					target = calls[0].(map[string]any)
+				}
+			}
+			if target == nil {
+				t.Fatalf("样本前提不成立：in-cc-tool-turn2 里找不到 %s", tc.inject)
+			}
+			target["cache_control"] = clientMark["cache_control"]
+			patched, _ := json.Marshal(body)
+			req := decodeWith(t, openaicc.NewCodec(), string(patched))
+			enc, err := anthropic.NewCodec(anthropic.Options{DefaultMaxTokens: 8192}).EncodeRequest(req, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]any
+			if err := json.Unmarshal(enc, &out); err != nil {
+				t.Fatal(err)
+			}
+			got := breakpoints(out)
+			if len(got) != 1 {
+				t.Fatalf("断点 = %v，期望只有客户端那一个", got)
+			}
+			wantType := map[string]string{"tool_calls": "tool_use", "tool": "tool_result"}[tc.inject]
+			for mi, m := range out["messages"].([]any) {
+				for bi, b := range m.(map[string]any)["content"].([]any) {
+					if b.(map[string]any)["cache_control"] != nil && b.(map[string]any)["type"] != wantType {
+						t.Errorf("messages[%d][%d] 带了断点但类型是 %v，期望 %s", mi, bi, b.(map[string]any)["type"], wantType)
+					}
+				}
+			}
+		})
+	}
 	t.Run("工具", func(t *testing.T) {
 		out := goldenToAnthropic(t, "in-cc-tool-turn1", false, func(req *protocol.Request) {
 			req.Tools[0].Extras = clientMark

@@ -364,6 +364,10 @@ func encodeMessages(msgs []protocol.Message, dropped *protocol.Drops) []map[stri
 		if len(blocks) == 0 {
 			continue
 		}
+		if m.Role == protocol.RoleTool {
+			// CC 的 role=tool 消息整条就是一个 tool_result，客户端的断点挂在消息上。
+			withCacheControl(blocks[0], m.Extras)
+		}
 		blocks = flushPending(role, blocks)
 		appendMsg(role, blocks)
 		if role == string(protocol.RoleAssistant) {
@@ -455,7 +459,8 @@ func encodeBlocksFiltered(blocks []protocol.Block, seen map[string]bool, drop fu
 			if b.ToolCall == nil {
 				continue
 			}
-			out = append(out, withCacheControl(encodeToolUse(b.ToolCall), b.Extras))
+			// 客户端打在调用条目上的断点，入口解码落在 ToolCall.Extras 而不是块上。
+			out = append(out, withCacheControl(encodeToolUse(b.ToolCall), b.ToolCall.Extras))
 
 		case protocol.BlockToolResult:
 			if b.ToolResult == nil {
