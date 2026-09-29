@@ -58,7 +58,7 @@ type Codec struct {
 	// compaction 记「本次是 Codex 压缩 turn」，compactionDrops 记回带时没能还原的
 	// 压缩 item。两个都由 DecodeRequest 填，消费方见 CompactionTurn / CompactionDrops。
 	compaction      bool
-	compactionDrops []string
+	compactionDrops protocol.NameList
 
 	// argsSalvaged 记回带历史里入参被救治成 `{}` 的 function_call（形如 `名字(call_id)`），
 	// 由 DecodeRequest 填，消费方见 ArgsSalvaged。与 compactionDrops 同一个形制：codec

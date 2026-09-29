@@ -91,7 +91,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		}
 		req.ToolChoice = choice
 	}
-	c.compaction, c.compactionDrops, c.argsSalvaged = false, nil, protocol.NameList{}
+	c.compaction, c.compactionDrops, c.argsSalvaged = false, protocol.NameList{}, protocol.NameList{}
 	if raw, ok := root["input"]; ok {
 		if err := c.decodeInput(raw, req, td); err != nil {
 			return nil, err
@@ -269,7 +269,7 @@ func (c *Codec) decodeInput(raw json.RawMessage, req *protocol.Request, td *tool
 				// 登记而不是静默降级：解不开只有两种来路——先经透传渠道压缩成功后混路
 				// 到转换渠道，或这段历史是别的网关压的。两种都值得在流水/日志里留一行，
 				// 否则「模型好像忘了前半段」这类反馈永远查不到根。
-				c.compactionDrops = append(c.compactionDrops, kind)
+				c.compactionDrops.Add(kind)
 			}
 			// 挂 user：摘要在 Codex 的原生流程里就是一条 user 消息（summaryPrefix 是它的
 			// 引导语）。
@@ -331,7 +331,7 @@ func (c *Codec) CompactionTurn() bool { return c.compaction }
 
 // CompactionDrops 列出解码时没能还原的回带压缩 item 的 type，供调用方打丢弃日志
 // （口径层 §2.6：跨协议丢弃要有日志警告，不静默）。codec 是纯函数、不持有 logger。
-func (c *Codec) CompactionDrops() []string { return c.compactionDrops }
+func (c *Codec) CompactionDrops() protocol.NameList { return c.compactionDrops }
 
 // ArgsSalvaged 列出解码时入参被救治成 `{}` 的回带 function_call（形如 `名字(call_id)`），
 // 供调用方打警告日志。同 CompactionDrops：codec 是纯函数、不持有 logger。

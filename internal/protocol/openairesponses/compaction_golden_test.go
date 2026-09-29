@@ -86,7 +86,7 @@ func TestGoldenCompactionReplayIsNotACompactionTurn(t *testing.T) {
 	if c.CompactionTurn() {
 		t.Error("回带轮的 CompactionTurn() 为真——丢弃日志罩在这道闸里就会全无声")
 	}
-	if got := c.CompactionDrops(); len(got) != 1 || got[0] != itemCompaction {
+	if got := c.CompactionDrops().Names(); len(got) != 1 || got[0] != itemCompaction {
 		t.Fatalf("CompactionDrops() = %v，期望恰好一条 %q", got, itemCompaction)
 	}
 
@@ -119,7 +119,7 @@ func TestGoldenPreCompactionTurnIsOrdinary(t *testing.T) {
 	if _, err := c.DecodeRequest(body, true); err != nil {
 		t.Fatalf("普通一轮解不动: %v", err)
 	}
-	if c.CompactionTurn() || len(c.CompactionDrops()) != 0 {
+	if c.CompactionTurn() || !c.CompactionDrops().Empty() {
 		t.Errorf("普通一轮被当成压缩相关: turn=%v drops=%v", c.CompactionTurn(), c.CompactionDrops())
 	}
 }

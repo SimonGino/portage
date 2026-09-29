@@ -104,8 +104,8 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 丢弃日志**不能**罩在压缩 turn 里面：回带解不开发生在压缩之后的**普通**请求上
 	// （那一轮没有 trigger，CompactionTurn 为假——见 decode 侧的还原用例），而混路
 	// 场景恰恰是它要诊断的头一次。罩着的话最该归因的那次静默无声。
-	if rc, ok := inCodec.(interface{ CompactionDrops() []string }); ok {
-		if drops := rc.CompactionDrops(); len(drops) > 0 {
+	if rc, ok := inCodec.(interface{ CompactionDrops() protocol.NameList }); ok {
+		if drops := rc.CompactionDrops(); !drops.Empty() {
 			// 回带的压缩摘要解不开、降级成了占位：这一段历史对上游是失忆的，
 			// 「模型好像忘了前半段」这类反馈只能靠这行日志归因。
 			s.log.Warn("回带的压缩摘要解不开，已降级为占位",
