@@ -159,10 +159,10 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 		}
 	}
 
-	// Truncated 与流式那半边同判据（emitDone）：非流式的 stop_reason 缺失不是「流断
-	// 了」——包解得开——而是「上游没声明这轮是怎么收的」，对压缩合成是同一个失格理由
-	// （openairesponses 的 compactionNoItem）。这一位不置，一份没声明收尾的响应会被
-	// 当成完整摘要装回 Codex 的历史。
+	// Truncated 只取流式判据（emitDone）的停因那一半，非流式没有终态帧可看。
+	// stop_reason 缺失不是「流断了」——包解得开——而是「上游没声明这轮是怎么收的」，
+	// 对压缩合成是同一个失格理由（openairesponses 的 compactionNoItem）。这一位不置，
+	// 一份没声明收尾的响应会被当成完整摘要装回 Codex 的历史。
 	//
 	// 这里没走 emitDone 是因为非流式不经 respState（没有 channel、没有跨帧状态），
 	// 但两处的 EvDone 必须同形——上面那句「两条路径只有一处解析」管的是内容块，收尾
@@ -365,7 +365,7 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 		}
 
 	case "message_stop":
-		st.emitDone(out)
+		st.emitDone(out, true)
 
 	case "error":
 		msg := "上游返回错误"
@@ -383,17 +383,18 @@ func (st *respState) frame(frame []byte, out chan<- protocol.Event) {
 //
 // 不补就是把「流没了」变成「流永远不结束」——编码侧在等 EvDone，客户端在等
 // response.completed，两边一起挂着。
-func (st *respState) finish(out chan<- protocol.Event) { st.emitDone(out) }
+func (st *respState) finish(out chan<- protocol.Event) { st.emitDone(out, false) }
 
-func (st *respState) emitDone(out chan<- protocol.Event) {
+// emitDone 放 EvDone；terminal 表示是 message_stop 来的，不是 finish 兜底。
+func (st *respState) emitDone(out chan<- protocol.Event, terminal bool) {
 	if st.done {
 		return
 	}
 	st.done = true
-	st.truncated = st.stop == ""
-	// st.stop 空 = message_delta 里那个 stop_reason 一次都没到，这个收尾纯是上面
-	// finish 兜出来的。StopReason 照旧兜成 stop（下游要一个合法取值），另开
-	// Truncated 把「上游没说话就断了」这件事带下去。
+	// 停因与 message_stop 都没到，这个收尾纯是上面 finish 兜出来的（#161 判据）。
+	// StopReason 照旧兜成 stop（下游要一个合法取值），另开 Truncated 把「上游没说话
+	// 就断了」这件事带下去。
+	st.truncated = protocol.StreamTruncated(st.stop != "", terminal)
 	out <- protocol.Event{
 		Type:       protocol.EvDone,
 		StopReason: canonicalStopReason(st.stop),

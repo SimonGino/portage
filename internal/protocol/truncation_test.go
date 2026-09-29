@@ -342,26 +342,69 @@ data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"d
 	}
 }
 
-// #98 裁决顺手修的判据：CC 上游发过 [DONE] 只是没给 finish_reason，不算截断。
-func TestCCDoneWithoutFinishReasonIsNotTruncated(t *testing.T) {
-	const stream = `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"好了"}}]}
+// 截断判据三家对称（#161 PO 裁决，#98 CC 那条的推广）：见过停因或协议终态帧（A message_stop /
+// CC [DONE] / R 终态事件）任一即不算截断，照常收尾、流水落 ok。三条构造样本（手搭）。
+// 反面「两者皆无的干净 EOF」由 TestCleanEOFWithoutTerminalIsError 钉。
+func TestTerminalFrameWithoutStopReasonIsNotTruncated(t *testing.T) {
+	type decoder interface {
+		DecodeStream(r io.Reader) (<-chan protocol.Event, error)
+		StreamReadError() error
+	}
+	cases := map[string]struct {
+		codec  decoder
+		stream string
+	}{
+		"CC [DONE] 无 finish_reason": {openaicc.NewCodec(), `data: {"id":"chatcmpl-1","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"好了"}}]}
 
 data: [DONE]
 
-`
-	dec := openaicc.NewCodec()
-	ch, err := dec.DecodeStream(strings.NewReader(stream))
-	if err != nil {
-		t.Fatal(err)
+`},
+		"A message_stop 无 stop_reason": {anthropic.NewCodec(), `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"好了"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":null,"stop_sequence":null},"usage":{"output_tokens":2}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`},
+		"R 终帧缺 response 对象": {openairesponses.NewCodec(), `event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","model":"m","status":"in_progress","output":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"好了"}
+
+event: response.completed
+data: {"type":"response.completed"}
+
+`},
 	}
-	var buf bytes.Buffer
-	if err := anthropic.NewCodec().EncodeStream(&buf, ch); err != nil {
-		t.Fatal(err)
-	}
-	if out := buf.String(); !strings.Contains(out, `"stop_reason":"end_turn"`) || !strings.Contains(out, "event: message_stop") {
-		t.Errorf("[DONE] 收尾应照常 end_turn + message_stop:\n%s", out)
-	}
-	if err := dec.StreamReadError(); err != nil {
-		t.Errorf("StreamReadError = %v，[DONE] 收尾不该记断流", err)
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			ch, err := c.codec.DecodeStream(strings.NewReader(c.stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if err := anthropic.NewCodec().EncodeStream(&buf, ch); err != nil {
+				t.Fatal(err)
+			}
+			if out := buf.String(); !strings.Contains(out, `"stop_reason":"end_turn"`) || !strings.Contains(out, "event: message_stop") {
+				t.Errorf("终态帧收尾应照常 end_turn + message_stop:\n%s", out)
+			}
+			if err := c.codec.StreamReadError(); err != nil {
+				t.Errorf("StreamReadError = %v，见过终态帧不该记断流", err)
+			}
+		})
 	}
 }

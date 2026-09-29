@@ -201,8 +201,8 @@ type Event struct {
 	// 未知一律 stop（Anthropic 非流式不接受空 stop_reason，见 §5 坑清单）。
 	StopReason string
 
-	// EvDone：这个收尾是**解码侧兜底合成**的——上游流断在它声明 stop reason 之前
-	// （Anthropic 的 message_delta、CC 的 finish_reason 都没等到）。
+	// EvDone：这个收尾是**解码侧兜底合成**的——上游流既没声明 stop reason、也没发协议
+	// 终态帧就断了（判据见 StreamTruncated，#161）。
 	//
 	// 单开一位而不是让 StopReason 留空：留空这条路被上面那个兜底堵死了，而「上游
 	// 说它停了」与「上游没说话就没了」在压缩合成上是生死之别——半截摘要会被 Codex

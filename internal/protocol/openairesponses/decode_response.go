@@ -227,6 +227,9 @@ type respStreamState struct {
 
 	// truncated：放出去的 EvDone 带了 Truncated，DecodeStream 据此记 StreamReadError（#98）。
 	truncated bool
+	// sawTerminal：到过 response.completed / incomplete。终帧缺 response 对象时停因为空，
+	// 但上游说完了，不算截断（#161）。
+	sawTerminal bool
 }
 
 // textSlot 是一段正文的身份：output item 的位置 + item 内部件的位置。
@@ -657,6 +660,7 @@ func (st *respStreamState) terminal(f *respFrame, out chan<- protocol.Event) {
 	// doneSent 挡死了——不 flush 等于让那一路调用只剩 Start，入参与 End 双双消失。
 	// completed 的正常序里缓冲早已空，这一句是空转。
 	st.flushAllPending(out)
+	st.sawTerminal = true
 	if f.Response != nil {
 		st.observeUsage(f.Response.Usage, out)
 		st.stop = st.stopReason(f.Response)
@@ -726,9 +730,9 @@ func (st *respStreamState) done(out chan<- protocol.Event) {
 	}
 	st.doneSent = true
 	stop := st.stop
-	truncated := stop == ""
+	truncated := protocol.StreamTruncated(stop != "", st.sawTerminal)
 	st.truncated = truncated
-	if truncated {
+	if stop == "" {
 		// 同 CC 侧：Anthropic 非流式不接受空 stop_reason（§5 坑清单），默认值在解码
 		// 侧就给足；「上游没说就断了」这个事实另开 Truncated 带下去。
 		stop = "stop"
