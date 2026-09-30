@@ -1,6 +1,6 @@
 # 参考仓库
 
-本地 `~/Code/GitHub/` 下的以下几个仓库。涉及协议细节、字段语义、转换坑，先查这里再下结论，不凭记忆；**本机上其他 fork 一律不参考**。逐文件的路径对照表见 `docs/MVP设计草案.md` §12。
+本地 `~/Code/GitHub/` 下的以下几个仓库。涉及协议细节、字段语义、转换坑，先查这里再下结论，不凭记忆；**本机上其他 fork 一律不参考**。「首要参考」是先查哪里，不是只查哪里：首要参考沉默或存疑时，放宽到其他仓库再调研。逐文件的路径对照表见 `docs/MVP设计草案.md` §12。
 
 ## `new-api`（QuantumNous/new-api）
 
@@ -38,7 +38,7 @@ MIT，义务同 CLIProxyAPI / opencodex：阅读借鉴零义务，复制代码�
 
 ## `CLIProxyAPI`（router-for-me/CLIProxyAPI，MIT）
 
-Go 本地代理。**「thinking/reasoning 跨协议保真与 signature 处置」这一主题的首要参考**（主题之外不参考）：出向合成见 `internal/translator/openai/claude/`，回带按 signature provenance 整块丢弃的决策表见 `internal/signature/provider_compatibility.go`，「思考多少 / 展示与否」正交两维见 `internal/thinking/`。
+Go 本地代理。**「thinking/reasoning 跨协议保真与 signature 处置」这一主题的首要参考**（主题之外次参考）：出向合成见 `internal/translator/openai/claude/`，回带按 signature provenance 整块丢弃的决策表见 `internal/signature/provider_compatibility.go`，「思考多少 / 展示与否」正交两维见 `internal/thinking/`。
 
 **架构不参考**（点对点 N×M、30 对逐一注册、无 canonical 事件模型），五套有状态 reasoning 回放账本知道即可、不抄。
 
