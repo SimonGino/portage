@@ -48,3 +48,6 @@ web/tsconfig.tsbuildinfo
 
 # 真机截图带真实渠道名与掩码 key，不入库；设计稿本身（HTML/MD）是假数据，照常跟踪
 design-demos/redesign/shots/live-*.png
+
+# pi / herdr 本地产物
+.pi/
