@@ -3,6 +3,8 @@
 **换模型，不换 harness。**
 
 [![CI](https://github.com/SimonGino/portage/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonGino/portage/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SimonGino/portage)](https://github.com/SimonGino/portage/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![单二进制](https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-%E5%8D%95%E4%BA%8C%E8%BF%9B%E5%88%B6-1B365D)](#快速开始)
 
@@ -75,52 +77,19 @@ flowchart LR
 
 ## 快速开始
 
-同一个二进制跑两种形态，分界只有一条：有没有设管理密码。
-
-| | 管理密码 | 业务配置 | 用在哪 |
-| --- | --- | --- | --- |
-| **带管理端** | 设了 | 落在库里，点着改 | 你**用来配**的那台 |
-| **纯转发** | 哪儿都没设 | 来自声明文件 | 你**部署到**的那台 |
-
-正经路子是两台都要，三步：**本地开着管理端配好 → 导出一份 `channels.yaml` → 把这份文件
-部署到一台纯转发实例上。**
-
-### 1. 本地配，带管理端
-
 ```bash
-PORTAGE_ADMIN_PASSWORD='想好的密码' \
-  docker compose -f deploy/docker-compose.yml up -d --build
+curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh
+PORTAGE_ADMIN_PASSWORD='想好的密码' portage
 ```
 
-起来后开 <http://127.0.0.1:8317/panel> 登录，依次配渠道 → 纳管模型 → 接入点 → API Key。
-上游也在这台上测通：纯转发实例不主动探任何东西，你在这台上没验过的，就没人验了。
+这就是一台跑起来的网关：一个二进制，不需要配置文件，SQLite 建在当前目录。开
+<http://127.0.0.1:8317/panel> 登录，依次配渠道 → 纳管模型 → 接入点 → API Key，然后把
+harness 指过来——客户端那侧要做的全在下面两节。
 
-### 2. 导出 `channels.yaml`
-
-管理端左栏底下那一个按钮，整份业务配置写成一个文件，运行期状态一样不带。**文件里是明文秘
-密**，落盘 0600，永远别提交——`.gitignore` 里已经有它了。
-
-### 3. 部署，纯转发
-
-部署机上一个目录、三个文件，镜像从 GHCR 拉，不需要仓库检出：
-
-```text
-portage/
-├── compose.yaml                 ← 拷自 deploy/forward/
-├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
-└── channels.yaml                ← 第 2 步导出的那份
-```
-
-```bash
-mkdir -p data && sudo chown 65532:65532 data
-docker compose up -d
-```
-
-挂了文件，这份文件就是业务配置的唯一事实源；配置里静态就能判出的错一律拒绝启动，退出码 1，
-一次把问题全报出来。
-
-每一步的完整说明——空库警告、导出物里有什么没什么、失败模式与重启循环、后面怎么改配置、手
-写 `channels.yaml`、从源码构建、公网暴露——见 **[部署文档](docs/deploy.zh-CN.md)**。
+安装脚本支持 Linux（amd64 / arm64）与 Apple 芯片的 macOS，带 sha256 校验；它不自己提权，
+`/usr/local/bin` 不可写时改用 `sudo sh` 接管道，或设 `PORTAGE_INSTALL_DIR`。GitHub 连不稳
+就设 `PORTAGE_DOWNLOAD_BASE` 走代理前缀。想用 Docker，或者要放到服务器上？见
+[部署到服务器](#部署到服务器)。
 
 ## 接 Claude Code
 
@@ -179,6 +148,55 @@ compaction item，收不到就当场 Fatal 且不重试。Portage 分两档处�
 legacy 的 `POST /v1/responses/compact` 不实现，回 501。
 </details>
 
+## 部署到服务器
+
+同一个二进制跑两种形态，分界只有一条：有没有设管理密码。
+
+| | 管理密码 | 业务配置 | 用在哪 |
+| --- | --- | --- | --- |
+| **带管理端** | 设了 | 落在库里，点着改 | 你**用来配**的那台 |
+| **纯转发** | 哪儿都没设 | 来自声明文件 | 你**部署到**的那台 |
+
+正经路子是两台都要，三步：**本地开着管理端配好 → 导出一份 `channels.yaml` → 把这份文件
+部署到一台纯转发实例上。**
+
+### 1. 本地配，带管理端
+
+```bash
+PORTAGE_ADMIN_PASSWORD='想好的密码' \
+  docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+起来后开 <http://127.0.0.1:8317/panel> 登录，依次配渠道 → 纳管模型 → 接入点 → API Key。
+上游也在这台上测通：纯转发实例不主动探任何东西，你在这台上没验过的，就没人验了。
+
+### 2. 导出 `channels.yaml`
+
+管理端左栏底下那一个按钮，整份业务配置写成一个文件，运行期状态一样不带。**文件里是明文秘
+密**，落盘 0600，永远别提交——`.gitignore` 里已经有它了。
+
+### 3. 部署，纯转发
+
+部署机上一个目录、三个文件，镜像从 GHCR 拉，不需要仓库检出：
+
+```text
+portage/
+├── compose.yaml                 ← 拷自 deploy/forward/
+├── config.yaml                  ← 以 deploy/config.example.yaml 为底改（全局限流在这儿）
+└── channels.yaml                ← 第 2 步导出的那份
+```
+
+```bash
+mkdir -p data && sudo chown 65532:65532 data
+docker compose up -d
+```
+
+挂了文件，这份文件就是业务配置的唯一事实源；配置里静态就能判出的错一律拒绝启动，退出码 1，
+一次把问题全报出来。
+
+每一步的完整说明——空库警告、导出物里有什么没什么、失败模式与重启循环、后面怎么改配置、手
+写 `channels.yaml`、从源码构建、公网暴露——见 **[部署文档](docs/deploy.zh-CN.md)**。
+
 ## 管理端
 
 五个页面，每屏回答一个运营问题：**模型 · API Key · 调用记录 · 接入点 · 排行**。层级靠排版
@@ -189,13 +207,9 @@ legacy 的 `POST /v1/responses/compact` 不实现，回 501。
 话在内——压根不注册：404 是路由给的，不是鉴权给的。没有登录表单可以爆破，也没有管理面会被
 不小心暴露出去。还听着的只剩 `/v1` 和 `/healthz`。
 
-<!-- 截图：把脱敏后的 PNG 放进 docs/images/ 再把下面这段取消注释。
-     要截哪几张见 docs/images/README.md。
-
 | 模型 | 调用记录 | 排行 |
 | --- | --- | --- |
 | ![模型](docs/images/admin-models.png) | ![调用记录](docs/images/admin-logs.png) | ![排行](docs/images/admin-rankings.png) |
--->
 
 完整视觉与交互规范见 [`DESIGN.md`](DESIGN.md)。
 
@@ -241,8 +255,12 @@ apply 进库。完整规则见[部署文档](docs/deploy.zh-CN.md#配置文件)�
 
 ## 明确不做
 
-多用户与租户、计费与充值、兑换码、通知、评测、ES 日志、模型训练相关的一切；new-api 式的
-「用户等级 × 渠道分组」体系不做——权重分流是路由，不是运营。图像生成与 audio 端点 v1 不做。
+计费与充值、兑换码、通知、评测、ES 日志、模型训练相关的一切；new-api 式的「用户等级 ×
+渠道分组」体系不做——权重分流是路由，不是运营。图像生成与 audio 端点 v1 不做。
+
+多用户**已有设计**（熟人小圈子、邀请制：按用户的 API Key、按模型定价、每用户月度 USD 配
+额——见设计文档），但它始终是配额制，不是运营系统：没有余额，没有支付，没有公开注册。纯
+转发部署完全不受影响——整套用户体系都藏在管理密码那道闸后面。
 
 **Responses 的有状态子路径不做。** 带 `previous_response_id` 的请求明确回 400，而不是把这个
 字段静默丢掉——丢了客户端以为历史还在、实际每轮都是单轮，劣化看不见。转换路径一律拒，同协议
@@ -287,3 +305,7 @@ apply 进库。完整规则见[部署文档](docs/deploy.zh-CN.md#配置文件)�
   参考：自动压缩、reasoning 回放、Responses SSE 事件线。
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) —— thinking/reasoning 跨协议
   保真与 signature 处置这一主题的首要参考（主题之外不参考）。
+
+## 许可证
+
+[MIT](LICENSE)

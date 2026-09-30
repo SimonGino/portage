@@ -3,6 +3,8 @@
 **Keep the harness. Change the model.**
 
 [![CI](https://github.com/SimonGino/portage/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonGino/portage/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SimonGino/portage)](https://github.com/SimonGino/portage/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Single binary](https://img.shields.io/badge/deploy-single%20binary-1B365D)](#quick-start)
 
@@ -79,60 +81,20 @@ Once every request goes through one place, a few things become free:
 
 ## Quick start
 
-The same binary runs in two shapes, and one thing decides which: whether an admin
-password is set.
-
-| | Admin password | Business configuration | What it's for |
-| --- | --- | --- | --- |
-| **With the console** | set | lives in the database, edited by clicking | the machine you configure *on* |
-| **Forwarding only** | not set anywhere | comes from a declarative file | the machine you deploy *to* |
-
-The intended path uses both, in three steps: **configure locally with the console →
-export one `channels.yaml` → deploy that file to a forwarding-only instance.**
-
-### 1. Configure locally, with the console
-
 ```bash
-PORTAGE_ADMIN_PASSWORD='pick-a-password' \
-  docker compose -f deploy/docker-compose.yml up -d --build
+curl -fsSL https://raw.githubusercontent.com/SimonGino/portage/main/install.sh | sh
+PORTAGE_ADMIN_PASSWORD='pick-a-password' portage
 ```
 
-Open <http://127.0.0.1:8317/panel>, log in, and add a channel → managed models →
-an access point → an API key. Test the upstreams from here: a forwarding-only instance
-never probes anything, so whatever you don't verify on this machine, nobody verifies.
+That's a running gateway: one binary, no config file, SQLite created in the current
+directory. Open <http://127.0.0.1:8317/panel>, log in, and add a channel → managed
+models → an access point → an API key. Then point your harness at it — the next two
+sections are the whole client-side setup.
 
-### 2. Export `channels.yaml`
-
-One button at the foot of the console's left rail: the whole business configuration in
-a single file, and nothing about runtime state. **The file carries secrets in
-cleartext**; it lands `0600`, and it never gets committed — `channels.yaml` is already
-in `.gitignore`.
-
-### 3. Deploy it, forwarding-only
-
-One directory and three files on the deployment machine, image pulled from GHCR, no
-repo checkout needed:
-
-```text
-portage/
-├── compose.yaml                 ← copied from deploy/forward/
-├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
-└── channels.yaml                ← the export from step 2
-```
-
-```bash
-mkdir -p data && sudo chown 65532:65532 data
-docker compose up -d
-```
-
-With a file mounted, that file is the only source of truth for business configuration;
-anything statically wrong with it fails the boot with exit code 1 and reports every
-problem at once.
-
-The full story of each step — the empty-database warning, what the export does and
-doesn't contain, failure modes and the restart loop, changing configuration later,
-writing `channels.yaml` by hand, building from source, public exposure — is in the
-**[deployment guide](docs/deploy.md)**.
+The installer covers Linux (amd64 / arm64) and Apple-silicon macOS and verifies the
+sha256. It won't escalate on its own: if `/usr/local/bin` isn't writable, pipe into
+`sudo sh` or set `PORTAGE_INSTALL_DIR`. Prefer Docker, or putting it on a server?
+See [Deploying to a server](#deploying-to-a-server).
 
 ## Claude Code
 
@@ -198,6 +160,63 @@ fatal, non-retryable error on the client. Portage handles the two cases differen
 The legacy `POST /v1/responses/compact` is not implemented and returns `501`.
 </details>
 
+## Deploying to a server
+
+The same binary runs in two shapes, and one thing decides which: whether an admin
+password is set.
+
+| | Admin password | Business configuration | What it's for |
+| --- | --- | --- | --- |
+| **With the console** | set | lives in the database, edited by clicking | the machine you configure *on* |
+| **Forwarding only** | not set anywhere | comes from a declarative file | the machine you deploy *to* |
+
+The intended path uses both, in three steps: **configure locally with the console →
+export one `channels.yaml` → deploy that file to a forwarding-only instance.**
+
+### 1. Configure locally, with the console
+
+```bash
+PORTAGE_ADMIN_PASSWORD='pick-a-password' \
+  docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Open <http://127.0.0.1:8317/panel>, log in, and add a channel → managed models →
+an access point → an API key. Test the upstreams from here: a forwarding-only instance
+never probes anything, so whatever you don't verify on this machine, nobody verifies.
+
+### 2. Export `channels.yaml`
+
+One button at the foot of the console's left rail: the whole business configuration in
+a single file, and nothing about runtime state. **The file carries secrets in
+cleartext**; it lands `0600`, and it never gets committed — `channels.yaml` is already
+in `.gitignore`.
+
+### 3. Deploy it, forwarding-only
+
+One directory and three files on the deployment machine, image pulled from GHCR, no
+repo checkout needed:
+
+```text
+portage/
+├── compose.yaml                 ← copied from deploy/forward/
+├── config.yaml                  ← start from deploy/config.example.yaml (global rate limit lives here)
+└── channels.yaml                ← the export from step 2
+```
+
+```bash
+mkdir -p data && sudo chown 65532:65532 data
+docker compose up -d
+```
+
+With a file mounted, that file is the only source of truth for business configuration;
+anything statically wrong with it fails the boot with exit code 1 and reports every
+problem at once.
+
+The full story of each step — the empty-database warning, what the export does and
+doesn't contain, failure modes and the restart loop, changing configuration later,
+writing `channels.yaml` by hand, building from source, public exposure — is in the
+**[deployment guide](docs/deploy.md)**.
+
 ## The admin console
 
 Five screens, each answering one operational question: **Models · API Keys · Call Log ·
@@ -212,13 +231,9 @@ The left rail also holds the export button that produces `channels.yaml`.
 and no admin surface to accidentally leave exposed. `/v1` and `/healthz` are all that's
 listening.
 
-<!-- Screenshots: drop sanitized PNGs into docs/images/ and uncomment.
-     See docs/images/README.md for what to capture.
-
 | Models | Call log | Rankings |
 | --- | --- | --- |
 | ![Models](docs/images/admin-models.png) | ![Call log](docs/images/admin-logs.png) | ![Rankings](docs/images/admin-rankings.png) |
--->
 
 Full visual and interaction spec in [`DESIGN.md`](DESIGN.md).
 
@@ -334,3 +349,7 @@ edges between them were checked against these projects:
   client behaviour: auto-compaction, reasoning replay, the Responses SSE event line.
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — primary reference on one
   topic only: cross-protocol fidelity of thinking/reasoning and how to handle signatures.
+
+## License
+
+[MIT](LICENSE)
