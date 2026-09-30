@@ -1,6 +1,7 @@
 # Portage
 
-**换模型，不换 harness。**
+**Claude Code 跑 GLM，Codex CLI 跑 DeepSeek，两边都能接你自己的 Ollama——只过一个你自己部
+署的网关。** 换模型，不换 harness。
 
 [![CI](https://github.com/SimonGino/portage/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonGino/portage/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SimonGino/portage)](https://github.com/SimonGino/portage/releases/latest)
@@ -12,44 +13,23 @@
 
 Portage 是一个自建模型网关：把你能拿到的所有模型——官方 API、OpenAI 兼容中转、本机的
 Ollama / vLLM——统一纳管到一个地址后面，让 Claude Code、Codex CLI 这些 agent harness
-想跑哪个模型就跑哪个。
+想跑哪个模型就跑哪个。它是按放在服务器上来设计的，而不是装在某一台笔记本里：每台机器、每个你愿意分享的人都指向
+同一个地址，上游 key 始终不出这台服务器。
 
 做法是协议互转。harness 各说各的协议（Claude Code 说 Anthropic Messages，Codex CLI 说
 OpenAI Responses，而绝大多数模型只提供 OpenAI Chat Completions），Portage 在中间做三种
 协议的双向翻译，同协议则字节透传。harness 指向 Portage，换模型就是改一行配置——不改客户端，
 不 fork harness，不套脚本。
 
-```mermaid
-flowchart LR
-    subgraph clients["你已经在用的 harness"]
-        CC["Claude Code<br/>Anthropic Messages"]
-        CX["Codex CLI<br/>OpenAI Responses"]
-        APP["自己的脚本 / SDK<br/>Chat Completions"]
-    end
-
-    PG{{"Portage<br/>单二进制 · SQLite · 可选管理端"}}
-
-    subgraph up["你手上能拿到的模型"]
-        T["开源权重模型<br/>经任意 OpenAI 兼容中转"]
-        L["自己的机器<br/>Ollama · vLLM · MLX"]
-        A["Anthropic · OpenAI<br/>原生"]
-    end
-
-    CC --> PG
-    CX --> PG
-    APP --> PG
-    PG -- "跨协议 → 翻译" --> T
-    PG --> L
-    PG -- "同协议 → 字节透传" --> A
-```
+![Portage 管理端：渠道、上游地址与纳管模型](docs/images/admin-models.png)
 
 ## 能跑什么
 
 | 你想跑的模型 | 从哪儿连 | 在哪个 harness 里 |
 | --- | --- | --- |
-| **开源权重模型**——这个月哪个好用就哪个 | 任意 OpenAI 兼容端点 | Claude Code · Codex CLI |
+| **开源权重模型**——GLM、Kimi、Qwen、DeepSeek、MiniMax，这个月哪个好用就哪个 | 任意 OpenAI 兼容端点 | Claude Code · Codex CLI |
 | **自己的机器**——Ollama、vLLM、LM Studio、MLX | 本机的 Chat Completions | Claude Code · Codex CLI |
-| **你已经在付费的中转或聚合站** | Chat Completions 或 Responses | Claude Code · Codex CLI |
+| **你已经在付费的中转或聚合站**——OpenRouter、硅基流动、云厂商的模型平台 | Chat Completions 或 Responses | Claude Code · Codex CLI |
 | **公司内部那套部署** | 三种协议里它露出来的那种 | Claude Code · Codex CLI |
 | **Anthropic 和 OpenAI 自己** | 各自原生协议，字节不动 | Claude Code · Codex CLI |
 
@@ -214,6 +194,31 @@ docker compose up -d
 完整视觉与交互规范见 [`DESIGN.md`](DESIGN.md)。
 
 ## 它是怎么搭起来的
+
+```mermaid
+flowchart LR
+    subgraph clients["你已经在用的 harness"]
+        CC["Claude Code<br/>Anthropic Messages"]
+        CX["Codex CLI<br/>OpenAI Responses"]
+        APP["自己的脚本 / SDK<br/>Chat Completions"]
+    end
+
+    PG{{"Portage<br/>单二进制 · SQLite · 可选管理端"}}
+
+    subgraph up["你手上能拿到的模型"]
+        T["开源权重模型<br/>经任意 OpenAI 兼容中转"]
+        L["自己的机器<br/>Ollama · vLLM · MLX"]
+        A["Anthropic · OpenAI<br/>原生"]
+    end
+
+    CC --> PG
+    CX --> PG
+    APP --> PG
+    PG -- "跨协议 → 翻译" --> T
+    PG --> L
+    PG -- "同协议 → 字节透传" --> A
+```
+
 
 一个**渠道**就是一次上游接入：`base_url` + 它能说的协议集 + 你在它上面纳管的模型 + 一池凭证。
 **接入点**是 harness 要的那个模型名，底下绑从这些渠道里挑出来的候选；也可以跳过它，用限定名

@@ -1,6 +1,7 @@
 # Portage
 
-**Keep the harness. Change the model.**
+**Run Claude Code on GLM, Codex CLI on DeepSeek, either one on your own Ollama — through
+one gateway you host yourself.** Keep the harness. Change the model.
 
 [![CI](https://github.com/SimonGino/portage/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonGino/portage/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/SimonGino/portage)](https://github.com/SimonGino/portage/releases/latest)
@@ -12,7 +13,9 @@
 
 Portage is a self-hosted model gateway: put every model you can reach — official APIs,
 OpenAI-compatible relays, Ollama / vLLM on your own machine — behind one address, and run
-any of them inside agent harnesses like Claude Code and Codex CLI.
+any of them inside agent harnesses like Claude Code and Codex CLI. It is built to sit
+on a server rather than inside one laptop: every machine and every person you share it with points at the same
+address, and the vendor keys never leave it.
 
 It works by translating protocols. Each harness speaks exactly one (Claude Code speaks
 Anthropic Messages, Codex CLI speaks OpenAI Responses, while most models only expose
@@ -21,37 +24,15 @@ bytes through untouched when the protocols already match. Point the harness at P
 and switching models is one line of config — no patched clients, no forked harness, no
 wrapper scripts.
 
-```mermaid
-flowchart LR
-    subgraph clients["The harness you already use"]
-        CC["Claude Code<br/>Anthropic Messages"]
-        CX["Codex CLI<br/>OpenAI Responses"]
-        APP["Your scripts / SDK<br/>Chat Completions"]
-    end
-
-    PG{{"Portage<br/>one binary · SQLite · optional web admin"}}
-
-    subgraph up["Whatever model you can get"]
-        T["Open-weight models<br/>via any OpenAI-compatible relay"]
-        L["Your own hardware<br/>Ollama · vLLM · MLX"]
-        A["Anthropic · OpenAI<br/>native"]
-    end
-
-    CC --> PG
-    CX --> PG
-    APP --> PG
-    PG -- "different protocol → translate" --> T
-    PG --> L
-    PG -- "same protocol → byte passthrough" --> A
-```
+![The Portage admin console: channels, upstream endpoints, managed models](docs/images/admin-models.png)
 
 ## What you can run
 
 | The model you want | Reached over | In the harness |
 | --- | --- | --- |
-| **Open-weight models** — whatever the good one is this month | any OpenAI-compatible endpoint | Claude Code · Codex CLI |
+| **Open-weight models** — GLM, Kimi, Qwen, DeepSeek, MiniMax, whatever the good one is this month | any OpenAI-compatible endpoint | Claude Code · Codex CLI |
 | **Your own hardware** — Ollama, vLLM, LM Studio, MLX | Chat Completions on localhost | Claude Code · Codex CLI |
-| **The relay or aggregator you already pay for** | Chat Completions or Responses | Claude Code · Codex CLI |
+| **The relay or aggregator you already pay for** — OpenRouter, SiliconFlow, a cloud vendor's model platform | Chat Completions or Responses | Claude Code · Codex CLI |
 | **Your employer's internal deployment** | whichever of the three it exposes | Claude Code · Codex CLI |
 | **Anthropic and OpenAI themselves** | their native protocol, bytes untouched | Claude Code · Codex CLI |
 
@@ -238,6 +219,31 @@ listening.
 Full visual and interaction spec in [`DESIGN.md`](DESIGN.md).
 
 ## How it's put together
+
+```mermaid
+flowchart LR
+    subgraph clients["The harness you already use"]
+        CC["Claude Code<br/>Anthropic Messages"]
+        CX["Codex CLI<br/>OpenAI Responses"]
+        APP["Your scripts / SDK<br/>Chat Completions"]
+    end
+
+    PG{{"Portage<br/>one binary · SQLite · optional web admin"}}
+
+    subgraph up["Whatever model you can get"]
+        T["Open-weight models<br/>via any OpenAI-compatible relay"]
+        L["Your own hardware<br/>Ollama · vLLM · MLX"]
+        A["Anthropic · OpenAI<br/>native"]
+    end
+
+    CC --> PG
+    CX --> PG
+    APP --> PG
+    PG -- "different protocol → translate" --> T
+    PG --> L
+    PG -- "same protocol → byte passthrough" --> A
+```
+
 
 A **channel** is one upstream account: a `base_url`, the protocols it can speak, the
 models you've declared on it, and a pool of credentials. An **access point** is the model
