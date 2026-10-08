@@ -97,3 +97,51 @@ func TestCostUsesRoutedPricesWithAnthropicNetInput(t *testing.T) {
 		t.Fatalf("input_tokens = %v，期望 1000（毛值）", row.InputTokens)
 	}
 }
+
+func i64(v int64) *int64 { return &v }
+
+// 分档价（口径层 v1.49）：毛输入严格大于阈值，整笔四项全按分档价——整笔替换
+// 不是加成；等于阈值仍按基础价。毛输入含缓存读写，判档不减缓存。
+func TestTierAppliesWholeCallAboveThreshold(t *testing.T) {
+	p := calllog.Prices{
+		Input: f(3), Output: f(15), CacheRead: f(0.3), CacheWrite: f(3.75),
+		TierAbove: i64(1000),
+		TierInput: f(6), TierOutput: f(22.5), TierCacheRead: f(0.6), TierCacheWrite: f(7.5),
+	}
+	// 毛 1000 = 阈值：不超过，基础价。
+	at := p.CostUSD(1000, 500, 200, 100)
+	wantAt := 700*3/1e6 + 500*15/1e6 + 200*0.3/1e6 + 100*3.75/1e6
+	if math.Abs(at.Float64-wantAt) > 1e-12 {
+		t.Fatalf("阈值处 CostUSD = %v，期望基础价 %v", at.Float64, wantAt)
+	}
+	// 毛 1001（净只有 1，主要是缓存）：超过，四项全按分档价。
+	above := p.CostUSD(1001, 500, 600, 400)
+	wantAbove := 1*6/1e6 + 500*22.5/1e6 + 600*0.6/1e6 + 400*7.5/1e6
+	if math.Abs(above.Float64-wantAbove) > 1e-12 {
+		t.Fatalf("超阈值 CostUSD = %v，期望分档价 %v", above.Float64, wantAbove)
+	}
+}
+
+// 分档某价空 = 沿用基础价（models.dev 省略语义）；基础价也空的照旧按 0。
+func TestTierMissingPriceFallsBackToBase(t *testing.T) {
+	p := calllog.Prices{
+		Input: f(3), Output: f(15), CacheRead: f(0.3),
+		TierAbove: i64(100),
+		TierInput: f(6), // 其余三项分档未填
+	}
+	got := p.CostUSD(1000, 500, 200, 100)
+	want := 700*6/1e6 + 500*15/1e6 + 200*0.3/1e6 // cache_write 两边都空记 0
+	if math.Abs(got.Float64-want) > 1e-12 {
+		t.Fatalf("CostUSD = %v，期望 %v", got.Float64, want)
+	}
+}
+
+// 阈值空 = 全程一档：分档四价即便有值也不生效（导入或残留数据的防线）。
+func TestNilThresholdMeansSingleTier(t *testing.T) {
+	p := calllog.Prices{Input: f(3), Output: f(15), TierInput: f(100), TierOutput: f(100)}
+	got := p.CostUSD(1_000_000, 500, 0, 0)
+	want := 1_000_000*3/1e6 + 500*15/1e6
+	if math.Abs(got.Float64-want) > 1e-12 {
+		t.Fatalf("CostUSD = %v，期望基础价 %v", got.Float64, want)
+	}
+}

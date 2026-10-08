@@ -108,6 +108,12 @@ type ChannelModel struct {
 	PriceOutput     *float64 `json:"price_output"`
 	PriceCacheRead  *float64 `json:"price_cache_read"`
 	PriceCacheWrite *float64 `json:"price_cache_write"`
+	// 分档价（口径层 v1.49，#185）：阈值 null = 全程一档；分档某价 null = 沿用基础价。
+	PriceTierAbove      *int64   `json:"price_tier_above"`
+	PriceTierInput      *float64 `json:"price_tier_input"`
+	PriceTierOutput     *float64 `json:"price_tier_output"`
+	PriceTierCacheRead  *float64 `json:"price_tier_cache_read"`
+	PriceTierCacheWrite *float64 `json:"price_tier_cache_write"`
 	// HasUsage：流水里有没有这条条目报过 usage 的行（channel_name × model_upstream
 	// 快照匹配，input_tokens 非 NULL）。它只服务未定价提醒的判据「四价全 NULL 且
 	// 有用量」（口径层 §2.10——提醒挂条目不挂流水行），不是路由状态。
@@ -223,7 +229,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	// 渠道 × 模型，得在 Go 里做一次去重才能还原渠道本身的字段。两趟更短也更难写错。
 	mrows, err := db.QueryContext(ctx,
 		`SELECT id, channel_id, upstream_model, protocols, max_input_tokens,
-		        price_input, price_output, price_cache_read, price_cache_write, disabled
+		        price_input, price_output, price_cache_read, price_cache_write,
+		        price_tier_above, price_tier_input, price_tier_output, price_tier_cache_read, price_tier_cache_write, disabled
 		 FROM channel_models ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -234,7 +241,9 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var chID int64
 		var mProtocols string
 		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.MaxInputTokens,
-			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite, &m.Disabled); err != nil {
+			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite,
+			&m.PriceTierAbove, &m.PriceTierInput, &m.PriceTierOutput, &m.PriceTierCacheRead, &m.PriceTierCacheWrite,
+			&m.Disabled); err != nil {
 			return nil, err
 		}
 		// 空串是最常见的正常值（继承渠道全集），ParseSet 对空是报错的，所以不进它。
@@ -753,6 +762,13 @@ type ChannelModelPrices struct {
 	Output     *float64 `json:"output"`
 	CacheRead  *float64 `json:"cache_read"`
 	CacheWrite *float64 `json:"cache_write"`
+	// 分档价（口径层 v1.49，#185）随四价整组走：TierAbove nil = 去分档，此时分档
+	// 四价一并清回 NULL；非 nil 时分档某价 nil = 沿用基础价。
+	TierAbove      *int64   `json:"tier_above"`
+	TierInput      *float64 `json:"tier_input"`
+	TierOutput     *float64 `json:"tier_output"`
+	TierCacheRead  *float64 `json:"tier_cache_read"`
+	TierCacheWrite *float64 `json:"tier_cache_write"`
 }
 
 // ChannelModelPatch 是改一条纳管模型时可写的东西（#141）：每个字段 nil = 不动那一列。
@@ -797,13 +813,22 @@ func UpdateChannelModel(ctx context.Context, db Conn, id int64, p ChannelModelPa
 		args = append(args, *p.MaxInputTokens)
 	}
 	if p.Prices != nil {
-		for _, v := range []*float64{p.Prices.Input, p.Prices.Output, p.Prices.CacheRead, p.Prices.CacheWrite} {
+		pr := *p.Prices
+		if pr.TierAbove == nil {
+			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite = nil, nil, nil, nil
+		} else if *pr.TierAbove <= 0 {
+			return InvalidInput{Reason: "分档阈值要是正整数（token 数）；不要分档就清空阈值"}
+		}
+		for _, v := range []*float64{pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite,
+			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite} {
 			if v != nil && *v < 0 {
 				return InvalidInput{Reason: "单价不能是负数：0 表示真免费，留空（null）表示未定价"}
 			}
 		}
-		sets = append(sets, `price_input = ?, price_output = ?, price_cache_read = ?, price_cache_write = ?`)
-		args = append(args, p.Prices.Input, p.Prices.Output, p.Prices.CacheRead, p.Prices.CacheWrite)
+		sets = append(sets, `price_input = ?, price_output = ?, price_cache_read = ?, price_cache_write = ?,
+			price_tier_above = ?, price_tier_input = ?, price_tier_output = ?, price_tier_cache_read = ?, price_tier_cache_write = ?`)
+		args = append(args, pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite,
+			pr.TierAbove, pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite)
 	}
 	if len(sets) == 0 {
 		return InvalidInput{Reason: "没有要改的字段"}

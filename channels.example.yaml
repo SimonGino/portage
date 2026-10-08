@@ -32,6 +32,11 @@ channels:
         price_output: 15
         price_cache_read: 0.3
         price_cache_write: 3.75
+        price_tier_above: 200000
+        price_tier_input: 6
+        price_tier_output: 22.5
+        price_tier_cache_read: 0.6
+        price_tier_cache_write: 7.5
         disabled: false
   - name: 自建-vllm
     base_url:

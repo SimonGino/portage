@@ -627,3 +627,17 @@ api_keys: []
 		t.Errorf("空白渠道名没被点名。实际报文：\n%s", msg)
 	}
 }
+
+// 分档价（#185）：阈值非正、没阈值却写了分档价，都在闸上一次点名——后者 apply
+// 会被「清空阈值 = 去分档」静默清掉，不报就是丢配置。
+func TestTierPriceChecks(t *testing.T) {
+	msg := applyErr(t, openDB(t), strings.Replace(goodFile,
+		"      - upstream_model: Qwen3-27B",
+		"      - upstream_model: Qwen3-27B\n        price_tier_above: 0\n"+
+			"      - upstream_model: orphan-tier\n        protocols: []\n        price_tier_output: 3", 1))
+	for _, want := range []string{"price_tier_above=0 要是正整数", `"orphan-tier" 写了分档价却没写 price_tier_above`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("报文里没有 %q：\n%s", want, msg)
+		}
+	}
+}

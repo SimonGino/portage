@@ -14,6 +14,7 @@ func Example() *File {
 	yes, no := true, false
 	w := func(n int) *int { return &n }
 	usd := func(v float64) *float64 { return &v }
+	tokens := func(v int64) *int64 { return &v }
 	return &File{
 		Channels: []Channel{
 			{
@@ -40,10 +41,15 @@ func Example() *File {
 					// protocols 留空表示继承渠道全集，这是最常见的正常值。
 					// 四价单位 USD/百万 token（口径层 §2.10）：不写 = 未定价（有用量
 					// 会记 0 并在管理端提醒），写 0 = 真免费。
+					// 分档价（可选）：一笔毛输入（含缓存）超过 price_tier_above 时整笔
+					// 按 price_tier_* 计；某个分档价不写 = 沿用上面的基础价。
 					{
 						UpstreamModel: "claude-sonnet-4-20250514", Protocols: []string{}, Disabled: false,
 						PriceInput: usd(3), PriceOutput: usd(15),
 						PriceCacheRead: usd(0.3), PriceCacheWrite: usd(3.75),
+						PriceTierAbove: tokens(200000),
+						PriceTierInput: usd(6), PriceTierOutput: usd(22.5),
+						PriceTierCacheRead: usd(0.6), PriceTierCacheWrite: usd(7.5),
 					},
 				},
 			},

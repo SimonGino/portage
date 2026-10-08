@@ -343,6 +343,8 @@ func applyModels(ctx context.Context, tx *sql.Tx, channel string, channelID int6
 			Prices: &store.ChannelModelPrices{
 				Input: m.PriceInput, Output: m.PriceOutput,
 				CacheRead: m.PriceCacheRead, CacheWrite: m.PriceCacheWrite,
+				TierAbove: m.PriceTierAbove, TierInput: m.PriceTierInput, TierOutput: m.PriceTierOutput,
+				TierCacheRead: m.PriceTierCacheRead, TierCacheWrite: m.PriceTierCacheWrite,
 			},
 		}); err != nil {
 			return nil, fmt.Errorf("写入渠道 %q 的纳管模型 %q：%w", channel, name, err)

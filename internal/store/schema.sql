@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS channel_models (
   price_output REAL,
   price_cache_read REAL,
   price_cache_write REAL,
+  -- 分档价（口径层 v1.49，#185）：一笔调用毛输入（含缓存读写）**严格大于**
+  -- price_tier_above 时整笔四项全按分档四价计，判在落库时点。阈值 NULL = 全程一档；
+  -- 阈值非 NULL 时分档某价 NULL = 沿用基础价。「未定价」判据只看基础四价。只有一档。
+  price_tier_above INTEGER,
+  price_tier_input REAL,
+  price_tier_output REAL,
+  price_tier_cache_read REAL,
+  price_tier_cache_write REAL,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)

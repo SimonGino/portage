@@ -714,6 +714,12 @@ func addPricingColumns(db *sql.DB) error {
 		{"channel_models", "price_cache_write", `ALTER TABLE channel_models ADD COLUMN price_cache_write REAL`},
 		{"channels", "provider", `ALTER TABLE channels ADD COLUMN provider TEXT NOT NULL DEFAULT ''`},
 		{"call_logs", "cost", `ALTER TABLE call_logs ADD COLUMN cost REAL`},
+		// 分档价五列（口径层 v1.49，#185）：NULL = 全程一档，存量条目语义不变。
+		{"channel_models", "price_tier_above", `ALTER TABLE channel_models ADD COLUMN price_tier_above INTEGER`},
+		{"channel_models", "price_tier_input", `ALTER TABLE channel_models ADD COLUMN price_tier_input REAL`},
+		{"channel_models", "price_tier_output", `ALTER TABLE channel_models ADD COLUMN price_tier_output REAL`},
+		{"channel_models", "price_tier_cache_read", `ALTER TABLE channel_models ADD COLUMN price_tier_cache_read REAL`},
+		{"channel_models", "price_tier_cache_write", `ALTER TABLE channel_models ADD COLUMN price_tier_cache_write REAL`},
 	} {
 		has, err := hasColumn(db, m.table, m.col)
 		if err != nil {
@@ -962,7 +968,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -980,6 +986,7 @@ func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *s
 	err := row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
 		&c.MaxInputTokens,
 		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite,
+		&c.Prices.TierAbove, &c.Prices.TierInput, &c.Prices.TierOutput, &c.Prices.TierCacheRead, &c.Prices.TierCacheWrite,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
 		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses, &headers)
 	c.Headers = DecodeHeaders(headers)

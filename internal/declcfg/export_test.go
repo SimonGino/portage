@@ -40,9 +40,12 @@ func roundtripFixture() *declcfg.File {
 	// 部分定价且含显式 0：input 真免费、output 有价、两个缓存价没写（NULL）。
 	// 挂在自建渠道上——示范里它的模型全未定价，正好补出三态并存的一个渠道。
 	free, out := 0.0, 2.5
+	tierAbove, tierOut := int64(32000), 5.0
 	f.Channels[1].Models = append(f.Channels[1].Models, declcfg.Model{
 		UpstreamModel: "Qwen-部分定价", Protocols: []string{"openai"},
 		PriceInput: &free, PriceOutput: &out,
+		// 部分分档（#185）：只写分档 output，其余三项沿用基础价（nil 不写）。
+		PriceTierAbove: &tierAbove, PriceTierOutput: &tierOut,
 	})
 	f.Channels = append(f.Channels, declcfg.Channel{
 		Name:           "停用的旧渠道",

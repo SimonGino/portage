@@ -735,21 +735,9 @@ func (h *Handler) bulkPriceChannelModels(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "内置 models.dev 快照读不出来，这是发版资产的问题")
 		return
 	}
-	// 建议 × 系数：nil 原样穿过（快照缺哪价就落 NULL 不补 0），结果收敛到 1e-6——
-	// 二进制浮点的尾巴（0.075×0.8 = 0.06000…01）不该出现在价目上。
-	scale := func(v *float64) *float64 {
-		if v == nil {
-			return nil
-		}
-		s := math.Round(*v*in.Factor*1e6) / 1e6
-		return &s
-	}
 	fill := make(map[string]store.ChannelModelPrices, len(sugg))
 	for name, p := range sugg {
-		sp := store.ChannelModelPrices{
-			Input: scale(p.Input), Output: scale(p.Output),
-			CacheRead: scale(p.CacheRead), CacheWrite: scale(p.CacheWrite),
-		}
+		sp := scaleSuggestion(p, in.Factor)
 		// 四价全缺的条目等于没有建议，进「无建议价跳过」那一档，别拿全 NULL 去清价。
 		if sp.Input == nil && sp.Output == nil && sp.CacheRead == nil && sp.CacheWrite == nil {
 			continue
@@ -759,6 +747,30 @@ func (h *Handler) bulkPriceChannelModels(c *gin.Context) {
 	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
 		return store.BulkPriceChannelModels(ctx, tx, id, in.Overwrite, fill)
 	})
+}
+
+// scaleSuggestion 把一条建议价乘系数落成纳管条目的价：四价与分档四价同乘、
+// 阈值原样（口径层 v1.49）。nil 原样穿过（快照缺哪价就落 NULL 不补 0），结果收敛
+// 到 1e-6——二进制浮点的尾巴（0.075×0.8 = 0.06000…01）不该出现在价目上。
+func scaleSuggestion(p pricing.ModelPrice, factor float64) store.ChannelModelPrices {
+	scale := func(v *float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		s := math.Round(*v*factor*1e6) / 1e6
+		return &s
+	}
+	out := store.ChannelModelPrices{
+		Input: scale(p.Input), Output: scale(p.Output),
+		CacheRead: scale(p.CacheRead), CacheWrite: scale(p.CacheWrite),
+	}
+	if t := p.Tier; t != nil {
+		above := t.Above // 拷一份：t 指着全进程共用的快照缓存
+		out.TierAbove = &above
+		out.TierInput, out.TierOutput = scale(t.Input), scale(t.Output)
+		out.TierCacheRead, out.TierCacheWrite = scale(t.CacheRead), scale(t.CacheWrite)
+	}
+	return out
 }
 
 func (h *Handler) deleteChannelModel(c *gin.Context) {
