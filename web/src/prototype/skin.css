@@ -1,0 +1,283 @@
+/* PROTOTYPE #179：视觉方向两版皮，`?variant=A|B` 落到 <html data-proto>。
+   同一张模型页、同一份真实数据，只换表面——拍板后整个文件进 prototype 分支。
+
+   A = 整体换 magpie 皮：冷中性灰底 + 白卡细边 + 居中滑块分段 tab + 彩色品牌图标 +
+       系统无衬线 + 靛蓝强调；带暗色（切换条上的按钮，data-dark）。
+   B = 借表面模型、保留身份：羊皮纸、衬线标题、灰度图标、墨蓝不动；只借白卡列表、
+       行分隔、居中药丸 tab、chips 形制。 */
+
+/* ── 两版共用：居中 tab 轨道、白卡列表、行分隔 ─────────────────────── */
+html[data-proto] .topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  padding: 7px 18px;
+}
+html[data-proto] .topbar-right {
+  justify-self: end;
+  margin-left: 0;
+}
+html[data-proto] .topnav {
+  gap: 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--p-track);
+}
+html[data-proto] .topnav a {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+html[data-proto] .topnav a:hover {
+  background: transparent;
+  color: var(--ink);
+}
+html[data-proto] .topnav a.active {
+  background: var(--p-thumb);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  font-weight: 500;
+}
+html[data-proto] .sheet {
+  background: transparent;
+  border-radius: 0;
+  padding-top: 20px;
+}
+html[data-proto] .detail-col {
+  border-left: 0;
+  padding-left: 0;
+}
+html[data-proto] .master-list,
+html[data-proto] .model-grid,
+html[data-proto] .ch-bar {
+  background: var(--p-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+html[data-proto] .master-list {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+html[data-proto] .master-list button {
+  border-radius: 0;
+  min-height: 40px;
+  border-top: 1px solid var(--line-soft);
+}
+html[data-proto] .master-list button:first-child {
+  border-top: 0;
+}
+html[data-proto] .master-list button.is-on {
+  background: var(--p-sel);
+}
+html[data-proto] .master-search {
+  background: var(--p-card);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  height: 30px;
+  padding: 0 10px;
+}
+html[data-proto] .master-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+html[data-proto] .model-grid {
+  overflow: hidden;
+  margin-top: 8px;
+}
+html[data-proto] .model {
+  border-radius: 0;
+  border-top: 1px solid var(--line-soft);
+  padding: 10px 14px;
+}
+html[data-proto] .model:first-child {
+  border-top: 0;
+}
+html[data-proto] .model:hover {
+  background: var(--p-card2);
+}
+html[data-proto] .ch-bar {
+  padding: 12px 16px;
+}
+html[data-proto] .section-head {
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin-bottom: 4px;
+}
+html[data-proto] .section-head h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mute);
+  font-family: var(--sans);
+}
+html[data-proto] .tag,
+html[data-proto] .chip-toggle,
+html[data-proto] .chip {
+  border-radius: 999px;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  line-height: 1.6;
+}
+html[data-proto] .tag-warn,
+html[data-proto] .tag-vendor {
+  padding: 1px 7px;
+}
+html[data-proto] .chip-toggle.is-on {
+  background: var(--p-accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+html[data-proto] .btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 7px;
+}
+html[data-proto] .act {
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+}
+html[data-proto] .acct-avatar {
+  background: var(--p-accent-soft);
+  color: var(--accent);
+  font-family: var(--sans);
+}
+
+/* ── B：羊皮纸 + 衬线 + 灰度图标不动，只补几个 token ───────────────── */
+html[data-proto="B"] {
+  --p-track: var(--sunken);
+  --p-thumb: var(--canvas);
+  --p-card: #faf9f3;
+  --p-card2: #f3f1e8;
+  --p-sel: var(--sunken);
+  --p-accent-soft: #e6ebf3;
+}
+
+/* ── A：magpie 的 token（源码 app.css:2-47 原样） ────────────────── */
+html[data-proto="A"] {
+  --paper: #f4f4f6;
+  --canvas: #f4f4f6;
+  --ink: #1c1c21;
+  --ink-2: #4b4b53;
+  --mute: #85858d;
+  --faint: #b9b9c2;
+  --line: #e3e3e8;
+  --line-soft: #ececf0;
+  --sunken: #f1f1f4;
+  --chip: #f1f1f4;
+  --hover: #e9e9ee;
+  --accent: #4f46e5;
+  --p-track: #e6e6eb;
+  --p-thumb: #fff;
+  --p-card: #fff;
+  --p-card2: #f9f9fb;
+  --p-sel: #ecebfb;
+  --p-accent-soft: #eeedfd;
+  --ok-bg: #e4f6ec;
+  --ok-line: #b7e3c8;
+  --ok-text: #189a58;
+  --err-bg: #fbe9e9;
+  --err-line: #f0b9b9;
+  --err-text: #d64545;
+  --warn-bg: #fbf0df;
+  --warn-line: #ecd3a6;
+  --warn-text: #b45309;
+  --serif: -apple-system, "SF Pro Text", "Segoe UI", system-ui, "PingFang SC", sans-serif;
+  --sans: -apple-system, "SF Pro Text", "Segoe UI", system-ui, "PingFang SC", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+html[data-proto="A"] .avatar {
+  filter: none;
+}
+html[data-proto="A"] .page-head h1 {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+html[data-proto="A"] .ch-bar-name {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+html[data-proto="A"] .brand b {
+  font-weight: 600;
+  font-size: 15px;
+}
+html[data-proto="A"] .topbar {
+  background: var(--p-card);
+}
+html[data-proto="A"] .btn-primary:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+/* A 的暗色：magpie 手调的那套，不是反色。 */
+html[data-proto="A"][data-dark] {
+  --paper: #1a1a1e;
+  --canvas: #1a1a1e;
+  --ink: #ededf1;
+  --ink-2: #b9b9c1;
+  --mute: #8b8b94;
+  --faint: #56565f;
+  --line: #333339;
+  --line-soft: #2c2c32;
+  --sunken: #2d2d33;
+  --chip: #2d2d33;
+  --hover: #36363d;
+  --accent: #a5b4fc;
+  --p-track: rgba(255, 255, 255, 0.035);
+  --p-thumb: rgba(255, 255, 255, 0.15);
+  --p-card: #232327;
+  --p-card2: #1f1f23;
+  --p-sel: #33345a;
+  --p-accent-soft: #2b2c47;
+  --ok-text: #6fd99b;
+  --ok-bg: #1f3328;
+  --ok-line: #2f5a3f;
+  --err-text: #f28b82;
+  --err-bg: #3a2426;
+  --err-line: #5e3538;
+  --warn-text: #f2b544;
+  --warn-bg: #3a2f1a;
+  --warn-line: #5d4a22;
+  --shadow: 0 16px 44px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+html[data-proto="A"][data-dark] .btn-primary {
+  color: #14142a;
+}
+html[data-proto="A"][data-dark] .topnav a.active {
+  color: var(--ink);
+}
+
+/* ── 切换条：故意长得不像页面的一部分 ─────────────────────────────── */
+.proto-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: #111;
+  color: #fff;
+  font: 500 12px/1 ui-monospace, Menlo, monospace;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.proto-bar button {
+  border: 0;
+  background: #333;
+  color: #fff;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.proto-bar button:hover {
+  background: #555;
+}
+.proto-bar .lbl {
+  padding: 0 6px;
+  white-space: nowrap;
+}

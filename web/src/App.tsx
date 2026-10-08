@@ -20,6 +20,8 @@ import OAuthComplete from './pages/auth/OAuthComplete'
 import MySpace from './pages/my/MySpace'
 import { AvatarMenu, TopShell } from './topshell'
 import { Confirm, Dialog, ErrorBar } from './ui'
+// PROTOTYPE #179：两版皮切换条（DEV-only），定稿后整段摘掉。
+import { ProtoSkinBar } from './prototype/skin'
 
 // 顶栏 tab 纯文字（v0.54）：左栏时代的六枚线性图标随左栏一起退役——横排里
 // 图标+字比纯字更挤，且「我的」空间的 tab 本来就没有图标，统一按无图标走。
@@ -413,6 +415,7 @@ function Shell({
       }
       width="wide"
     >
+      <ProtoSkinBar />
       <Routes>
         <Route path="/channels" element={<Channels />} />
         {/* 选中的渠道进 URL（口径层 v0.45 主从两栏）：刷新、回退都还留在同一个
