@@ -133,6 +133,8 @@ export interface IvStats {
   n: number
   /** 最长连续：连着几个区间有调用。 */
   streak: number
+  /** 已过去区间的调用次数合计。 */
+  calls: number
 }
 
 export function ivStats(list: Interval[]): IvStats {
@@ -153,6 +155,7 @@ export function ivStats(list: Interval[]): IvStats {
     activeN: past.filter((b) => b.calls > 0).length,
     n: past.length,
     streak: best,
+    calls: past.reduce((a, b) => a + b.calls, 0),
   }
 }
 

@@ -3,7 +3,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconCheck, IconCopy, IconEye, IconEyeOff } from './icons/acts'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Segmented } from './fields'
+import { IconCheck, IconCopy, IconEye, IconEyeOff, IconRefresh } from './icons/acts'
 
 /**
  * useList 把「拉一张列表」这件事收成一个 hook：加载中、出错、重拉。
@@ -62,21 +64,59 @@ export function Empty({ children }: { children: ReactNode }) {
  */
 export function Card({
   title,
+  tabs,
   action,
   children,
 }: {
   title: string
+  /** 页内子 tab（DESIGN §2 v0.74），紧贴 H1 右侧。 */
+  tabs?: SubTab[]
   action?: ReactNode
   children: ReactNode
 }) {
   return (
     <section className="section">
       <header className="page-head">
-        <h1>{title}</h1>
+        <PageTitle title={title} tabs={tabs} />
         {action}
       </header>
       {children}
     </section>
+  )
+}
+
+export interface SubTab {
+  to: string
+  label: string
+}
+
+/** H1 + 可选页内子 tab 同占页头左侧。子 tab 是现有 Segmented 形制小一号；子 tab 是
+ *  路由不是状态，选中由路径定，不认识的路径（如 /channels/5）落第一项。 */
+export function PageTitle({ title, tabs }: { title: string; tabs?: SubTab[] }) {
+  const { pathname } = useLocation()
+  const nav = useNavigate()
+  if (!tabs) return <h1>{title}</h1>
+  const on = tabs.find((t) => t.to === pathname)?.to ?? tabs[0].to
+  return (
+    <div className="page-title">
+      <h1>{title}</h1>
+      <div className="subtabs">
+        <Segmented
+          value={on}
+          options={tabs.map((t) => ({ value: t.to, label: t.label }))}
+          onChange={(to) => nav(to)}
+        />
+      </div>
+    </div>
+  )
+}
+
+/** 标题行手动刷新（DESIGN §5.2）。 */
+export function RefreshButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className="act-icon" aria-label="刷新" title="刷新" onClick={onClick}>
+      <IconRefresh />
+    </button>
   )
 }
 

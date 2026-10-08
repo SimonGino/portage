@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Empty, ErrorBar } from '../ui'
+import { Empty, ErrorBar, PageTitle } from '../ui'
+import { CHANNEL_TABS } from '../routes'
 import { ChannelIcon } from '../icons'
 import { ChannelDetail } from './channels/detail'
 import { ChannelForm } from './channels/form'
@@ -102,7 +103,7 @@ function ChannelsPage() {
         ) : (
           <>
             <header className="page-head">
-              <h1>渠道</h1>
+              <PageTitle title="渠道" tabs={CHANNEL_TABS} />
             </header>
             <Empty>还没有渠道。左边「新建渠道」接一家，再拉模型。</Empty>
           </>

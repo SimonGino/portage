@@ -10,8 +10,10 @@ import {
   fmtInt,
   fmtMoneyDetail,
   fmtTime,
+  RefreshButton,
   useList,
 } from '../../ui'
+import { USAGE_TABS } from '../../routes'
 import { Picker, Segmented } from '../../fields'
 import type { Option } from '../../fields'
 import { ModelIcon } from '../../icons'
@@ -426,7 +428,8 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
     <>
       <ErrorBar message={logs.error} />
       <Card
-        title="调用记录"
+        title={mine ? '调用记录' : '用量'}
+        tabs={mine ? undefined : USAGE_TABS}
         action={
           <div className="row-actions">
             {/* 模型筛选与「只看失败」都下推后端（v0.53）：在已拉回的那一页里过滤，
@@ -465,9 +468,13 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
               />
             </div>
             <Segmented value={filter} options={LOG_FILTERS} onChange={setFilter} />
-            <button className="btn btn-quiet" onClick={logs.reload}>
-              刷新
-            </button>
+            {mine ? (
+              <button className="btn btn-quiet" onClick={logs.reload}>
+                刷新
+              </button>
+            ) : (
+              <RefreshButton onClick={logs.reload} />
+            )}
           </div>
         }
       >

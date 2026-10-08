@@ -497,6 +497,23 @@ button.acct-avatar:hover {
   flex-wrap: wrap;
 }
 
+/* 页内子 tab（DESIGN §2 v0.74）：H1 右侧，Segmented 小一号。 */
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.page-head .subtabs .segmented {
+  height: 30px;
+}
+
+/* 内段撑满外壳，理由同下文 .section-head .segment：留着 4px 上下内边距会溢出 30。 */
+.page-head .subtabs .segment {
+  padding: 0 11px;
+}
+
 .page-head h1 {
   margin: 0;
   font-family: var(--serif);

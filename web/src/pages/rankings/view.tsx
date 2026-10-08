@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../api'
 import type { BucketUsage, UsageRow } from '../../api'
-import { Card, Empty, ErrorBar, fmtCompact, fmtInt, fmtMoney, useList } from '../../ui'
+import { Card, Empty, ErrorBar, RefreshButton, fmtCompact, fmtInt, fmtMoney, useList } from '../../ui'
+import { USAGE_TABS } from '../../routes'
 import { Segmented } from '../../fields'
 import { ModelIcon } from '../../icons'
 import {
@@ -226,8 +227,24 @@ export default function RankingsView({ mine = false }: { mine?: boolean }) {
     <>
       <ErrorBar message={buckets.error || winUsage.error || sliceUsage.error} />
       <Card
-        title={mine ? '用量' : '排行'}
-        action={<Segmented value={days} options={DAY_OPTIONS} onChange={pickDays} />}
+        title="用量"
+        tabs={mine ? undefined : USAGE_TABS}
+        action={
+          mine ? (
+            <Segmented value={days} options={DAY_OPTIONS} onChange={pickDays} />
+          ) : (
+            <div className="row-actions">
+              <Segmented value={days} options={DAY_OPTIONS} onChange={pickDays} />
+              <RefreshButton
+                onClick={() => {
+                  void buckets.reload()
+                  void winUsage.reload()
+                  void sliceUsage.reload()
+                }}
+              />
+            </div>
+          )
+        }
       >
         {/* 只摆合计一个数，不重复下面那排读数（DESIGN §6 同一份数据不画两遍）：
             它在这里的身份是**每一行占比的分母**，没有它，「57.9%」没有出处。 */}
@@ -332,6 +349,13 @@ export default function RankingsView({ mine = false }: { mine?: boolean }) {
                 <small>共 {countWord(stats.n)}</small>
               </dd>
             </div>
+            {/* 「调用 N」只加在管理侧（#184）：「我的」侧两页不动。 */}
+            {!mine && (
+              <div className="ivstat">
+                <dt>调用</dt>
+                <dd>{fmtInt(stats.calls)}</dd>
+              </div>
+            )}
             <div className="ivstat">
               <dt>最长连续</dt>
               <dd>
