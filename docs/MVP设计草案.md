@@ -1,6 +1,12 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.72
+> 状态：草案 v1.75
+
+> v1.75 变更（口径层 v1.49 / v1.50 落地：分档价字段、判档与 models.dev 快照放宽，[#185](https://github.com/SimonGino/portage/issues/185)、[#189](https://github.com/SimonGino/portage/issues/189)，地图 [#177](https://github.com/SimonGino/portage/issues/177)，修改人 jinpenga）：落点 §7.10「既有表改造」`channel_models` 条与「models.dev 快照」段。①`channel_models` 加 `price_tier_above`（INTEGER，token 阈值，NULL = 全程一档）+ 分档四价四列（REAL，与基础四价一一对应，列名实现时定）；阈值非 NULL 时分档某价 NULL = 沿用基础价；「未定价」判据仍只看基础四价。只有一档，要第二档时再迁。②判档：整笔**毛输入**（流水 `input_tokens` 口径，含缓存读写）与阈值比，严格大于即四项全按分档价——整笔替换不是加成；判在落库计价那一刻（`calllog.Prices.CostUSD` 已收毛输入），改阈值不追溯；流水不加字段。③`internal/pricing/gen` 放宽（推翻包注释「只留四价」）：留 `cost.tiers` 中 `tier.type = context` 的第一档（`tier.size` 即阈值，档内缺价 = 沿用基础价），顺带留 `limit.context`、`limit.output`、`modalities.input` 给模型目录胶囊；不留 reasoning / release_date / 无价模型。建议价与批量填价带分档（系数同乘分档四价、阈值原样）。`cache_write_1h` 另立 issue，不在本批。
+
+> v1.74 变更（口径层 v1.48 落地：接入指引取址规则，[#182](https://github.com/SimonGino/portage/issues/182)，地图 [#177](https://github.com/SimonGino/portage/issues/177)，修改人 jinpenga）：落点 §7「启动配置」样例下新增注记。**不加配置项**：对外地址读既有「站点外部 URL」设置（settings 表，#62 决议 7），没填用浏览器 `window.location.origin` 并附提示去设置里填；各协议端点 = 对外地址 + `/v1/chat/completions` / `/v1/responses` / `/v1/messages`；Claude Code 片段给根地址、Codex 片段给 `/v1`，与 README 一致。
+
+> v1.73 变更（口径层 v1.47 落地：渠道预设清单的数据形态，[#181](https://github.com/SimonGino/portage/issues/181)、[#178](https://github.com/SimonGino/portage/issues/178)，地图 [#177](https://github.com/SimonGino/portage/issues/177)，修改人 jinpenga）：落点 §7.12 新节。手写静态清单、内嵌 JSON 进二进制；每条字段 `id` / `name` / `group`（vendor / relay）/ `icon` / `models_dev` / `protocols`（每协议一个出站根，空 = 不支持）/ `keys_url` / `note` / 可选 `plans`。`models_dev` 即渠道 provider 标注的键，建议价与批量填价零新代码。magpie `internal/provider/presets.go`（MIT）只作核对底稿，逐条对厂商文档确认，不整表复制；若复制须保留 MIT 版权声明与许可全文。`gen` 不为建议模型放宽（v1.75 的放宽另有起因）。
 
 > v1.72 变更（口径层 v1.44 落地：见过工具调用而停因缺失或为 stop 时判工具停因，[#172](https://github.com/SimonGino/portage/issues/172)，修改人 jinpenga）：只记落点。判据收成 `protocol.ToolStop(stop, sawTool)`（`codec.go`，挨着 `StreamTruncated`），五处收尾共用：A `emitDone` 与 `DecodeFullBody`（`respState` 加 `sawTool`，`tool_use` 块置位）、CC `finish`（流式与非流式同一处，`len(st.tools) > 0`）、R `done` 与 `DecodeFullBody`。R `stopReason` 去掉自带的 `sawTool` 分支，拒答改判改为 `!sawTool` 才生效（工具优先，同 CC）——终帧缺 response（停因空）与 response 为 `{}`（停因 `stop`）由此走同一条改判。`Truncated` 仍按改判前的停因原值算，截断判据不动。连带：压缩合成撞上工具调用走 `compactionNoItem` 的 `tool_calls` 支（`response.failed`），不再当完整摘要产 item。透传 Tap 记的是原生停因，不受影响。同批（PR #174）连带两处原地订正：v1.69 块的 #173 导入后清单改完成时；§8.1 路由表渠道几行订正为现状（整体覆盖的 `PUT /channels/:id` 自 v1.14 起已拆成 settings / base-url / key-mode / disabled 四笔，表里一直没改，定号时补）。用例：`protocol/truncation_test.go` `TestToolCallsWithoutToolStopReasonIsToolStop`（CC `[DONE]` 无 finish_reason / CC 显式 stop / A `message_stop` 无 stop_reason / R 终帧缺 response / R response 为 `{}`，A 出口一律 `tool_use`）与 `TestFullBodyToolCallsWithoutStopReasonIsToolStop`（非流式三家），构造样本内联；`openaicc` 「带工具调用的 stop 不改判」子用例期望由 `stop` 改为 `tool_calls`。
 
@@ -774,6 +780,8 @@ concurrency_queue:                 # 渠道并发闸的有界排队（口径层 
   retry_after: 10s                 # 队满/超时 429 的 Retry-After，落头时换算成整秒、不足 1 秒顶成 1
 ```
 
+> **接入指引的取址规则（v1.74，[#182](https://github.com/SimonGino/portage/issues/182)）**：对外地址读「站点外部 URL」设置（与邮件链接、OAuth 回调同一处，不另加 `public_url` 配置项），只服务接入指引展示，不参与转发、路由与鉴权面。填了显示它，没填显示浏览器 `window.location.origin` 并附灰字「反代部署请在设置里填站点外部 URL」。端点按协议拼：Chat `/v1/chat/completions`、Responses `/v1/responses`、Anthropic `/v1/messages`；Claude Code 片段给根地址、Codex 片段给 `/v1`（与 README 两段 harness 配置一致）。前端通过既有设置读接口拿到它。
+
 > **唯一的环境变量是 `PORTAGE_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
 
 > **`max_attempts` 与 `max_retries` 是两层，不是一件事**（口径层 v0.38）：内层 `max_retries` 管同一份凭证上的抖动重试，外层 `max_attempts` 管一次请求最多打多少次上游、跨凭证累计。两层都要，因为只留内层时最坏耗时随凭证数线性增长（凭证是运营数据随时会加，配置里没有任何地方提示「加第 6 把会让超时翻倍」），而只留外层、跨凭证共享一份预算时会出现「换到第二份时预算耗尽、第三份根本没试过」——那份是好的却没被用上。`max_attempts` 与 `max_retries` 同一个零值陷阱，处理方式相同。
@@ -1155,6 +1163,7 @@ api_keys:
 
 - `api_keys`：加 `user_id INTEGER REFERENCES users(id)` **可空**（#63 拍 NOT NULL，#66 翻案：NULL = 无主，声明形态/无 admin 库的合法形态）；`name` 从全局 UNIQUE 改 `UNIQUE(user_id, name)`——SQLite 改不了约束，**迁移重建表**。
 - `channel_models`：加 `price_input` / `price_output` / `price_cache_read` / `price_cache_write`，REAL，USD/百万 token，**NULL = 未定价、0 = 真免费**（#65）；未定价提醒判据 =「价字段 NULL 且有用量」，挂条目不挂流水行。
+  - **分档价（v1.75，口径层 v1.49，[#185](https://github.com/SimonGino/portage/issues/185)）**：再加 `price_tier_above INTEGER`（token 阈值，NULL = 全程一档）+ 分档四价四列（REAL，与基础四价一一对应，列名实现时定）。阈值非 NULL 时分档某价 NULL = 沿用基础价；「未定价」只看基础四价。**判档**：毛输入（`input_tokens`，含缓存读写）**大于**阈值即整笔四项全按分档价，在 `calllog.Prices.CostUSD` 落库计价时判，改阈值不追溯；`call_logs` 不加字段。只有一档，要第二档时再迁。
 - `channels`：加可选 `provider` 标注（models.dev provider id，只服务建议价与图标分组，不参与路由）。
 - `call_logs`：加 `user_id INTEGER` 可空（NULL = 未鉴权或无主 key，靠 `api_key_name` 非空分辨，#64）与 `cost REAL` 可空（四项 token × 各自单价 ÷ 1e6 求和，`reasoning_tokens` 是 output 明细不另计；NULL = 无用量可计，有用量未定价记 0，#65）。
 
@@ -1164,7 +1173,7 @@ api_keys:
 
 **声明形态互斥闸**（#66；导出半边口径层 v1.12 放宽）：挂声明文件 ⇒ 用户体系路由整体不注册（404）；`POST /panel/api/import`（含试算）在存在非第一个 admin 名下 key 的库上拒绝 409；**导出不拒**（口径层 v1.12）——只导第一个 admin 与无主的 key，非 admin 用户名下的 key 跳过并回跳过名单，管理端逐把记日志；apply 对 `api_keys` 的覆盖删除语义不变。
 
-**models.dev 快照**（#68）：MIT，`api.json` 裁剪后 gzip 约 164 KB `go:embed`，四价字段单位与渠道口径一致，随发版一条命令更新；缺价条目（434/7483）容忍手填。
+**models.dev 快照**（#68）：MIT，`api.json` 裁剪后 gzip 约 164 KB `go:embed`，四价字段单位与渠道口径一致，随发版一条命令更新；缺价条目（434/7483）容忍手填。**v1.75 放宽裁剪**（[#185](https://github.com/SimonGino/portage/issues/185)、[#189](https://github.com/SimonGino/portage/issues/189)，推翻 `internal/pricing/gen` 包注释「只留四价」）：每模型多留 `cost.tiers` 中 `tier.type = context` 的**第一档**（`tier.size` → 阈值，档内缺价沿用基础价）、`limit.context`、`limit.output`、`modalities.input`；reasoning、release_date 不留，无价模型照旧丢。前一项喂建议价与批量填价的分档，后三项喂模型目录胶囊（`limit.output` 留而暂不摆，口径层 v1.50）。渠道预设（§7.12）不为建议模型另行放宽。
 
 ### 7.10.1 测试方案增补（§9 同批）
 
@@ -1188,6 +1197,14 @@ api_keys:
 - **`portage upgrade [版本]` 子命令**：`os.Args[1] == "upgrade"` 在 `flag.Parse` 之前分流，用同一个 `selfupdate` 包；无参时先取 `releases/latest/download/checksums.txt` 从行里解析版本（不打 API，免 60 次/时限额）；成功打印「已替换为 vX，重启生效：`systemctl restart portage`」退出 0，**不 Exec**；失败退出 1，stderr 打同一套错误词。docker 镜像里没有 shell 也不该有人跑它，`distro == docker` 直接拒。
 - **前端**：`/session` 拿到 `version` / `distro`；`role == admin && version` 为纯 `x.y.z`（v1.66：~~`version != "dev"`~~，`test` 与带后缀的构建同样不查）时请求 `https://api.github.com/repos/SimonGino/portage/releases/latest`（`Accept: application/vnd.github+json`，CORS `*`、简单 GET 不预检）；`localStorage` 存 ~~`{tag, checkedAt}`~~ `{tag, published, checkedAt}`（v1.66：弹框要显示发布日，DESIGN v0.65 版本对照行）24h，**非 2xx 不写缓存**（仓库尚无 Release 时是 404，缓存它就是把「查不到」缓存成「已是最新」）；比对 = `tag_name` 去 `v` 与 `version` 做**语义化比较**（本地比远端新也算无新版，不是字符串相等）。「重新检查」清缓存重查。升级流程：`Confirm` 举起 → `POST upgrade` → 200 后每 2s 轮询 `/session`，`version` 变了即 `location.reload()`；60s 没变露出「刷新页面」按钮兜底；非 2xx 按词表落三种失败文案（DESIGN v0.65）。
 - **测试**：`selfupdate` 包对 `httptest` 假 Release（`checksums.txt` + tar.gz）跑四例——成功替换 / 哈希不符（临时文件已删）/ 目录只读（`not_writable`）/ 缺本平台条目；tar 解包只认单文件 `portage`，多文件与路径穿越条目拒。`run()` 的 `errRestart` 分支单测到「关 `upgraded` 后 `Shutdown` 被调、返回哨兵」为止，`Exec` 不进测试。前端语义化比较与 404 不缓存各一例（vitest）。
+
+### 7.12 渠道预设清单（口径层 v1.47，[#181](https://github.com/SimonGino/portage/issues/181)，数据来源 [#178](https://github.com/SimonGino/portage/issues/178)；v1.73）
+
+- **形态**：仓库内手写静态清单，**JSON 文件 `go:embed` 进二进制**，不启动拉取（便于只改数据；放 `internal/pricing` 旁还是独立包，实现票定）。初版名单见口径层 v1.47（厂商 13 + 中转 3），随用随加。
+- **每条字段**：`id`、`name`、`group`（`vendor` / `relay`，即「厂商 API」「中转」）、`icon`（沿用 `web/src/icons`）、`models_dev`（快照 provider id，即渠道 provider 标注的键）、`protocols`（每协议一个出站根地址，空 = 不支持）、`keys_url`、`note`、可选 `auth_scheme`（预填「认证头」三档，缺省 default）、可选 `plans`。**`plans`**：同一家 key 不通用的多套地址（国际 / 中国、标准 / Coding Plan），每个 plan 一组三协议地址与一个 `models_dev` id（如智谱 `zhipuai` / `zhipuai-coding-plan`）。
+- **与既有数据的衔接**：选预设 = 把这些值预填进新建渠道表单（全部可改），`models_dev` 写进渠道 provider 标注；建议模型与建议价都从快照按标注取，**零新代码**。建成后渠道与预设脱钩。
+- **地址来源**：models.dev 只有单个 `api` 字段、没有 Responses 地址，Anthropic 协议地址只少数几家有，且 `api` 是 AI SDK 的 baseURL 约定、不能直接当出站根（存的是子路径之前的前缀，§6.1）——地址一律手写，逐条对厂商文档确认。magpie `internal/provider/presets.go`（MIT）只作**核对底稿**，不整表复制；若复制须保留 MIT 版权声明与许可全文（`docs/agents/reference-repos.md`）。magpie 各家 Responses 地址未经验证，落实现前逐条验。
+- **测试**（调研建议，可选）：断言每条预设（含 plans）的 `models_dev` id 在快照里存在，快照更新后立刻发现 id 改名或下线。
 
 ## 8. 最小管理接口
 
