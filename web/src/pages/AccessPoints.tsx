@@ -32,7 +32,7 @@ export default function AccessPoints() {
     <>
       <ErrorBar message={aps.error || channels.error} />
       <Card
-        title="接入点"
+        title="路由"
         action={
           <button className="btn btn-primary" onClick={() => setEditing('new')} disabled={chList.length === 0}>
             新建接入点

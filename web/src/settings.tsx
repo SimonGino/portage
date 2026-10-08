@@ -337,6 +337,16 @@ function AuthSettingsForm({
     google.secret !== null
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
+  // 保存后 reload 换上后端规范化过的值（去空白、站点地址去尾斜杠），表单跟着同步，
+  // 否则输入里的原样字符串与 initial 对不上，dirty 一直为真、遮罩关不掉。
+  // reload 只在保存成功后发生，不会冲掉未保存的编辑。
+  useEffect(() => {
+    setSiteURL(initial.site_url)
+    setSmtp(smtpOf(initial))
+    setGithub((g) => ({ ...g, id: initial.github.client_id }))
+    setGoogle((g) => ({ ...g, id: initial.google.client_id }))
+  }, [initial])
+
   async function save(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)

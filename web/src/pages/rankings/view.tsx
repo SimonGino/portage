@@ -185,7 +185,8 @@ export default function RankingsView({ mine = false }: { mine?: boolean }) {
   useEffect(() => {
     if (sel == null) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSel(null)
+      // 有弹框开着时 Esc 归弹框：document 监听先于 Dialog 的 window 监听，不让就会顺手清掉身后的选中格。
+      if (e.key === 'Escape' && !document.querySelector('.overlay')) setSel(null)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
