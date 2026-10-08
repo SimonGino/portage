@@ -16,7 +16,8 @@ import type {
   ChannelModel,
   Protocol,
 } from '../../api'
-import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Field, Toggle } from '../../ui'
+import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Field, PageTitle, Toggle } from '../../ui'
+import { CHANNEL_TABS } from '../../routes'
 import { ModelPrices } from './modelprices'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
 import { IconCheck, IconPencil, IconRows, IconSliders } from '../../icons/acts'
@@ -87,7 +88,7 @@ export function ChannelDetail({ id }: { id: number }) {
   return (
     <>
       <header className="page-head">
-        <h1>渠道</h1>
+        <PageTitle title="渠道" tabs={CHANNEL_TABS} />
       </header>
 
       <div className="ch-bar">

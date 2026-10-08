@@ -100,6 +100,7 @@ describe('ivStats', () => {
     ]
     const s = ivStats(buildIntervals(1, rows, NOW).list)
     expect(s.n).toBe(16)
+    expect(s.calls).toBe(4)
     expect(s.activeN).toBe(2)
     expect(s.total).toBe(400)
     expect(s.avg).toBe(25) // 400 / 16，不是 400 / 24 也不是 400 / 2

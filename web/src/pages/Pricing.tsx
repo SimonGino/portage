@@ -5,12 +5,13 @@ import type { Channel, ChannelModel } from '../api'
 import { Card, Dialog, Empty, ErrorBar, Field, useList } from '../ui'
 import { Segmented } from '../fields'
 import { Picker } from '../fields'
+import { CHANNEL_TABS } from '../routes'
 import { ChannelIcon, ModelIcon } from '../icons'
 import { ModelPrices } from './channels/modelprices'
 import { isUnpriced, providerName, providerOptions, useProviders, useSuggested } from '../prices'
 
 /**
- * 定价页（口径层 v1.10 立、v1.11 改可编辑；#81；DESIGN §5.4）：全渠道纳管模型 ×
+ * 渠道页「定价」子 tab（口径层 v1.10 立、v1.11 改可编辑；#81；DESIGN §5.4）：全渠道纳管模型 ×
  * 四价的平铺总表，答「每个纳管模型记什么价、谁还没定价」，并且**当场能改**——
  * 定价格就是渠道详情页那副 ModelPrices 胶囊（同一个组件，不是第二套编辑面），
  * 三态、采纳建议、未定价提醒全一致；「厂商标注」列行内可标（未标注的渠道标上
@@ -156,7 +157,8 @@ export default function Pricing() {
         />
       )}
       <Card
-        title="定价"
+        title="渠道"
+        tabs={CHANNEL_TABS}
         action={
           <div className="row-actions">
             <input

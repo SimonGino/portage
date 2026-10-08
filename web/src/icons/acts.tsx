@@ -116,3 +116,13 @@ export function IconGear() {
     </svg>
   )
 }
+
+/** 手动刷新：标题行 .act-icon 用（DESIGN §5.2）。 */
+export function IconRefresh() {
+  return (
+    <svg {...S}>
+      <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+      <path d="M13 2.5v3h-3" />
+    </svg>
+  )
+}
