@@ -44,7 +44,7 @@ import {
 /**
  * ChannelDetail 是模型页主画布：**主语是纳管模型**（口径层 v0.75 / v0.76）。
  *
- * H1 永远是栏目名「模型」。渠道是 sunken 身份条，跟等宽模型行不是同一层。
+ * H1 永远是栏目名「渠道」（DESIGN v0.71 由「模型」改名）。渠道是 sunken 身份条，跟等宽模型行不是同一层。
  * 「API 地址」「上游凭证」是身份条下**常驻展开的区块**（PO 2026-08-20 裁决提出井外，
  * 2026-08-24 裁决地址在上——地址定义这个渠道是谁、声明了哪些协议，凭证是从属物，
  * 接一家上游也是先填地址再贴 key；2026-08-28 裁决回到常驻展开，推翻 08-26 的默认
@@ -87,7 +87,7 @@ export function ChannelDetail({ id }: { id: number }) {
   return (
     <>
       <header className="page-head">
-        <h1>模型</h1>
+        <h1>渠道</h1>
       </header>
 
       <div className="ch-bar">

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { LEGACY_REDIRECTS, NAV } from './routes'
 import { api, download, importConfig, previewImport, setUnauthorizedHandler } from './api'
 import type { SessionState } from './api'
 import Login from './pages/Login'
@@ -21,18 +22,6 @@ import MySpace from './pages/my/MySpace'
 import { AvatarMenu, TopShell } from './topshell'
 import { IconGear } from './icons/acts'
 import { Confirm, Dialog, ErrorBar } from './ui'
-
-// 顶栏 tab 纯文字（v0.54）：左栏时代的六枚线性图标随左栏一起退役——横排里
-// 图标+字比纯字更挤，且「我的」空间的 tab 本来就没有图标，统一按无图标走。
-const NAV: { to: string; label: string }[] = [
-  { to: '/channels', label: '模型' },
-  { to: '/keys', label: 'API Key' },
-  { to: '/logs', label: '调用记录' },
-  { to: '/access-points', label: '接入点' },
-  { to: '/rankings', label: '排行' },
-  { to: '/pricing', label: '定价' },
-  { to: '/users', label: '用户' },
-]
 
 export default function App() {
   const [session, setSession] = useState<SessionState | null>(null)
@@ -362,7 +351,7 @@ function Shell({
   onLogout: () => void
 }) {
   const user = session.user
-  // 管理空间六页统一 wide 档（v0.55）：此前按「吃宽与否」分 920/1320 两档，
+  // 管理空间各页统一 wide 档（v0.55）：此前按「吃宽与否」分 920/1320 两档，
   // 切 tab 时画布左右边缘跳来跳去，比省下的留白更扎眼。
   return (
     <TopShell
@@ -423,20 +412,26 @@ function Shell({
         {/* 选中的渠道进 URL（口径层 v0.45 主从两栏）：刷新、回退都还留在同一个
             渠道上。`new` 占的是同一段位置——新建时右栏就是那张空表单。 */}
         <Route path="/channels/:id" element={<Channels />} />
-        <Route path="/access-points" element={<AccessPoints />} />
-        <Route path="/keys" element={<Keys />} />
-        <Route path="/logs" element={<Logs />} />
-        <Route path="/rankings" element={<Rankings />} />
-        <Route path="/pricing" element={<Pricing />} />
+        {/* 静态的 /channels/pricing 优先于上面的 /channels/:id：RR 按路径特异性排序，与书写顺序无关。 */}
+        <Route path="/channels/pricing" element={<Pricing />} />
+        <Route path="/gateway" element={<Keys />} />
+        <Route path="/routing" element={<AccessPoints />} />
+        <Route path="/usage" element={<Rankings />} />
+        <Route path="/usage/logs" element={<Logs />} />
         <Route path="/users" element={<Users />} />
-        {/* 概览已从导航拿掉（口径层 v0.75）。老地址与拆页前的 /usage 都落到排行，
-            不交给下面那个 `*`：开着旧标签刷新会掉到渠道页上，那不像跳转，像页面没了。 */}
-        <Route path="/overview" element={<Navigate to="/rankings" replace />} />
-        <Route path="/usage" element={<Navigate to="/rankings" replace />} />
+        {/* 旧路径（含历史的 /overview）跳新地址，query 保留。 */}
+        {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => (
+          <Route key={from} path={from} element={<LegacyRedirect to={to} />} />
+        ))}
         {/* 兜住 /panel 本身以及任何不认识的深链接。用 replace 是为了不在
             浏览器历史里留下一个「回退就又跳一次」的空档。 */}
         <Route path="*" element={<Navigate to="/channels" replace />} />
       </Routes>
     </TopShell>
   )
+}
+
+function LegacyRedirect({ to }: { to: string }) {
+  const { search } = useLocation()
+  return <Navigate to={{ pathname: to, search }} replace />
 }

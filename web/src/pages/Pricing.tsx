@@ -170,7 +170,7 @@ export default function Pricing() {
         }
       >
         {rows.length === 0 ? (
-          <Empty>还没有渠道纳管模型。先去「模型」页接一家上游、纳管几个模型，价才有落处。</Empty>
+          <Empty>还没有渠道纳管模型。先去「渠道」页接一家上游、纳管几个模型，价才有落处。</Empty>
         ) : shown.length === 0 ? (
           <Empty>{filter === 'unpriced' && needle === '' ? '每一条都定过价了。' : '没有匹配的条目。'}</Empty>
         ) : (

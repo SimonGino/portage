@@ -8,7 +8,7 @@ import { channelMark, filterChannels } from './channels/derive'
 import { ChannelsProvider, useChannels } from './channels/useChannel'
 
 /**
- * 模型页（路由仍是 /channels）：页内主从两栏——左列渠道清单（sticky），右栏是
+ * 渠道页（/channels；v0.71 前叫「模型」页）：页内主从两栏——左列渠道清单（sticky），右栏是
  * 选中渠道的纳管模型（口径层 v0.75；v0.54 左栏退役后清单从壳搬回页内）。
  * 新建时右栏整个是表单，没有模型列表。
  *
@@ -102,7 +102,7 @@ function ChannelsPage() {
         ) : (
           <>
             <header className="page-head">
-              <h1>模型</h1>
+              <h1>渠道</h1>
             </header>
             <Empty>还没有渠道。左边「新建渠道」接一家，再拉模型。</Empty>
           </>
