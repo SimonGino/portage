@@ -85,6 +85,8 @@ var responsesUpstreamSamples = []string{
 	"responses-stream-tool-turn2",
 	"responses-stream-parallel-turn1",
 	"responses-stream-parallel-turn2",
+	// Sign in with ChatGPT 通道的官方直打样本（#205）。
+	"responses-stream-siwc-text",
 }
 
 // cacheSamples 是 Anthropic 缓存两项的真实转录（#13，2026-08-20 采）。

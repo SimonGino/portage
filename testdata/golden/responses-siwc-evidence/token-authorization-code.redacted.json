@@ -1,0 +1,9 @@
+{
+  "access_token": "<redacted len=2104>",
+  "expires_in": 3600,
+  "id_token": "<redacted len=1098>",
+  "scope": "chatgpt.tokens.use.direct email offline_access openid profile resource.invoke",
+  "token_type": "Bearer",
+  "earliest_refresh_at": 1791470301,
+  "refresh_token": "<redacted len=196>"
+}
