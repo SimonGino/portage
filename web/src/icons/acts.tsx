@@ -105,3 +105,14 @@ export function IconRows() {
     </svg>
   )
 }
+
+/** 顶栏齿轮：系统设置（DESIGN §2 v0.71）。与 IconSliders 分开——那是单个渠道的参数。 */
+export function IconGear() {
+  return (
+    <svg {...S} width={16} height={16}>
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.15 1.15M11.25 11.25l1.15 1.15M3.6 12.4l1.15-1.15M11.25 4.75l1.15-1.15" />
+      <circle cx="8" cy="8" r="4.6" />
+    </svg>
+  )
+}

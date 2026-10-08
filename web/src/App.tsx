@@ -19,6 +19,7 @@ import VerifyGate from './pages/auth/VerifyGate'
 import OAuthComplete from './pages/auth/OAuthComplete'
 import MySpace from './pages/my/MySpace'
 import { AvatarMenu, TopShell } from './topshell'
+import { IconGear } from './icons/acts'
 import { Confirm, Dialog, ErrorBar } from './ui'
 
 // 顶栏 tab 纯文字（v0.54）：左栏时代的六枚线性图标随左栏一起退役——横排里
@@ -381,6 +382,10 @@ function Shell({
               我的
             </NavLink>
           )}
+          {/* 设置齿轮（DESIGN §2 v0.71）：本票只占位，设置面在后续票接上。 */}
+          <button type="button" className="act-icon topbar-gear" aria-label="设置" title="设置" disabled>
+            <IconGear />
+          </button>
           <AvatarMenu user={user}>
             {(close) => (
               <>

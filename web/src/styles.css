@@ -13,10 +13,17 @@
   --sunken: #eae7da;
   --chip: #efece0;
   --hover: rgba(28, 26, 21, 0.045);
+  /* 白卡（DESIGN v0.70 §4 表面模型）：清单 / 目录 / 表格进卡，暖白不是纯白。 */
+  --card: #faf9f3;
+  /* 滑块那圈 0.5px 描边阴影：§4 阴影清单里唯一给非浮层的例外。 */
+  --thumb-shadow: 0 1px 2px rgba(62, 52, 30, 0.14), 0 0 0 0.5px rgba(62, 52, 30, 0.1);
+  /* 输入框一类的填色取所在表面的反调：.sheet 不再铺画布色之后，页面底就是 --paper，
+     旧的 --paper 填色会跟页面底融成一片。页面上取白卡色，浮层与白卡里回到 --paper。 */
+  --field: var(--card);
   --shadow: 0 1px 2px rgba(62, 52, 30, 0.05), 0 10px 30px rgba(62, 52, 30, 0.07);
   --r: 10px;
   --r-sm: 8px;
-  /* 衬线只给标题（页标题 / 区块标题 / 渠道身份条上的渠道名 / 空态首句）。
+  /* 衬线只给标题（页标题 / 渠道身份条上的渠道名 / 空态首句；区块标题 v0.70 起是 sans）。
      中文不加载衬线 webfont，落本机的宋体。 */
   --serif: "Source Serif 4", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
   --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
@@ -319,7 +326,10 @@ button.brand-ver:hover {
   position: sticky;
   top: 0;
   z-index: 30;
-  display: flex;
+  /* tab 居中（v0.70）：两侧等分 1fr，导航落正中。1fr 的下限是 min-content，
+     两侧挤不下时导航让位偏一点，不压字。 */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 18px;
   padding: 10px 22px;
@@ -327,31 +337,42 @@ button.brand-ver:hover {
   border-bottom: 1px solid var(--line-soft);
 }
 
+/* 居中滑块（v0.70）：--sunken 轨道 + 画布色药丸，药丸带 0.5px 描边阴影。
+   不做滑动动画——§8 默认静止，切 tab 本来就换整页。不给蓝、不用下划线。 */
 .topnav {
   display: flex;
-  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
 }
 
 .topnav a {
-  padding: 7px 12px;
-  border-radius: var(--r-sm);
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
   color: var(--ink-2);
+  font-size: 14px;
   text-decoration: none;
   white-space: nowrap;
 }
 
 .topnav a:hover {
-  background: var(--hover);
+  color: var(--ink);
 }
 
 .topnav a.active {
-  background: var(--sunken);
+  background: var(--canvas);
+  box-shadow: var(--thumb-shadow);
   color: var(--ink);
   font-weight: 500;
 }
 
+.act-icon.topbar-gear {
+  width: 32px;
+  height: 32px;
+}
+
 .topbar-right {
-  margin-left: auto;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -364,9 +385,8 @@ button.brand-ver:hover {
   width: 100%;
   max-width: 920px;
   margin: 0 auto;
+  /* v0.70 起不单独铺色：页面底即画布，白卡自己立在上面。 */
   padding: 28px 18px 48px;
-  background: var(--canvas);
-  border-radius: var(--r) var(--r) 0 0;
 }
 
 .sheet-narrow {
@@ -538,8 +558,9 @@ button.acct-avatar:hover {
 }
 
 .ch-bar {
-  background: var(--sunken);
-  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 12px 16px;
   margin: 0 0 16px;
 }
@@ -623,17 +644,22 @@ button.acct-avatar:hover {
   justify-content: space-between;
   gap: 12px;
   min-height: 28px;
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--line-soft);
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
-.section-head h2 {
+/* 区块标题（v0.70）：11px 大写 sans 小标题，字距 0.05em。段界不再靠标题下的
+   细线——清单自己进了白卡，卡边就是段界。全大写只限这一档（§9）。 */
+.section-head h2,
+.form-section,
+.detail-block-title,
+.master-label {
   margin: 0;
-  font-family: var(--serif);
-  font-size: 17px;
+  font-family: var(--sans);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mute);
 }
 
 /* 区段顶部的说明句。跟下面的表拉开距离，不然会被误读成第一行数据；封个宽度是
@@ -650,27 +676,35 @@ button.acct-avatar:hover {
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  /* 白卡（v0.70）：圆角要 separate 才画得出来，行线改由各格的 border-top 自己画。 */
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
+/* 不用 overflow: hidden 裁圆角：格子里有 Picker 之类的弹层，会被一起裁掉。
+   能溢出圆角的只有末行悬停底，单独给两只角收圆。 */
+.table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: 11px;
+}
+
+.table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: 11px;
+}
+
+/* 卡内行高 40px：9 + 22.5（15px × 1.5）+ 9。 */
 .table th,
 .table td {
-  padding: 11px 14px;
+  padding: 9px 14px;
   text-align: left;
   border-top: 1px solid var(--line-soft);
   vertical-align: middle;
 }
 
-/* 首末两列跟区段标题对齐，不再往里缩：卡片没了，那圈内边距也就没有理由留着，
-   留着的话表格看上去像浮在一块看不见的板子上。 */
-.table th:first-child,
-.table td:first-child {
-  padding-left: 0;
-}
-
-.table th:last-child,
-.table td:last-child {
-  padding-right: 0;
+.table tbody tr:first-child td {
+  border-top: 0;
 }
 
 .table th {
@@ -679,7 +713,7 @@ button.acct-avatar:hover {
   font-size: 12px;
   letter-spacing: 0.02em;
   border-top: none;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
   white-space: nowrap;
 }
 
@@ -767,11 +801,31 @@ button.acct-avatar:hover {
    「表格看上去像浮在一块看不见的板子上」，正是这块底色把那块板又画了出来。定高是
    为了翻页时按钮不跑，跟「要不要一块底色」是两件事，去掉底色不影响它。
    底边留一条线：视口底沿常把一行切成半行，没有线的话那半行像是断在半空；有线之后
-   它终止在一条边上，读起来就是「下面还有，滚就是了」。 */
+   它终止在一条边上，读起来就是「下面还有，滚就是了」。
+   v0.70：表格统一进白卡，这里由**视口**当卡（表在里面横滚，卡边不能跟着滚走），
+   底线随之成了一圈卡边。表格改 separate 之后行线不再对半分给相邻两行，按新模型重算
+   仍是 727：上下边框 2 + 表头 40 + 十行 ×68.5（67.5 + 每行 1px 上线；首行那条上线
+   这里留着，正好压在表头底线下）。 */
 .log-viewport {
   height: min(727px, calc(100vh - 235px));
   overflow: auto;
-  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.log-viewport .table {
+  border: 0;
+  border-radius: 0;
+}
+
+.log-viewport .table tbody tr:first-child td {
+  border-top: 1px solid var(--line-soft);
+}
+
+/* 视口自己裁圆角；不足十行时末行那两只收圆的角会浮在卡中间，这里放平。 */
+.log-viewport .table tbody tr:last-child td {
+  border-radius: 0;
 }
 
 /* 横向滚动的下限**逐表给**，不给一个全局值：它是「窄到这个份上就该滚了」的地板，
@@ -812,7 +866,7 @@ button.acct-avatar:hover {
   position: sticky;
   right: 0;
   padding-right: 16px;
-  background: var(--canvas);
+  background: var(--card);
   box-shadow: -1px 0 0 var(--line);
 }
 
@@ -836,17 +890,17 @@ button.acct-avatar:hover {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--canvas);
+  background: var(--card);
   border-bottom: none;
   box-shadow: 0 1px 0 var(--line);
 }
 
 /* 流水表列多，内边距光 padding 就吃掉两百多像素。压到 12px，省下的宽度正好
-   够最右那列在窄窗口里也留在可视区。 */
+   够最右那列在窄窗口里也留在可视区。上下仍是 11px：视口定高 727 是按这个行高量的，
+   不跟卡内 40px 那档走。 */
 .table-logs th,
 .table-logs td {
-  padding-left: 12px;
-  padding-right: 12px;
+  padding: 11px 12px;
 }
 
 /* 模型列封顶截断：`claude-sonnet-4-5-20250929` 这种名字一个人就能顶掉 200px，
@@ -896,10 +950,7 @@ button.acct-avatar:hover {
 }
 
 .master-label {
-  padding: 0 12px 8px;
-  color: var(--faint);
-  font-size: 12px;
-  letter-spacing: 0.01em;
+  padding: 0 2px 8px;
 }
 
 .master-search {
@@ -921,12 +972,15 @@ button.acct-avatar:hover {
   box-shadow: inset 0 0 0 1.5px var(--ink);
 }
 
+/* 白卡（v0.70）：行与行之间 --line-soft 细线，行高 40，取代原先的 2px 行距。 */
 .master-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   min-height: 0;
   overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
 .master-empty {
@@ -945,20 +999,25 @@ button.acct-avatar:hover {
   width: 100%;
   padding: 8px 12px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
   background: none;
   text-align: left;
   color: var(--ink-2);
-  min-height: 38px;
+  min-height: 40px;
   cursor: pointer;
+}
+
+.master-list button:first-child {
+  border-top: 0;
 }
 
 .master-list button:hover {
   background: var(--hover);
 }
 
-/* 焦点环收进行内（v0.60）：行距只有 2px，全局那圈 3px 外扩的环会压到邻行，
-   叠在 sunken 选中底上像给行描了个黑框。收成 -2px 后环贴着药丸内缘走，
+/* 焦点环收进行内（v0.60）：行与行紧贴，全局那圈 3px 外扩的环会压到邻行，
+   叠在 sunken 选中底上像给行描了个黑框。收成 -2px 后环贴着行内缘走，
    键盘导航的可见性不丢。 */
 .master-list button:focus-visible,
 .master-new:focus-visible {
@@ -1047,30 +1106,38 @@ button.acct-avatar:hover {
   min-width: 0;
 }
 
-/* 纳管模型：网格而不是整行。
-   整行铺开时模型名在最左、开关和删除在最右，中间隔着一整个卡片宽度，眼睛没法
-   把它们连起来——「这个开关是哪个模型的」要横扫一千多像素才能确认。压成
-   auto-fill 网格之后，名字与它的控件永远相邻，且渠道挂十几个模型时不再是十几
-   个空旷的长条。 */
-/* column-gap 留着（相邻两格要分开），row-gap 归零：行与行靠 .model 的上细线分，
-   再留缝的话线就浮在半空。 */
-/* 下限给到 420：小了会在宽窗口上排出四五列，而模型名（`qwen3.7-coder-2026-05-14`
-   这种）随即被省略号切掉——一列格子看不出是哪个模型，网格就白排了。 */
+/* 纳管模型列表（v0.70 白卡）：单列，行与行靠 .model 的上细线分，不留行距。 */
 .model-grid {
   display: flex;
   flex-direction: column;
   margin: 10px 0 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
+/* 卡内行（v0.70）：--line-soft 细线分隔，首行不画。 */
 .model {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 4px 20px;
   align-items: start;
-  padding: 16px 12px 15px;
-  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
   min-width: 0;
   text-align: left;
+}
+
+.model:first-child {
+  border-top: 0;
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+}
+
+/* 悬停底别顶出卡的圆角；不用 overflow: hidden——行里有就地编辑的弹层。 */
+.model:last-child {
+  border-bottom-left-radius: 11px;
+  border-bottom-right-radius: 11px;
 }
 
 .model-id {
@@ -1142,7 +1209,7 @@ button.acct-avatar:hover {
   border-radius: 999px;
   background: transparent;
   color: var(--mute);
-  font-size: 12.5px;
+  font-size: 11.5px;
   line-height: 1.6;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
@@ -1163,7 +1230,7 @@ button.acct-avatar:hover {
   border-radius: 999px;
   background: var(--chip);
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: 11.5px;
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -1194,7 +1261,7 @@ button.acct-avatar:hover {
   height: 26px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--paper);
+  background: var(--field);
   padding: 0 10px 0 2px;
   transition: border-color 120ms ease;
 }
@@ -1261,7 +1328,7 @@ button.acct-avatar:hover {
   border-radius: 999px;
   background: var(--chip);
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: 11.5px;
   line-height: 1.6;
   cursor: pointer;
 }
@@ -1350,7 +1417,7 @@ button.acct-avatar:hover {
   display: inline-block;
   padding: 3px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.5;
   background: var(--chip);
   border: 0;
@@ -1390,12 +1457,12 @@ button.acct-avatar:hover {
   align-items: center;
   gap: 4px;
   margin: 2px 4px 2px 0;
-  padding: 2px 7px;
+  padding: 2px 8px;
   background: var(--sunken);
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 /* ── 按钮与表单 ────────────────────────────────────────────────────── */
@@ -1596,7 +1663,7 @@ textarea {
   padding: 11px 14px;
   border: 0;
   border-radius: 8px;
-  background: var(--paper);
+  background: var(--field);
   color: var(--ink);
   font: inherit;
 }
@@ -1684,7 +1751,7 @@ textarea:focus {
   overflow-y: auto;
   padding: 8px 10px;
   border: 0;
-  background: var(--paper);
+  background: var(--field);
   border-radius: 8px;
 }
 
@@ -1719,7 +1786,7 @@ textarea:focus {
   border-radius: 8px;
   border: 0;
   font-size: 14px;
-  background: var(--paper);
+  background: var(--field);
   color: var(--ink-2);
 }
 
@@ -1801,6 +1868,17 @@ textarea:focus {
   padding: 8vh 16px;
   z-index: 100;
   overflow-y: auto;
+}
+
+.dialog,
+.picker-pop,
+.avatar-pop,
+.table,
+.master-list,
+.model-grid,
+.ch-bar,
+.log-viewport {
+  --field: var(--paper);
 }
 
 .dialog {
@@ -2233,13 +2311,10 @@ textarea:focus {
 
 /* ── 用户页表单 ────────────────────────────────────────────────────── */
 
-/* 长表单里的小节标题（SMTP / GitHub / Google）：衬线、上方留出一段呼吸。 */
-.form-section {
+/* 长表单里的小节标题（SMTP / GitHub / Google）：区块小标题那一档（见 .section-head h2），
+   上方留出一段呼吸。 */
+h3.form-section {
   margin: 14px 0 0;
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: -0.01em;
 }
 
 /* 两列并排的字段（服务器+端口、用户名+密码）。窄屏塌回单列。 */
@@ -2358,38 +2433,39 @@ textarea:focus {
 
 /* ── Segmented ─────────────────────────────────────────────────────── */
 
+/* 顶栏滑块的小一号（v0.70 / v0.74）：同一条 --sunken 轨道 + 画布色药丸 + 0.5px
+   描边阴影；子 tab 与页内分段共用这一形制。 */
 .segmented {
   display: inline-flex;
-  padding: 4px;
-  gap: 4px;
-  background: var(--paper);
+  padding: 2px;
+  background: var(--sunken);
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
 }
 
 .segment {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 11px;
+  padding: 4px 11px;
   border: 0;
   border-radius: 5px;
   background: none;
-  color: var(--muted);
+  color: var(--mute);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
 }
 
 .segment:hover {
-  color: var(--text);
+  color: var(--ink);
 }
 
 .segment.is-on {
   background: var(--canvas);
+  box-shadow: var(--thumb-shadow);
   color: var(--ink);
   font-weight: 500;
-  box-shadow: none;
 }
 
 /* ── 检测弹层（口径层 v0.96：发起、勾选、结果同一个容器，关弹层即失） ── */
@@ -2533,7 +2609,7 @@ textarea:focus {
   padding: 10px 12px;
   border: 0;
   border-radius: 8px;
-  background: var(--paper);
+  background: var(--field);
   color: var(--ink);
   font: inherit;
   text-align: left;
@@ -2677,7 +2753,7 @@ textarea:focus {
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
-  background: var(--paper);
+  background: var(--field);
 }
 
 .chips-row:focus-within {
@@ -2868,12 +2944,6 @@ textarea:focus {
 /* 成对动作（管理 / 检测）贴成一组：容器 gap 12px 是「组与组」的距离，组内收紧一档。 */
 .detail-block-acts .act + .act {
   margin-left: -6px;
-}
-
-.detail-block-title {
-  font-size: 12px;
-  color: var(--faint);
-  letter-spacing: 0.02em;
 }
 
 /* 凭证行：掩码值 + 「管理」「检测」。52em 与弹框里的列表同一条右边界。 */
@@ -4160,11 +4230,19 @@ button.cal-day,
 
 @media (max-width: 720px) {
   .topbar {
+    display: flex;
     flex-wrap: wrap;
     gap: 10px;
   }
+  .topbar-right {
+    margin-left: auto;
+  }
+  .topnav {
+    order: 1;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .sheet {
-    border-radius: 0;
     padding: 22px 14px 40px;
   }
 }
