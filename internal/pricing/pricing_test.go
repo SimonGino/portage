@@ -1,6 +1,9 @@
 package pricing
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // 快照是发版资产：解不开、缺了 anthropic 这种一方大厂、或单位明显不对（README
 // 说 USD/百万 token，Claude 一档的 input 不可能是 3e-6 或 3e6），都说明生成或
@@ -49,5 +52,29 @@ func TestUnknownProviderIsJustEmpty(t *testing.T) {
 	}
 	if len(prices) != 0 {
 		t.Fatalf("查无此家该回空映射，回了 %d 条", len(prices))
+	}
+}
+
+// v1.75 放宽：快照得带出分档价与模型元数据，否则建议价与模型目录胶囊无源可读。
+func TestSnapshotCarriesTierAndLimits(t *testing.T) {
+	var tiered, limited, image bool
+	for _, pid := range []string{"anthropic", "google", "deepinfra", "openai"} {
+		prices, err := ModelPrices(pid)
+		if err != nil {
+			t.Fatalf("ModelPrices: %v", err)
+		}
+		for id, p := range prices {
+			if p.Tier != nil {
+				tiered = true
+				if p.Tier.Above <= 0 {
+					t.Fatalf("模型 %s 分档阈值 %d 不合法", id, p.Tier.Above)
+				}
+			}
+			limited = limited || p.LimitContext > 0
+			image = image || slices.Contains(p.InputModalities, "image")
+		}
+	}
+	if !tiered || !limited || !image {
+		t.Fatalf("快照缺放宽字段：分档 %v、limit.context %v、image 模态 %v", tiered, limited, image)
 	}
 }

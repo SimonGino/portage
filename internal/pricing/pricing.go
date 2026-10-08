@@ -37,7 +37,25 @@ type Provider struct {
 // ModelPrice 是快照里一个模型的四价，单位与渠道口径一致：USD / 百万 token
 // （models.dev README 明文，无需换算）。指针的 nil = 快照里没有这个价——
 // 与纳管条目那边一样，「没有」与 0（真免费）必须分得开。
+//
+// v1.75（#185/#189）起顺带带出分档价与三项模型元数据。后三项是上游的静态
+// 自称、只做展示（模型目录胶囊），不进路由与拦截；0 / 空 = 快照没写。
 type ModelPrice struct {
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
+	// Tier 是上游 `cost.tiers` 里 context 型的第一档；nil = 全程一档。
+	Tier            *PriceTier `json:"tier,omitempty"`
+	LimitContext    int64      `json:"limit_context,omitempty"`
+	LimitOutput     int64      `json:"limit_output,omitempty"`
+	InputModalities []string   `json:"input_modalities,omitempty"`
+}
+
+// PriceTier 是分档价（口径层 v1.49）：毛输入超过 Above 时整笔按这四价计，
+// 某价 nil = 沿用基础价（models.dev 省略语义，与纳管条目同）。
+type PriceTier struct {
+	Above      int64    `json:"above"`
 	Input      *float64 `json:"input,omitempty"`
 	Output     *float64 `json:"output,omitempty"`
 	CacheRead  *float64 `json:"cache_read,omitempty"`
