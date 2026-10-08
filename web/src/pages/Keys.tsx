@@ -42,7 +42,7 @@ export default function Keys() {
           悄悄空掉的话看起来像「一个模型都没配」。 */}
       <ErrorBar message={keys.error || models.error} />
       <Card
-        title="API Key"
+        title="网关"
         action={
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             新建 API Key

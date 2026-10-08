@@ -1941,8 +1941,9 @@ textarea:focus {
 }
 
 /* 设置面的内容根是 .form，里面再套登录与邮件那张 <form class="form">：内层不再要衬，
-   不然字段比段标题多缩进一档、两排动作右缘对不齐。 */
-.dialog .form .form {
+   不然字段比段标题多缩进一档、两排动作右缘对不齐。只认直接子级：设置面里再开的
+   「发测试邮件」框也是 .form，DOM 上同在这层 .form 之下，它的衬要留着。 */
+.dialog .form > .form {
   padding: 0;
 }
 

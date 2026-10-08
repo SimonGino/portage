@@ -25,15 +25,22 @@ export function useList<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const ref = useRef(fetcher)
   ref.current = fetcher
 
+  // 只认最后一次发起的请求：连点刷新或快速切换 deps 时，先发后到的旧响应不能盖掉新数据。
+  const seq = useRef(0)
+
   const reload = useCallback(async () => {
+    const id = ++seq.current
     setLoading(true)
     try {
-      setData(await ref.current())
+      const next = await ref.current()
+      if (id !== seq.current) return
+      setData(next)
       setError('')
     } catch (e) {
+      if (id !== seq.current) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (id === seq.current) setLoading(false)
     }
   }, [])
 
@@ -96,7 +103,9 @@ export function PageTitle({ title, tabs }: { title: string; tabs?: SubTab[] }) {
   const { pathname } = useLocation()
   const nav = useNavigate()
   if (!tabs) return <h1>{title}</h1>
-  const on = tabs.find((t) => t.to === pathname)?.to ?? tabs[0].to
+  // 路由也匹配带尾斜杠的 /usage/logs/，比对前去掉，否则选中落回第一项。
+  const path = pathname.replace(/\/+$/, '')
+  const on = tabs.find((t) => t.to === path)?.to ?? tabs[0].to
   return (
     <div className="page-title">
       <h1>{title}</h1>
