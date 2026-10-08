@@ -478,11 +478,6 @@ button.acct-avatar:hover {
   color: var(--ink);
 }
 
-.menu-item:disabled {
-  color: var(--faint);
-  cursor: default;
-}
-
 .spacer {
   flex: 1;
 }
@@ -1945,6 +1940,12 @@ textarea:focus {
   padding: 18px;
 }
 
+/* 设置面的内容根是 .form，里面再套登录与邮件那张 <form class="form">：内层不再要衬，
+   不然字段比段标题多缩进一档、两排动作右缘对不齐。 */
+.dialog .form .form {
+  padding: 0;
+}
+
 /* 装列表的框才放宽。表单不跟着变宽：一行输入框拉到 900px，标签和光标离得老远。 */
 /* 弹框壳的降档（PO 2026-08-30 贴「发测试邮件」截图裁定「每次这种弹框都是这样子」，
    DESIGN v0.47）：标题、头部、主按钮全收在弹框规格里，页面级的档不进框。
@@ -2326,7 +2327,7 @@ textarea:focus {
   color: var(--ok-text);
 }
 
-/* ── 用户页表单 ────────────────────────────────────────────────────── */
+/* ── 设置面表单（登录与邮件）────────────────────────────────────────────────────── */
 
 /* 长表单里的小节标题（SMTP / GitHub / Google）：区块小标题那一档（见 .section-head h2），
    上方留出一段呼吸。 */

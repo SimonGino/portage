@@ -44,11 +44,10 @@ export function TopShell({
 }
 
 /**
- * 顶栏右侧的头像菜单：账号身份 + 一列动作。管理空间的导出/导入/改密码/退出
- * 从左栏底部搬进来（PO 2026-08-31 裁定），「我的」空间只有退出——密码在账号页。
+ * 顶栏右侧的头像菜单：账号身份 + 一列动作。管理空间是改密码 + 退出（导出/导入 v0.71 搬进齿轮
+ * 设置面），「我的」空间只有退出——密码在账号页。
  *
- * children 是渲染函数：动作项自己决定点完关不关菜单（改密码/退出关，导出/导入
- * 不关——它们的弹框就长在菜单的 DOM 里，菜单一关弹框跟着卸载，流程断在半路）。
+ * children 是渲染函数：动作项拿到 close，点完自己关菜单。
  */
 export function AvatarMenu({
   user,
@@ -62,14 +61,11 @@ export function AvatarMenu({
 
   useEffect(() => {
     if (!open) return
-    // 弹框开着时（导出失败/导入试算的 overlay 是菜单的 DOM 子孙）外点与 Escape
-    // 都不关菜单：overlay 盖满全屏，mousedown 落在它上面 contains 本来就为真；
-    // Escape 交给 Dialog 自己关，菜单同帧跟着关会把「关弹框」误伤成「全关」。
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !ref.current?.querySelector('.overlay')) setOpen(false)
+      if (e.key === 'Escape') setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)

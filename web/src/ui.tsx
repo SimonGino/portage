@@ -154,16 +154,25 @@ export function Dialog({
   children: ReactNode
 }) {
   // Esc 关闭。表单填错了想退出去，第一反应是按 Esc 而不是找那个叉。
+  // 框里再开框（设置面里的测试邮件、导入试算）时只关最上面那层：嵌套框在 DOM 里
+  // 排在外层之后，最后一个 .overlay 就是最上层。只看「是不是最上层」不够——监听
+  // 按注册序跑，内层先关、React 在两个监听之间刷掉它的 DOM，外层就成了最上层再关
+  // 一次；所以关掉的那层 preventDefault，后面的见了就不动。
+  const overlayRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const overlays = document.querySelectorAll('.overlay')
+      if (overlays[overlays.length - 1] !== overlayRef.current) return
+      e.preventDefault()
+      onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   return (
-    <div className="overlay" onMouseDown={guard ? undefined : onClose}>
+    <div className="overlay" ref={overlayRef} onMouseDown={guard ? undefined : onClose}>
       {/* 阻止冒泡：在框里面按下鼠标不该关掉框（选文本时很容易拖到框外） */}
       <div
         className={'dialog' + (wide ? ' dialog-wide' : '') + (scroll ? ' dialog-scroll' : '')}
