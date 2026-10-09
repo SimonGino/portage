@@ -660,6 +660,9 @@ export default function LogsView({ mine = false }: { mine?: boolean }) {
                         <div className="sub">
                           缓存 读 {fmtInt(l.cache_read_tokens)} / 写{' '}
                           {fmtInt(l.cache_write_tokens)}
+                          {/* 1h 写是写入的明细（#198），同款只在非 0 时露出：
+                              报了但为 0 与没报同账，不另挂一行零。 */}
+                          {l.cache_write_1h_tokens ? <> · 1h {fmtInt(l.cache_write_1h_tokens)}</> : null}
                         </div>
                       ) : null}
                       {/* 思考 token 同款只在有数时露出（口径层 v0.66）。判据是

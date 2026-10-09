@@ -519,6 +519,11 @@ export interface CallLog {
   cache_read_tokens: number | null
   cache_write_tokens: number | null
   /**
+   * 1h TTL 的缓存写（#198），cache_write_tokens 的**明细**不是另一笔。null = 老流水
+   * （加列前）或没到上游；0 = 上游没报细分（与报了 0 同账）——前端只在非 0 时摆。
+   */
+  cache_write_1h_tokens: number | null
+  /**
    * 思考 token（口径层 v0.66）。是 output_tokens 的**明细**不是另一笔，别相加。
    *
    * 三态：null = 上游不报这个数（Anthropic 一路，以及 v0.66 之前的老流水）；
