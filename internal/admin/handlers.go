@@ -17,6 +17,7 @@ import (
 	"github.com/SimonGino/portage/internal/pricing"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/subscription"
 	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
@@ -481,6 +482,8 @@ func (h *Handler) deleteChannel(c *gin.Context) {
 //
 // 只用第一把**启用**凭证，不像 Probe 那样逐把跑：那边逐把是因为「这把停用的凭证还坏
 // 不坏」本身就是要问的；这边问的是上游有哪些模型，换一把凭证不会换来另一份答案。
+// （订阅渠道除外，见 fetchSubscriptionModels：换的是「哪把刷得动」。）
+// #214 起按 credential_type 切分支：chatgpt_account 的拉法与解析都不同，见下。
 func (h *Handler) fetchChannelModels(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -493,19 +496,64 @@ func (h *Handler) fetchChannelModels(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	var cred string
-	for _, x := range target.Credentials {
-		if !x.Disabled {
-			cred = x.Value
-			break
+	var results []upstream.ModelListResult
+	if target.CredentialType == store.CredentialTypeChatGPTAccount {
+		// 订阅渠道（#214，口径层 §2.2 v1.52）：出站凭证先过引擎懒刷新换成 access，
+		// 解析只认官方 models[] 形状（§7.13 那张目录）。
+		results = h.fetchSubscriptionModels(c.Request.Context(), target)
+	} else {
+		var cred string
+		for _, x := range target.Credentials {
+			if !x.Disabled {
+				cred = x.Value
+				break
+			}
 		}
+		// 各协议打各的出站根地址（口径层 v0.96 ②，#49）：哪个协议用哪个地址的知识在
+		// upstream 里，这儿只把整份映射递过去。
+		results = upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, target.AuthScheme, cred, target.Headers)
 	}
-	// 各协议打各的出站根地址（口径层 v0.96 ②，#49）：哪个协议用哪个地址的知识在
-	// upstream 里，这儿只把整份映射递过去。
-	results := upstream.ListModelsFor(c.Request.Context(), target.BaseURLs, target.AuthScheme, cred, target.Headers)
 	// 只报渠道名与拉到几组，不报 base_url，更不报凭证值。
 	h.log.Info("拉上游模型列表", "channel", target.Name, "groups", len(results))
 	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
+// fetchSubscriptionModels 朝订阅渠道拉官方模型目录（#214）：逐把启用凭证过引擎的
+// 懒刷新，换到第一个 access 就出站；换不到就不把请求打去上游，原因摆进结果里——
+// 与拉取失败同档（只提示，不拦页面）。与转发端共享同一个引擎实例：每把凭证一把
+// 互斥锁在引擎里，另造一个等于让管理端与转发端各自刷各自的，撞 refresh_token_reused。
+func (h *Handler) fetchSubscriptionModels(ctx context.Context, target store.ProbeTarget) []upstream.ModelListResult {
+	var lastErr error
+	var reauth bool
+	for _, x := range target.Credentials {
+		if x.Disabled {
+			continue
+		}
+		// 模型目录对哪把凭证都一样，但「这把刷不刷得动」是每把自己的事：第一把
+		// 待重登时换下一把，别让死号拦住拉取（与 EffectiveAll 摘掉坏凭证同一语义）。
+		access, err := h.sub.Effective(ctx, store.Credential{ID: x.ID, Name: x.Name, Value: x.Value})
+		if err == nil {
+			return upstream.ListSubscriptionModelsFor(ctx, target.BaseURLs, access)
+		}
+		if errors.Is(err, subscription.ErrReauthRequired) {
+			reauth = true
+		} else {
+			lastErr = err
+		}
+	}
+	// 全部不可用时与 EffectiveAll 的收场同序：有死亡码在场优先说「需要重新登录」——
+	// 死号要的是人去重新登录，最后那把的瞬时错误等一等自己会好，别让它盖掉提示。
+	switch {
+	case reauth:
+		return []upstream.ModelListResult{{Protocols: target.Protocols,
+			Detail: "订阅凭证需要重新登录：请在管理端渠道页重新登录该账号"}}
+	case lastErr != nil:
+		return []upstream.ModelListResult{{Protocols: target.Protocols,
+			Detail: "订阅凭证暂不可用：" + upstream.Redact(lastErr).Error()}}
+	default:
+		return []upstream.ModelListResult{{Protocols: target.Protocols,
+			Detail: "没有启用的订阅凭证，先启用或重新登录一个账号"}}
+	}
 }
 
 // ── 凭证池 ──────────────────────────────────────────────────────────────
