@@ -12,8 +12,8 @@ package calllog
 import "database/sql"
 
 // Outcome 是流水 `error` 列的那份固定词表（CONTEXT.md「outcome 词表」，口径层
-// v0.70 定 10 词、v0.99 加 `request_too_large`、§2.10 加 `quota_exceeded`）：
-// **12 个词**，加一个不落库的哨兵 `ok`。
+// v0.70 定 10 词、v0.99 加 `request_too_large`、§2.10 加 `quota_exceeded`、§2.2
+// 「订阅渠道」条加 `reauth_required`）：**13 个词**，加一个不落库的哨兵 `ok`。
 //
 // 封闭类型而不是裸 string，是因为这份词表的读者（`group by error` 的人）没有第二个
 // 信源：字面量写错一个字母能编译、能上线，只在有人按词聚合时才发现，而那时错的
@@ -62,6 +62,10 @@ const (
 	// 本月流水 SUM(cost) ≥ 限额即 429。闸在全局令牌桶之后、Resolve 之前，一个字节
 	// 没到上游；count_tokens 豁免。0 = 封停也落这个词——判据同一条（SUM ≥ 0 恒真）。
 	QuotaExceeded Outcome = "quota_exceeded"
+	// ReauthRequired 是订阅渠道的凭证需要重新登录（口径层 §2.2「订阅渠道」条，第 13 词，
+	// #211）：refresh 撞上死亡码、凭证被标停用（reason 同词），请求因此没打到上游。
+	// 流水筛它就能找到所有停在「该去面板里重新登录了」的请求。
+	ReauthRequired Outcome = "reauth_required"
 
 	// —— 失败这一半：真的向上游发起过之后出的事 ——
 
@@ -134,6 +138,7 @@ var halves = map[Outcome]half{
 	QueueAbandoned:        halfRefusal,
 	RequestTooLarge:       halfRefusal,
 	QuotaExceeded:         halfRefusal,
+	ReauthRequired:        halfRefusal,
 
 	UpstreamError: halfFailure,
 	StreamAborted: halfFailure,

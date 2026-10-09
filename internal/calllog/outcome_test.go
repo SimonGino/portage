@@ -7,9 +7,10 @@ import (
 	"github.com/SimonGino/portage/internal/calllog"
 )
 
-// words 是词表全集，**12 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70 定 10 词、
-// v0.99 加 request_too_large、§2.10 加 quota_exceeded），哨兵 ok 不在其中。加第 13 个
-// 词要同步这里——下面几条断言就是靠它变成必答题的。
+// words 是词表全集，**13 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70 定 10 词、
+// v0.99 加 request_too_large、§2.10 加 quota_exceeded、§2.2「订阅渠道」条加
+// reauth_required），哨兵 ok 不在其中。加第 14 个词要同步这里——下面几条断言
+// 就是靠它变成必答题的。
 var words = []calllog.Outcome{
 	calllog.UpstreamError,
 	calllog.StreamAborted,
@@ -23,13 +24,14 @@ var words = []calllog.Outcome{
 	calllog.RateLimited,
 	calllog.RequestTooLarge,
 	calllog.QuotaExceeded,
+	calllog.ReauthRequired,
 }
 
-// 词表是 12 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
-// 这份词表与 CONTEXT.md 的词条、口径层 v0.70/v0.99/§2.10 是同一件事，改一边就得改另一边。
-func TestOutcomeVocabularyHasTwelveWords(t *testing.T) {
-	if len(words) != 12 {
-		t.Fatalf("词表有 %d 个词, 期望 12", len(words))
+// 词表是 13 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
+// 这份词表与 CONTEXT.md 的词条、口径层 v0.70/v0.99/§2.10/§2.2 是同一件事，改一边就得改另一边。
+func TestOutcomeVocabularySize(t *testing.T) {
+	if len(words) != 13 {
+		t.Fatalf("词表有 %d 个词, 期望 13", len(words))
 	}
 	seen := map[calllog.Outcome]bool{}
 	for _, w := range words {
@@ -39,7 +41,7 @@ func TestOutcomeVocabularyHasTwelveWords(t *testing.T) {
 		seen[w] = true
 	}
 	if seen[calllog.OK] {
-		t.Error("ok 是哨兵，不是第 13 个词")
+		t.Error("ok 是哨兵，不是词表的一员")
 	}
 }
 
@@ -60,6 +62,7 @@ func TestOutcomeStringIsTheWireWord(t *testing.T) {
 		calllog.RateLimited:           "rate_limited",
 		calllog.RequestTooLarge:       "request_too_large",
 		calllog.QuotaExceeded:         "quota_exceeded",
+		calllog.ReauthRequired:        "reauth_required",
 	} {
 		if got := word.String(); got != want {
 			t.Errorf("String() = %q, 期望 %q", got, want)
@@ -102,7 +105,7 @@ func TestErrorWordReadsNullAsEmpty(t *testing.T) {
 	}
 }
 
-// 每个词**恰好**属于两半中的一半。加第 11 个词时这条会红，「它属于哪一半」
+// 每个词**恰好**属于两半中的一半。加新词时这条会红，「它属于哪一半」
 // 于是变成必答题——那正是本次把词表收进 module 想买到的东西。
 func TestEveryWordBelongsToExactlyOneHalf(t *testing.T) {
 	for _, w := range words {
@@ -127,6 +130,7 @@ func TestHalvesSplitOnWhetherUpstreamWasDialed(t *testing.T) {
 		calllog.RateLimited, calllog.CompactionUnsupported,
 		calllog.QueueFull, calllog.QueueTimeout, calllog.QueueAbandoned,
 		calllog.RequestTooLarge, calllog.QuotaExceeded,
+		calllog.ReauthRequired,
 	} {
 		if !w.Refusal() {
 			t.Errorf("%q 该算回绝：这一档一个字节都没到上游", w)
