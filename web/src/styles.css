@@ -4502,6 +4502,12 @@ button.cal-day,
 }
 
 /* 模型目录（v0.76）：白卡行列表 + 细线分隔，胶囊 999 圆角。 */
+.catalog-list {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
 .catalog-row {
   display: flex;
   align-items: center;
