@@ -61,6 +61,11 @@ type Row struct {
 	OutputTokens     sql.NullInt64
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
+	// CacheWrite1hTokens 是 1 小时 TTL 的缓存写 token（#198），cache_write_tokens
+	// 的**明细**不是另一笔。上游没报 TTL 细分（老式/兼容上游，容器缺席）与报了 0
+	// 同账部——两者计价都按「1h 部分为 0、整笔按 5 分钟价」，不像 reasoning_tokens
+	// 那格要三档：这列显示的就是上游报的数，抹了也不产生假象。
+	CacheWrite1hTokens sql.NullInt64
 	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的**明细**
 	// 而非另一笔。可空的理由与上面几个不同：这一列上 NULL 是「上游这一轮不报这个数」
 	// （整个 details 容器都不发——老式兼容上游、中转裁剪、CC 挂非推理模型），0 是

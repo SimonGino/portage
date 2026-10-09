@@ -279,6 +279,9 @@ type CallRow struct {
 	OutputTokens     sql.NullInt64
 	CacheReadTokens  sql.NullInt64
 	CacheWriteTokens sql.NullInt64
+	// CacheWrite1hTokens 是 1h 缓存写 token（#198），cache_write_tokens 的明细。
+	// 有 summary 就有值（含 0）；NULL 只属于没到上游那批行。
+	CacheWrite1hTokens sql.NullInt64
 	// ReasoningTokens 是思考 token（口径层 v0.66）。可空：NULL 是「上游不报这个数」，
 	// 0 是「上游报了，这次没思考」。
 	ReasoningTokens sql.NullInt64
@@ -303,14 +306,14 @@ func (g *Gateway) LastCallRow(t *testing.T) CallRow {
 			SELECT api_key_name, endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 			       model_requested, model_upstream, channel_name, channel_key_name,
 			       status, retry_count, is_stream, ttft_ms, total_ms, queue_wait_ms,
-			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
 			       reasoning_tokens, error, error_detail,
 			       upstream_request_id
 			FROM call_logs ORDER BY id DESC LIMIT 1`).
 			Scan(&r.APIKeyName, &r.Endpoint, &r.UpstreamEndpoint, &r.ClientProtocol, &r.UpstreamProtocol,
 				&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName,
 				&r.Status, &r.RetryCount, &r.IsStream, &r.TTFTMs, &r.TotalMs, &r.QueueWaitMs,
-				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens,
+				&r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheWriteTokens, &r.CacheWrite1hTokens,
 				&r.ReasoningTokens, &r.Error, &r.ErrorDetail,
 				&r.UpstreamRequestID)
 		if err == nil {

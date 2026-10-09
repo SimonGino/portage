@@ -108,12 +108,17 @@ type ChannelModel struct {
 	PriceOutput     *float64 `json:"price_output"`
 	PriceCacheRead  *float64 `json:"price_cache_read"`
 	PriceCacheWrite *float64 `json:"price_cache_write"`
+	// PriceCacheWrite1H 是 1h 缓存写单价（#198）：null = 未设（那部分按 5 分钟价计）。
+	// 明细价不进「未定价」判据（口径层 v1.49：只看基础四价）。
+	PriceCacheWrite1H *float64 `json:"price_cache_write_1h"`
 	// 分档价（口径层 v1.49，#185）：阈值 null = 全程一档；分档某价 null = 沿用基础价。
 	PriceTierAbove      *int64   `json:"price_tier_above"`
 	PriceTierInput      *float64 `json:"price_tier_input"`
 	PriceTierOutput     *float64 `json:"price_tier_output"`
 	PriceTierCacheRead  *float64 `json:"price_tier_cache_read"`
 	PriceTierCacheWrite *float64 `json:"price_tier_cache_write"`
+	// PriceTierCacheWrite1H 同上，1h 那格的分档对应项（#198）。
+	PriceTierCacheWrite1H *float64 `json:"price_tier_cache_write_1h"`
 	// HasUsage：流水里有没有这条条目报过 usage 的行（channel_name × model_upstream
 	// 快照匹配，input_tokens 非 NULL）。它只服务未定价提醒的判据「四价全 NULL 且
 	// 有用量」（口径层 §2.10——提醒挂条目不挂流水行），不是路由状态。
@@ -229,8 +234,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	// 渠道 × 模型，得在 Go 里做一次去重才能还原渠道本身的字段。两趟更短也更难写错。
 	mrows, err := db.QueryContext(ctx,
 		`SELECT id, channel_id, upstream_model, protocols, max_input_tokens,
-		        price_input, price_output, price_cache_read, price_cache_write,
-		        price_tier_above, price_tier_input, price_tier_output, price_tier_cache_read, price_tier_cache_write, disabled
+		        price_input, price_output, price_cache_read, price_cache_write, price_cache_write_1h,
+		        price_tier_above, price_tier_input, price_tier_output, price_tier_cache_read, price_tier_cache_write, price_tier_cache_write_1h, disabled
 		 FROM channel_models ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -241,8 +246,8 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var chID int64
 		var mProtocols string
 		if err := mrows.Scan(&m.ID, &chID, &m.UpstreamModel, &mProtocols, &m.MaxInputTokens,
-			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite,
-			&m.PriceTierAbove, &m.PriceTierInput, &m.PriceTierOutput, &m.PriceTierCacheRead, &m.PriceTierCacheWrite,
+			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite, &m.PriceCacheWrite1H,
+			&m.PriceTierAbove, &m.PriceTierInput, &m.PriceTierOutput, &m.PriceTierCacheRead, &m.PriceTierCacheWrite, &m.PriceTierCacheWrite1H,
 			&m.Disabled); err != nil {
 			return nil, err
 		}
@@ -762,13 +767,17 @@ type ChannelModelPrices struct {
 	Output     *float64 `json:"output"`
 	CacheRead  *float64 `json:"cache_read"`
 	CacheWrite *float64 `json:"cache_write"`
-	// 分档价（口径层 v1.49，#185）随四价整组走：TierAbove nil = 去分档，此时分档
-	// 四价一并清回 NULL；非 nil 时分档某价 nil = 沿用基础价。
+	// CacheWrite1H 是 1h 缓存写单价（#198）：null = 未设，那部分按 5 分钟价计。
+	CacheWrite1H *float64 `json:"cache_write_1h"`
+	// 分档价（口径层 v1.49，#185）随价整组走：TierAbove nil = 去分档，此时分档价
+	// 一并清回 NULL；非 nil 时分档某价 nil = 沿用基础价。
 	TierAbove      *int64   `json:"tier_above"`
 	TierInput      *float64 `json:"tier_input"`
 	TierOutput     *float64 `json:"tier_output"`
 	TierCacheRead  *float64 `json:"tier_cache_read"`
 	TierCacheWrite *float64 `json:"tier_cache_write"`
+	// TierCacheWrite1H 同上，1h 那格的分档对应项（#198）。
+	TierCacheWrite1H *float64 `json:"tier_cache_write_1h"`
 }
 
 // ChannelModelPatch 是改一条纳管模型时可写的东西（#141）：每个字段 nil = 不动那一列。
@@ -815,20 +824,20 @@ func UpdateChannelModel(ctx context.Context, db Conn, id int64, p ChannelModelPa
 	if p.Prices != nil {
 		pr := *p.Prices
 		if pr.TierAbove == nil {
-			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite = nil, nil, nil, nil
+			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite, pr.TierCacheWrite1H = nil, nil, nil, nil, nil
 		} else if *pr.TierAbove <= 0 {
 			return InvalidInput{Reason: "分档阈值要是正整数（token 数）；不要分档就清空阈值"}
 		}
-		for _, v := range []*float64{pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite,
-			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite} {
+		for _, v := range []*float64{pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite, pr.CacheWrite1H,
+			pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite, pr.TierCacheWrite1H} {
 			if v != nil && *v < 0 {
 				return InvalidInput{Reason: "单价不能是负数：0 表示真免费，留空（null）表示未定价"}
 			}
 		}
-		sets = append(sets, `price_input = ?, price_output = ?, price_cache_read = ?, price_cache_write = ?,
-			price_tier_above = ?, price_tier_input = ?, price_tier_output = ?, price_tier_cache_read = ?, price_tier_cache_write = ?`)
-		args = append(args, pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite,
-			pr.TierAbove, pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite)
+		sets = append(sets, `price_input = ?, price_output = ?, price_cache_read = ?, price_cache_write = ?, price_cache_write_1h = ?,
+			price_tier_above = ?, price_tier_input = ?, price_tier_output = ?, price_tier_cache_read = ?, price_tier_cache_write = ?, price_tier_cache_write_1h = ?`)
+		args = append(args, pr.Input, pr.Output, pr.CacheRead, pr.CacheWrite, pr.CacheWrite1H,
+			pr.TierAbove, pr.TierInput, pr.TierOutput, pr.TierCacheRead, pr.TierCacheWrite, pr.TierCacheWrite1H)
 	}
 	if len(sets) == 0 {
 		return InvalidInput{Reason: "没有要改的字段"}
@@ -1226,6 +1235,9 @@ type CallLogRow struct {
 	OutputTokens     *int64 `json:"output_tokens"`
 	CacheReadTokens  *int64 `json:"cache_read_tokens"`
 	CacheWriteTokens *int64 `json:"cache_write_tokens"`
+	// CacheWrite1hTokens 是 1h TTL 的缓存写 token（#198），cache_write_tokens 的明细。
+	// 有 summary 就有值（含 0）：上游没报细分与报了 0 同账，前端只在非 0 时摆出来。
+	CacheWrite1hTokens *int64 `json:"cache_write_1h_tokens"`
 	// ReasoningTokens 是思考 token（口径层 v0.66），output_tokens 的明细而非另一笔。
 	// null 是「上游不报这个数」，0 是「这次没思考」——前端据此决定露不露这一格。
 	ReasoningTokens *int64 `json:"reasoning_tokens"`
@@ -1350,7 +1362,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		       endpoint, upstream_endpoint, client_protocol, upstream_protocol,
 		       model_requested, model_upstream, channel_name, channel_key_name, status, retry_count,
 		       is_stream, ttft_ms, total_ms, queue_wait_ms, input_tokens, output_tokens,
-		       cache_read_tokens, cache_write_tokens, reasoning_tokens, cost,
+		       cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, reasoning_tokens, cost,
 		       error, error_detail, upstream_request_id, service_tier, speed
 		FROM call_logs LEFT JOIN users u ON u.id = call_logs.user_id`+
 		clause+` ORDER BY call_logs.id DESC LIMIT ? OFFSET ?`, args...)
@@ -1361,13 +1373,13 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 	out := []CallLogRow{}
 	for rows.Next() {
 		var r CallLogRow
-		var ttft, in, outTok, cr, cw, reasoning sql.NullInt64
+		var ttft, in, outTok, cr, cw, cw1h, reasoning sql.NullInt64
 		var stream sql.NullBool
 		var errWord, detail sql.NullString
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.APIKeyName, &r.User, &r.Endpoint, &r.UpstreamEndpoint,
 			&r.ClientProtocol, &r.UpstreamProtocol,
 			&r.ModelRequested, &r.ModelUpstream, &r.ChannelName, &r.ChannelKeyName, &r.Status, &r.RetryCount,
-			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &reasoning,
+			&stream, &ttft, &r.TotalMs, &r.QueueWaitMs, &in, &outTok, &cr, &cw, &cw1h, &reasoning,
 			&r.Cost, &errWord, &detail, &r.UpstreamRequestID, &r.ServiceTier, &r.Speed); err != nil {
 			return nil, err
 		}
@@ -1376,7 +1388,7 @@ func ListCallLogs(ctx context.Context, db Queryer, f CallLogFilter) ([]CallLogRo
 		// 一处类型系统看不见、也没有单测的地方。
 		r.Error = calllog.ErrorWord(errWord)
 		r.TTFTMs, r.InputTokens, r.OutputTokens = nullable(ttft), nullable(in), nullable(outTok)
-		r.CacheReadTokens, r.CacheWriteTokens = nullable(cr), nullable(cw)
+		r.CacheReadTokens, r.CacheWriteTokens, r.CacheWrite1hTokens = nullable(cr), nullable(cw), nullable(cw1h)
 		r.ReasoningTokens = nullable(reasoning)
 		r.IsStream = nullableBool(stream)
 		r.ErrorDetail = nullableStr(detail)

@@ -89,14 +89,19 @@ CREATE TABLE IF NOT EXISTS channel_models (
   price_output REAL,
   price_cache_read REAL,
   price_cache_write REAL,
+  -- 1 小时 TTL 缓存写单价（#198）：Claude 系才有这个档（1h = 2× input 是厂商定价
+  -- 事实，但只做建议价、不自动落库）。NULL = 未设，计价时那部分按 5 分钟价。
+  -- 仍是明细价：只设它不设上面四价构不成「已定价」。
+  price_cache_write_1h REAL,
   -- 分档价（口径层 v1.49，#185）：一笔调用毛输入（含缓存读写）**严格大于**
-  -- price_tier_above 时整笔四项全按分档四价计，判在落库时点。阈值 NULL = 全程一档；
+  -- price_tier_above 时整笔五项全按分档价计，判在落库时点。阈值 NULL = 全程一档；
   -- 阈值非 NULL 时分档某价 NULL = 沿用基础价。「未定价」判据只看基础四价。只有一档。
   price_tier_above INTEGER,
   price_tier_input REAL,
   price_tier_output REAL,
   price_tier_cache_read REAL,
   price_tier_cache_write REAL,
+  price_tier_cache_write_1h REAL,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(channel_id, upstream_model)
@@ -291,6 +296,10 @@ CREATE TABLE IF NOT EXISTS call_logs (
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+  -- 1 小时 TTL 的缓存写 token（#198），cache_write_tokens 的**明细**不是另一笔。
+  -- 上游没报 TTL 细分与报了 0 都落 0：两种情况计价同账（整笔按 5 分钟价），
+  -- 不像 reasoning_tokens 那列要三档分开。
+  cache_write_1h_tokens INTEGER,
   -- 思考 token（口径层 v0.66）。是 output_tokens 的**明细**不是另一笔，别把两者相加。
   -- 可空且必须可空：NULL 是「上游不报这个数」（Anthropic 一路、迁移前的老行），
   -- 0 是「上游报了，这次没思考」。抹成 0 会让前者显示成确凿的零思考成本。
@@ -325,9 +334,9 @@ CREATE TABLE IF NOT EXISTS call_logs (
   service_tier TEXT NOT NULL DEFAULT '',
   speed TEXT NOT NULL DEFAULT '',
   -- 这一次调用的成本（口径层 §2.10 计价，#65/#74），USD。落库时点按选中渠道纳管
-  -- 条目的四价算死：净 input（毛值减缓存两项）、output、cache_read、cache_write
-  -- 各乘各的单价 ÷ 1e6 求和；reasoning_tokens 是 output 的明细不另计。之后改价
-  -- **不追溯**，这一列就是当时的账。
+  -- 条目的价算死：净 input（毛值减缓存两项）、output、cache_read、cache_write
+  -- （写入里 1h 那部分若设了 1h 价则按 1h 价计，#198）各乘各的单价 ÷ 1e6 求和；
+  -- reasoning_tokens 是 output 的明细不另计。之后改价**不追溯**，这一列就是当时的账。
   --
   -- 可空且必须可空：NULL = 没有用量可计（未鉴权、没到上游、加列前的老行），
   -- 0 = 有用量但当时未定价（或真免费）。抹成 0 会把「没打上游」说成「免费打了一次」。

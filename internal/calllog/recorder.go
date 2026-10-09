@@ -492,6 +492,11 @@ func (r *Recorder) LogAttrs() []any {
 		if sum.HasReasoningTokens {
 			attrs = append(attrs, "reasoning_tokens", sum.ReasoningTokens)
 		}
+		// 1h 缓存写（#198）同 retries 的惯例：有值才打——CC / R 渠道没有这个概念，
+		// 每行背一个 0 是噪音；真发生时它才是排障线索（顺带看见这笔记在哪个 TTL 档）。
+		if sum.CacheWrite1hTokens != 0 {
+			attrs = append(attrs, "cache_write_1h_tokens", sum.CacheWrite1hTokens)
+		}
 		// 服务档与 fast mode（#103）同 upstream_request_id 的惯例：有值才打。
 		if sum.ServiceTier != "" {
 			attrs = append(attrs, "service_tier", sum.ServiceTier)
@@ -563,6 +568,10 @@ func (r *Recorder) Row() Row {
 		row.OutputTokens = nullInt(r.summary.OutputTokens)
 		row.CacheReadTokens = nullInt(r.summary.CacheReadTokens)
 		row.CacheWriteTokens = nullInt(r.summary.CacheWriteTokens)
+		// 1h 明细（#198）：有 summary 就落（含 0）——「上游报了 1h 档是 0」与「没报
+		// 细分」在这一列上同账部，不另开 Has 档（判据差异在 reasoning_tokens 那格
+		// 才有意义，见 Row.CacheWrite1hTokens）。
+		row.CacheWrite1hTokens = nullInt(r.summary.CacheWrite1hTokens)
 		// 思考 token 单独判（口径层 v0.66）：上面四个是「有 summary 就一定有
 		// 数」，这一格不是——上游可能整个 details 容器都不发（老式兼容上游、中转
 		// 裁剪、CC 挂非推理模型）。没报就留 NULL，别落 0：落 0 是在说「上游报了，
@@ -571,13 +580,13 @@ func (r *Recorder) Row() Row {
 			row.ReasoningTokens = nullInt(r.summary.ReasoningTokens)
 		}
 		row.ServiceTier, row.Speed = r.summary.ServiceTier, r.summary.Speed
-		// cost 与 token 五列同一个判据（口径层 §2.10，#65）：有 summary 才有账，
+		// cost 与 token 列同一个判据（口径层 §2.10，#65）：有 summary 才有账，
 		// 没有就留 NULL——「没有用量可计」与「算出来是 0」不是一回事。算术
-		// （净 input、未定价按 0）全在 Prices.CostUSD，这里只把毛值口径的四个数
+		// （净 input、未定价按 0）全在 Prices.CostUSD，这里只把毛值口径的五个数
 		// 递过去。落库时点计价：这一行写死之后，改价不追溯。
 		row.Cost = r.prices.CostUSD(
 			int(row.InputTokens.Int64), r.summary.OutputTokens,
-			r.summary.CacheReadTokens, r.summary.CacheWriteTokens)
+			r.summary.CacheReadTokens, r.summary.CacheWriteTokens, r.summary.CacheWrite1hTokens)
 	}
 	// 表里没有 outcome 列（portage-legacy#22：不动表结构），而「这行为什么不是一次干净的成功」
 	// 正是 error 列该承载的。写的是我们自己的固定词表，不是上游原文——上游错误

@@ -477,6 +477,7 @@ func TestRowCarriesNamesNeverSecrets(t *testing.T) {
 	got.TotalMs, got.IsStream, got.TTFTMs = 0, want.IsStream, want.TTFTMs
 	got.InputTokens, got.OutputTokens = want.InputTokens, want.OutputTokens
 	got.CacheReadTokens, got.CacheWriteTokens = want.CacheReadTokens, want.CacheWriteTokens
+	got.CacheWrite1hTokens = want.CacheWrite1hTokens
 	if got != want {
 		t.Errorf("落库的行装配不对\n实得: %+v\n期望: %+v", got, want)
 	}

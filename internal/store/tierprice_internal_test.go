@@ -20,8 +20,8 @@ func TestTierPricesRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	seedChannel(t, db, "openai", "")
 	if err := UpdateChannelModel(ctx, db, 1, ChannelModelPatch{Prices: &ChannelModelPrices{
-		Input: fp(3), Output: fp(15),
-		TierAbove: ip(200000), TierInput: fp(6), TierCacheRead: fp(0),
+		Input: fp(3), Output: fp(15), CacheWrite1H: fp(6),
+		TierAbove: ip(200000), TierInput: fp(6), TierCacheRead: fp(0), TierCacheWrite1H: fp(12),
 	}}); err != nil {
 		t.Fatalf("填分档价: %v", err)
 	}
@@ -36,6 +36,11 @@ func TestTierPricesRoundTrip(t *testing.T) {
 			p.TierCacheRead == nil || *p.TierCacheRead != 0 || p.TierOutput != nil || p.TierCacheWrite != nil {
 			t.Errorf("%s 的分档价没带对：%+v", model, p)
 		}
+		// 1h 那两格（#198）同样随行带出：基础 6、分档 12。
+		if p.CacheWrite1H == nil || *p.CacheWrite1H != 6 ||
+			p.TierCacheWrite1H == nil || *p.TierCacheWrite1H != 12 {
+			t.Errorf("%s 的 1h 缓存写价没带对：%+v", model, p)
+		}
 	}
 
 	chs, err := ListChannels(ctx, db)
@@ -46,6 +51,12 @@ func TestTierPricesRoundTrip(t *testing.T) {
 	if m.PriceTierAbove == nil || *m.PriceTierAbove != 200000 || m.PriceTierInput == nil ||
 		*m.PriceTierInput != 6 || m.PriceTierOutput != nil {
 		t.Errorf("ListChannels 分档价 = above %v input %v output %v", m.PriceTierAbove, m.PriceTierInput, m.PriceTierOutput)
+	}
+	// 管理端读点（#198）：两列 1h 价原样带出，那边字段名带 price_ 前缀。
+	if m.PriceCacheWrite1H == nil || *m.PriceCacheWrite1H != 6 ||
+		m.PriceTierCacheWrite1H == nil || *m.PriceTierCacheWrite1H != 12 {
+		t.Errorf("ListChannels 1h 缓存写价 = %v / %v，期望 6 / 12",
+			m.PriceCacheWrite1H, m.PriceTierCacheWrite1H)
 	}
 }
 
@@ -137,13 +148,21 @@ func TestMigrateAddsTierColumns(t *testing.T) {
 			t.Fatalf("迁移: %v", err)
 		}
 	}
-	var above sql.NullInt64
-	var tcw sql.NullFloat64
-	if err := old.QueryRow(`SELECT price_tier_above, price_tier_cache_write FROM channel_models WHERE id = 1`).
-		Scan(&above, &tcw); err != nil {
+	var above, cw1hTokens sql.NullInt64
+	var tcw, cw1hPrice, tierCw1hPrice sql.NullFloat64
+	// 1h 缓存写三列（#198）随同一批迁移落下，存量行语义不变（未设价 / 没报明细都
+	// 是 NULL，不回填）。
+	if err := old.QueryRow(`SELECT price_tier_above, price_tier_cache_write,
+		price_cache_write_1h, price_tier_cache_write_1h FROM channel_models WHERE id = 1`).
+		Scan(&above, &tcw, &cw1hPrice, &tierCw1hPrice); err != nil {
 		t.Fatalf("读存量条目: %v", err)
 	}
-	if above.Valid || tcw.Valid {
-		t.Errorf("存量条目分档列 = %v / %v，期望 NULL", above, tcw)
+	if above.Valid || tcw.Valid || cw1hPrice.Valid || tierCw1hPrice.Valid {
+		t.Errorf("存量条目分档/1h 列 = %v / %v / %v / %v，期望全 NULL", above, tcw, cw1hPrice, tierCw1hPrice)
+	}
+	// 老库 call_logs 补上 1h 那一列：探针选不出行不算错，要的是「没有这列」的那个
+	// 错误不足现。
+	if err := old.QueryRow(`SELECT cache_write_1h_tokens FROM call_logs WHERE 1=0`).Scan(&cw1hTokens); !errors.Is(err, sql.ErrNoRows) && err != nil {
+		t.Fatalf("老库 call_logs 没有 cache_write_1h_tokens 列: %v", err)
 	}
 }
