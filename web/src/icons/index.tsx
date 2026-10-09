@@ -115,6 +115,9 @@ const MODEL_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
  * 口径层 v0.17 初始集是 Anthropic / OpenAI / Vertex / 百炼；「等」补的是同样
  * 有官方域名的实验室。host 写死官方后缀，不写 `aliyuncs` 这种会把 PAI 推理
  * 也认成百炼的宽模式。
+ *
+ * v0.72（#181）起渠道预设目录里的每一家（含三家中转）都在这张表里：渠道没有图标字段，
+ * 「预填图标」靠的就是预设地址落在这里，建出来的渠道自然长成目录 tile 上那枚。
  */
 const CHANNEL_HOSTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/anthropic\.com/, 'anthropic'],
@@ -123,11 +126,16 @@ const CHANNEL_HOSTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/aiplatform\.googleapis|vertexai/, 'vertexai'],
   [/generativelanguage\.googleapis/, 'google'],
   [/(^|\.)deepseek\.com$/, 'deepseek'],
-  [/dashscope\.aliyuncs\.com/, 'dashscope'],
-  [/(^|\.)moonshot\.cn$/, 'moonshot'],
+  [/dashscope(-intl)?\.aliyuncs\.com/, 'dashscope'],
+  [/(^|\.)moonshot\.(cn|ai)$/, 'moonshot'],
   [/bigmodel\.cn|(^|\.)z\.ai$/, 'z-ai'],
   [/volces\.com|volcengine\.com/, 'volcengine'],
-  [/(^|\.)minimax\.(io|chat)$/, 'minimax'],
+  [/(^|\.)minimaxi?\.(io|chat|com)$/, 'minimax'],
+  [/(^|\.)stepfun\.(com|ai)$/, 'step'],
+  [/(^|\.)groq\.com$/, 'groq'],
+  [/(^|\.)openrouter\.ai$/, 'openrouter'],
+  [/(^|\.)siliconflow\.(cn|com)$/, 'silicon'],
+  [/(^|\.)aihubmix\.com$/, 'aihubmix'],
   [/(^|\.)x\.ai$/, 'grok'],
   [/(^|\.)mistral\.ai$/, 'mistral'],
 ]

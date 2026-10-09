@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, AUTH_SCHEME_OPTIONS, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs } from '../../api'
-import type { AuthScheme, BaseURLDraft, BaseURLs, Channel } from '../../api'
+import { api, AUTH_SCHEME_OPTIONS, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs, splitBaseURLs } from '../../api'
+import type { AuthScheme, BaseURLDraft, BaseURLs, Channel, ChannelPreset } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
-import { headerRows, headersDirty, headersOf, maxConcurrencyOf, settingsDirty } from './derive'
+import { headerRows, headersDirty, headersOf, maxConcurrencyOf, presetPlans, settingsDirty } from './derive'
 import type { HeaderRow } from './derive'
 import { IconX } from '../../icons/acts'
 import { providerOptions, useProviders } from '../../prices'
@@ -40,8 +40,18 @@ export function ChannelForm({
   onDirtyChange,
   onDelete,
   onHeadersSaved,
+  preset,
+  onRepick,
 }: {
   channel: Channel | null
+  /**
+   * 新建时选中的渠道预设（#181）：预填渠道名、三协议地址、厂商标注、认证头，全部可改、
+   * 不锁；null / 不给 = 自定义（原空白表单）。图标不另存——渠道图标本就按地址 host 推，
+   * 预设地址落在 CHANNEL_HOSTS 里，建出来的渠道自然是那枚图标。
+   */
+  preset?: ChannelPreset | null
+  /** 新建时给：表单顶部「换一个」回预设目录。 */
+  onRepick?: () => void
   /** 新建时是「放弃新建」；编辑时不给（弹框自己有关闭）。 */
   onCancel?: () => void
   onSaved: (id: number) => void
@@ -55,13 +65,18 @@ export function ChannelForm({
    */
   onHeadersSaved?: () => void
 }) {
-  const [name, setName] = useState(channel?.name ?? '')
+  const plans = preset ? presetPlans(preset) : []
+  const [planID, setPlanID] = useState(plans[0]?.id ?? '')
+  const plan = plans.find((p) => p.id === planID)
+  const [name, setName] = useState(channel?.name ?? preset?.id ?? '')
   // API 地址是一份共用前缀 + 协议勾选（DESIGN v0.46，口径层 v1.04）；落库前由
   // joinBaseURLs 合回那份「协议 → 地址」map，声明语义照旧由「哪些协议填了地址」
   // 推导。只在**新建**时出现在这张表单里——编辑走模型页上的「API 地址」常驻
   // 区块（PO 2026-08-20），那儿不再留一份：两处各存一份编辑态，后保存的会把先
   // 保存的悄悄盖回去。
-  const [draft, setDraft] = useState<BaseURLDraft>({ shared: '', chips: [], overrides: {} })
+  const [draft, setDraft] = useState<BaseURLDraft>(() =>
+    plans[0] ? splitBaseURLs(plans[0].protocols) : { shared: '', chips: [], overrides: {} },
+  )
   const urls = useMemo(() => joinBaseURLs(draft), [draft])
   // 并发上限（口径层 v0.49）。0 与留空都显示成空——「不限」不该长得像一个数字。
   const [maxConc, setMaxConc] = useState(channel?.max_concurrency ? String(channel.max_concurrency) : '')
@@ -77,10 +92,10 @@ export function ChannelForm({
   const [credential, setCredential] = useState('')
   // provider 标注（口径层 §2.10，#74）：models.dev 的 id，只服务填价建议与图标分组，
   // 不参与路由。空串 = 未标注，是合法常态（中转站多半对不上任何一家）。
-  const [provider, setProvider] = useState(channel?.provider ?? '')
+  const [provider, setProvider] = useState(channel?.provider ?? plans[0]?.models_dev ?? '')
   // 认证头写法（口径层 v1.13，#82）。default 即老行为；raw 给 PAI-EAS 这类只认
   // 裸 Authorization 的网关——错配的表象是清一色 401，人会先怀疑凭证本身。
-  const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? 'default')
+  const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? preset?.auth_scheme ?? 'default')
   // 额外出站头（#137 / #167）：只在编辑态出现，单独一笔 PUT，其余字段写不碰它。
   const [headerList, setHeaderList] = useState<HeaderRow[]>(() => headerRows(channel?.headers ?? {}))
   // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
@@ -111,6 +126,16 @@ export function ChannelForm({
     )
   const headersChanged = channel !== null && headersDirty(channel.headers, headerList)
   const dirty = settingsChanged || headersChanged
+
+  // 切套餐 = 换一套地址与它的 models.dev 标注（key 不通用，所以连标注一起换）；
+  // 名字、认证头等人可能已改过的字段不动。
+  function pickPlan(id: string) {
+    const next = plans.find((p) => p.id === id)
+    if (!next) return
+    setPlanID(id)
+    setDraft(splitBaseURLs(next.protocols))
+    setProvider(next.models_dev ?? '')
+  }
 
   function setHeaderRow(i: number, patch: Partial<HeaderRow>) {
     setHeaderList((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
@@ -204,6 +229,44 @@ export function ChannelForm({
         </header>
       )}
 
+      {/* 预设来源条（DESIGN v0.72）：哪条预设预填的、换一个回目录、去哪拿 key。
+          自定义只给回目录那一下。 */}
+      {!channel && onRepick && (
+        <div className="preset-from">
+          {preset ? (
+            <>
+              <span>
+                来自预设 <strong>{preset.name}</strong>
+                {preset.note && <span className="muted"> · {preset.note}</span>}
+              </span>
+              <button type="button" className="bar-link" onClick={onRepick}>
+                换一个
+              </button>
+              <span className="spacer" />
+              <a href={plan?.keys_url || preset.keys_url} target="_blank" rel="noreferrer">
+                去拿 key
+              </a>
+            </>
+          ) : (
+            <>
+              <span>自定义（空白表单）</span>
+              <button type="button" className="bar-link" onClick={onRepick}>
+                回目录选预设
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {!channel && plans.length > 1 && (
+        <Field label="套餐" hint="同一家的几套地址，key 不通用：用哪套就贴哪套的 key。切换会换掉下面的地址与厂商标注">
+          <Segmented
+            value={planID}
+            options={plans.map((p) => ({ value: p.id, label: p.name }))}
+            onChange={pickPlan}
+          />
+        </Field>
+      )}
+
       {/* 图标是从地址的 host 猜出来的（渠道没有「供应商」这个字段）。
           边填边显示，等于顺手校验了域名有没有填错——图标一直是首字母块，
           多半是地址还没填对。 */}
@@ -220,7 +283,7 @@ export function ChannelForm({
       {/* 名字与并发并排：一宽一窄，各占一行是浪费。 */}
       <div className="form-row">
         <Field label="渠道名" hint="限定名的前半截（如 bailian/qwen3-max），不能含 `/`">
-          <input autoFocus={!channel} value={name} onChange={(e) => setName(e.target.value)} />
+          <input autoFocus={!channel && !preset} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="并发上限" hint="同时打向这个上游的请求数上限，超出的在网关排队；留空 = 不限">
           <input
@@ -349,6 +412,8 @@ export function ChannelForm({
       {!channel && (
         <Field label="上游凭证" hint="先给一份，渠道建完可以在「上游凭证」段里继续加；多给几份就是凭证池，按选取模式轮着用">
           <input
+            // 选了预设，表单里只剩凭证要人补（口径层 v1.47），焦点直接落这儿。
+            autoFocus={!!preset}
             type="password"
             autoComplete="off"
             value={credential}

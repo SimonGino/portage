@@ -234,6 +234,8 @@ func (h *Handler) Mount(r *gin.Engine) {
 	// ——那形态下页面只读，但看建议价不是写业务配置。
 	auth.GET("/pricing/providers", h.pricingProviders)
 	auth.GET("/pricing/models", h.pricingModels)
+	// 渠道预设目录（#181）：go:embed 的手写清单，只读、不碰库。
+	adm.GET("/channel-presets", h.channelPresets)
 
 	adm.GET("/access-points", h.listAccessPoints)
 	cw.POST("/access-points", h.createAccessPoint)

@@ -9,9 +9,11 @@ import type {
   BaseURLs,
   Channel,
   ChannelModel,
+  ChannelPreset,
   Credential,
   ModelListResult,
   Protocol,
+  PresetPlan,
 } from '../../api'
 
 // ── 左栏清单 ─────────────────────────────────────────────────────────────
@@ -279,4 +281,41 @@ export function headersDirty(saved: Record<string, string>, rows: HeaderRow[]): 
   if (dup) return true
   const keys = Object.keys(headers)
   return keys.length !== Object.keys(saved).length || keys.some((k) => saved[k] !== headers[k])
+}
+
+// ── 渠道预设目录（#181）────────────────────────────────────────────────────
+
+/** 预设的每一套地址：无 plans 时顶层那份就是唯一一套（id 与 name 为空串）。 */
+export function presetPlans(p: ChannelPreset): PresetPlan[] {
+  return p.plans ?? [{ id: '', name: '', models_dev: p.models_dev, protocols: p.protocols ?? {} }]
+}
+
+/** 目录搜索：名、id、任一套地址的**域名**（DESIGN v0.72）。只比 host 不比路径——
+ *  搜「anthropic」不该把每家带 /anthropic 兼容端点的厂商都捞出来。空查询原样回。 */
+export function filterPresets(list: readonly ChannelPreset[], query: string): ChannelPreset[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...list]
+  const host = (u: string) => {
+    try {
+      return new URL(u).host.toLowerCase()
+    } catch {
+      return ''
+    }
+  }
+  return list.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.id.toLowerCase().includes(q) ||
+      presetPlans(p).some((pl) => Object.values(pl.protocols).some((u) => host(u ?? '').includes(q))),
+  )
+}
+
+/** ModelPicker 的预勾：上游列表 ∩ 建议模型，已纳管的不算（口径层 v1.47）。 */
+export function preChecked(
+  upstream: Iterable<string>,
+  suggested: readonly string[],
+  existing: ReadonlySet<string>,
+): Set<string> {
+  const s = new Set(suggested)
+  return new Set([...upstream].filter((n) => s.has(n) && !existing.has(n)))
 }

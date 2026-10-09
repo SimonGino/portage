@@ -3,6 +3,7 @@ import { api, PROTOCOL_LABEL, PROTOCOL_SHORT } from '../../api'
 import type { Channel, ModelListResult, Protocol } from '../../api'
 import { Dialog, Empty } from '../../ui'
 import { ModelIcon } from '../../icons'
+import { preChecked } from './derive'
 
 /**
  * familyOf 给模型名归族，用来在挑选面板里分组。
@@ -54,6 +55,12 @@ export function ModelPicker({
    * （裁决 1A——那两条存量提示是 v0.40 刻意做的能力，不砍）。
    */
   onResults,
+  /**
+   * 建议模型（口径层 v1.47）：渠道厂商标注对应的 models.dev 快照有价模型。undefined =
+   * 还没拉到（预勾等它）；空数组 = 没有标注或没有建议。「上游 ∩ 建议」默认勾上；
+   * 拉失败时列表只列建议模型供勾。
+   */
+  suggested,
 }: {
   channel: Channel
   existing: Set<string>
@@ -61,6 +68,7 @@ export function ModelPicker({
   onAdd: (names: string[]) => Promise<void>
   initial?: ModelListResult[]
   onResults?: (results: ModelListResult[]) => void
+  suggested?: string[]
 }) {
   // 拉取态三档：'running' | 'failed' | 成果数组。开框自动拉一次（cherry-studio 那套），
   // 拉到的结果留在框里不动；重拉走 refresh()。复用 calling 方传进来的 initial：
@@ -95,11 +103,17 @@ export function ModelPicker({
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
+  const suggest = useMemo(() => new Set(suggested ?? []), [suggested])
 
   // 每个名字被哪几侧列出来了。同一个模型可能在多份结果里出现（渠道支持多协议时
   // 是逐侧拉的），协议要去重。
+  // 拉失败时只列建议模型供勾（没有哪侧列出的信息，协议列空着）。
   const sides = useMemo(() => {
     const m = new Map<string, Protocol[]>()
+    if (state === 'failed') {
+      for (const n of suggested ?? []) m.set(n, [])
+      return m
+    }
     for (const r of results ?? []) {
       for (const name of r.models ?? []) {
         const cur = m.get(name) ?? []
@@ -107,7 +121,17 @@ export function ModelPicker({
       }
     }
     return m
-  }, [results])
+  }, [results, state, suggested])
+
+  // 预勾「上游列表 ∩ 建议」：每拿到一份上游列表（含重拉）做一次，等建议也到手才做。
+  // 只加不减——人已经勾上的不因重拉被抹掉。拉失败不预勾，留给「勾上全部建议」。
+  const [seeded, setSeeded] = useState<ModelListResult[] | null>(null)
+  useEffect(() => {
+    if (state !== 'done' || suggested === undefined || seeded === results) return
+    setSeeded(results)
+    const on = preChecked(sides.keys(), suggested, existing)
+    if (on.size > 0) setPicked((prev) => new Set([...prev, ...on]))
+  }, [state, suggested, results, seeded, sides, existing])
 
   const q = query.trim().toLowerCase()
   // 排序按名字：上游返回的顺序没有语义（多半是库里的自增序），而人是竖着扫这一列的。
@@ -169,6 +193,8 @@ export function ModelPicker({
   }
 
   const total = sides.size
+  const suggestedHere = Array.from(sides.keys()).filter((n) => suggest.has(n) && !existing.has(n))
+  const allSuggestedOn = suggestedHere.length > 0 && suggestedHere.every((n) => picked.has(n))
   const managed = Array.from(sides.keys()).filter((n) => existing.has(n)).length
 
   return (
@@ -186,7 +212,9 @@ export function ModelPicker({
           {state === 'running' ? (
             '拉取中…朝勾选的协议侧各请求一次上游 /v1/models。'
           ) : state === 'failed' ? (
-            '拉取失败——上游没有 /v1/models 是常事，可以关掉手填，或重试。'
+            total > 0
+              ? `拉取失败——上游没有 /v1/models 是常事。下面先列出 models.dev 给这家的 ${total} 个建议模型，勾之前确认上游真的有。`
+              : '拉取失败——上游没有 /v1/models 是常事，可以关掉手填，或重试。'
           ) : total === 0 ? (
             '上游没列出任何模型。可以关掉手填，或重试。'
           ) : (
@@ -207,14 +235,14 @@ export function ModelPicker({
             placeholder="搜模型名，比如 qwen3.7 或 embedding"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            disabled={state !== 'done' || total === 0}
+            disabled={state === 'running' || total === 0}
           />
           <button
             type="button"
             className={'btn btn-quiet' + (showManaged ? ' is-on' : '')}
             onClick={() => setShowManaged((v) => !v)}
             title="已纳管的也显示出来（灰着、勾不动），用来核对哪些已经加过了"
-            disabled={state !== 'done' || total === 0}
+            disabled={state === 'running' || total === 0}
           >
             显示已纳管
           </button>
@@ -229,6 +257,17 @@ export function ModelPicker({
           >
             {state === 'running' ? '拉取中…' : '重新拉取'}
           </button>
+          {suggestedHere.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-quiet"
+              disabled={allSuggestedOn}
+              onClick={() => setMany(suggestedHere, true)}
+              title="上游列表里有 models.dev 建议价的那些，一次勾上"
+            >
+              勾上全部建议
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-quiet"
@@ -243,17 +282,17 @@ export function ModelPicker({
         <div className="mpick-list">
           {/* 拉取中不渲染 Empty：后者会闪一下「都已经纳管了」再被真实列表盖掉。 */}
           {state === 'running' && <div className="muted">拉取中…</div>}
-          {state === 'failed' && (
+          {state === 'failed' && total === 0 && (
             <div className="muted">
               拉取失败。可以「重新拉取」重试，或关掉手填。
             </div>
           )}
-          {state === 'done' && visible.length === 0 && (
+          {state !== 'running' && total > 0 && visible.length === 0 && (
             <Empty>
               {q ? `没有匹配「${query}」的模型。` : '上游列出的都已经纳管了。'}
             </Empty>
           )}
-          {state === 'done' &&
+          {state !== 'running' &&
             groups.map((g, gi) => {
               const open = isOpen(g, gi)
               const free = g.items.filter((n) => !existing.has(n))
@@ -310,6 +349,11 @@ export function ModelPicker({
                                   {PROTOCOL_SHORT[p] ?? p}
                                 </span>
                               ))}
+                            {suggest.has(name) && (
+                              <span className="tag tag-suggest" title="models.dev 有这家这个模型的价">
+                                建议
+                              </span>
+                            )}
                             {has && <span className="tag tag-off">已纳管</span>}
                           </label>
                         )
@@ -323,7 +367,11 @@ export function ModelPicker({
 
         <div className="form-actions">
           <span className="muted">
-            {picked.size > 0 ? `已选 ${picked.size} 个` : '还没选'}
+            {suggest.size > 0
+              ? `已勾 ${picked.size} / 建议 ${suggestedHere.length} / 共 ${total - managed}`
+              : picked.size > 0
+                ? `已选 ${picked.size} 个`
+                : '还没选'}
           </span>
           <button type="button" className="btn btn-quiet" onClick={onClose} disabled={busy}>
             取消

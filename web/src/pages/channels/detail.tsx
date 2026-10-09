@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   api,
   PROTOCOL_LABEL,
@@ -20,7 +20,7 @@ import { Confirm, CopyCode, CopyIconButton, DetailBlock, Dialog, Field, PageTitl
 import { CHANNEL_TABS } from '../../routes'
 import { ModelPrices } from './modelprices'
 import { Avatar, ChannelIcon, ModelIcon, vendorForModel } from '../../icons'
-import { IconCheck, IconPencil, IconRows, IconSliders } from '../../icons/acts'
+import { IconCheck, IconPencil, IconRows, IconSliders, IconX } from '../../icons/acts'
 import { ChannelForm, joinURL } from './form'
 import { BaseURLFields } from './baseurl'
 import { CredentialBlock } from './credentials'
@@ -61,13 +61,34 @@ export function ChannelDetail({ id }: { id: number }) {
   // 状态全从 store 拿（#56）：渠道行、那一把 mutate、拉到的上游列表（裁决 1A——
   // 保留 fetched state：只进内存、刷新即失，口径层 v0.40）。
   const { ch, mutate, reload, listed, setFetched } = useChannel(id)
-  const [picking, setPicking] = useState(false)
+  const location = useLocation()
+  // 新建渠道建成后带 { pick: true } 跳来，自动开 ModelPicker（口径层 v1.47）。只认挂载
+  // 那一刻：消费完立刻把 state 换掉，刷新或回退回来不会再弹一次。
+  const [picking, setPicking] = useState(() => (location.state as { pick?: boolean } | null)?.pick === true)
+  useEffect(() => {
+    if ((location.state as { pick?: boolean } | null)?.pick) nav(location.pathname, { replace: true, state: null })
+    // 只在挂载时消费一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // ModelPicker 添加完成的回执（DESIGN v0.72）：加了几个、其中几个有建议价——有才给
+  // 「按建议价填价」，开的就是下面那只批量填价弹框，不自动落价。
+  const [added, setAdded] = useState<{ count: number; priced: number } | null>(null)
   const [adding, setAdding] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
   // models.dev 的建议价（口径层 §2.10，#74）：渠道标注了 provider 才拉，取法见 prices.ts。
   const provider = ch?.provider ?? ''
   const suggested = useSuggested([provider])[provider]
+  // 建议模型（口径层 v1.47）= 标注对应的快照里**有价**的模型：四价全缺的条目批量填价
+  // 也会跳过，算进建议只会多勾一个填不上价的。undefined = 有标注但还没拉到。
+  const suggestedNames = useMemo(
+    () =>
+      provider === ''
+        ? []
+        : suggested &&
+          Object.keys(suggested).filter((n) => Object.values(suggested[n]).some((v) => v != null)),
+    [provider, suggested],
+  )
   // 厂商标注设了才在身份条上体现（v0.58，PO「设置了要在外面就能体现，没设置就算了」）：
   // 库里存的是 models.dev 的 id（如 302ai），身份条上摆人话名（302 AI）；拉失败就摆
   // id 本身——标注是可选项，不为它挂错误条。
@@ -172,6 +193,7 @@ export function ChannelDetail({ id }: { id: number }) {
           existing={managedNames(models)}
           onClose={() => setPicking(false)}
           onResults={setFetched}
+          suggested={suggestedNames}
           onAdd={async (names) => {
             const ok = await mutate(async () => {
               for (const name of names) {
@@ -181,7 +203,10 @@ export function ChannelDetail({ id }: { id: number }) {
                 })
               }
             })
-            if (ok) setPicking(false)
+            if (ok) {
+              setPicking(false)
+              setAdded({ count: names.length, priced: names.filter((n) => suggestedNames?.includes(n)).length })
+            }
           }}
         />
       )}
@@ -226,6 +251,30 @@ export function ChannelDetail({ id }: { id: number }) {
           </>
         }
       >
+        {added && (
+          <div className="bar bar-ok added-bar">
+            <span>
+              已添加 {added.count} 个模型
+              {ch.provider && added.priced > 0 && <>，其中 {added.priced} 个有 models.dev 建议价</>}。
+            </span>
+            {ch.provider && added.priced > 0 && (
+              <button
+                type="button"
+                className="act"
+                onClick={() => {
+                  setAdded(null)
+                  setBulkOpen(true)
+                }}
+              >
+                <IconRows />
+                按建议价填价
+              </button>
+            )}
+            <button type="button" className="act-icon" aria-label="收起" title="收起" onClick={() => setAdded(null)}>
+              <IconX />
+            </button>
+          </div>
+        )}
         {bulkOpen && (
           <BulkPriceDialog channel={ch} onClose={() => setBulkOpen(false)} />
         )}

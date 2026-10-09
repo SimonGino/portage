@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SimonGino/portage/internal/auth"
+	"github.com/SimonGino/portage/internal/preset"
 	"github.com/SimonGino/portage/internal/pricing"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
@@ -696,6 +697,16 @@ func (h *Handler) pricingModels(c *gin.Context) {
 		prices = map[string]pricing.ModelPrice{}
 	}
 	c.JSON(http.StatusOK, gin.H{"provider": provider, "models": prices})
+}
+
+func (h *Handler) channelPresets(c *gin.Context) {
+	ps, err := preset.List()
+	if err != nil {
+		h.log.Error("读渠道预设清单失败", "err", err)
+		fail(c, http.StatusInternalServerError, "内置渠道预设清单读不出来，这是发版资产的问题")
+		return
+	}
+	c.JSON(http.StatusOK, ps)
 }
 
 // bulkPriceChannelModels 是批量填价（口径层 v1.10，#81）：建议价 × 系数一次性落成

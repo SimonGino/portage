@@ -379,6 +379,35 @@ export const AUTH_SCHEME_OPTIONS: { value: AuthScheme; label: string }[] = [
   { value: 'raw', label: '裸 Authorization' },
 ]
 
+/**
+ * 渠道预设（`GET /channel-presets`，#181；internal/preset）：建渠道的模板，选中即预填
+ * 新建表单、全部可改，建成即脱钩。有 plans 时地址与 models_dev 只在 plans 里，第一个
+ * 是默认。
+ */
+export interface ChannelPreset {
+  id: string
+  name: string
+  group: 'vendor' | 'relay'
+  /** web/src/icons/svg 下的图标键。 */
+  icon: string
+  /** models.dev provider id，即渠道 provider 标注；空 = 不标注。 */
+  models_dev?: string
+  protocols?: BaseURLs
+  keys_url: string
+  note?: string
+  auth_scheme?: AuthScheme
+  plans?: PresetPlan[]
+}
+
+/** 同一家 key 不通用的一套地址（国际 / 中国、按量 / Coding Plan）。 */
+export interface PresetPlan {
+  id: string
+  name: string
+  models_dev?: string
+  protocols: BaseURLs
+  keys_url?: string
+}
+
 export const KEY_MODE_OPTIONS: { value: KeyMode; label: string; hint: string }[] = [
   { value: 'polling', label: '轮询', hint: '依次轮转' },
   { value: 'random', label: '随机', hint: '每次随机挑' },
