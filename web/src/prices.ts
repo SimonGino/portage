@@ -45,33 +45,41 @@ export const TIER_FIELDS = [
   ['tier_cache_write', '缓写'],
 ] as const
 
-type PriceKey = (typeof PRICE_FIELDS)[number][0] | (typeof TIER_FIELDS)[number][0] | 'tier_above'
+type PriceKey = (typeof PRICE_FIELDS)[number][0] | (typeof TIER_FIELDS)[number][0] | 'cache_write_1h' | 'tier_cache_write_1h' | 'tier_above'
 
 /** 填价那一笔的整组（= PUT /channel-models/:id 的 prices，store.ChannelModelPrices）：
- *  基础四价 + 阈值 + 分档四价。整组覆盖，漏一个键就是把它清成 null。 */
+ *  基础四价 + 1h 缓写 + 阈值 + 分档四价 + 分档 1h 缓写（十一键，#198 补两键）。
+ *  整组覆盖，漏一个键就是把它清成 null。 */
 export type PriceBody = Record<PriceKey, number | null>
 
 const PRICE_KEYS: readonly PriceKey[] = [
   ...PRICE_FIELDS.map(([k]) => k),
+  'cache_write_1h',
   'tier_above',
   ...TIER_FIELDS.map(([k]) => k),
+  'tier_cache_write_1h',
 ]
 
 export function modelPriceBody(m: ChannelModel): PriceBody {
   return {
     input: m.price_input, output: m.price_output, cache_read: m.price_cache_read, cache_write: m.price_cache_write,
+    cache_write_1h: m.price_cache_write_1h,
     tier_above: m.price_tier_above, tier_input: m.price_tier_input, tier_output: m.price_tier_output,
     tier_cache_read: m.price_tier_cache_read, tier_cache_write: m.price_tier_cache_write,
+    tier_cache_write_1h: m.price_tier_cache_write_1h,
   }
 }
 
-/** 建议价 → 采纳时落的那一组：连分档一起，快照缺的价 null 不补 0。 */
+/** 建议价 → 采纳时落的那一组：连分档与 1h 缓写一起（后端对 claude 系按 2× input 派生），
+ *  快照缺的价 null 不补 0。 */
 export function suggestPriceBody(s: PricingModelPrice): PriceBody {
   const t = s.tier
   return {
     input: s.input ?? null, output: s.output ?? null, cache_read: s.cache_read ?? null, cache_write: s.cache_write ?? null,
+    cache_write_1h: s.cache_write_1h ?? null,
     tier_above: t?.above ?? null, tier_input: t?.input ?? null, tier_output: t?.output ?? null,
     tier_cache_read: t?.cache_read ?? null, tier_cache_write: t?.cache_write ?? null,
+    tier_cache_write_1h: t?.cache_write_1h ?? null,
   }
 }
 
@@ -80,7 +88,8 @@ export function samePrices(a: PriceBody, b: PriceBody): boolean {
 }
 
 /** 编辑草稿 → 整组。空 = null；解析不出、负数、阈值不是正整数都整组不存（回 null）——
- *  存下能解析的那几个会把没看清的输入悄悄写成 null。阈值空 = 去分档，分档四价一并清。 */
+ *  存下能解析的那几个会把没看清的输入悄悄写成 null。阈值空 = 去分档，分档四价与分档
+ *  1h 缓写一并清（基础 1h 缓写是基础价，不随分档走）。 */
 export function parsePriceDraft(draft: Record<string, string>): PriceBody | null {
   const out = {} as PriceBody
   for (const k of PRICE_KEYS) {
@@ -95,6 +104,7 @@ export function parsePriceDraft(draft: Record<string, string>): PriceBody | null
     out[k] = n
   }
   if (out.tier_above === null) for (const [k] of TIER_FIELDS) out[k] = null
+  if (out.tier_above === null) out.tier_cache_write_1h = null
   return out
 }
 
@@ -105,11 +115,18 @@ export function fmtTokensShort(n: number): string {
   return String(n)
 }
 
-/** 分档全文，进 title：「超过 200000 token 整笔按：入 $6，出 $22.5，缓读 沿用基础价…」。 */
+/** 分档全文，进 title：「超过 200000 token 整笔按：入 $6，出 $22.5，缓读 沿用基础价…」。
+ *  分档 1h 缓写有值时跟在末尾（#198）；null / undefined 不摆——沿用基础 1h 价是缺省，
+ *  非 claude 模型根本没这一档，不进这行字。 */
 export function fmtTierTitle(b: PriceBody): string {
+  const oneHour =
+    b.tier_cache_write_1h !== null && b.tier_cache_write_1h !== undefined
+      ? `，1h 缓写 ${fmtPrice(b.tier_cache_write_1h)}`
+      : ''
   return (
     `超过 ${b.tier_above} token 整笔按：` +
-    TIER_FIELDS.map(([k, label]) => `${label} ${b[k] === null ? '沿用基础价' : fmtPrice(b[k])}`).join('，')
+    TIER_FIELDS.map(([k, label]) => `${label} ${b[k] === null ? '沿用基础价' : fmtPrice(b[k])}`).join('，') +
+    oneHour
   )
 }
 

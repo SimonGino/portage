@@ -1159,10 +1159,12 @@ func (h *Handler) myModels(c *gin.Context) {
 			"max_input_tokens": m.MaxInputTokens,
 			"price_input":      m.Prices.Input, "price_output": m.Prices.Output,
 			"price_cache_read": m.Prices.CacheRead, "price_cache_write": m.Prices.CacheWrite,
-			"price_tier_above": m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
+			"price_cache_write_1h": m.Prices.CacheWrite1H,
+			"price_tier_above":     m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
 			"price_tier_output": m.Prices.TierOutput, "price_tier_cache_read": m.Prices.TierCacheRead,
-			"price_tier_cache_write": m.Prices.TierCacheWrite,
-			"snapshot_context":       ctx, "image": image,
+			"price_tier_cache_write":    m.Prices.TierCacheWrite,
+			"price_tier_cache_write_1h": m.Prices.TierCacheWrite1H,
+			"snapshot_context":          ctx, "image": image,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"models": out})
@@ -1186,10 +1188,12 @@ func (h *Handler) modelCatalog(c *gin.Context) {
 			"protocols": m.Protocols, "max_input_tokens": m.MaxInputTokens,
 			"price_input": m.Prices.Input, "price_output": m.Prices.Output,
 			"price_cache_read": m.Prices.CacheRead, "price_cache_write": m.Prices.CacheWrite,
-			"price_tier_above": m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
+			"price_cache_write_1h": m.Prices.CacheWrite1H,
+			"price_tier_above":     m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
 			"price_tier_output": m.Prices.TierOutput, "price_tier_cache_read": m.Prices.TierCacheRead,
-			"price_tier_cache_write": m.Prices.TierCacheWrite,
-			"snapshot_context":       ctx, "image": image,
+			"price_tier_cache_write":    m.Prices.TierCacheWrite,
+			"price_tier_cache_write_1h": m.Prices.TierCacheWrite1H,
+			"snapshot_context":          ctx, "image": image,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"models": out})

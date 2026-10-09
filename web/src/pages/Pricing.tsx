@@ -228,6 +228,7 @@ export default function Pricing() {
                   <td>
                     <ModelPrices
                       model={r.m}
+                      provider={r.ch.provider}
                       suggest={r.ch.provider ? (suggested[r.ch.provider]?.[r.m.upstream_model] ?? null) : null}
                       mutate={mutate}
                     />

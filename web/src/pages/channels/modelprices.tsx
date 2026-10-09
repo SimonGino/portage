@@ -32,15 +32,24 @@ import type { PriceBody } from '../../prices'
  * 四框之下一颗默认收起的「+ 分档」，展开为「超过 [N] token 后」+ 四框，清空阈值 = 去分档。
  * 建议价带分档时 chip 后缀「>200k 另价」，采纳连分档一起落。
  *
+ * 1h 缓写（#198）：模型为 Claude 系（渠道厂商标注 anthropic）或已有值时，基础四框
+ * 与分档四框之后各多显「1h 缓写」一框；未设 1h 价的那部分按 5 分钟缓写价计，不自动
+ * 按 2× input 落库——建议价里后端对 claude 系派生（2× input），采纳连 1h 一起落。
+ * 胶囊只读态：1h 价不另摆胶囊，进 title 与「缓存 a/b」那段小字的后缀，
+ * DESIGN v0.75 未及此格，此处从简裁量。
+ *
  * v0.62 起渠道详情页与定价页总表共用这一个组件（PO 2026-09-01 裁定总表可编辑，
  * 推翻 v1.10「只读总表」）——编辑面还是同一副，只是摆进了两页。
  */
 export function ModelPrices({
   model,
+  provider,
   suggest,
   mutate,
 }: {
   model: ChannelModel
+  /** 渠道的 models.dev 厂商标注（#198）：anthropic ⇒ 这个条目是 Claude 系，编辑态多显 1h 缓写框。 */
+  provider: string
   /** models.dev 快照里这个模型的建议价。null = 没建议（没标注 provider / 快照里没有它）。 */
   suggest: PricingModelPrice | null
   mutate: (fn: () => Promise<unknown>) => Promise<unknown>
@@ -51,6 +60,11 @@ export function ModelPrices({
 
   const current = modelPriceBody(model)
   const unpriced = PRICE_FIELDS.every(([k]) => current[k] === null)
+  // 1h 缓写框的显隐（#198）：Claude 系（渠道标注 anthropic）或已有值（基础或分档任一）。
+  // 已有值也显是为了不让已设的 1h 价变成看不见的幽冥值；非 claude 模型不显，快照建议里
+  // 也没有这一格，采纳不会带入。
+  const show1h =
+    provider === 'anthropic' || current.cache_write_1h !== null || current.tier_cache_write_1h !== null
 
   function put(prices: PriceBody) {
     void mutate(() => api.put(`/channel-models/${model.id}`, { prices }))
@@ -72,7 +86,9 @@ export function ModelPrices({
     setEditing(true)
   }
 
-  const title = PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(current[k])}`).join('，')
+  const title =
+    PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(current[k])}`).join('，') +
+    (current.cache_write_1h !== null ? `，1h 缓写 ${fmtPrice(current.cache_write_1h)}` : '')
   const tierTitle = current.tier_above !== null ? `；${fmtTierTitle(current)}` : ''
   const tierSuffix = current.tier_above !== null && (
     <span className="muted" title={fmtTierTitle(current)}>
@@ -80,7 +96,7 @@ export function ModelPrices({
     </span>
   )
 
-  // 建议与现值逐项相等（连分档）就不摆「采纳」：快照缺的价按 null 比，别拿 0 充数。
+  // 建议与现值逐项相等（连分档与 1h 缓写）就不摆「采纳」：快照缺的价按 null 比，别拿 0 充数。
   const suggested = suggest === null ? null : suggestPriceBody(suggest)
   const suggestChip = suggested !== null && !samePrices(suggested, current) && (
     <button
@@ -88,7 +104,9 @@ export function ModelPrices({
       className="chip-toggle chip-suggest"
       title={`models.dev 快照的建议价（USD/百万 token）：${PRICE_FIELDS.map(
         ([k, label]) => `${label} ${fmtPrice(suggested[k])}`,
-      ).join('，')}${suggested.tier_above !== null ? `；${fmtTierTitle(suggested)}` : ''}。只是建议，点「采纳」才落库（连分档一起）`}
+      ).join('，')}${
+        suggested.cache_write_1h !== null ? `，1h 缓写 ${fmtPrice(suggested.cache_write_1h)}` : ''
+      }${suggested.tier_above !== null ? `；${fmtTierTitle(suggested)}` : ''}。只是建议，点「采纳」才落库（连分档与 1h 一起）`}
       onClick={() => put(suggested)}
     >
       models.dev {fmtPrice(suggested.input)}/{fmtPrice(suggested.output)}
@@ -144,6 +162,15 @@ export function ModelPrices({
               {priceInput(k, i === 0)}
             </span>
           ))}
+          {show1h && (
+            <span
+              className="limit-edit price-edit"
+              title="1 小时 TTL 的缓存写单价：上游把写入拆成 5m + 1h 两段各计各的价。留空 = 未设，那部分按 5 分钟缓写价计"
+            >
+              <span className="price-edit-label">1h 缓写</span>
+              {priceInput('cache_write_1h', false)}
+            </span>
+          )}
           <span className="limit-edit-unit price-edit-unit">$/M</span>
           {tierOpen ? (
             <span
@@ -159,6 +186,12 @@ export function ModelPrices({
                   {priceInput(k, false)}
                 </span>
               ))}
+              {show1h && (
+                <span className="limit-edit price-edit" title="分档那笔的 1h 缓写价；留空 = 沿用基础 1h 缓写价">
+                  <span className="price-edit-label">1h 缓写</span>
+                  {priceInput('tier_cache_write_1h', false)}
+                </span>
+              )}
             </span>
           ) : (
             <span className="price-tier-row">
@@ -216,9 +249,10 @@ export function ModelPrices({
         <IconPencil />
       </button>
       {tierSuffix}
-      {(current.cache_read !== null || current.cache_write !== null) && (
-        <span className="muted">
+      {(current.cache_read !== null || current.cache_write !== null || current.cache_write_1h !== null) && (
+        <span className="muted" title={`缓存读 / 5 分钟写 / 1h 写：${fmtPrice(current.cache_read)} / ${fmtPrice(current.cache_write)} / ${fmtPrice(current.cache_write_1h)}`}>
           缓存 {fmtPrice(current.cache_read)}/{fmtPrice(current.cache_write)}
+          {current.cache_write_1h !== null && <> · 1h {fmtPrice(current.cache_write_1h)}</>}
         </span>
       )}
       {suggestChip}

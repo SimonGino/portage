@@ -13,11 +13,13 @@ const row = (over: Partial<CatalogModel>): CatalogModel => ({
   price_output: null,
   price_cache_read: null,
   price_cache_write: null,
+  price_cache_write_1h: null,
   price_tier_above: null,
   price_tier_input: null,
   price_tier_output: null,
   price_tier_cache_read: null,
   price_tier_cache_write: null,
+  price_tier_cache_write_1h: null,
   snapshot_context: 0,
   image: false,
   ...over,
@@ -62,6 +64,12 @@ describe('单价胶囊（NULL ≠ 0，口径层两态）', () => {
     expect(p.unpriced).toBe(false)
     expect(p.price?.text).toBe('$3/$15 · >200k ↑')
     expect(p.price?.title).toContain('缓读 —')
+    // 分档 1h 缓写（#198）：有值才进 title，未设不摆字。
+    const oneHour = catalogPills(
+      row({ price_input: 3, price_output: 15, price_tier_above: 200000, price_tier_cache_write_1h: 12 }),
+    )
+    expect(oneHour.price?.title).toContain('1h 缓写 $12')
+    expect(p.price?.title).not.toContain('1h 缓写')
   })
   it('四价全 null → 「未定价」，不显 $0', () => {
     const p = catalogPills(row({}))

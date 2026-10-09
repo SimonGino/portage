@@ -51,16 +51,18 @@ describe('分档价（#185）', () => {
     expect(fmtTierTitle(b)).toBe('超过 200000 token 整笔按：入 $6，出 $22.5，缓读 沿用基础价，缓写 沿用基础价')
   })
 
-  it('清空阈值 = 去分档：分档四价跟着落 null', () => {
-    expect(parsePriceDraft({ ...base, tier_above: '', tier_input: '6' })).toEqual({
-      input: 3, output: 15, cache_read: null, cache_write: 0,
+  it('清空阈值 = 去分档：分档四价与分档 1h 缓写跟着落 null', () => {
+    expect(parsePriceDraft({ ...base, cache_write_1h: '6', tier_above: '', tier_input: '6' })).toEqual({
+      input: 3, output: 15, cache_read: null, cache_write: 0, cache_write_1h: 6,
       tier_above: null, tier_input: null, tier_output: null, tier_cache_read: null, tier_cache_write: null,
+      tier_cache_write_1h: null,
     })
   })
 
   it('有阈值时分档某价空 = null（沿用基础价），0 照写', () => {
     expect(parsePriceDraft({ ...base, tier_above: '200000', tier_input: '6', tier_cache_read: '0' })).toMatchObject({
       tier_above: 200000, tier_input: 6, tier_output: null, tier_cache_read: 0, tier_cache_write: null,
+      cache_write_1h: null, tier_cache_write_1h: null,
     })
   })
 
@@ -75,5 +77,37 @@ describe('分档价（#185）', () => {
     expect(b).toMatchObject({ input: 2, output: null, tier_above: 128000, tier_input: null, tier_output: 8 })
     expect(samePrices(b, { ...b })).toBe(true)
     expect(samePrices(b, { ...b, tier_above: null })).toBe(false)
+  })
+})
+
+describe('1h 缓写（#198）', () => {
+  const base = { input: '3', output: '15', cache_read: '', cache_write: '3.75', cache_write_1h: '6' }
+
+  it('基础 1h 缓写进整组；分档带 1h 时有值才进 title，缺价不摆字', () => {
+    const b = parsePriceDraft({ ...base, tier_above: '200000', tier_input: '6', tier_cache_write_1h: '12' })
+    expect(b).not.toBeNull()
+    expect(b).toMatchObject({ cache_write_1h: 6, tier_cache_write_1h: 12 })
+    expect(fmtTierTitle(b!)).toBe(
+      '超过 200000 token 整笔按：入 $6，出 沿用基础价，缓读 沿用基础价，缓写 沿用基础价，1h 缓写 $12',
+    )
+    expect(fmtTierTitle(parsePriceDraft({ ...base, tier_above: '200000' })!)).toBe(
+      '超过 200000 token 整笔按：入 沿用基础价，出 沿用基础价，缓读 沿用基础价，缓写 沿用基础价',
+    )
+  })
+
+  it('建议价连 1h 一起进采纳：claude 系后端派生 2× input，非 claude 缺键 = null', () => {
+    const claude = suggestPriceBody({ input: 3, cache_write_1h: 6, tier: { above: 200000, input: 6, cache_write_1h: 12 } })
+    expect(claude).toMatchObject({ cache_write_1h: 6, tier_cache_write_1h: 12 })
+    const other = suggestPriceBody({ input: 2 })
+    expect(other.cache_write_1h).toBeNull()
+    expect(other.tier_cache_write_1h).toBeNull()
+    // 十一键全参与相等判定：仅差 1h 也算不等，「采纳」才会摆出来。
+    expect(samePrices(claude, { ...claude, cache_write_1h: null })).toBe(false)
+  })
+
+  it('留空 1h = 未设（按 5 分钟价计），0 = 真免费', () => {
+    expect(parsePriceDraft({ ...base, cache_write_1h: '' })).toMatchObject({ cache_write_1h: null })
+    expect(parsePriceDraft({ ...base, cache_write_1h: '0' })).toMatchObject({ cache_write_1h: 0 })
+    expect(parsePriceDraft({ ...base, cache_write_1h: '-1' })).toBeNull()
   })
 })

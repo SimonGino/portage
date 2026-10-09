@@ -77,11 +77,13 @@ export function catalogPills(m: CatalogModel): CatalogPills {
           output: m.price_output,
           cache_read: m.price_cache_read,
           cache_write: m.price_cache_write,
+          cache_write_1h: m.price_cache_write_1h,
           tier_above: m.price_tier_above,
           tier_input: m.price_tier_input,
           tier_output: m.price_tier_output,
           tier_cache_read: m.price_tier_cache_read,
           tier_cache_write: m.price_tier_cache_write,
+          tier_cache_write_1h: m.price_tier_cache_write_1h,
         })}`
       : ''
   return {

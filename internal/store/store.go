@@ -1327,8 +1327,8 @@ func ListCatalogModels(ctx context.Context, db *sql.DB) ([]CatalogModel, error) 
 	if err != nil {
 		return nil, err
 	}
-	prices := `cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write,
-		       cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write`
+	prices := `cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_cache_write_1h,
+		       cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, cm.price_tier_cache_write_1h`
 	rows, err := db.QueryContext(ctx, `
 		SELECT ap.model, cm.upstream_model, ch.provider, ch.id, ch.name,
 		       cm.protocols, cm.max_input_tokens, `+prices+`,
@@ -1360,8 +1360,8 @@ func ListCatalogModels(ctx context.Context, db *sql.DB) ([]CatalogModel, error) 
 		var id int64
 		if err := rows.Scan(&m.ID, &m.UpstreamModel, &m.Provider, &m.ChannelID, &m.ChannelName,
 			&raw, &m.MaxInputTokens,
-			&m.Prices.Input, &m.Prices.Output, &m.Prices.CacheRead, &m.Prices.CacheWrite,
-			&m.Prices.TierAbove, &m.Prices.TierInput, &m.Prices.TierOutput, &m.Prices.TierCacheRead, &m.Prices.TierCacheWrite,
+			&m.Prices.Input, &m.Prices.Output, &m.Prices.CacheRead, &m.Prices.CacheWrite, &m.Prices.CacheWrite1H,
+			&m.Prices.TierAbove, &m.Prices.TierInput, &m.Prices.TierOutput, &m.Prices.TierCacheRead, &m.Prices.TierCacheWrite, &m.Prices.TierCacheWrite1H,
 			&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &m.Direct, &id); err != nil {
 			return nil, err
 		}

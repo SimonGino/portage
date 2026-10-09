@@ -281,6 +281,8 @@ export interface ChannelModel {
   price_output: number | null
   price_cache_read: number | null
   price_cache_write: number | null
+  /** 1h 缓存写单价（#198）：null = 未设，那部分按 5 分钟缓写价计，不自动按 2× input。 */
+  price_cache_write_1h: number | null
   /**
    * 分档价（口径层 v1.49，#185）：毛输入（含缓存读写）超过阈值的那笔整笔按分档四价计。
    * 阈值 null = 全程一档；分档某价 null = 沿用基础价。「未定价」只看上面四价。
@@ -290,6 +292,8 @@ export interface ChannelModel {
   price_tier_output: number | null
   price_tier_cache_read: number | null
   price_tier_cache_write: number | null
+  /** 分档 1h 缓写（#198）：null = 沿用基础 1h 价。 */
+  price_tier_cache_write_1h: number | null
   /**
    * 这条条目名下有没有报过 usage 的流水（渠道名 × 上游模型名）。未定价提醒的判据
    * 是「四价全 null 且它为 true」——没人用过的条目不催着定价。
@@ -607,8 +611,13 @@ export interface PricingModelPrice {
   output?: number
   cache_read?: number
   cache_write?: number
+  /**
+   * 1h 缓存写建议价（#198）：**不是快照字段**，后端按「Claude 1h = 2× input」对
+   * claude 系模型派生（models.dev 没这一格）；非 claude 模型不带这个键。
+   */
+  cache_write_1h?: number
   /** 分档价（上游 `cost.tiers` 的 context 首档）：毛输入超过 above 整笔按这四价，缺价沿用基础价。 */
-  tier?: { above: number; input?: number; output?: number; cache_read?: number; cache_write?: number }
+  tier?: { above: number; input?: number; output?: number; cache_read?: number; cache_write?: number; cache_write_1h?: number }
 }
 
 /** `GET /pricing/models?provider=` 的回包。查无此家 models 是空对象，不报错。 */
@@ -654,12 +663,16 @@ export interface CatalogModel {
   price_output: number | null
   price_cache_read: number | null
   price_cache_write: number | null
+  /** 1h 缓写（#198）：null = 未设，那部分按 5 分钟缓写价计。 */
+  price_cache_write_1h: number | null
   /** 分档价（口径层 v1.49，#185）：阈值 null = 全程一档，胶囊后缀「· >200k ↑」靠它。 */
   price_tier_above: number | null
   price_tier_input: number | null
   price_tier_output: number | null
   price_tier_cache_read: number | null
   price_tier_cache_write: number | null
+  /** 分档 1h 缓写（#198）：null = 沿用基础 1h 价。 */
+  price_tier_cache_write_1h: number | null
   /** models.dev 快照的输入上限建议（上游静态自称，只提示不落库）：0 = 快照没有。 */
   snapshot_context: number
   /** 快照 modalities.input 含 image 才 true——不是能力位，不参与路由与拦截。 */

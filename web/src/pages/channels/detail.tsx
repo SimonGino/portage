@@ -335,6 +335,7 @@ export function ChannelDetail({ id }: { id: number }) {
                   <ModelInputLimit model={m} channelID={ch.id} />
                   <ModelPrices
                     model={m}
+                    provider={ch.provider}
                     suggest={suggested?.[m.upstream_model] ?? null}
                     mutate={mutate}
                   />
