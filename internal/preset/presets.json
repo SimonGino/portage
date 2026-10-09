@@ -5,7 +5,9 @@
     "group": "vendor",
     "icon": "anthropic",
     "models_dev": "anthropic",
-    "protocols": { "anthropic": "https://api.anthropic.com" },
+    "protocols": {
+      "anthropic": "https://api.anthropic.com"
+    },
     "keys_url": "https://console.anthropic.com/settings/keys"
   },
   {
@@ -14,7 +16,10 @@
     "group": "vendor",
     "icon": "openai",
     "models_dev": "openai",
-    "protocols": { "openai": "https://api.openai.com", "openai_responses": "https://api.openai.com" },
+    "protocols": {
+      "openai": "https://api.openai.com",
+      "openai_responses": "https://api.openai.com"
+    },
     "keys_url": "https://platform.openai.com/api-keys"
   },
   {
@@ -23,7 +28,9 @@
     "group": "vendor",
     "icon": "google",
     "models_dev": "google",
-    "protocols": { "openai": "https://generativelanguage.googleapis.com/v1beta/openai" },
+    "protocols": {
+      "openai": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
     "keys_url": "https://aistudio.google.com/apikey",
     "note": "官方文档的兼容端点在 /v1beta/openai/chat/completions，实测 /v1 形态同样可用"
   },
@@ -33,7 +40,11 @@
     "group": "vendor",
     "icon": "deepseek",
     "models_dev": "deepseek",
-    "protocols": { "openai": "https://api.deepseek.com", "anthropic": "https://api.deepseek.com/anthropic" },
+    "protocols": {
+      "openai": "https://api.deepseek.com",
+      "anthropic": "https://api.deepseek.com/anthropic",
+      "openai_responses": "https://api.deepseek.com"
+    },
     "keys_url": "https://platform.deepseek.com/api_keys"
   },
   {
@@ -47,14 +58,22 @@
         "id": "global",
         "name": "国际",
         "models_dev": "moonshotai",
-        "protocols": { "openai": "https://api.moonshot.ai", "anthropic": "https://api.moonshot.ai/anthropic" },
+        "protocols": {
+          "openai": "https://api.moonshot.ai",
+          "anthropic": "https://api.moonshot.ai/anthropic",
+          "openai_responses": "https://api.moonshot.ai"
+        },
         "keys_url": "https://platform.moonshot.ai/console/api-keys"
       },
       {
         "id": "cn",
         "name": "中国",
         "models_dev": "moonshotai-cn",
-        "protocols": { "openai": "https://api.moonshot.cn", "anthropic": "https://api.moonshot.cn/anthropic" },
+        "protocols": {
+          "openai": "https://api.moonshot.cn",
+          "anthropic": "https://api.moonshot.cn/anthropic",
+          "openai_responses": "https://api.moonshot.cn"
+        },
         "keys_url": "https://platform.moonshot.cn/console/api-keys"
       }
     ]
@@ -71,17 +90,22 @@
         "id": "cn",
         "name": "智谱开放平台（中国）",
         "models_dev": "zhipuai",
-        "protocols": { "anthropic": "https://open.bigmodel.cn/api/anthropic" },
+        "protocols": {
+          "anthropic": "https://open.bigmodel.cn/api/anthropic"
+        },
         "keys_url": "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys"
       },
       {
         "id": "intl",
         "name": "Z.ai（国际）",
         "models_dev": "zai",
-        "protocols": { "anthropic": "https://api.z.ai/api/anthropic" },
+        "protocols": {
+          "anthropic": "https://api.z.ai/api/anthropic"
+        },
         "keys_url": "https://z.ai/manage-apikey/apikey-list"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "qwen",
@@ -110,7 +134,8 @@
         },
         "keys_url": "https://bailian.console.alibabacloud.com"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "doubao",
@@ -124,16 +149,21 @@
         "id": "coding",
         "name": "Coding 套餐",
         "models_dev": "volcengine-coding-plan",
-        "protocols": { "anthropic": "https://ark.cn-beijing.volces.com/api/coding" },
+        "protocols": {
+          "anthropic": "https://ark.cn-beijing.volces.com/api/coding"
+        },
         "keys_url": "https://ark.volcengine.com/region:cn-beijing/apikey"
       },
       {
         "id": "agent",
         "name": "Agent 套餐",
-        "protocols": { "anthropic": "https://ark.cn-beijing.volces.com/api/plan" },
+        "protocols": {
+          "anthropic": "https://ark.cn-beijing.volces.com/api/plan"
+        },
         "keys_url": "https://ark.volcengine.com/region:cn-beijing/apikey"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "minimax",
@@ -146,17 +176,24 @@
         "id": "intl",
         "name": "国际",
         "models_dev": "minimax",
-        "protocols": { "openai": "https://api.minimax.io", "anthropic": "https://api.minimax.io/anthropic" },
+        "protocols": {
+          "openai": "https://api.minimax.io",
+          "anthropic": "https://api.minimax.io/anthropic"
+        },
         "keys_url": "https://platform.minimax.io/user-center/basic-information/interface-key"
       },
       {
         "id": "cn",
         "name": "中国",
         "models_dev": "minimax-cn",
-        "protocols": { "openai": "https://api.minimaxi.com", "anthropic": "https://api.minimaxi.com/anthropic" },
+        "protocols": {
+          "openai": "https://api.minimaxi.com",
+          "anthropic": "https://api.minimaxi.com/anthropic"
+        },
         "keys_url": "https://platform.minimaxi.com/user-center/basic-information/interface-key"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "stepfun",
@@ -169,17 +206,24 @@
         "id": "intl",
         "name": "国际",
         "models_dev": "stepfun-ai",
-        "protocols": { "openai": "https://api.stepfun.ai", "anthropic": "https://api.stepfun.ai" },
+        "protocols": {
+          "openai": "https://api.stepfun.ai",
+          "anthropic": "https://api.stepfun.ai"
+        },
         "keys_url": "https://platform.stepfun.ai/interface-key"
       },
       {
         "id": "cn",
         "name": "中国",
         "models_dev": "stepfun",
-        "protocols": { "openai": "https://api.stepfun.com", "anthropic": "https://api.stepfun.com" },
+        "protocols": {
+          "openai": "https://api.stepfun.com",
+          "anthropic": "https://api.stepfun.com"
+        },
         "keys_url": "https://platform.stepfun.com/interface-key"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "mistral",
@@ -187,7 +231,9 @@
     "group": "vendor",
     "icon": "mistral",
     "models_dev": "mistral",
-    "protocols": { "openai": "https://api.mistral.ai" },
+    "protocols": {
+      "openai": "https://api.mistral.ai"
+    },
     "keys_url": "https://console.mistral.ai/api-keys"
   },
   {
@@ -209,7 +255,10 @@
     "group": "vendor",
     "icon": "groq",
     "models_dev": "groq",
-    "protocols": { "openai": "https://api.groq.com/openai", "openai_responses": "https://api.groq.com/openai" },
+    "protocols": {
+      "openai": "https://api.groq.com/openai",
+      "openai_responses": "https://api.groq.com/openai"
+    },
     "keys_url": "https://console.groq.com/keys"
   },
   {
@@ -218,8 +267,13 @@
     "group": "relay",
     "icon": "openrouter",
     "models_dev": "openrouter",
-    "protocols": { "openai": "https://openrouter.ai/api", "anthropic": "https://openrouter.ai/api" },
-    "keys_url": "https://openrouter.ai/keys"
+    "protocols": {
+      "openai": "https://openrouter.ai/api",
+      "anthropic": "https://openrouter.ai/api",
+      "openai_responses": "https://openrouter.ai/api"
+    },
+    "keys_url": "https://openrouter.ai/keys",
+    "auth_scheme": "bearer"
   },
   {
     "id": "siliconflow",
@@ -232,17 +286,24 @@
         "id": "cn",
         "name": "中国",
         "models_dev": "siliconflow-cn",
-        "protocols": { "openai": "https://api.siliconflow.cn" },
+        "protocols": {
+          "openai": "https://api.siliconflow.cn",
+          "anthropic": "https://api.siliconflow.cn"
+        },
         "keys_url": "https://cloud.siliconflow.cn/account/ak"
       },
       {
         "id": "intl",
         "name": "国际",
         "models_dev": "siliconflow",
-        "protocols": { "openai": "https://api.siliconflow.com" },
+        "protocols": {
+          "openai": "https://api.siliconflow.com",
+          "anthropic": "https://api.siliconflow.com"
+        },
         "keys_url": "https://cloud.siliconflow.com/account/ak"
       }
-    ]
+    ],
+    "auth_scheme": "bearer"
   },
   {
     "id": "aihubmix",
@@ -250,7 +311,11 @@
     "group": "relay",
     "icon": "aihubmix",
     "models_dev": "aihubmix",
-    "protocols": { "openai": "https://aihubmix.com", "anthropic": "https://aihubmix.com" },
-    "keys_url": "https://console.aihubmix.com/token"
+    "protocols": {
+      "openai": "https://aihubmix.com",
+      "anthropic": "https://aihubmix.com"
+    },
+    "keys_url": "https://aihubmix.com/token",
+    "auth_scheme": "bearer"
   }
 ]
