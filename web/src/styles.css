@@ -4574,3 +4574,9 @@ button.cal-day,
 .cat-pill .muted {
   color: var(--mute);
 }
+
+/* harness 档锁定的协议行：置灰不可点（值也被锁到对应协议上）。 */
+.access-seg.is-locked {
+  opacity: 0.55;
+  pointer-events: none;
+}

@@ -294,11 +294,9 @@ export function AccessGuide({
       <div className="access-rows">
         <div className="access-row">
           <span className="access-label">协议</span>
-          <Segmented
-            value={effProto}
-            options={PROTO_OPTIONS}
-            onChange={locked ? () => {} : setProto}
-          />
+          <div className={'access-seg' + (locked ? ' is-locked' : '')}>
+            <Segmented value={effProto} options={PROTO_OPTIONS} onChange={setProto} />
+          </div>
           <span className="access-endpoint">
             <code>{endpointOf(base, effProto, kind)}</code>
           </span>

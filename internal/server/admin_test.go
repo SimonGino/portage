@@ -1021,3 +1021,24 @@ func TestModelCatalogCarriesPillFacts(t *testing.T) {
 		t.Errorf("我的侧胶囊事实该与管理侧一致：%+v", my)
 	}
 }
+
+// /session 带站点外部 URL（#195）：接入指引两空间都从这儿读 Base URL。填了照发、
+// 去尾斜杠，没填是空串——前端退回 window.location.origin 并附灰字提醒。
+func TestSessionCarriesSiteURL(t *testing.T) {
+	g := gatewaytest.Start(t, gatewaytest.NewDB(t))
+	a := g.LoggedIn(t)
+	var s struct {
+		SiteURL string `json:"site_url"`
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/session", "", &s)
+	if s.SiteURL != "" {
+		t.Errorf("没填站点外部 URL 该是空串，得到 %q", s.SiteURL)
+	}
+	if _, err := g.DB.Exec(`INSERT INTO settings (key, value) VALUES ('site_external_url', 'https://gw.example/')`); err != nil {
+		t.Fatal(err)
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/session", "", &s)
+	if s.SiteURL != "https://gw.example" {
+		t.Errorf("填了该去尾斜杠照发，得到 %q", s.SiteURL)
+	}
+}
