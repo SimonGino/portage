@@ -246,6 +246,8 @@ func (h *Handler) Mount(r *gin.Engine) {
 	// 白名单可选项（#57）：与 /v1/models 同一份可路由谓词，前端不再拿接入点 + 渠道
 	// 两张表自己拼近似。
 	adm.GET("/routable-models", h.routableModels)
+	// 模型目录（#189，DESIGN v0.76）：网关页第三段的数据，行带目录胶囊事实。
+	adm.GET("/model-catalog", h.modelCatalog)
 	cw.POST("/keys", h.createKey)
 	cw.PUT("/keys/:id", h.updateKey)
 	cw.DELETE("/keys/:id", h.deleteKey)

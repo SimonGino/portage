@@ -11,7 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"slices"
+
 	"github.com/SimonGino/portage/internal/gatewaytest"
+	"github.com/SimonGino/portage/internal/pricing"
 )
 
 // ── 鉴权与分离 ──────────────────────────────────────────────────────────
@@ -922,5 +925,99 @@ func TestAdminRejectsBlankChannelName(t *testing.T) {
 	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
 	if len(channels) != 0 {
 		t.Errorf("被挡下的渠道不该落库：%+v", channels)
+	}
+}
+
+// ── 模型目录（#189，DESIGN v0.76） ───────────────────────────────────────
+
+// 目录行带齐胶囊事实：来源列、协议子集、条目已设的输入上限、快照的 context 与图片
+// 模态；「我的」侧同一行少来源两格。快照断言不锚死具体模型——从真快照里现挑一个
+// 有限额、带图片模态的，发版换快照也不红。
+func TestModelCatalogCarriesPillFacts(t *testing.T) {
+	prices, err := pricing.ModelPrices("anthropic")
+	if err != nil {
+		t.Fatalf("读快照: %v", err)
+	}
+	snapshotModel, snapshotContext := "", int64(0)
+	for id, p := range prices {
+		if p.LimitContext > 0 && slices.Contains(p.InputModalities, "image") {
+			snapshotModel, snapshotContext = id, p.LimitContext
+			break
+		}
+	}
+	if snapshotModel == "" {
+		t.Fatal("快照里找不到带 limit.context 与图片模态的 anthropic 模型")
+	}
+
+	up := gatewaytest.NewUpstream(t)
+	db := gatewaytest.NewDB(t)
+	gatewaytest.SeedPassthrough(t, db, "gw-x", "anthropic", up.URL, snapshotModel, "sk-up")
+	if _, err := db.Exec(`UPDATE channels SET provider = 'anthropic' WHERE name = 'test-anthropic'`); err != nil {
+		t.Fatal(err)
+	}
+	gatewaytest.SetModelMaxInputTokens(t, db, snapshotModel, 300000)
+	g := gatewaytest.Start(t, db)
+
+	type row struct {
+		ID             string   `json:"id"`
+		Direct         bool     `json:"direct"`
+		Source         *string  `json:"source"`
+		SourceID       *int64   `json:"source_id"`
+		Protocols      []string `json:"protocols"`
+		MaxInputTokens int      `json:"max_input_tokens"`
+		SnapshotCtx    int64    `json:"snapshot_context"`
+		Image          bool     `json:"image"`
+		PriceTierAbove *int64   `json:"price_tier_above"`
+	}
+	a := g.LoggedIn(t)
+	var cat struct {
+		Models []row `json:"models"`
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/model-catalog", "", &cat)
+	var admin *row
+	for i, m := range cat.Models {
+		if m.ID == "gw-x" {
+			admin = &cat.Models[i]
+		}
+	}
+	if admin == nil {
+		t.Fatalf("目录里没有接入点 gw-x：%+v", cat.Models)
+	}
+	if admin.Direct || admin.Protocols[0] != "anthropic" || len(admin.Protocols) != 1 {
+		t.Errorf("协议子集该只有 anthropic：%+v", admin)
+	}
+	if admin.MaxInputTokens != 300000 {
+		t.Errorf("条目已设的输入上限该照带 300000：%+v", admin)
+	}
+	if admin.SnapshotCtx != snapshotContext || !admin.Image {
+		t.Errorf("快照胶囊该带 limit.context=%d 与图片模态：%+v", snapshotContext, admin)
+	}
+	if admin.Source == nil || *admin.Source != "test-anthropic" || admin.SourceID == nil {
+		t.Errorf("管理侧来源列该指渠道 test-anthropic：%+v", admin)
+	}
+	if admin.PriceTierAbove != nil {
+		t.Errorf("没分档的条目该 tier null：%+v", admin)
+	}
+
+	// 「我的」侧同一行：没有来源两格（#73 的谨慎不加不减）。
+	u, _ := g.UserSession(t, "bob@x")
+	var mine struct {
+		Models []row `json:"models"`
+	}
+	u.JSONInto(t, http.MethodGet, "/panel/api/my/models", "", &mine)
+	var my *row
+	for i, m := range mine.Models {
+		if m.ID == "gw-x" {
+			my = &mine.Models[i]
+		}
+	}
+	if my == nil {
+		t.Fatalf("我的清单里没有接入点 gw-x：%+v", mine.Models)
+	}
+	if my.Source != nil || my.SourceID != nil {
+		t.Errorf("我的侧不该带来源：%+v", my)
+	}
+	if my.SnapshotCtx != snapshotContext || my.MaxInputTokens != 300000 {
+		t.Errorf("我的侧胶囊事实该与管理侧一致：%+v", my)
 	}
 }

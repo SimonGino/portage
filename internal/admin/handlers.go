@@ -121,9 +121,17 @@ func (h *Handler) session(c *gin.Context) {
 			return
 		}
 		out["user"] = u
-		// 未登录一字不带：不向未鉴权方泄露版本与形态（口径层 v1.38 ③）。
+		// 未登录一字不带：不向未鉴权方泄露版本与形态（口径层 v1.38 ③）。site_url 是
+		// 站点公开地址，不算 secret，但同样只在已登录时带——接入指引两空间共用一个
+		// 组件，它从这里读「站点外部 URL」（#182，#195）。
 		out["version"] = h.version
 		out["distro"] = h.distro
+		site, err := store.GetSetting(c.Request.Context(), h.db, store.SettingSiteURL)
+		if err != nil {
+			h.log.Error("读站点外部 URL 失败", "err", err)
+		} else {
+			out["site_url"] = strings.TrimSuffix(strings.TrimSpace(site), "/")
+		}
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -1127,32 +1135,80 @@ func (h *Handler) myUsage(c *gin.Context) {
 }
 
 // myModels 是「模型」页的只读清单（#76，DESIGN §12：全量开放，不按用户圈定）。
-// 复用 /v1/models 背后的同一份谓词——列出来的都调得通，两处不各算各的。
+// myModels 是「我的 · 模型」页的模型目录（v0.76，#189）：与 /v1/models 同一份可路由
+// 谓词，行上多带目录胶囊要摆的事实（协议子集 / 输入上限 / 单价含分档 / 快照的
+// context 与图片模态）。渠道名与 id 不下发——「我的」侧没有来源列，也不必让人
+// 看见渠道叫什么（#73 的谨慎不加不减，老版也没给过）。
 func (h *Handler) myModels(c *gin.Context) {
-	models, err := store.ListExposedModels(c.Request.Context(), h.db)
+	rows, err := store.ListCatalogModels(c.Request.Context(), h.db)
 	if err != nil {
 		h.log.Error("列可路由模型失败", "err", err)
 		fail(c, http.StatusInternalServerError, "读取失败")
 		return
 	}
-	// 单价列（口径层 v1.10，#81）：只读展示，四价 null = 未定价（≠ $0）。接入点按
-	// 唯一候选取价，见 store.ListExposedModelPrices 的注释。
-	prices, err := store.ListExposedModelPrices(c.Request.Context(), h.db)
-	if err != nil {
-		h.log.Error("读模型单价失败", "err", err)
-		fail(c, http.StatusInternalServerError, "读取失败")
-		return
-	}
-	out := make([]gin.H, 0, len(models))
-	for _, m := range models {
-		p := prices[m.ID]
+	out := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		ctx, image := snapshotMeta(m)
 		out = append(out, gin.H{
 			"id": m.ID, "direct": m.Direct,
-			"price_input": p.Input, "price_output": p.Output,
-			"price_cache_read": p.CacheRead, "price_cache_write": p.CacheWrite,
+			"protocols":        m.Protocols,
+			"max_input_tokens": m.MaxInputTokens,
+			"price_input":      m.Prices.Input, "price_output": m.Prices.Output,
+			"price_cache_read": m.Prices.CacheRead, "price_cache_write": m.Prices.CacheWrite,
+			"price_tier_above": m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
+			"price_tier_output": m.Prices.TierOutput, "price_tier_cache_read": m.Prices.TierCacheRead,
+			"price_tier_cache_write": m.Prices.TierCacheWrite,
+			"snapshot_context":       ctx, "image": image,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"models": out})
+}
+
+// modelCatalog 是管理侧网关页第三段的数据（#189）：与 myModels 同一行，多带来源
+// 列要的渠道名与 id（前端的文字链接拼 /channels/:id）。
+func (h *Handler) modelCatalog(c *gin.Context) {
+	rows, err := store.ListCatalogModels(c.Request.Context(), h.db)
+	if err != nil {
+		h.log.Error("列模型目录失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		ctx, image := snapshotMeta(m)
+		out = append(out, gin.H{
+			"id": m.ID, "direct": m.Direct,
+			"source": m.ChannelName, "source_id": m.ChannelID,
+			"protocols": m.Protocols, "max_input_tokens": m.MaxInputTokens,
+			"price_input": m.Prices.Input, "price_output": m.Prices.Output,
+			"price_cache_read": m.Prices.CacheRead, "price_cache_write": m.Prices.CacheWrite,
+			"price_tier_above": m.Prices.TierAbove, "price_tier_input": m.Prices.TierInput,
+			"price_tier_output": m.Prices.TierOutput, "price_tier_cache_read": m.Prices.TierCacheRead,
+			"price_tier_cache_write": m.Prices.TierCacheWrite,
+			"snapshot_context":       ctx, "image": image,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"models": out})
+}
+
+// snapshotMeta 读 models.dev 快照给目录胶囊的两个提示字段（#189）：输入上限建议
+// （≈N · models.dev，条目已设时不摆）与图片输入模态。渠道未标注 / 快照没有这个
+// 模型 → 两样都给零值，前端不摆胶囊不猜。快照是上游的静态自称，不进路由与拦截。
+func snapshotMeta(m store.CatalogModel) (context int64, image bool) {
+	if m.Provider == "" {
+		return 0, false
+	}
+	prices, err := pricing.ModelPrices(m.Provider)
+	if err != nil {
+		return 0, false
+	}
+	p := prices[m.UpstreamModel]
+	for _, modality := range p.InputModalities {
+		if modality == "image" {
+			image = true
+		}
+	}
+	return p.LimitContext, image
 }
 
 // routableModels 是治理面的可路由清单（#57，架构评审卡 9）：API Key 白名单的可选项。

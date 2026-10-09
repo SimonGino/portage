@@ -1295,6 +1295,90 @@ func ListExposedModels(ctx context.Context, db *sql.DB) ([]ExposedModel, error) 
 	return out, rows.Err()
 }
 
+// CatalogModel 是模型目录的一行（#189，DESIGN v0.76）：ListExposedModels 的
+// 可路由谓词原样，再多带目录胶囊要摆的事实——协议子集、输入上限、单价、以及
+// 快照查询要用的厂商标注与上游模型名（渠道信息只给管理侧「来源」列用）。
+type CatalogModel struct {
+	ID            string
+	Direct        bool
+	UpstreamModel string
+	// Provider 是所在渠道的 models.dev 标注，快照胶囊（≈N · models.dev / 图片
+	// 模态）从它查。空串 = 未标注，快照胶囊整个不摆。
+	Provider    string
+	ChannelID   int64
+	ChannelName string
+	// Protocols 是这条名字当下真能走的协议集（与路由同一份交集，不猜）。
+	Protocols protocol.Set
+	// MaxInputTokens 是纳管条目上人设的输入上限（估算）：0 = 未设。
+	MaxInputTokens int
+	Prices         ChannelModelPrices
+}
+
+// ListCatalogModels 列模型目录：与 ListExposedModels 同一份谓词（先到先得、接入点
+// 优先、直连过 candidateUsable、接入点过 deadAccessPoints），只是行上多带目录
+// 胶囊的事实。接入点取唯一候选（单候选临时闸，与 ListExposedModelPrices 同口径）。
+// 谓词半边刻意各算各的会漂移——两处 SQL 任何一边改了都得跟着对齐，见 v0.38 教训。
+func ListCatalogModels(ctx context.Context, db *sql.DB) ([]CatalogModel, error) {
+	dead, err := deadAccessPoints(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	prices := `cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write,
+		       cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write`
+	rows, err := db.QueryContext(ctx, `
+		SELECT ap.model, cm.upstream_model, ch.provider, ch.id, ch.name,
+		       cm.protocols, cm.max_input_tokens, `+prices+`,
+		       ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, 0 AS direct, ap.id
+		FROM access_points ap
+		JOIN candidates ca ON ca.access_point_id = ap.id
+		JOIN channel_models cm ON cm.id = ca.channel_model_id
+		JOIN channels ch ON ch.id = cm.channel_id
+		WHERE ap.disabled = 0
+		  AND ca.id = (SELECT MIN(c2.id) FROM candidates c2 WHERE c2.access_point_id = ap.id)
+		UNION ALL
+		SELECT ch.name || '/' || cm.upstream_model, cm.upstream_model, ch.provider, ch.id, ch.name,
+		       cm.protocols, cm.max_input_tokens, `+prices+`,
+		       ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, 1, 0
+		FROM channel_models cm
+		JOIN channels ch ON ch.id = cm.channel_id
+		WHERE `+candidateUsable+`
+		ORDER BY direct`) // 接入点排前（口径层 v1.48），先到先得 = 接入点优先，同 ListExposedModels
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	var out []CatalogModel
+	for rows.Next() {
+		var m CatalogModel
+		var raw string
+		var urls BaseURLs
+		var id int64
+		if err := rows.Scan(&m.ID, &m.UpstreamModel, &m.Provider, &m.ChannelID, &m.ChannelName,
+			&raw, &m.MaxInputTokens,
+			&m.Prices.Input, &m.Prices.Output, &m.Prices.CacheRead, &m.Prices.CacheWrite,
+			&m.Prices.TierAbove, &m.Prices.TierInput, &m.Prices.TierOutput, &m.Prices.TierCacheRead, &m.Prices.TierCacheWrite,
+			&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic, &m.Direct, &id); err != nil {
+			return nil, err
+		}
+		// 协议集就取路由会真的走的那份交集，取不到（解析失败、交集为空）的行
+		// 不进目录——与 ListExposedModels 同判，列出来的必须调得通；接入点半边
+		// 另按 deadAccessPoints 再判一道（单候选闸下两种判据等价，多候选放开后
+		// 「首个候选死了但兄弟还活着」仍要列出，与 ListExposedModels 同秩序）。
+		set, err := usableProtocols(urls, raw)
+		if err != nil || (!m.Direct && dead[id]) {
+			continue
+		}
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		m.Protocols = set
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // deadAccessPoints 找出「候选一个都活不了」的接入点——它们的每个候选，协议子集与所在
 // 渠道的支持协议集都没有交集，于是打过去必 503。
 //
