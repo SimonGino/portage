@@ -638,18 +638,39 @@ export interface QuotaState {
   spent_usd: number
 }
 
-/** 「模型」页只读清单的一行（GET /my/models）：与 /v1/models 同一份可路由谓词。 */
-export interface MyModel {
+/** 模型目录的一行（#189，DESIGN v0.76）：网关页第三段与「我的 · 模型」共用。
+ *  GET /my/models 与 GET /model-catalog 同一形状，管理侧多 source 两格。 */
+export interface CatalogModel {
   id: string
   /** true = 纳管模型限定名（渠道名/模型名，直连），false = 接入点。 */
   direct: boolean
+  /** 这条名字当下真能走的协议子集（与路由同一份交集）。 */
+  protocols: string[]
+  /** 条目已设的输入上限（估算，口径层 v0.99）：0 = 未设。 */
+  max_input_tokens: number
   /** 只读单价（口径层 v1.10，USD/百万 token）：四价全 null = 未定价，≠ $0。
    *  接入点按唯一候选的条目价（单候选临时闸；多候选展示口径见口径层待澄清 12）。 */
   price_input: number | null
   price_output: number | null
   price_cache_read: number | null
   price_cache_write: number | null
+  /** 分档价（口径层 v1.49，#185）：阈值 null = 全程一档，胶囊后缀「· >200k ↑」靠它。 */
+  price_tier_above: number | null
+  price_tier_input: number | null
+  price_tier_output: number | null
+  price_tier_cache_read: number | null
+  price_tier_cache_write: number | null
+  /** models.dev 快照的输入上限建议（上游静态自称，只提示不落库）：0 = 快照没有。 */
+  snapshot_context: number
+  /** 快照 modalities.input 含 image 才 true——不是能力位，不参与路由与拦截。 */
+  image: boolean
+  /** 来源列（管理侧目录独有）：渠道名与渠道 id，文字链接到 /channels/:id。 */
+  source?: string
+  source_id?: number
 }
+
+/** 「模型」页只读清单的一行（GET /my/models）：与 /v1/models 同一份可路由谓词。 */
+export type MyModel = CatalogModel
 
 /** 治理面的可路由清单一行（GET /routable-models，#57）：API Key 白名单的可选项，
  *  与 /v1/models、/my/models 同一份谓词。 */
@@ -673,6 +694,8 @@ export interface SessionState {
   /** 口径层 v1.38 ③：只在已登录时带。version 去 v（`0.5.0`），本地构建为 `dev`。 */
   version?: string
   distro?: 'binary' | 'docker'
+  /** 站点外部 URL（#195）：接入指引的 Base URL 从它读；空串 = 没填，退回面板 origin。 */
+  site_url?: string
 }
 
 /** 登录页「有哪些门」：注册开不开、OAuth 有哪几家（GET /auth-config，不鉴权）。 */

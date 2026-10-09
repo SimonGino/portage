@@ -4437,3 +4437,134 @@ button.cal-day,
 .added-bar > span:first-child {
   flex: 1;
 }
+
+/* ── 接入指引（v0.73，#182/#195）与模型目录（v0.76，#189） ───────────── */
+
+/* Picker 里的禁选项（无明文旧 key）：列出、看得见、点不动。 */
+.picker-option.is-disabled {
+  color: var(--mute);
+  cursor: not-allowed;
+}
+
+.picker-option.is-disabled.is-active {
+  background: none;
+}
+
+/* 接入指引的四个标签行：标签列对齐，控件跟在后面；端点等宽跟在协议行尾。 */
+.access-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.access-label {
+  width: 64px;
+  flex: none;
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.access-endpoint code {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+.access-origin-note {
+  margin: 4px 0 8px;
+}
+
+/* 片段框：等宽不高亮，右上复制键压在框角上。 */
+.snippet-box {
+  position: relative;
+  margin-top: 6px;
+}
+
+.snippet-box .snippet-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+}
+
+.snippet {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--sunken);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+/* 模型目录（v0.76）：白卡行列表 + 细线分隔，胶囊 999 圆角。 */
+.catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.catalog-row + .catalog-row {
+  border-top: 1px solid var(--line-soft);
+}
+
+.catalog-row.is-pickable {
+  cursor: pointer;
+}
+
+.catalog-row.is-pickable:hover {
+  background: var(--hover);
+}
+
+.catalog-name {
+  min-width: 0;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-name code {
+  font-size: 13px;
+}
+
+.catalog-sub {
+  font-size: 12px;
+  color: var(--mute);
+}
+
+.catalog-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+/* 目录胶囊：999 圆角、无底色细边；快照建议那枚虚线灰字（≈N · models.dev）。 */
+.cat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cat-pill.is-ghost {
+  border-style: dashed;
+  color: var(--mute);
+}
+
+.cat-pill .muted {
+  color: var(--mute);
+}

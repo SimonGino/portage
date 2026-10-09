@@ -19,6 +19,8 @@ export interface Option<T> {
   group?: string
   /** keywords 参与搜索但不显示——渠道的 base_url 就靠它搜得到。 */
   keywords?: string
+  /** 禁选但照列（接入指引的无明文旧 key）：看得见、点不动，副行交代原因。 */
+  disabled?: boolean
 }
 
 /**
@@ -125,6 +127,8 @@ export function Picker<T extends string | number>({
   }, [open, active])
 
   function commit(o: Option<T>) {
+    // 禁选项列得出点不得（无明文旧 key）：键盘 Enter 也走这儿，一并拦住。
+    if (o.disabled) return
     onChange(o.value)
     setOpen(false)
   }
@@ -227,7 +231,8 @@ export function Picker<T extends string | number>({
                       className={
                         'picker-option' +
                         (o.value === value ? ' is-selected' : '') +
-                        (i === active ? ' is-active' : '')
+                        (i === active ? ' is-active' : '') +
+                        (o.disabled ? ' is-disabled' : '')
                       }
                       // 用 mousemove 而不是 mouseenter：列表被键盘滚动时，光标下方
                       // 换了一行会触发 mouseenter，高亮就被鼠标抢回去了。
