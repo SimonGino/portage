@@ -1,0 +1,27 @@
+{
+  "direction": "upstream",
+  "protocol": "openai_responses",
+  "stream": true,
+  "endpoint": "/v1/responses",
+  "status": 200,
+  "headers": {
+    "content-type": "text/event-stream",
+    "x-oai-request-id": "req_a6c00cf8940a4ebda540c80c97acfdad",
+    "x-models-etag": "W/\"378a8a5ac1b8e3134512fa3b1669afcc\"",
+    "x-codex-safety-buffering-enabled": "true"
+  },
+  "expect": {
+    "Model": "gpt-6.1-sol",
+    "InputTokens": 16,
+    "OutputTokens": 5,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 0,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "completed",
+    "ServiceTier": "default",
+    "Degraded": false
+  },
+  "verified": true,
+  "source": "OpenAI 官方 api.openai.com/v1/responses，Sign in with ChatGPT（动态注册 client、scope 含 chatgpt.tokens.use.direct）的 Bearer 直打，2026-10-08，#205。请求体手写最小 ping（store:false、stream:true、instructions + 一条 user message）。要点：①usage 在 response.completed 里，形状与 API key 一样（input_tokens_details.cached_tokens / cache_write_tokens、output_tokens_details.reasoning_tokens），另多一个非标准 attribution 块；②response.completed.output 是空数组，正文只在 output_text.delta 里——解码不能依赖 completed.output；③响应头没有 Content-Type（chunked 直出），有 x-codex-turn-state（已剥，不透明状态）与 Set-Cookie（已剥）。"
+}

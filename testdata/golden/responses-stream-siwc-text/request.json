@@ -1,0 +1,18 @@
+{
+  "model": "gpt-6.1-sol",
+  "stream": true,
+  "store": false,
+  "instructions": "Reply with exactly: pong",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "ping"
+        }
+      ]
+    }
+  ]
+}
