@@ -389,6 +389,9 @@ type Options struct {
 	Declarative bool
 	// DumpDir 开排障采样（PORTAGE_DUMP_DIR，server/dump.go），空即不开。
 	DumpDir string
+	// SubscriptionIssuer 把订阅凭证引擎指向另一个 OIDC 签发方（#211）：token 端点
+	// 与发现文档都由它拼，指向 httptest 假签发方即可测懒刷新与死亡码全链。
+	SubscriptionIssuer string
 }
 
 // NewDB creates a temporary database with the real schema applied.
@@ -441,7 +444,9 @@ func StartWith(t *testing.T, db *sql.DB, opts Options) *Gateway {
 	}
 	capture := &logCapture{}
 	log := slog.New(&captureHandler{c: capture, text: slog.NewTextHandler(capture, nil)})
-	srv := httptest.NewServer(server.New(cfg, db, log).WithDumpDir(opts.DumpDir).Engine())
+	srv := httptest.NewServer(server.New(cfg, db, log).
+		WithDumpDir(opts.DumpDir).
+		WithSubscriptionIssuer(opts.SubscriptionIssuer).Engine())
 	t.Cleanup(srv.Close)
 	return &Gateway{Server: srv, DB: db, log: capture}
 }

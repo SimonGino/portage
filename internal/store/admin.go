@@ -274,9 +274,11 @@ type ChannelInput struct {
 	// BaseURLs 是每协议出站根地址（口径层 v0.96 ②）：填了哪个协议就是声明了哪个，
 	// 至少要有一个；从映射里去掉一个协议就是取消声明，服务端拒绝删空（normalized）。
 	BaseURLs BaseURLs `json:"base_url"`
-	// CredentialType 是渠道级凭证类型 api_key / service_account 二选一。空串是「没提
-	// 这个字段」——管理端从不发它（M0 只有 api_key，值域由 Validate 兜），建渠道时落
-	// DDL 默认 api_key，改渠道时不动；声明文件那条路（#48 起走这道门）显式给。
+	// CredentialType 是渠道级凭证类型（#211，一列四值）：api_key（默认）/
+	// service_account / chatgpt_account（Sign in with ChatGPT 的账号登录态，凭证值是
+	// JSON、存 channel_keys.credential 原文）/ copilot_account（随 Copilot 实现票启用）。
+	// 空串是「没提这个字段」——建渠道时落 DDL 默认 api_key，改渠道时不动；声明文件
+	// 那条路显式给（但遇 *_account 整份拒启，见 declcfg）。
 	CredentialType string `json:"credential_type"`
 	// KeyMode 是凭证选取模式：polling（默认）/ random。空串是「没提这个字段」——它是
 	// v0.38 才露到表单上的，老前端与手写的请求体里没有；建渠道时补默认，改渠道时不动。
@@ -360,6 +362,20 @@ func authScheme(v string) (string, error) {
 	}
 }
 
+// credentialType 归一化凭证类型，**空串原样返回**表示「这次请求没提这个字段」——建
+// 渠道时由 CreateChannel 补默认值，改渠道时那一列不动。哨兵语义与 keyMode 逐字相同，
+// 认不得的取值也直接拒：拼错的类型名会被启动闸拦下、整台网关起不来，比一条点名的
+// 400 难查得多。
+func (in ChannelInput) credentialType() (string, error) {
+	switch v := strings.TrimSpace(in.CredentialType); v {
+	case "", CredentialTypeAPIKey, CredentialTypeServiceAccount,
+		CredentialTypeChatGPTAccount, CredentialTypeCopilotAccount:
+		return v, nil
+	default:
+		return "", InvalidInput{Reason: "凭证类型只能是 api_key / service_account / chatgpt_account / copilot_account"}
+	}
+}
+
 // maxConcurrency 校验并发上限。负数直接拒而不是当 0 用：写 -1 的人多半以为它是
 // 某种「不限」的暗号，静默当成 0 恰好蒙对了语义，但下次改成 -5 想「更不限」时就
 // 该困惑了——说清楚只有 0 表示不限。
@@ -412,9 +428,12 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if s != nil {
 		stateful = *s
 	}
-	credType := strings.TrimSpace(in.CredentialType)
+	credType, err := in.credentialType()
+	if err != nil {
+		return 0, err
+	}
 	if credType == "" {
-		credType = "api_key"
+		credType = CredentialTypeAPIKey
 	}
 	provider := ""
 	if in.Provider != nil {
@@ -461,7 +480,9 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	// 人真把它清空了。
 	sets := `name = ?, base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?, disabled = ?`
 	args := []any{in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, boolInt(in.Disabled)}
-	if credType := strings.TrimSpace(in.CredentialType); credType != "" {
+	if credType, err := in.credentialType(); err != nil {
+		return err
+	} else if credType != "" {
 		sets += `, credential_type = ?`
 		args = append(args, credType)
 	}

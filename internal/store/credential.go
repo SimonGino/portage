@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/SimonGino/portage/internal/calllog"
 )
 
 // CredentialInfo 是管理端看到的一份凭证：名字、值、状态、时间。
@@ -70,7 +72,13 @@ type NewCredential struct {
 // 语义是追加而不是整把替换（口径层 v0.38 改写 v0.28 的写入形态）。v0.47 让值可回读之后
 // 「页面上对不齐」那半条理由没了，但另半条还在，而且是决定性的：覆盖会连带清掉已停用
 // 的凭证，连同停用原因与时刻——那是「这把为什么不转了」的唯一记录。
+//
+// chatgpt_account 渠道的值是凭证 JSON（#211）：写侧过一遍形状校验，坏 JSON 进不了库——
+// 进了也只是把「登录失败」堆到请求时才暴露。
 func AddChannelCredentials(ctx context.Context, db Conn, channelID int64, items []NewCredential) error {
+	if err := validateCredentialShape(ctx, db, channelID, items); err != nil {
+		return err
+	}
 	for _, it := range items {
 		value := strings.TrimSpace(it.Value)
 		if value == "" {
@@ -89,6 +97,31 @@ func AddChannelCredentials(ctx context.Context, db Conn, channelID int64, items 
 			`INSERT INTO channel_keys (channel_id, name, credential) VALUES (?, ?, ?)`,
 			channelID, name, value); err != nil {
 			return credentialNameConflict(err, name)
+		}
+	}
+	return nil
+}
+
+// validateCredentialShape 按渠道的凭证类型校验将要写进去的值（#211）：只有
+// chatgpt_account 有形状约束（JSON，见 subcred.go）；其余类型任意非空串照收。
+//
+// 渠道不存在时静默放过——外键错误由紧随其后的 INSERT 当场报，不在这里枪毙。
+func validateCredentialShape(ctx context.Context, db Queryer, channelID int64, items []NewCredential) error {
+	var credType string
+	err := db.QueryRowContext(ctx,
+		`SELECT credential_type FROM channels WHERE id = ?`, channelID).Scan(&credType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if credType != CredentialTypeChatGPTAccount {
+		return nil
+	}
+	for _, it := range items {
+		if _, err := ParseChatGPTCredential(it.Value); err != nil {
+			return InvalidInput{Reason: err.Error()}
 		}
 	}
 	return nil
@@ -136,7 +169,15 @@ type CredentialUpdate struct {
 //
 // 启用（Disabled=false）时顺手清掉停用原因与时刻：那两列描述的是「当下为什么停
 // 着」，凭证恢复了还挂着一句停用原因只会误导下一个看日志的人。
+//
+// 换值先过形状校验（#211，同 AddChannelCredentials 那道闸）：chatgpt_account 渠道
+// 的凭证值是 JSON，坏 JSON 换不进来。
 func UpdateCredential(ctx context.Context, db Conn, id int64, in CredentialUpdate) error {
+	if value := strings.TrimSpace(in.Value); value != "" {
+		if err := validateCredentialValueByID(ctx, db, id, value); err != nil {
+			return err
+		}
+	}
 	var sets []string
 	var args []any
 	name := ""
@@ -173,6 +214,60 @@ func UpdateCredential(ctx context.Context, db Conn, id int64, in CredentialUpdat
 		return credentialNameConflict(err, name)
 	}
 	return affectedOne(res, nil)
+}
+
+// validateCredentialValueByID 是 validateCredentialShape 的换值那半边：UpdateCredential
+// 只拿凭证 id，渠道的类型要顺着外键找回去。凭证行不存在时静默放过——affectedOne
+// 稍后会把「没这行」报出来，不在这里枪毙。
+func validateCredentialValueByID(ctx context.Context, db Queryer, id int64, value string) error {
+	var credType string
+	err := db.QueryRowContext(ctx, `
+		SELECT ch.credential_type FROM channel_keys ck
+		JOIN channels ch ON ch.id = ck.channel_id WHERE ck.id = ?`, id).Scan(&credType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if credType != CredentialTypeChatGPTAccount {
+		return nil
+	}
+	if _, err := ParseChatGPTCredential(value); err != nil {
+		return InvalidInput{Reason: err.Error()}
+	}
+	return nil
+}
+
+// CredentialByID 取一份凭证（含已停用的）。订阅刷新引擎拿锁后的复查读它——「拿锁
+// 后复查」要读到的是库里当下那份（refresh token 每刷一次轮换一次），不能拿进门前
+// 调用方手里那份旧 JSON 再判一遍（#211）。
+func CredentialByID(ctx context.Context, db Queryer, id int64) (CredentialInfo, error) {
+	var c CredentialInfo
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, credential, disabled,
+		       COALESCE(disabled_reason, ''), COALESCE(disabled_at, ''), created_at
+		FROM channel_keys WHERE id = ?`, id).Scan(
+		&c.ID, &c.Name, &c.Credential, &c.Disabled,
+		&c.DisabledReason, &c.DisabledAt, &c.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CredentialInfo{}, ErrNotFound
+	}
+	return c, err
+}
+
+// MarkCredentialReauth 把一份启用中的凭证标成「需要重新登录」的停用（口径层 §2.2
+// v1.52：refresh 撞上死亡码即停用、reason 落 reauth_required——v0.95「任何状态码
+// 都不改凭证状态」对凭证生命周期事件的唯一例外，那条管的是上游请求状态码）。
+//
+// 只翻启用中的行：等锁的这会儿被人工停用了的话，现场（原因、时刻）留给人写的那份，
+// 网关不覆盖。停用原因与流水词 calllog.ReauthRequired 是同一个词、同一处定义。
+func MarkCredentialReauth(ctx context.Context, db Conn, id int64) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE channel_keys
+		SET disabled = 1, disabled_reason = ?, disabled_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND disabled = 0`, calllog.ReauthRequired.String(), id)
+	return err
 }
 
 // DeleteCredential 删一份凭证。

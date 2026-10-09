@@ -19,6 +19,7 @@ import (
 	"github.com/SimonGino/portage/internal/exchange"
 	"github.com/SimonGino/portage/internal/protocol"
 	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/subscription"
 	"github.com/SimonGino/portage/internal/upstream"
 
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,10 @@ type Server struct {
 	db  *sql.DB
 	// ex 是「一次上游交换」的编排方（#9）：dial→attempt→错误收场→观察者装配都在
 	// 它里面，透传与转换两条 relay 只当 adapter。
-	ex  *exchange.Client
+	ex *exchange.Client
+	// sub 是订阅凭证引擎（#211）：chatgpt_account 渠道的请求前懒刷新在它那儿。
+	// 非 chatgpt_account 渠道一次都不会碰它。
+	sub *subscription.Engine
 	log *slog.Logger
 	// genLim 是生成面那三个端点共用的全局令牌桶，nil 即不限流（rate_limit_qps 配 0）。
 	genLim *rate.Limiter
@@ -69,6 +73,13 @@ func (s *Server) WithDumpDir(dir string) *Server {
 		s.log.Warn("排障采样已开启：每次转发的请求体、上游请求体与响应字节都会全文落盘，用完请关",
 			"dir", dir)
 	}
+	return s
+}
+
+// WithSubscriptionIssuer 把订阅凭证引擎指向另一个 OIDC 签发方（#211 的测试口：
+// token 端点与发现文档都由 issuer 拼，测试指向 httptest 假签发方）。
+func (s *Server) WithSubscriptionIssuer(issuer string) *Server {
+	s.sub = subscription.NewEngine(s.db, issuer)
 	return s
 }
 
@@ -95,6 +106,7 @@ func New(cfg config.Config, db *sql.DB, log *slog.Logger) *Server {
 		cfg: cfg, db: db, log: log,
 		genLim:         newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
 		countTokensLim: newLimiter(cfg.RateLimitQPS, cfg.RateLimitBurst),
+		sub:            subscription.NewEngine(db, ""),
 	}
 	up := upstream.NewClient(retry)
 	// 渠道并发闸的排队参数（口径层 v0.50）在这里从配置接上。Retry-After 在这里就换算
@@ -282,6 +294,14 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		}
 
+		// 两处 reauth 收场（Resolve 倒下与下面 EffectiveAll 倒下）同一个词、同一句
+		// 503 文案——收口一处，改文案不用记得改两处。
+		refuseReauth := func() {
+			rec.Refused(calllog.ReauthRequired)
+			ep.Proto.WriteError(c.Writer, http.StatusServiceUnavailable,
+				"模型 "+head.Model+" 的订阅凭证需要重新登录：请在管理端渠道页重新登录该账号")
+		}
+
 		// 入站协议参与解析：渠道声明的是一个支持协议集，选哪个由「能透传就透传」
 		// 决定（口径层 v0.33）。同一个渠道、同一个模型，`/v1/responses` 进来走上游
 		// Responses，`/v1/chat/completions` 进来走上游 CC，客户端不用在模型名里标。
@@ -294,6 +314,11 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			return
 		case errors.Is(err, store.ErrNoUsableCandidate):
 			ep.Proto.WriteError(c.Writer, http.StatusServiceUnavailable, "模型 "+head.Model+" 当前没有可用的上游")
+			return
+		case errors.Is(err, store.ErrReauthRequired):
+			// 订阅凭证被死亡码停用后，后续请求在 Resolve 就倒下（启用凭证归零）——
+			// 那也是「因凭证需重新登录未打到上游」，落专词（#211）。
+			refuseReauth()
 			return
 		case err != nil:
 			s.log.Error("模型解析失败", "model", head.Model, "err", err)
@@ -334,6 +359,27 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 		if cand.Protocol != ep.Proto && ep == protocol.EndpointCountTokens {
 			s.countTokensLocal(c, rec, ep, cand, body)
 			return
+		}
+
+		// 订阅渠道的请求前懒刷新（#211，§2.2 v1.52）：chatgpt_account 的凭证值是
+		// JSON，出站前换成懒刷新后的 access token；refresh 撞死亡码的那把当场标停用、
+		// 从本次尝试里摘掉。全部凭证都待重登时回 503，流水落 reauth_required——一个
+		// 字节没到上游，出站端点还空着。非订阅渠道走不进这道闸，路径一字不变。
+		if cand.CredentialType == store.CredentialTypeChatGPTAccount {
+			creds, err := s.sub.EffectiveAll(c.Request.Context(), cand.Credentials)
+			if err != nil {
+				if errors.Is(err, subscription.ErrReauthRequired) {
+					// 当次请求就撞上死亡码：与 Resolve 那处同一个收场。
+					refuseReauth()
+					return
+				}
+				// 别的失败（网络拨不动、坏 JSON）：默认词 rejected 由收尾自己落。
+				s.log.Error("订阅凭证刷新失败", "channel", cand.ChannelName, "err", upstream.Redact(err))
+				ep.Proto.WriteError(c.Writer, http.StatusServiceUnavailable,
+					"模型 "+head.Model+" 的订阅凭证暂不可用，请稍后重试")
+				return
+			}
+			cand.Credentials = creds
 		}
 
 		// 转换闸。portage-legacy#80 九宫格全开、count_tokens 又在上面拆去本地路之后，

@@ -26,6 +26,10 @@ var (
 	// ErrNoUsableCandidate means the access point exists but its candidate,
 	// channel or credential is disabled or missing.
 	ErrNoUsableCandidate = errors.New("no usable candidate")
+	// ErrReauthRequired 是 ErrNoUsableCandidate 的订阅凭证特例（#211）：候选用
+	// 不了是因为渠道的凭证被 refresh 死亡码停用（需要重新登录），不是普通停用。
+	// relay 靠它把流水词落成 reauth_required（口径层 §2.2 v1.52）。
+	ErrReauthRequired = errors.New("订阅凭证需要重新登录")
 )
 
 // Open opens (creating if absent) the SQLite database and applies the schema.
@@ -899,6 +903,9 @@ type Candidate struct {
 	// 用哪一份、失败了换不换，由 upstream 的 key 层内环决定——store 只负责把候选
 	// 集交出去，选取策略与轮询游标都不落在这一层。
 	Credentials []Credential
+	// CredentialType 是渠道级凭证类型（#211，一列四值）：relay 靠它认订阅渠道——
+	// chatgpt_account 的凭证值是 JSON，出站前要走请求前懒刷新。
+	CredentialType string
 	// KeyMode 是渠道级的选取模式：polling（默认）/ random。
 	KeyMode string
 	// AuthScheme 是渠道级的上游认证头写法（口径层 v1.13，#82）：default（按协议
@@ -907,6 +914,17 @@ type Candidate struct {
 	// Headers 是渠道级额外出站头（#137），nil = 没有。同上，只带值。
 	Headers map[string]string
 }
+
+// 渠道级凭证类型的词表（口径层 v1.52，一列四值）。api_key 是静态 key；
+// chatgpt_account 是 Sign in with ChatGPT 的账号登录态（凭证 JSON 见 subcred.go），
+// #211 起真正落地；service_account 至今只有口径无刷新代码；copilot_account 的
+// 行为随 Copilot 实现票启用。后两者收得进列里、启动闸不放行（见 checkChannelFields）。
+const (
+	CredentialTypeAPIKey         = "api_key"
+	CredentialTypeServiceAccount = "service_account"
+	CredentialTypeChatGPTAccount = "chatgpt_account"
+	CredentialTypeCopilotAccount = "copilot_account"
+)
 
 // 渠道级的凭证选取模式（口径层 v0.11）。库里的默认值是 polling，认不得的取值一律
 // 当 polling——这一列可以是手写 SQL 灌进来的，为一个拼错的模式名让请求失败不值当。
@@ -972,7 +990,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_cache_write_1h, cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, cm.price_tier_cache_write_1h, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_cache_write_1h, cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, cm.price_tier_cache_write_1h, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers, ch.credential_type`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -992,7 +1010,7 @@ func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *s
 		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite, &c.Prices.CacheWrite1H,
 		&c.Prices.TierAbove, &c.Prices.TierInput, &c.Prices.TierOutput, &c.Prices.TierCacheRead, &c.Prices.TierCacheWrite, &c.Prices.TierCacheWrite1H,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
-		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses, &headers)
+		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses, &headers, &c.CredentialType)
 	c.Headers = DecodeHeaders(headers)
 	return err
 }
@@ -1102,6 +1120,17 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		  AND `+candidateUsable+`
 		LIMIT 1`, apID), &c, &urls, &modelProtocols)
 	if errors.Is(err, sql.ErrNoRows) {
+		// 名字在、候选用不了：订阅凭证全数因需重新登录被停用时升格成 ErrReauthRequired。
+		// ponytail: LIMIT 1 不带 ORDER BY——多候选接入点的死因归类随 SQLite 行序；
+		// checkSingleCandidate 的「每接入点恰一候选」临时闸让它今天不可达，放开多
+		// 候选时要改成「任一候选渠道撞 reauth 即落 reauth 词」。
+		var chID int64
+		if qErr := db.QueryRowContext(ctx, `
+			SELECT cm.channel_id FROM candidates cd
+			JOIN channel_models cm ON cm.id = cd.channel_model_id
+			WHERE cd.access_point_id = ? AND cd.weight > 0 LIMIT 1`, apID).Scan(&chID); qErr == nil {
+			return Candidate{}, noUsableWhy(ctx, db, chID)
+		}
 		return Candidate{}, ErrNoUsableCandidate
 	}
 	if err != nil {
@@ -1162,18 +1191,41 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 	// 分清「没有这个名字」和「有但现在用不了」。直连路径不进启动闸（它没有
 	// candidates 行），停用渠道 / 停用模型 / 没有启用凭证只能在请求时才发现，
 	// 一律报 404 会让人以为名字打错了。
-	var exists int
+	var chID int64
 	err = db.QueryRowContext(ctx, `
-		SELECT 1 FROM channel_models cm
+		SELECT cm.channel_id FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
-		WHERE ch.name || '/' || cm.upstream_model = ? LIMIT 1`, model).Scan(&exists)
+		WHERE ch.name || '/' || cm.upstream_model = ? LIMIT 1`, model).Scan(&chID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrAccessPointNotFound
 	}
 	if err != nil {
 		return Candidate{}, err
 	}
-	return Candidate{}, ErrNoUsableCandidate
+	return Candidate{}, noUsableWhy(ctx, db, chID)
+}
+
+// noUsableWhy 把「候选当下用不了」升格成更具体的那种（#211）：订阅渠道的凭证
+// 全部因需重新登录被停用时回 ErrReauthRequired，其余维持 ErrNoUsableCandidate。
+// 名字在、用不了的两种解析路径都从这儿过一遍；定位失败不枪毙，回到通用错误。
+// 停用原因那个词走 calllog.ReauthRequired——与 MarkCredentialReauth 写进库里的
+// 是同一处定义，词表动一处这边跟着动，不留第二份字面量。
+func noUsableWhy(ctx context.Context, db *sql.DB, channelID int64) error {
+	var credType string
+	var reauth int
+	if err := db.QueryRowContext(ctx, `
+		SELECT ch.credential_type,
+		       (SELECT COUNT(*) FROM channel_keys ck
+		         WHERE ck.channel_id = ch.id AND ck.disabled = 1
+		           AND ck.disabled_reason = ?)
+		FROM channels ch WHERE ch.id = ?`,
+		calllog.ReauthRequired.String(), channelID).Scan(&credType, &reauth); err != nil {
+		return ErrNoUsableCandidate
+	}
+	if credType == CredentialTypeChatGPTAccount && reauth > 0 {
+		return ErrReauthRequired
+	}
+	return ErrNoUsableCandidate
 }
 
 // ExposedModel is one entry of `GET /v1/models`.
@@ -1594,8 +1646,20 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 				return fmt.Sprintf("渠道 %q (id=%d) 的名字含 `/`，会让限定名 `渠道名/纳管模型名` 产生歧义"+
 					"（纳管模型名本身常带 `/`）；改个不带 `/` 的渠道名", name, id), nil
 			}
-			if credType != "api_key" {
-				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q，M0 只支持 api_key", name, id, credType), nil
+			// 凭证类型闸（#211）：一列四值，但「收得进列里」与「跑得起来」是两件事——
+			// api_key / chatgpt_account 真正落地，另两个值只能躺在列里。
+			switch credType {
+			case CredentialTypeAPIKey, CredentialTypeChatGPTAccount:
+			case CredentialTypeServiceAccount:
+				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=service_account 至今只有口径、没有刷新代码，暂不可用；"+
+					"改回 api_key，或等 service_account 实现落地", name, id), nil
+			case CredentialTypeCopilotAccount:
+				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=copilot_account 还不可用：GitHub Copilot 订阅的行为"+
+					"随 Copilot 实现票启用（先落地的订阅类型是 chatgpt_account）；现在建这个渠道也用不了，"+
+					"改回 api_key 或改用 chatgpt_account", name, id), nil
+			default:
+				return fmt.Sprintf("渠道 %q (id=%d) 的 credential_type=%q 认不得；取值只能是 api_key / "+
+					"service_account / chatgpt_account / copilot_account", name, id, credType), nil
 			}
 			// 至少一个协议要填地址（口径层 v0.96：支持协议集由地址推导）：零地址的
 			// 渠道选不出出站协议，每次请求才 500——正是 v0.21 通则要拦的形态。

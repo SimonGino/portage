@@ -59,6 +59,17 @@ func checkChannels(f *File) []string {
 			p = append(p, fmt.Sprintf("渠道 %q 的 key_mode=%q 不合法，只能是 %s（轮询）或 %s（随机）",
 				name, m, store.KeyModePolling, store.KeyModeRandom))
 		}
+		// 订阅渠道整份拒启（口径层 §2.2 v1.52「声明文件」子条，#211）：凭证是账号
+		// 登录态、refresh token 会轮换，不是能明文写进声明文件的静态材料。含订阅
+		// 渠道的库导出的声明文件在任何实例上都 apply 不了，属同一已知边界——文案
+		// 两边都得说明白，别让人拿着导出文件去找一个能 apply 的地方。
+		if ct := strings.TrimSpace(ch.CredentialType); ct == store.CredentialTypeChatGPTAccount || ct == store.CredentialTypeCopilotAccount {
+			p = append(p, fmt.Sprintf("渠道 %q 的 credential_type=%q 是订阅渠道，声明文件形态不支持："+
+				"订阅凭证是账号登录态（refresh token 会轮换），不是能写进文件的静态材料。"+
+				"含订阅渠道的库导出的声明文件在任何实例上都 apply 不了，属同一已知边界；"+
+				"纯转发机迁移 = 本机登录 + 拷 gateway.db。订阅渠道走管理端渠道页登录，不进声明文件",
+				name, ct))
+		}
 		// 拒而不是当 0 用：写 -1 的人多半以为它是某种「不限」的暗号，静默蒙对语义
 		// 会让他下次写 -5 时困惑（同 store 的既有立论）。
 		if ch.MaxConcurrency < 0 {
