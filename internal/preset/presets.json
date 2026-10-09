@@ -52,7 +52,7 @@
     "name": "Kimi",
     "group": "vendor",
     "icon": "moonshot",
-    "keys_url": "https://platform.moonshot.ai/console/api-keys",
+    "keys_url": "https://platform.kimi.ai/console/api-keys",
     "plans": [
       {
         "id": "global",
@@ -63,7 +63,7 @@
           "anthropic": "https://api.moonshot.ai/anthropic",
           "openai_responses": "https://api.moonshot.ai"
         },
-        "keys_url": "https://platform.moonshot.ai/console/api-keys"
+        "keys_url": "https://platform.kimi.ai/console/api-keys"
       },
       {
         "id": "cn",
@@ -74,7 +74,7 @@
           "anthropic": "https://api.moonshot.cn/anthropic",
           "openai_responses": "https://api.moonshot.cn"
         },
-        "keys_url": "https://platform.moonshot.cn/console/api-keys"
+        "keys_url": "https://platform.kimi.com/console/api-keys"
       }
     ]
   },
