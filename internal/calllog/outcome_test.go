@@ -7,10 +7,10 @@ import (
 	"github.com/SimonGino/portage/internal/calllog"
 )
 
-// words 是词表全集，**13 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70 定 10 词、
+// words 是词表全集，**14 个词**（CONTEXT.md「outcome 词表」，口径层 v0.70 定 10 词、
 // v0.99 加 request_too_large、§2.10 加 quota_exceeded、§2.2「订阅渠道」条加
-// reauth_required），哨兵 ok 不在其中。加第 14 个词要同步这里——下面几条断言
-// 就是靠它变成必答题的。
+// reauth_required 与 plan_limit_exceeded），哨兵 ok 不在其中。加第 15 个词要同步这里——
+// 下面几条断言就是靠它变成必答题的。
 var words = []calllog.Outcome{
 	calllog.UpstreamError,
 	calllog.StreamAborted,
@@ -25,13 +25,14 @@ var words = []calllog.Outcome{
 	calllog.RequestTooLarge,
 	calllog.QuotaExceeded,
 	calllog.ReauthRequired,
+	calllog.PlanLimitExceeded,
 }
 
-// 词表是 13 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
+// 词表是 14 个词。数字写死在这里，是为了让「悄悄多一个/少一个」当场红——
 // 这份词表与 CONTEXT.md 的词条、口径层 v0.70/v0.99/§2.10/§2.2 是同一件事，改一边就得改另一边。
 func TestOutcomeVocabularySize(t *testing.T) {
-	if len(words) != 13 {
-		t.Fatalf("词表有 %d 个词, 期望 13", len(words))
+	if len(words) != 14 {
+		t.Fatalf("词表有 %d 个词, 期望 14", len(words))
 	}
 	seen := map[calllog.Outcome]bool{}
 	for _, w := range words {
@@ -63,6 +64,7 @@ func TestOutcomeStringIsTheWireWord(t *testing.T) {
 		calllog.RequestTooLarge:       "request_too_large",
 		calllog.QuotaExceeded:         "quota_exceeded",
 		calllog.ReauthRequired:        "reauth_required",
+		calllog.PlanLimitExceeded:     "plan_limit_exceeded",
 	} {
 		if got := word.String(); got != want {
 			t.Errorf("String() = %q, 期望 %q", got, want)
@@ -136,7 +138,7 @@ func TestHalvesSplitOnWhetherUpstreamWasDialed(t *testing.T) {
 			t.Errorf("%q 该算回绝：这一档一个字节都没到上游", w)
 		}
 	}
-	for _, w := range []calllog.Outcome{calllog.UpstreamError, calllog.StreamAborted} {
+	for _, w := range []calllog.Outcome{calllog.UpstreamError, calllog.StreamAborted, calllog.PlanLimitExceeded} {
 		if !w.Failure() {
 			t.Errorf("%q 该算失败：这一档真的向上游发起过", w)
 		}

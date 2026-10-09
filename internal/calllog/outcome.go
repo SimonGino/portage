@@ -13,9 +13,8 @@ import "database/sql"
 
 // Outcome 是流水 `error` 列的那份固定词表（CONTEXT.md「outcome 词表」，口径层
 // v0.70 定 10 词、v0.99 加 `request_too_large`、§2.10 加 `quota_exceeded`、§2.2
-// 「订阅渠道」条加 `reauth_required`）：**13 个词**，加一个不落库的哨兵 `ok`。
-// CONTEXT.md 已先行到 14 词：第 14 词 `plan_limit_exceeded` 随 #215（记账票）
-// 落地，届时同步这里与 outcome_test 的计数。
+// 「订阅渠道」条加 `reauth_required` 与 `plan_limit_exceeded`）：**14 个词**，加一个
+// 不落库的哨兵 `ok`。CONTEXT.md 与口径层文档已先行到 14 词，两处同一张表。
 //
 // 封闭类型而不是裸 string，是因为这份词表的读者（`group by error` 的人）没有第二个
 // 信源：字面量写错一个字母能编译、能上线，只在有人按词聚合时才发现，而那时错的
@@ -75,6 +74,14 @@ const (
 	// 上游回了非 2xx。**透传路径的上游 4xx 不算**：那是一次成功的透传，
 	// error 列留空（口径层 v0.28 纪律）。
 	UpstreamError Outcome = "upstream_error"
+	// PlanLimitExceeded 是订阅额度撞限（口径层 §2.2「订阅渠道」条，第 14 词，#215）：
+	// ChatGPT 429 `subscription_sharing_usage_limit_exceeded` 与（将来）Copilot premium
+	// requests 耗尽落它；403 `user_not_eligible`、503 `usage_unavailable` 仍是
+	// UpstreamError。请求打到过上游、上游用 429 把它退了回来，所以归失败半区——
+	// 与 ReauthRequired（一个字节没到上游）恰好隔半区相望，两词不叠加、一档一个词。
+	// 撞限按这个词筛（转换路径上筛得到全部；#213 落地前同协议透传那一档 error 列按
+	// v0.28 纪律留空），余量展示与「上次撞限时间」不做（口径层钉死）。
+	PlanLimitExceeded Outcome = "plan_limit_exceeded"
 	// StreamAborted 是首字节写出之后断流。状态码早已发出去了，只有这一格
 	// 能看出这次其实没说完。
 	StreamAborted Outcome = "stream_aborted"
@@ -142,8 +149,9 @@ var halves = map[Outcome]half{
 	QuotaExceeded:         halfRefusal,
 	ReauthRequired:        halfRefusal,
 
-	UpstreamError: halfFailure,
-	StreamAborted: halfFailure,
+	UpstreamError:     halfFailure,
+	PlanLimitExceeded: halfFailure,
+	StreamAborted:     halfFailure,
 }
 
 // Refusal 报告这个词是不是「网关自己回绝、一个字节都没到上游」那一半。
