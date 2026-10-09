@@ -131,8 +131,10 @@ func checkModels(channel string, models []Model) []string {
 		}{
 			{"price_input", m.PriceInput}, {"price_output", m.PriceOutput},
 			{"price_cache_read", m.PriceCacheRead}, {"price_cache_write", m.PriceCacheWrite},
+			{"price_cache_write_1h", m.PriceCacheWrite1H},
 			{"price_tier_input", m.PriceTierInput}, {"price_tier_output", m.PriceTierOutput},
 			{"price_tier_cache_read", m.PriceTierCacheRead}, {"price_tier_cache_write", m.PriceTierCacheWrite},
+			{"price_tier_cache_write_1h", m.PriceTierCacheWrite1H},
 		} {
 			if pr.v != nil && *pr.v < 0 {
 				p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 的 %s=%v 是负数：0 表示真免费，不写表示未定价",
@@ -146,7 +148,8 @@ func checkModels(channel string, models []Model) []string {
 				channel, name, *m.PriceTierAbove))
 		}
 		if m.PriceTierAbove == nil && (m.PriceTierInput != nil || m.PriceTierOutput != nil ||
-			m.PriceTierCacheRead != nil || m.PriceTierCacheWrite != nil) {
+			m.PriceTierCacheRead != nil || m.PriceTierCacheWrite != nil ||
+			m.PriceTierCacheWrite1H != nil) {
 			p = append(p, fmt.Sprintf("渠道 %q 的纳管模型 %q 写了分档价却没写 price_tier_above：分档价要有阈值才生效",
 				channel, name))
 		}

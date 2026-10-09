@@ -116,14 +116,18 @@ type Model struct {
 	PriceOutput     *float64 `yaml:"price_output,omitempty"`
 	PriceCacheRead  *float64 `yaml:"price_cache_read,omitempty"`
 	PriceCacheWrite *float64 `yaml:"price_cache_write,omitempty"`
-	// 分档价（口径层 v1.49，#185）：毛输入超过 price_tier_above 时整笔按分档四价计。
+	// PriceCacheWrite1H 是 1h 缓存写单价（#198）：不写 = 未设，那部分按 5 分钟价
+	// 计（不自动按 2× input 落库）。Claude 系才用得上这一格。
+	PriceCacheWrite1H *float64 `yaml:"price_cache_write_1h,omitempty"`
+	// 分档价（口径层 v1.49，#185）：毛输入超过 price_tier_above 时整笔按分档五价计。
 	// 不写阈值 = 全程一档（此时不许写分档价）；分档某价不写 = 沿用基础价。
-	PriceTierAbove      *int64   `yaml:"price_tier_above,omitempty"`
-	PriceTierInput      *float64 `yaml:"price_tier_input,omitempty"`
-	PriceTierOutput     *float64 `yaml:"price_tier_output,omitempty"`
-	PriceTierCacheRead  *float64 `yaml:"price_tier_cache_read,omitempty"`
-	PriceTierCacheWrite *float64 `yaml:"price_tier_cache_write,omitempty"`
-	Disabled            bool     `yaml:"disabled"`
+	PriceTierAbove        *int64   `yaml:"price_tier_above,omitempty"`
+	PriceTierInput        *float64 `yaml:"price_tier_input,omitempty"`
+	PriceTierOutput       *float64 `yaml:"price_tier_output,omitempty"`
+	PriceTierCacheRead    *float64 `yaml:"price_tier_cache_read,omitempty"`
+	PriceTierCacheWrite   *float64 `yaml:"price_tier_cache_write,omitempty"`
+	PriceTierCacheWrite1H *float64 `yaml:"price_tier_cache_write_1h,omitempty"`
+	Disabled              bool     `yaml:"disabled"`
 }
 
 // AccessPoint 是对外模型名，内嵌它的候选。

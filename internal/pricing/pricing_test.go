@@ -78,3 +78,39 @@ func TestSnapshotCarriesTierAndLimits(t *testing.T) {
 		t.Fatalf("快照缺放宽字段：分档 %v、limit.context %v、image 模态 %v", tiered, limited, image)
 	}
 }
+
+// 1h 缓存写建议价（#198）：claude 系模型按「Claude 1h = 2× input」派生（厂商定价
+// 事实，docs.anthropic.com prompt-caching#pricing），非 claude 模型恒 nil——它们没有
+// 1h TTL 这个档。派生只发生在读取点，快照字节与 gen 的形状都不动。
+func TestSuggested1hWritePriceDerivedForClaudeModels(t *testing.T) {
+	prices, err := ModelPrices("anthropic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, p := range prices {
+		if p.Input == nil {
+			continue
+		}
+		if p.CacheWrite1H == nil || *p.CacheWrite1H != *p.Input*2 {
+			t.Errorf("模型 %s 的 1h 缓存写建议 = %v，期望 2× input = %v", id, p.CacheWrite1H, *p.Input*2)
+		}
+	}
+	// 分档有价时同规则派生：2× 分档 input。
+	for id, p := range prices {
+		if tier := p.Tier; tier != nil && tier.Input != nil {
+			if tier.CacheWrite1H == nil || *tier.CacheWrite1H != *tier.Input*2 {
+				t.Errorf("模型 %s 的分档 1h 建议 = %v，期望 %v", id, tier.CacheWrite1H, *tier.Input*2)
+			}
+		}
+	}
+	// 非 claude 模型不派生：没有 1h 档的世面价，给建议就是编数。
+	if prices, err := ModelPrices("openai"); err != nil {
+		t.Fatal(err)
+	} else {
+		for id, p := range prices {
+			if p.CacheWrite1H != nil {
+				t.Errorf("模型 %s 不是 claude 系，1h 建议 = %v，期望 nil", id, *p.CacheWrite1H)
+			}
+		}
+	}
+}

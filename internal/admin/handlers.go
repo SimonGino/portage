@@ -768,9 +768,11 @@ func (h *Handler) bulkPriceChannelModels(c *gin.Context) {
 	})
 }
 
-// scaleSuggestion 把一条建议价乘系数落成纳管条目的价：四价与分档四价同乘、
-// 阈值原样（口径层 v1.49）。nil 原样穿过（快照缺哪价就落 NULL 不补 0），结果收敛
-// 到 1e-6——二进制浮点的尾巴（0.075×0.8 = 0.06000…01）不该出现在价目上。
+// scaleSuggestion 把一条建议价乘系数落成纳管条目的价：五价与分档五价同乘、
+// 阈值原样（口径层 v1.49；1h 那格是读取点按「Claude 1h = 2× input」派生的建议，
+// #198——同样乘系数，乘出来就是普通价）。nil 原样穿过（快照缺哪价就落 NULL 不
+// 补 0），结果收敛到 1e-6——二进制浮点的尾巴（0.075×0.8 = 0.0600…01）不该出现在
+// 价目上。
 func scaleSuggestion(p pricing.ModelPrice, factor float64) store.ChannelModelPrices {
 	scale := func(v *float64) *float64 {
 		if v == nil {
@@ -782,12 +784,14 @@ func scaleSuggestion(p pricing.ModelPrice, factor float64) store.ChannelModelPri
 	out := store.ChannelModelPrices{
 		Input: scale(p.Input), Output: scale(p.Output),
 		CacheRead: scale(p.CacheRead), CacheWrite: scale(p.CacheWrite),
+		CacheWrite1H: scale(p.CacheWrite1H),
 	}
 	if t := p.Tier; t != nil {
 		above := t.Above // 拷一份：t 指着全进程共用的快照缓存
 		out.TierAbove = &above
 		out.TierInput, out.TierOutput = scale(t.Input), scale(t.Output)
 		out.TierCacheRead, out.TierCacheWrite = scale(t.CacheRead), scale(t.CacheWrite)
+		out.TierCacheWrite1H = scale(t.CacheWrite1H)
 	}
 	return out
 }

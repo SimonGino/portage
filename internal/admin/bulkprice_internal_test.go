@@ -27,3 +27,18 @@ func TestScaleSuggestionCarriesTier(t *testing.T) {
 		t.Errorf("无分档建议不该落阈值")
 	}
 }
+
+// 批量填价带 1h 缓存写（#198）：读取点派生的建议（Claude 1h = 2× input）同乘系数，
+// 快照缺那一格（非 claude 模型）nil 穿过。
+func TestScaleSuggestionCarries1hWrite(t *testing.T) {
+	got := scaleSuggestion(pricing.ModelPrice{
+		Input: fp(3), CacheWrite1H: fp(6),
+		Tier: &pricing.PriceTier{Above: 200000, Input: fp(6), CacheWrite1H: fp(12)},
+	}, 2)
+	if got.CacheWrite1H == nil || *got.CacheWrite1H != 12 || got.TierCacheWrite1H == nil || *got.TierCacheWrite1H != 24 {
+		t.Errorf("1h 建议价 = %v / %v，期望 12 / 24（同乘系数 2）", got.CacheWrite1H, got.TierCacheWrite1H)
+	}
+	if none := scaleSuggestion(pricing.ModelPrice{Input: fp(1)}, 1); none.CacheWrite1H != nil || none.TierCacheWrite1H != nil {
+		t.Errorf("快照缺 1h 建议时该 nil 穿过，实得 %v / %v", none.CacheWrite1H, none.TierCacheWrite1H)
+	}
+}

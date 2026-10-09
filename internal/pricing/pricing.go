@@ -45,6 +45,11 @@ type ModelPrice struct {
 	Output     *float64 `json:"output,omitempty"`
 	CacheRead  *float64 `json:"cache_read,omitempty"`
 	CacheWrite *float64 `json:"cache_write,omitempty"`
+	// CacheWrite1H 是 1h 缓存写建议价（#198）。**不是快照字段**：models.dev 没有这一
+	// 价，读取点（ModelPrices）按「Claude 1h = 2× input」的厂商定价事实
+	// （docs.anthropic.com prompt-caching#pricing）对 claude 系模型派生，非 claude
+	// 模型恒 nil（没有 1h TTL 这个档）。只做建议，不自动落库。
+	CacheWrite1H *float64 `json:"cache_write_1h,omitempty"`
 	// Tier 是上游 `cost.tiers` 里 context 型的第一档；nil = 全程一档。
 	Tier            *PriceTier `json:"tier,omitempty"`
 	LimitContext    int64      `json:"limit_context,omitempty"`
@@ -60,6 +65,8 @@ type PriceTier struct {
 	Output     *float64 `json:"output,omitempty"`
 	CacheRead  *float64 `json:"cache_read,omitempty"`
 	CacheWrite *float64 `json:"cache_write,omitempty"`
+	// CacheWrite1H 同 ModelPrice 那份：读取点按 2× 分档 input 派生，非快照字段。
+	CacheWrite1H *float64 `json:"cache_write_1h,omitempty"`
 }
 
 type provider struct {
@@ -102,13 +109,39 @@ func Providers() ([]Provider, error) {
 	return out, nil
 }
 
-// ModelPrices 返回一个 provider 名下全部有价模型：模型 id → 四价。
-// provider 不认识时返回空映射不报错——标注是自由文本，快照又随发版才更新，
-// 「查无此家」在这里就是「没有建议」。
+// ModelPrices 返回一个 provider 名下全部有价模型：模型 id → 五价（1h 缓存写那格是
+// 派生的建议，见 ModelPrice.CacheWrite1H）。provider 不认识时返回空映射不报错——
+// 标注是自由文本，快照又随发版才更新，「查无此家」在这里就是「没有建议」。
 func ModelPrices(providerID string) (map[string]ModelPrice, error) {
 	m, err := load()
 	if err != nil {
 		return nil, err
 	}
-	return m[providerID].Models, nil
+	return withSuggested1h(m[providerID].Models), nil
+}
+
+// withSuggested1h 给 claude 系模型补派生的 1h 缓存写建议价（#198）：models.dev 没有
+// 这一格，「Claude 1h = 2× input」是厂商定价事实（docs.anthropic.com
+// prompt-caching#pricing），只在建议侧给——不自动落库（口径层 v1.49：未设 1h 价按
+// 5 分钟价计）。非 claude 模型原样穿过：它们没有 1h TTL 这个档。分档有价时同样按
+// 2× 分档 input 派生。
+//
+// 只在此处派生（快照字节与解析形状都不动）：两个消费端——建议价端点与批量填价——
+// 都从 ModelPrices 走，规则只写这一遍。
+func withSuggested1h(models map[string]ModelPrice) map[string]ModelPrice {
+	out := make(map[string]ModelPrice, len(models))
+	for name, p := range models {
+		if strings.Contains(strings.ToLower(name), "claude") && p.Input != nil {
+			v := *p.Input * 2
+			p.CacheWrite1H = &v
+			if t := p.Tier; t != nil && t.Input != nil {
+				tc := *t
+				tv := *t.Input * 2
+				tc.CacheWrite1H = &tv
+				p.Tier = &tc
+			}
+		}
+		out[name] = p
+	}
+	return out
 }

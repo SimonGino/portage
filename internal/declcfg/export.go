@@ -230,12 +230,12 @@ func exportCredentials(ctx context.Context, db store.Queryer, channelID int64) (
 }
 
 func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Model, error) {
-	// 四价直接扫进 *float64：NULL → nil → omitempty 不写这一行，未定价的条目在
+	// 五价直接扫进 *float64：NULL → nil → omitempty 不写这一行，未定价的条目在
 	// 文件里就是「没有这几个键」——与 apply 侧「没写落 NULL」互为逆运算，往返闸靠它。
 	rows, err := db.QueryContext(ctx,
 		`SELECT upstream_model, protocols, max_input_tokens,
-		        price_input, price_output, price_cache_read, price_cache_write,
-		        price_tier_above, price_tier_input, price_tier_output, price_tier_cache_read, price_tier_cache_write, disabled
+		        price_input, price_output, price_cache_read, price_cache_write, price_cache_write_1h,
+		        price_tier_above, price_tier_input, price_tier_output, price_tier_cache_read, price_tier_cache_write, price_tier_cache_write_1h, disabled
 		 FROM channel_models WHERE channel_id = ? ORDER BY upstream_model`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("读纳管模型：%w", err)
@@ -247,8 +247,8 @@ func exportModels(ctx context.Context, db store.Queryer, channelID int64) ([]Mod
 		var protocols string
 		var disabled int
 		if err := rows.Scan(&m.UpstreamModel, &protocols, &m.MaxInputTokens,
-			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite,
-			&m.PriceTierAbove, &m.PriceTierInput, &m.PriceTierOutput, &m.PriceTierCacheRead, &m.PriceTierCacheWrite,
+			&m.PriceInput, &m.PriceOutput, &m.PriceCacheRead, &m.PriceCacheWrite, &m.PriceCacheWrite1H,
+			&m.PriceTierAbove, &m.PriceTierInput, &m.PriceTierOutput, &m.PriceTierCacheRead, &m.PriceTierCacheWrite, &m.PriceTierCacheWrite1H,
 			&disabled); err != nil {
 			return nil, err
 		}
