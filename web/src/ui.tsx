@@ -568,6 +568,22 @@ export function fmtTime(s: string) {
   const iso = s.includes('T') ? s : s.replace(' ', 'T') + 'Z'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return s
+  return fmtClock(d)
+}
+
+/**
+ * fmtUnix 把 unix 秒显示成本地时间——订阅凭证行的 access 过期时刻是 JWT 的 exp
+ * （unix 秒），不是 SQLite 时间戳。档同 fmtTime，理由同上：不用 toLocaleString
+ * 的默认形态，等宽才能竖着扫。
+ */
+export function fmtUnix(secs: number) {
+  const d = new Date(secs * 1000)
+  if (Number.isNaN(d.getTime())) return '—'
+  return fmtClock(d)
+}
+
+/** fmtClock：Date → `MM-DD HH:mm:ss`，fmtTime / fmtUnix 共用的那一半。 */
+function fmtClock(d: Date) {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }

@@ -114,3 +114,63 @@ func TestCreateChannelIgnoresResponsesBitsWithoutProtocol(t *testing.T) {
 		t.Errorf("supports_stateful_responses = %d, 期望 1（同上，落默认值）", stateful)
 	}
 }
+
+// TestSubscriptionChannelStatefulBitForcedOff：订阅渠道的有状态续链位链「否」——
+// *_account 走转换路径（#204 例外），previous_response_id 无论这一位怎么选都被
+// 网关拒，存「是」是在撒谎（Codex 评审）。建渠道缺省、建渠道显式给 true、改设置
+// 显式给 true，三路都该落「否」；api_key 渠道不受影响（链紧不外溢）。
+func TestSubscriptionChannelStatefulBitForcedOff(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// 建：缺省字段——本来该落默认 true 的那条路。
+	id, err := CreateChannel(ctx, db, ChannelInput{
+		Name:           "sub-default",
+		BaseURLs:       BaseURLs{OpenAIResponses: "https://x"},
+		CredentialType: "chatgpt_account",
+	})
+	if err != nil {
+		t.Fatalf("建订阅渠道失败: %v", err)
+	}
+	if _, stateful := readBits(t, db, id); stateful != 0 {
+		t.Errorf("订阅渠道缺省建出来的 stateful = %d, 期望 0", stateful)
+	}
+
+	// 建：显式给 true 也不作数。
+	id2, err := CreateChannel(ctx, db, ChannelInput{
+		Name:                      "sub-explicit",
+		BaseURLs:                  BaseURLs{OpenAIResponses: "https://x"},
+		CredentialType:            "chatgpt_account",
+		SupportsStatefulResponses: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("建订阅渠道失败: %v", err)
+	}
+	if _, stateful := readBits(t, db, id2); stateful != 0 {
+		t.Errorf("订阅渠道显式 true 的 stateful = %d, 期望 0", stateful)
+	}
+
+	// 改：PUT settings 显式给 true 同样不作数。
+	if err := UpdateChannelSettings(ctx, db, id, ChannelSettings{
+		Name:                      "sub-default",
+		SupportsStatefulResponses: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("改设置失败: %v", err)
+	}
+	if _, stateful := readBits(t, db, id); stateful != 0 {
+		t.Errorf("订阅渠道改设置后的 stateful = %d, 期望 0", stateful)
+	}
+
+	// 对照组：api_key 渠道显式 true 照落——链紧只对 *_account。
+	id3, err := CreateChannel(ctx, db, ChannelInput{
+		Name:                      "plain",
+		BaseURLs:                  BaseURLs{OpenAIResponses: "https://x"},
+		SupportsStatefulResponses: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("建渠道失败: %v", err)
+	}
+	if _, stateful := readBits(t, db, id3); stateful != 1 {
+		t.Errorf("api_key 渠道的 stateful = %d, 期望 1（链紧不外溢）", stateful)
+	}
+}

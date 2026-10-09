@@ -94,15 +94,19 @@ func pkceChallenge(verifier string) string {
 // 一个渠道同时只一个（口径层 v1.52）：上一个还活着就拒绝——重叠的两个 state 会
 // 让「粘贴的地址是哪一次的」在页面上说不清。过期的待完成态就地清掉，不占坑。
 func (e *Engine) StartLogin(ctx context.Context, channelID, replaceID int64) (string, error) {
+	// host_id 的取造在 loginMu 之外做（#212 集成评审，CodeRabbit）：库里单连接
+	// （SetMaxOpenConns(1)），settings 读写撞上开着的写事务时会让整个登录面
+	// （start/complete/poll 都要这把锁）一起干等；「每实例一份」由 extAgentHostID
+	// 自己的 hostIDMu 保证。
+	hostID, err := e.extAgentHostID(ctx)
+	if err != nil {
+		return "", err
+	}
 	e.loginMu.Lock()
 	defer e.loginMu.Unlock()
 	e.expireLoginLocked(channelID)
 	if _, ok := e.pending[channelID]; ok {
 		return "", ErrLoginInProgress
-	}
-	hostID, err := e.extAgentHostID(ctx)
-	if err != nil {
-		return "", err
 	}
 	p := &pendingLogin{
 		state:     randomToken(24),
@@ -158,7 +162,11 @@ func (e *Engine) CompleteLogin(ctx context.Context, channelID int64, pasted stri
 	delete(e.pending, channelID)
 	e.loginMu.Unlock()
 
-	tok, err := e.postTokenForm(ctx, url.Values{
+	// 换 token 不随请求取消（与刷新链 #217 同判，Codex 评审）：code 一次性、待
+	// 完成态已消费——浏览器中途断开时若交换随 ctx 取消，上游可能已发了一把自己
+	// 再拿不回的 refresh token，重贴回调也换不回来。HTTP 客户端的超时仍兜底；
+	// 取消只影响后续校验链，失败路径自会 revokeIssued。
+	tok, err := e.postTokenForm(context.WithoutCancel(ctx), url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {clientID},
 		"code":          {code},
@@ -169,23 +177,32 @@ func (e *Engine) CompleteLogin(ctx context.Context, channelID int64, pasted stri
 	if err != nil {
 		return store.ChatGPTCredential{}, 0, fmt.Errorf("换 token 失败: %w", err)
 	}
-	c, err := applyToken(store.ChatGPTCredential{ClientID: clientID, HostID: p.hostID}, tok, time.Now())
-	if err != nil {
+	// 从 token 端点回包那刻起，上游已发了一把自己还没存的 refresh token：后面
+	// 哪一步失败（缺直连 scope、没带回 ID token、验签、账号声明），这把 token
+	// 都会悬在上游再也撤不掉——失败路径 best-effort 撤掉刚发出来的这份（#212
+	// 审查，Codex）。撤销失败不吞原错误：原错误才是要给人看的。
+	revokeIssued := func(err error) (store.ChatGPTCredential, int64, error) {
+		_ = e.Revoke(context.WithoutCancel(ctx),
+			store.ChatGPTCredential{ClientID: clientID, RefreshToken: tok.Refresh})
 		return store.ChatGPTCredential{}, 0, err
 	}
+	c, err := applyToken(store.ChatGPTCredential{ClientID: clientID, HostID: p.hostID}, tok, time.Now())
+	if err != nil {
+		return revokeIssued(err)
+	}
 	if c.IDToken == "" {
-		return store.ChatGPTCredential{}, 0, errors.New("认证服务没带回 ID token，验不了这次登录")
+		return revokeIssued(errors.New("认证服务没带回 ID token，验不了这次登录"))
 	}
 	// nonce 传的是这次登录生成的那个、恒非空——complete 的 id_token 是拿当次
 	// authorization code 换来的，必须带当次 nonce，否则这条验签形同虚设
 	// （refresh 回包的 id_token 才没有当次 nonce、传空跳过，与 magpie 同判）。
 	claims, err := e.VerifyIDToken(ctx, c.IDToken, clientID, p.nonce)
 	if err != nil {
-		return store.ChatGPTCredential{}, 0, err
+		return revokeIssued(err)
 	}
 	c.Sub, c.Email = claimString(claims, "sub"), claimString(claims, "email")
 	if c.Sub == "" && c.Email == "" {
-		return store.ChatGPTCredential{}, 0, errors.New("ID token 里没有账号（sub / email 都空）——OpenAI 没说是谁登录了")
+		return revokeIssued(errors.New("ID token 里没有账号（sub / email 都空）——OpenAI 没说是谁登录了"))
 	}
 	return c, p.replaceID, nil
 }
@@ -235,6 +252,11 @@ func parseCallback(pasted string) (url.Values, error) {
 // extAgentHostID 是本实例在 OpenAI 侧的名字（口径：每实例一个、落 settings 表）。
 // urn:uuid: 前缀的 v4 UUID，与 magpie 的 siwcHostID 同构；取不到再生成，幂等。
 func (e *Engine) extAgentHostID(ctx context.Context) (string, error) {
+	// 取造串行（hostIDMu，#212 集成评审）：loginMu 不再罩着这里，两个渠道并发
+	// 起登录也会同时进来，没这把锁会各自造一个 UUID、各写各的，「每实例一份」
+	// 就破了。
+	e.hostIDMu.Lock()
+	defer e.hostIDMu.Unlock()
 	id, err := store.GetSetting(ctx, e.db, store.SettingExtAgentHostID)
 	if err != nil {
 		return "", err

@@ -199,8 +199,11 @@ export function primaryCredential(list: readonly Credential[]): Credential | nul
 
 /** 这是启用渠道的最后一把启用凭证：删掉或停掉它都会撞上「能保存的配置一定能启动」
  *  的写后校验。出路是确认后先停渠道再动凭证——校验不放宽，提示给足，但不拦人
- *  （PO 2026-08-28）。 */
+ *  （PO 2026-08-28）。订阅渠道例外（#216 豁免闸）：启用中的空订阅渠道本就合法，
+ *  先停渠道是多余动作——而且重登只会救活凭证行、不会重新启用渠道，渠道会一直
+ *  挂在「停用」上。 */
 export function cascadesToChannel(cred: Credential, enabledCount: number, channel: Channel): boolean {
+  if (isSubscriptionChannel(channel)) return false
   return !cred.disabled && enabledCount === 1 && !channel.disabled
 }
 
@@ -220,6 +223,13 @@ export interface SubscriptionSummary {
   account: string
   plan: string
   expiresAt: number
+}
+
+/** 订阅渠道判定（*_account，口径层 §2.2 v1.52），与 store.IsSubscriptionCredentialType
+ *  同源：两个词一起判是把票面的「*_account」写进代码，Copilot 落地时不用回这里
+ *  补。凭证区块、管理弹框、凭证行三处共用，别再手抄字面量。 */
+export function isSubscriptionChannel(c: { credential_type?: CredentialType }): boolean {
+  return c.credential_type === 'chatgpt_account' || c.credential_type === 'copilot_account'
 }
 
 /** 解一份 chatgpt_account 凭证 JSON 整包，取行显示要用的三样。
@@ -432,7 +442,9 @@ export function channelCreatePayload(d: ChannelCreateDraft): ChannelCreatePayloa
   }
   if (declaredProtocols(base).includes('openai_responses')) {
     out.supports_compaction = d.compaction
-    out.supports_stateful_responses = d.stateful
+    // 订阅渠道的有状态续链位恒「否」（服务端同判链紧）：*_account 走转换路径
+    // （#204 例外），previous_response_id 无论怎么选都被网关拒——存「是」是撒谎。
+    out.supports_stateful_responses = d.credentialType ? false : d.stateful
   }
   if (d.credentialType) out.credential_type = d.credentialType
   return out

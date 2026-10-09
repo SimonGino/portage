@@ -438,6 +438,12 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	if credType == "" {
 		credType = CredentialTypeAPIKey
 	}
+	// 订阅渠道的有状态续链位链在「否」（#212/#216 集成，Codex 评审）：*_account 走
+	// 转换路径（#204 例外），previous_response_id 无论这一位怎么选都被网关拒绝
+	// ——存成「是」是在跟管理端撒谎。
+	if IsSubscriptionCredentialType(credType) {
+		stateful = false
+	}
 	provider := ""
 	if in.Provider != nil {
 		provider = strings.TrimSpace(*in.Provider)
@@ -630,13 +636,18 @@ func UpdateChannelSettings(ctx context.Context, db Conn, id int64, s ChannelSett
 	if s.MaxConcurrency != nil && *s.MaxConcurrency < 0 {
 		return InvalidInput{Reason: "并发上限不能是负数：0 表示不限，正整数表示上限"}
 	}
-	var respURL string
+	var respURL, credType string
 	switch err := db.QueryRowContext(ctx,
-		`SELECT base_url_openai_responses FROM channels WHERE id = ?`, id).Scan(&respURL); {
+		`SELECT base_url_openai_responses, COALESCE(credential_type, '') FROM channels WHERE id = ?`, id).Scan(&respURL, &credType); {
 	case errors.Is(err, sql.ErrNoRows):
 		return ErrNotFound
 	case err != nil:
 		return err
+	}
+	// 订阅渠道同判链「否」（见 Create 侧同款注释）：这一位不存在「支持」的形态。
+	if IsSubscriptionCredentialType(credType) {
+		v := false
+		s.SupportsStatefulResponses = &v
 	}
 	sets := `name = ?`
 	args := []any{s.Name}

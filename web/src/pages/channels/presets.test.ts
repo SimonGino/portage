@@ -101,6 +101,10 @@ describe('channelCreatePayload（#216）', () => {
     const p = channelCreatePayload({ ...draft, credentialType: chatgpt.credential_type })
     expect(p.credential_type).toBe('chatgpt_account')
   })
+  it('订阅渠道的有状态续链位恒「否」——转换路径拒 previous_response_id，位不撒谎', () => {
+    const p = channelCreatePayload({ ...draft, credentialType: chatgpt.credential_type })
+    expect(p.supports_stateful_responses).toBe(false)
+  })
   it('厂商预设与自定义不带这键，渠道落默认 api_key', () => {
     const p = channelCreatePayload({ ...draft, credentialType: ds.credential_type })
     expect('credential_type' in p).toBe(false)

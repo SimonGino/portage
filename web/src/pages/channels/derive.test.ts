@@ -8,6 +8,7 @@ import {
   headerRows,
   headersOf,
   headersDirty,
+  isSubscriptionChannel,
   limitToSave,
   listComplete,
   listedOn,
@@ -192,6 +193,17 @@ describe('凭证池', () => {
     expect(cascadesToChannel(cred({}), 2, ch({}))).toBe(false)
     expect(cascadesToChannel(cred({ disabled: true }), 1, ch({}))).toBe(false)
     expect(cascadesToChannel(cred({}), 1, ch({ disabled: true }))).toBe(false)
+  })
+
+  it('订阅渠道不动最后一把也不连带停渠道（#216 豁免闸的前端配套）', () => {
+    expect(cascadesToChannel(cred({}), 1, ch({ credential_type: 'chatgpt_account' }))).toBe(false)
+  })
+
+  it('订阅渠道判定：两个 *_account 是，其余与缺省不是', () => {
+    expect(isSubscriptionChannel({ credential_type: 'chatgpt_account' })).toBe(true)
+    expect(isSubscriptionChannel({ credential_type: 'copilot_account' })).toBe(true)
+    expect(isSubscriptionChannel({ credential_type: 'api_key' })).toBe(false)
+    expect(isSubscriptionChannel({})).toBe(false)
   })
 })
 
