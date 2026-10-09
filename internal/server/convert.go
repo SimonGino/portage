@@ -98,7 +98,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	req.Model = cand.UpstreamModel
 
 	// Codex 压缩 turn 走本地合成（portage-legacy#74）。日志在这里打而不是在 codec 里：codec 是纯
-	// 函数、不持有 logger，同「跨协议转换丢弃字段」那条的分工。
+	// 函数、不持有 logger，同「转换路径丢弃字段」那条的分工。
 	// 断言小接口而不是具体 codec 类型（同下面 ArgsSalvaged 那条，#54）：server 不认
 	// 任何具体协议包，「协议 → Codec 只有一张表」在 codecs.New。
 	if rc, ok := inCodec.(interface{ CompactionTurn() bool }); ok && rc.CompactionTurn() {
@@ -128,7 +128,7 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 		}
 	}
 	// 入站请求里 canonical 收不下的形态（CC 的 tool_choice.allowed_tools 白名单）：
-	// 同上一条的分工，codec 只登记、日志在这里打。与出口侧的「跨协议转换丢弃字段」
+	// 同上一条的分工，codec 只登记、日志在这里打。与出口侧的「转换路径丢弃字段」
 	// 分成两条是因为归因不同——那条丢的是**我们编不出去**的，这条丢的是**canonical
 	// 装不下**的，看日志的人据此决定该改哪一侧。
 	if r, ok := inCodec.(interface{ DecodeDrops() protocol.NameList }); ok {
@@ -187,7 +187,18 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 			return
 		}
 	}
-	defer res.Close()
+	defer func() {
+		res.Close()
+		// 流中撞限改判（#215 集成项，接缝假设照两份 handoff 落地）：上游 200 开流、
+		// 中途 response.failed 带撞限码——错误帧已写给客户端、流正常收场，流水词还是
+		// OK，按词筛（口径层 §2.5）筛不到这一档。Close 先把 Summarize 落进流水（#8
+		// 收场序），之后才判得了。判据与 HTTP 层 writeUpstreamError 同一份 planLimitCode，
+		// 不另立第二处。Failed 传空串：流内形态没有 2KB 错误体那一档，原文已随错误帧
+		// 写给客户端，不重复截。同族其余码不改判，照旧 OK（#213 钉住的带内语义）。
+		if res.UpstreamErrorCode() == planLimitCode {
+			rec.Failed(calllog.PlanLimitExceeded, "")
+		}
+	}()
 	// 转换路径**不**把上游响应头回给客户端（出口协议的头是这边重造的），但流水里
 	// 照记了 request-id（exchange 写回）：找上游对账与走的是哪条路无关（口径层
 	// v0.56，#2）。三档的取舍仍在 calllog.Recorder.Finish，包括错误体那一档（v0.74）。
@@ -317,8 +328,10 @@ func (s *Server) writeUpstreamError(c *gin.Context, rec *calllog.Recorder, ep pr
 	// 订阅额度撞限（#215，口径层 §2.2 v1.52）：这一档落第 14 词，按词筛得到转换路径上的
 	// 全部撞限请求；同族其余码（user_not_eligible / usage_unavailable / 认不得的）照旧
 	// upstream_error。判码不判状态码也不判渠道类型——撞限码语义自足（只有订阅后端会
-	// 发），谁回的、带什么状态码都落同一个词。同协议透传窗口里（#213 落地前 R 入口
-	// 撞限仍逐字节透传）那一档 error 列按 v0.28 纪律留空，不走这里。
+	// 发），谁回的、带什么状态码都落同一个词。透传路径不走这里：那条路不解析错误体，
+	// error 列按 v0.28 纪律留空（订阅渠道已全量改道转换，#213）。
+	// 流中那一档（200 开流、response.failed 带码）在 relayConverted 的收场处改判，
+	// 判据同一份 planLimitCode。
 	// 原文已由 UpstreamRejected 记全，这里只改词——Failed 传空串即不碰原文（后写覆盖
 	// 先写，一档一个词）。key 层内环照旧：429 换凭证不摘不冷却，全池撞限时这份 429
 	// 状态码原样交回客户端（上面的 status），只有流水那一格换词。

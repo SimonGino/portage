@@ -398,3 +398,22 @@ func TestSubscriptionUpstreamDetailRejectSurfaces(t *testing.T) {
 		t.Errorf("error_detail = %v，期望上游原文落库", row.ErrorDetail)
 	}
 }
+
+// TestSubscriptionOutboundForcesBearerOverRawScheme：订阅渠道的出站鉴权头是 D6 逐字
+// 契约（Authorization: Bearer <access>）——渠道上配了 raw 档也不照抄：access 由凭证票
+// 换出、上游固定是 ChatGPT 后端，裸 access 出站只会 401。渠道额外静态头不在此拦
+// （运维配置自担，handoff-213 已裁决的接受边界，Codex 终审同条发现的另一半）。
+func TestSubscriptionOutboundForcesBearerOverRawScheme(t *testing.T) {
+	gw, up := newSIWCGateway(t)
+	if _, err := gw.DB.Exec(`UPDATE channels SET auth_scheme = 'raw' WHERE credential_type = 'chatgpt_account'`); err != nil {
+		t.Fatalf("改 auth_scheme 失败: %v", err)
+	}
+
+	resp := gw.Post(t, "/v1/responses", siwcRequest, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	if a := up.Last(t).Header.Get("Authorization"); a != "Bearer at-old" {
+		t.Errorf("上游 Authorization = %q, 期望 Bearer <access>——raw 档不该把裸 access 发出去", a)
+	}
+}

@@ -121,6 +121,17 @@ func (o *ResponseObserver) Close() {
 	}
 }
 
+// UpstreamErrorCode 是 Tap 从上游原始字节里透出的流内错误码（#213：response.failed
+// 的 response.error.code、裸 error 帧的顶层 code）。Close 之后读是终值——Summary 幂等
+// （同 StreamTruncated 那条），没挂 Tap 或上游没报码时为空串。词表映射不在这里：记账
+// 词归 server 收场处判（#215 的撞限词），这里只把透出的那串字节递过去。
+func (o *ResponseObserver) UpstreamErrorCode() string {
+	if o.tap == nil {
+		return ""
+	}
+	return o.tap.Summary().ErrorCode
+}
+
 // Do 跑一次上游交换：记出站端点 → 发请求 → 回填 attempt 三数 → 错误则按入站协议
 // 收场（已写回客户端，返回 nil, false）→ 成功则写回 request-id 候选并装配观察者。
 //

@@ -142,6 +142,18 @@ data: {"type":"error","code":"server_error","message":"boom"}
 			t.Errorf("Summary.ErrorCode = %q，期望裸 error 帧顶层的 code", got.ErrorCode)
 		}
 	})
+	t.Run("bare error frame nested", func(t *testing.T) {
+		// 嵌套 error.code 是解码侧（decode_response.go）#162 起就认的形状；Tap 少认
+		// 这一种会让该形态从 #215 的收场改判里漏掉——两半必须认同一套形状。
+		const raw = `event: error
+data: {"type":"error","error":{"code":"subscription_sharing_usage_limit_exceeded","message":"limit"}}
+
+`
+		got := feed(t, NewTap(true), raw)
+		if got.ErrorCode != "subscription_sharing_usage_limit_exceeded" {
+			t.Errorf("Summary.ErrorCode = %q，期望裸 error 帧嵌套 error.code 也透出", got.ErrorCode)
+		}
+	})
 	t.Run("no error code stays empty", func(t *testing.T) {
 		got := feed(t, NewTap(true), functionCallStream)
 		if got.ErrorCode != "" {

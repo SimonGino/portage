@@ -30,8 +30,9 @@ const (
 )
 
 // ccPlanLimitRequest 是 CC 入站的最小请求：chatgpt_account 渠道声明的是 openai_responses，
-// CC 入口必然走转换路径（③下半）——这正是撞限词的落点；同协议 R 入口今天还在透传
-// 窗口里（#213 落地后关闭），透传 4xx 的 error 列按 v0.28 纪律留空。
+// CC 入口必然走转换路径（③下半）——这正是撞限词的落点。同协议 R 入口也走转换
+// （#213 在场，订阅渠道没有透传路）；透传 4xx 的 error 列按 v0.28 纪律留空只适用于
+// 非订阅渠道。
 const ccPlanLimitRequest = `{"model":"` + planLimitAP + `","messages":[{"role":"user","content":"hi"}]}`
 
 // farFuture 是「这把凭证不用刷」的过期时刻：懒刷新只认剩 3 分钟内的，够远就一次
@@ -263,10 +264,9 @@ func TestPlanLimitDoesNotStackWithReauthRequired(t *testing.T) {
 // 月度 USD 配额（SUM(cost) 不被推着走，下一发照常过闸）。
 func TestSubscriptionCallCostsZeroAndSkipsQuota(t *testing.T) {
 	gw, up := seedPlanLimitGateway(t, gatewaytest.Options{}, siwcCred("at-1", "rt-1", farFuture()))
-	// R 入口撞 openai_responses 渠道是同协议透传（#213 落地前订阅渠道也走这条，
-	// 200 成功路径两边一样）；上游把 usage 报满，cost 的判据才有货。
-	up.RespondWith(http.StatusOK, map[string]string{"Content-Type": "application/json"},
-		`{"id":"resp_1","status":"completed","usage":{"input_tokens":100,"output_tokens":50}}`)
+	// 合并态下订阅渠道 R 入口同协议也走转换聚合（#213），出站强制 SSE——假上游按
+	// #213 契约回真机样本（usage 在 response.completed，16/5），cost 的判据才有货。
+	serveSIWCGolden(t, up)
 
 	_, bobID := gw.UserSession(t, "plan-bob@x")
 	const bobKey = "sk-ptg-plan-bob"
@@ -295,8 +295,8 @@ func TestSubscriptionCallCostsZeroAndSkipsQuota(t *testing.T) {
 	if !cost.Valid || cost.Float64 != 0 {
 		t.Errorf("cost = %+v, 期望 0 且非 NULL——四价落 0 的「真免费」", cost)
 	}
-	if !inTok.Valid || inTok.Int64 != 100 || !outTok.Valid || outTok.Int64 != 50 {
-		t.Errorf("token 照落: input=%+v output=%+v, 期望 100/50", inTok, outTok)
+	if !inTok.Valid || inTok.Int64 != 16 || !outTok.Valid || outTok.Int64 != 5 {
+		t.Errorf("token 照落: input=%+v output=%+v, 期望 16/5（golden response.completed 报的数）", inTok, outTok)
 	}
 	if !uid.Valid || uid.Int64 != bobID { // 行归属本人，配额闸的判据才成立
 		t.Errorf("行归属 = %+v, 期望 bob(%d)", uid, bobID)
@@ -307,5 +307,60 @@ func TestSubscriptionCallCostsZeroAndSkipsQuota(t *testing.T) {
 	}
 	if q.SpentUSD != 0 {
 		t.Errorf("本月已用 = %v, 期望 0——cost 0 的流水不占用户月度配额", q.SpentUSD)
+	}
+}
+
+// limitStreamFailed 是流中撞限的构造样本：上游 200 开流、中途 response.failed 带码
+// （真实流中形态同样未采到，形状与 siwc_relay_test 那份手写 SSE 同源，码逐字取自
+// magpie）。word 是这发该落的收场词；空串 = 照旧 ok（error 列空）。
+func limitStreamFailed(code string) string {
+	return "event: response.created\n" +
+		`data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}` + "\n\n" +
+		"event: response.failed\n" +
+		`data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"` + code + `","message":"limit"},"output":[]}}` + "\n\n"
+}
+
+// TestPlanLimitStreamFailureFlipsWord：流中撞限（200 开流、response.failed 带撞限码）
+// 也落第 14 词——#215 handoff 记的集成项：错误帧已写给客户端、流正常收场，收场把
+// OK 改判，按词筛才筛得到这一档；非流式客户端走聚合路径回 502，同一道收场改判
+// 把 upstream_error 换成撞限词（判码不判状态码）。同族其余码（server_error）不改判，
+// 照旧 ok。改判在 relayConverted 的 defer 里、两条子路径共享——非流式那条也得钉住，
+// 防将来重构把改判圈进 streamConverted 一侧。
+func TestPlanLimitStreamFailureFlipsWord(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stream bool
+		body   string
+		status int
+		word   string
+	}{
+		{"流式撞限码改判", true, limitStreamFailed("subscription_sharing_usage_limit_exceeded"), http.StatusOK, "plan_limit_exceeded"},
+		{"流式其余码不改判", true, limitStreamFailed("server_error"), http.StatusOK, ""},
+		{"非流式聚合撞限码也改判", false, limitStreamFailed("subscription_sharing_usage_limit_exceeded"), http.StatusBadGateway, "plan_limit_exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gw, up := seedPlanLimitGateway(t, gatewaytest.Options{}, siwcCred("at-1", "rt-1", farFuture()))
+			up.Handler = func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(tc.body))
+			}
+
+			// CC 入站走转换路径：流式进 streamConverted（错误帧带内写给客户端、流正常
+			// 收场）；非流式进 aggregateConverted（回 502）。收场词两路共享同一道改判。
+			resp := gw.Post(t, "/v1/chat/completions",
+				`{"model":"`+planLimitAP+`","stream":`+strconv.FormatBool(tc.stream)+`,"messages":[{"role":"user","content":"hi"}]}`, nil)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("状态码 = %d, 期望 %d；body=%s", resp.StatusCode, tc.status, gatewaytest.ReadBody(t, resp))
+			}
+			row := gw.LastCallRow(t)
+			got := ""
+			if row.Error.Valid {
+				got = row.Error.String
+			}
+			if got != tc.word {
+				t.Errorf("error 列 = %q, 期望 %q", got, tc.word)
+			}
+		})
 	}
 }
