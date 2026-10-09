@@ -110,3 +110,61 @@ func TestUpdateChannelModel(t *testing.T) {
 		t.Errorf("改不存在的行 err = %v，期望 ErrNotFound", err)
 	}
 }
+
+// TestAddChannelModelZeroPriceOnSubscription：订阅渠道的纳管条目建成时四价自动落 0
+// （#215，口径层 §2.2 v1.52「真免费」态）：0 与 NULL 在价列上是两种话——NULL 是
+// 「还没记账依据」，0 是「记过了，账是 0」。普通渠道默认仍是 NULL；渠道不存在时
+// 照旧让 INSERT 自己撞外键，不在半道改判另一种错。
+func TestAddChannelModelZeroPriceOnSubscription(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		credTyp string
+		want    sql.NullFloat64
+	}{
+		{"chatgpt_account", "chatgpt_account", sql.NullFloat64{Float64: 0, Valid: true}},
+		{"copilot_account 同为订阅", "copilot_account", sql.NullFloat64{Float64: 0, Valid: true}},
+		{"普通渠道仍 NULL", "api_key", sql.NullFloat64{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			if _, err := db.Exec(
+				`INSERT INTO channels (id, name, credential_type) VALUES (1, 'ch', ?)`, tc.credTyp); err != nil {
+				t.Fatalf("插渠道: %v", err)
+			}
+			if err := AddChannelModel(ctx, db, 1, "gpt-6.1-sol", nil); err != nil {
+				t.Fatalf("加纳管模型: %v", err)
+			}
+			var in, out, cr, cw sql.NullFloat64
+			if err := db.QueryRow(`SELECT price_input, price_output, price_cache_read, price_cache_write
+				FROM channel_models WHERE channel_id = 1`).Scan(&in, &out, &cr, &cw); err != nil {
+				t.Fatalf("回读: %v", err)
+			}
+			for _, got := range []struct {
+				name string
+				col  sql.NullFloat64
+			}{{"price_input", in}, {"price_output", out}, {"price_cache_read", cr}, {"price_cache_write", cw}} {
+				if got.col != tc.want {
+					t.Errorf("%s = %+v, 期望 %+v", got.name, got.col, tc.want)
+				}
+			}
+			// 幂等重添加：价格不被二次改写。
+			if err := AddChannelModel(ctx, db, 1, "gpt-6.1-sol", nil); err != nil {
+				t.Fatalf("重复添加: %v", err)
+			}
+			if err := db.QueryRow(`SELECT price_input FROM channel_models WHERE channel_id = 1`).Scan(&in); err != nil {
+				t.Fatal(err)
+			}
+			if in != tc.want {
+				t.Errorf("幂等重添加后 price_input = %+v, 期望不变", in)
+			}
+		})
+	}
+
+	// 渠道不存在：外键照旧拦（与 AddChannelCredentials 同一条纪律），不因多了一次
+	// 读渠道类型的查询改判另一种错。
+	db := openTestDB(t)
+	if err := AddChannelModel(ctx, db, 999, "gpt-x", nil); err == nil {
+		t.Error("渠道不存在该报错，得到 nil")
+	}
+}

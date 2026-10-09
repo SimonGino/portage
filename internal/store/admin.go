@@ -772,14 +772,38 @@ func DeleteChannel(ctx context.Context, db Conn, id int64) error {
 //
 // protocols 是这个模型的协议子集（口径层 v0.40），空集合表示继承渠道全集——那是常态。
 // 幂等这条对它有个后果：重复添加时协议子集也不会被改写，改子集走 UpdateChannelModel。
+//
+// 订阅渠道（credential_type 为 *_account）的条目建成时四价自动落 0（#215，口径层
+// §2.2 v1.52「真免费」态）：0 与 NULL 在价列上是两种话——NULL 是「还没记账依据」，
+// 0 是「记过了，账是 0」；后续填价想看等价成本仍可整组覆盖。分档与 1h 两列不随默认
+// 动：分档 NULL = 全程一档，1h NULL = 按 5 分钟价（即 0），cost 都是 0。渠道不
+// 存在时不在这里报错——ErrNoRows 当作非订阅处理放行，下面的 INSERT 自己撞外键
+// （同 AddChannelCredentials 的理由）。
 func AddChannelModel(ctx context.Context, db Conn, channelID int64, upstreamModel string, protocols protocol.Set) error {
 	raw, err := normalizeModelProtocols(protocols)
 	if err != nil {
 		return err
 	}
+	var credType string
+	switch err := db.QueryRowContext(ctx,
+		`SELECT credential_type FROM channels WHERE id = ?`, channelID).Scan(&credType); {
+	case err == nil, errors.Is(err, sql.ErrNoRows):
+	default:
+		return err
+	}
+	// 两个调用方（管理端一次保存与声明文件 apply）都已在事务里，这次读与下面的
+	// INSERT 之间渠道类型不会被改掉。两次都在同一家身上，不另开事务。
+	var priceIn, priceOut, priceCacheRead, priceCacheWrite any
+	if credType == CredentialTypeChatGPTAccount || credType == CredentialTypeCopilotAccount {
+		zero := float64(0)
+		priceIn, priceOut, priceCacheRead, priceCacheWrite = zero, zero, zero, zero
+	}
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO channel_models (channel_id, upstream_model, protocols) VALUES (?, ?, ?)
-		ON CONFLICT(channel_id, upstream_model) DO NOTHING`, channelID, upstreamModel, raw)
+		INSERT INTO channel_models
+			(channel_id, upstream_model, protocols, price_input, price_output, price_cache_read, price_cache_write)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(channel_id, upstream_model) DO NOTHING`,
+		channelID, upstreamModel, raw, priceIn, priceOut, priceCacheRead, priceCacheWrite)
 	return err
 }
 

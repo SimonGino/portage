@@ -314,6 +314,17 @@ func (s *Server) writeUpstreamError(c *gin.Context, rec *calllog.Recorder, ep pr
 	// 收场与原文一次记完：「上游说不行」与「它说了什么」本来就是同一件事，
 	// 分两处写只是因为它们以前落在两个函数里。读多少由流水那一侧定。
 	raw := rec.UpstreamRejected(body)
+	// 订阅额度撞限（#215，口径层 §2.2 v1.52）：这一档落第 14 词，按词筛得到转换路径上的
+	// 全部撞限请求；同族其余码（user_not_eligible / usage_unavailable / 认不得的）照旧
+	// upstream_error。判码不判状态码也不判渠道类型——撞限码语义自足（只有订阅后端会
+	// 发），谁回的、带什么状态码都落同一个词。同协议透传窗口里（#213 落地前 R 入口
+	// 撞限仍逐字节透传）那一档 error 列按 v0.28 纪律留空，不走这里。
+	// 原文已由 UpstreamRejected 记全，这里只改词——Failed 传空串即不碰原文（后写覆盖
+	// 先写，一档一个词）。key 层内环照旧：429 换凭证不摘不冷却，全池撞限时这份 429
+	// 状态码原样交回客户端（上面的 status），只有流水那一格换词。
+	if refusalCode(raw) == planLimitCode {
+		rec.Failed(calllog.PlanLimitExceeded, "")
+	}
 	msg, code := upstreamErrorMessage(raw)
 	if msg == "" {
 		msg = "上游返回 " + http.StatusText(status)
@@ -353,6 +364,54 @@ func upstreamErrorMessage(raw []byte) (msg, code string) {
 		return payload.Error.Message, code
 	}
 	return payload.Detail, code
+}
+
+// planLimitCode 是「订阅额度撞限」的上游错误码（口径层 §2.2 v1.52，ChatGPT）。
+// Copilot premium requests 耗尽的码随其实现票并入同一个词，届时在判词处加一行。
+const planLimitCode = "subscription_sharing_usage_limit_exceeded"
+
+// refusalCode 读上游拒绝体里点名的错误码，三种形态都认（magpie siwcErrorCode 同读法，
+// MIT 参考；真实 429 形态未采到，#205 只采到 400 的 {"detail":…}，构造样本以它的
+// 读法为准）：标准 error 信封的 error.code、detail 对象的 code 键、detail 句子里嵌
+// 的 subscription_sharing_* 码（句子形态按词界截取，不做子串匹配——撞限码不是任何
+// 已知码的前缀，但截取把「将来出现更长码」的误报也一并堵死）。
+// error.code 按字符串读（与 magpie 同）：撞限码只有字符串形态，numeric code 的上游
+// 会让整个 unmarshal 报错、在这里拿到空串、落回 upstream_error——安全默认，不另兼容。
+func refusalCode(raw []byte) string {
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		Detail json.RawMessage `json:"detail"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	if payload.Error.Code != "" {
+		return payload.Error.Code
+	}
+	var detailObj struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(payload.Detail, &detailObj) == nil && detailObj.Code != "" {
+		return detailObj.Code
+	}
+	var detailStr string
+	if json.Unmarshal(payload.Detail, &detailStr) != nil {
+		return ""
+	}
+	const family = "subscription_sharing_"
+	i := strings.Index(detailStr, family)
+	if i < 0 {
+		return ""
+	}
+	end := strings.IndexFunc(detailStr[i:], func(r rune) bool {
+		return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	if end < 0 {
+		return detailStr[i:]
+	}
+	return detailStr[i : i+end]
 }
 
 // contextTooLongRe 是各家说「输入超过模型上下文」的写法：OpenAI 的 maximum context
