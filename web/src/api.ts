@@ -282,6 +282,15 @@ export interface ChannelModel {
   price_cache_read: number | null
   price_cache_write: number | null
   /**
+   * 分档价（口径层 v1.49，#185）：毛输入（含缓存读写）超过阈值的那笔整笔按分档四价计。
+   * 阈值 null = 全程一档；分档某价 null = 沿用基础价。「未定价」只看上面四价。
+   */
+  price_tier_above: number | null
+  price_tier_input: number | null
+  price_tier_output: number | null
+  price_tier_cache_read: number | null
+  price_tier_cache_write: number | null
+  /**
    * 这条条目名下有没有报过 usage 的流水（渠道名 × 上游模型名）。未定价提醒的判据
    * 是「四价全 null 且它为 true」——没人用过的条目不催着定价。
    */
@@ -569,6 +578,8 @@ export interface PricingModelPrice {
   output?: number
   cache_read?: number
   cache_write?: number
+  /** 分档价（上游 `cost.tiers` 的 context 首档）：毛输入超过 above 整笔按这四价，缺价沿用基础价。 */
+  tier?: { above: number; input?: number; output?: number; cache_read?: number; cache_write?: number }
 }
 
 /** `GET /pricing/models?provider=` 的回包。查无此家 models 是空对象，不报错。 */

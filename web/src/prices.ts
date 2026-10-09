@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from './api'
-import type { PricingModelPrice, PricingModels, PricingProvider } from './api'
+import type { ChannelModel, PricingModelPrice, PricingModels, PricingProvider } from './api'
 import type { Option } from './fields'
 
 /** 单价显示：USD/百万 token 的定价惯用形（$3、$0.3、$3.75），不是金额展示的
@@ -35,6 +35,82 @@ export function isUnpriced(p: FourPrices): boolean {
 /** 四价全文，进 title 用：「入 $3，出 $15，缓读 —，缓写 —。USD/百万 token」。 */
 export function fmtFourTitle(p: FourPrices): string {
   return PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(p[k])}`).join('，') + '。USD/百万 token'
+}
+
+/** 分档四价的键与标签，与 PRICE_FIELDS 一一对应（口径层 v1.49，#185）。 */
+export const TIER_FIELDS = [
+  ['tier_input', '入'],
+  ['tier_output', '出'],
+  ['tier_cache_read', '缓读'],
+  ['tier_cache_write', '缓写'],
+] as const
+
+type PriceKey = (typeof PRICE_FIELDS)[number][0] | (typeof TIER_FIELDS)[number][0] | 'tier_above'
+
+/** 填价那一笔的整组（= PUT /channel-models/:id 的 prices，store.ChannelModelPrices）：
+ *  基础四价 + 阈值 + 分档四价。整组覆盖，漏一个键就是把它清成 null。 */
+export type PriceBody = Record<PriceKey, number | null>
+
+const PRICE_KEYS: readonly PriceKey[] = [
+  ...PRICE_FIELDS.map(([k]) => k),
+  'tier_above',
+  ...TIER_FIELDS.map(([k]) => k),
+]
+
+export function modelPriceBody(m: ChannelModel): PriceBody {
+  return {
+    input: m.price_input, output: m.price_output, cache_read: m.price_cache_read, cache_write: m.price_cache_write,
+    tier_above: m.price_tier_above, tier_input: m.price_tier_input, tier_output: m.price_tier_output,
+    tier_cache_read: m.price_tier_cache_read, tier_cache_write: m.price_tier_cache_write,
+  }
+}
+
+/** 建议价 → 采纳时落的那一组：连分档一起，快照缺的价 null 不补 0。 */
+export function suggestPriceBody(s: PricingModelPrice): PriceBody {
+  const t = s.tier
+  return {
+    input: s.input ?? null, output: s.output ?? null, cache_read: s.cache_read ?? null, cache_write: s.cache_write ?? null,
+    tier_above: t?.above ?? null, tier_input: t?.input ?? null, tier_output: t?.output ?? null,
+    tier_cache_read: t?.cache_read ?? null, tier_cache_write: t?.cache_write ?? null,
+  }
+}
+
+export function samePrices(a: PriceBody, b: PriceBody): boolean {
+  return PRICE_KEYS.every((k) => a[k] === b[k])
+}
+
+/** 编辑草稿 → 整组。空 = null；解析不出、负数、阈值不是正整数都整组不存（回 null）——
+ *  存下能解析的那几个会把没看清的输入悄悄写成 null。阈值空 = 去分档，分档四价一并清。 */
+export function parsePriceDraft(draft: Record<string, string>): PriceBody | null {
+  const out = {} as PriceBody
+  for (const k of PRICE_KEYS) {
+    const raw = (draft[k] ?? '').trim()
+    if (raw === '') {
+      out[k] = null
+      continue
+    }
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n < 0) return null
+    if (k === 'tier_above' && !(Number.isInteger(n) && n > 0)) return null
+    out[k] = n
+  }
+  if (out.tier_above === null) for (const [k] of TIER_FIELDS) out[k] = null
+  return out
+}
+
+/** 阈值简写进胶囊：200000 → 200k、1000000 → 1M；不整千的照原数。 */
+export function fmtTokensShort(n: number): string {
+  if (n >= 1e6 && n % 1e6 === 0) return `${n / 1e6}M`
+  if (n % 1000 === 0) return `${n / 1000}k`
+  return String(n)
+}
+
+/** 分档全文，进 title：「超过 200000 token 整笔按：入 $6，出 $22.5，缓读 沿用基础价…」。 */
+export function fmtTierTitle(b: PriceBody): string {
+  return (
+    `超过 ${b.tier_above} token 整笔按：` +
+    TIER_FIELDS.map(([k, label]) => `${label} ${b[k] === null ? '沿用基础价' : fmtPrice(b[k])}`).join('，')
+  )
 }
 
 /*
