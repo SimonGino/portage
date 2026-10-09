@@ -649,7 +649,7 @@ function BulkPriceDialog({ channel, onClose }: { channel: Channel; onClose: () =
             hint={
               invalid
                 ? '要是大于 0 的数'
-                : '每个模型的建议价四项 × 系数后写进条目。1 = 照官方建议价；0.5 = 五折中转；大于 1 也合法'
+                : '每个模型的建议价四项（带分档的连分档四价）× 系数后写进条目，分档阈值原样。1 = 照官方建议价；0.5 = 五折中转；大于 1 也合法'
             }
           >
             <input autoFocus inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} />

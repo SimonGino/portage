@@ -2,7 +2,18 @@ import { useState } from 'react'
 import { api } from '../../api'
 import type { ChannelModel, PricingModelPrice } from '../../api'
 import { IconPencil } from '../../icons/acts'
-import { PRICE_FIELDS, fmtPrice } from '../../prices'
+import {
+  PRICE_FIELDS,
+  TIER_FIELDS,
+  fmtPrice,
+  fmtTierTitle,
+  fmtTokensShort,
+  modelPriceBody,
+  parsePriceDraft,
+  samePrices,
+  suggestPriceBody,
+} from '../../prices'
+import type { PriceBody } from '../../prices'
 
 /**
  * ModelPrices 是纳管条目的「定价」编辑件（口径层 §2.10，#74；DESIGN v0.41 收进
@@ -16,6 +27,10 @@ import { PRICE_FIELDS, fmtPrice } from '../../prices'
  *
  * 建议价来自内置 models.dev 快照（渠道标注了 provider 才有），chip-suggest 同
  * 协议子集那颗「采纳」的形制：只提示，点了才落库；快照缺哪一价就建议 null，不补 0。
+ *
+ * 分档价（v0.75，#185）：有分档时实底芯片后跟小字「· >200k ↑」、全文进 title；编辑态
+ * 四框之下一颗默认收起的「+ 分档」，展开为「超过 [N] token 后」+ 四框，清空阈值 = 去分档。
+ * 建议价带分档时 chip 后缀「>200k 另价」，采纳连分档一起落。
  *
  * v0.62 起渠道详情页与定价页总表共用这一个组件（PO 2026-09-01 裁定总表可编辑，
  * 推翻 v1.10「只读总表」）——编辑面还是同一副，只是摆进了两页。
@@ -32,64 +47,79 @@ export function ModelPrices({
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<Record<string, string>>({})
+  const [tierOpen, setTierOpen] = useState(false)
 
-  const current: Record<string, number | null> = {
-    input: model.price_input,
-    output: model.price_output,
-    cache_read: model.price_cache_read,
-    cache_write: model.price_cache_write,
-  }
+  const current = modelPriceBody(model)
   const unpriced = PRICE_FIELDS.every(([k]) => current[k] === null)
 
-  function put(prices: Record<string, number | null>) {
+  function put(prices: PriceBody) {
     void mutate(() => api.put(`/channel-models/${model.id}`, { prices }))
   }
 
   function save() {
     setEditing(false)
-    const next: Record<string, number | null> = {}
-    for (const [k] of PRICE_FIELDS) {
-      const raw = (draft[k] ?? '').trim()
-      if (raw === '') {
-        next[k] = null
-        continue
-      }
-      const n = Number(raw)
-      // 解析不出或负数整组不存（同上限那颗的处置）：四价是一笔整组覆盖，
-      // 存下能解析的那几个会把没看清的输入悄悄写成 null。
-      if (!Number.isFinite(n) || n < 0) return
-      next[k] = n
-    }
-    if (PRICE_FIELDS.every(([k]) => next[k] === current[k])) return
+    // 解析不出、负数、阈值不是正整数整组不存（同上限那颗的处置），见 parsePriceDraft。
+    const next = parsePriceDraft(draft)
+    if (next === null || samePrices(next, current)) return
     put(next)
   }
 
   function open() {
     setDraft(
-      Object.fromEntries(PRICE_FIELDS.map(([k]) => [k, current[k] === null ? '' : String(current[k])])),
+      Object.fromEntries(Object.entries(current).map(([k, v]) => [k, v === null ? '' : String(v)])),
     )
+    setTierOpen(current.tier_above !== null)
     setEditing(true)
   }
 
   const title = PRICE_FIELDS.map(([k, label]) => `${label} ${fmtPrice(current[k])}`).join('，')
+  const tierTitle = current.tier_above !== null ? `；${fmtTierTitle(current)}` : ''
+  const tierSuffix = current.tier_above !== null && (
+    <span className="muted" title={fmtTierTitle(current)}>
+      · &gt;{fmtTokensShort(current.tier_above)} ↑
+    </span>
+  )
 
-  // 建议与现值逐项相等就不摆「采纳」：快照缺的价按 null 比，别拿 0 充数。
-  const suggestDiffers =
-    suggest !== null && PRICE_FIELDS.some(([k]) => (suggest[k] ?? null) !== current[k])
-  const suggestChip = suggestDiffers && (
+  // 建议与现值逐项相等（连分档）就不摆「采纳」：快照缺的价按 null 比，别拿 0 充数。
+  const suggested = suggest === null ? null : suggestPriceBody(suggest)
+  const suggestChip = suggested !== null && !samePrices(suggested, current) && (
     <button
       type="button"
       className="chip-toggle chip-suggest"
       title={`models.dev 快照的建议价（USD/百万 token）：${PRICE_FIELDS.map(
-        ([k, label]) => `${label} ${fmtPrice(suggest![k])}`,
-      ).join('，')}。只是建议，点「采纳」才落库`}
-      onClick={() =>
-        put(Object.fromEntries(PRICE_FIELDS.map(([k]) => [k, suggest![k] ?? null])))
-      }
+        ([k, label]) => `${label} ${fmtPrice(suggested[k])}`,
+      ).join('，')}${suggested.tier_above !== null ? `；${fmtTierTitle(suggested)}` : ''}。只是建议，点「采纳」才落库（连分档一起）`}
+      onClick={() => put(suggested)}
     >
-      models.dev {fmtPrice(suggest!.input)}/{fmtPrice(suggest!.output)} · 采纳
+      models.dev {fmtPrice(suggested.input)}/{fmtPrice(suggested.output)}
+      {suggested.tier_above !== null && (
+        <span className="muted"> &gt;{fmtTokensShort(suggested.tier_above)} 另价</span>
+      )}{' '}
+      · 采纳
     </button>
   )
+
+  function priceInput(k: string, autoFocus: boolean, digitsOnly = false) {
+    return (
+      <input
+        autoFocus={autoFocus}
+        value={draft[k] ?? ''}
+        inputMode={digitsOnly ? 'numeric' : 'decimal'}
+        onChange={(e) =>
+          setDraft((d) => ({ ...d, [k]: e.target.value.replace(digitsOnly ? /[^0-9]/g : /[^0-9.]/g, '') }))
+        }
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            save()
+          } else if (e.key === 'Escape') {
+            setEditing(false)
+          }
+        }}
+        placeholder="—"
+      />
+    )
+  }
 
   if (editing) {
     return (
@@ -111,24 +141,39 @@ export function ModelPrices({
           {PRICE_FIELDS.map(([k, label], i) => (
             <span key={k} className="limit-edit price-edit">
               <span className="price-edit-label">{label}</span>
-              <input
-                autoFocus={i === 0}
-                value={draft[k] ?? ''}
-                inputMode="decimal"
-                onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value.replace(/[^0-9.]/g, '') }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    save()
-                  } else if (e.key === 'Escape') {
-                    setEditing(false)
-                  }
-                }}
-                placeholder="—"
-              />
+              {priceInput(k, i === 0)}
             </span>
           ))}
           <span className="limit-edit-unit price-edit-unit">$/M</span>
+          {tierOpen ? (
+            <span
+              className="price-tier-row"
+              title="分档价：一笔调用的毛输入（含缓存读写）超过这个 token 数，整笔四项全按下面的价计；某价留空 = 沿用基础价。清空阈值 = 去分档"
+            >
+              <span className="price-edit-label">超过</span>
+              <span className="limit-edit price-edit price-tier-above">{priceInput('tier_above', true, true)}</span>
+              <span className="price-edit-label">token 后</span>
+              {TIER_FIELDS.map(([k, label]) => (
+                <span key={k} className="limit-edit price-edit">
+                  <span className="price-edit-label">{label}</span>
+                  {priceInput(k, false)}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="price-tier-row">
+              <button
+                type="button"
+                className="price-tier-add"
+                // mousedown 不抢焦点：Safari 点按钮不给它焦点，焦点一离开输入组就会先存盘收起。
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setTierOpen(true)}
+                title="长上下文分档价：毛输入超过阈值的调用整笔按另一套四价计"
+              >
+                + 分档
+              </button>
+            </span>
+          )}
         </span>
         <span className="muted">空 = 未定价 · 0 = 免费</span>
       </div>
@@ -165,11 +210,12 @@ export function ModelPrices({
         type="button"
         className="model-limit-chip"
         onClick={open}
-        title={`单价（USD/百万 token）：${title}。点击修改；改价只影响之后的流水，不追溯`}
+        title={`单价（USD/百万 token）：${title}${tierTitle}。点击修改；改价只影响之后的流水，不追溯`}
       >
         {fmtPrice(current.input)}/{fmtPrice(current.output)}
         <IconPencil />
       </button>
+      {tierSuffix}
       {(current.cache_read !== null || current.cache_write !== null) && (
         <span className="muted">
           缓存 {fmtPrice(current.cache_read)}/{fmtPrice(current.cache_write)}
