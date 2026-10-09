@@ -60,7 +60,11 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// 状态，而入口 codec 的 DecodeRequest 与 EncodeStream/EncodeFullBody 服务的是同
 	// 一次请求。openairesponses 就靠这条把「客户端声明了哪些 custom 工具」从解码侧
 	// 传到编码侧（见该包 Codec 的注释）。
-	codecOpts := codecs.Options{DefaultMaxTokens: s.cfg.DefaultMaxTokens}
+	// 订阅渠道（*_account，#213）：出站按 OpenAI 文档 D6 改写、恒为 SSE；客户端要
+	// 非流式时由下面的聚合路径收完再编。判据是 credential_type，不按地址判（口径层
+	// §2.2 v1.52）。入口半边同带这一位：previous_response_id 的 400 换订阅渠道的文案。
+	sub := store.IsSubscriptionCredentialType(cand.CredentialType)
+	codecOpts := codecs.Options{DefaultMaxTokens: s.cfg.DefaultMaxTokens, Subscription: sub}
 	inCodec, outCodec := codecs.New(ep.Proto, codecOpts), codecs.New(cand.Protocol, codecOpts)
 	if inCodec == nil || outCodec == nil {
 		s.log.Error("转换路径缺 codec", "inbound", ep.Proto, "channel", cand.Protocol)
@@ -139,8 +143,9 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 		// 口径层 §2.6：跨协议丢弃要有日志警告，不做伪映射也不静默。codec 只登记，
 		// 日志在这里打——codec 是纯函数，不持有 logger。工具类三档带名单（v1.14 ⑨，
 		// 渲染在 protocol.Drops.LogValue）。**排在下面的 400 之前**：编码被拒时这条
-		// 照打，两条对照才分得出「客户端发空」与「我们丢光」（v1.14 ⑦）。
-		s.log.Warn("跨协议转换丢弃字段",
+		// 照打，两条对照才分得出「客户端发空」与「我们丢光」（v1.14 ⑦）。订阅渠道
+		// 同协议也走这条路（#213），文案不再限定「跨协议」。
+		s.log.Warn("转换路径丢弃字段",
 			"inbound", ep.Proto, "channel_protocol", cand.Protocol, "dropped", dropped)
 	}
 	if err != nil {
@@ -166,16 +171,18 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 	// Tap 与 body 记录照样挂在**上游原始字节**上：usage 要的是上游自己报的数，
 	// 不是网关重编出来的响应。
 	dumpFrom(c).write("out.json", outBody)
+	// 出站恒为 SSE：Tap 按 SSE 解 usage，出站头按流式写。客户端的非流式由聚合路径
+	// 兜（下面 response 侧的分岔），出站这半边一个字不省。
 	xreq := exchange.Request{
 		Rec: rec, Inbound: ep.Proto, Route: routeOf(cand), Endpoint: outEp,
-		Body: outBody, Header: c.Request.Header, Stream: stream,
+		Body: outBody, Header: c.Request.Header, Stream: stream || sub,
 	}
 	res, ok := s.ex.Do(c.Request.Context(), c.Writer, xreq)
 	if !ok {
 		return
 	}
 	if res.Status == http.StatusBadRequest {
-		res, ok = s.retryTokenFloor(c, cand, outCodec, req, stream, xreq, res)
+		res, ok = s.retryTokenFloor(c, cand, outCodec, req, stream || sub, xreq, res)
 		if !ok {
 			return
 		}
@@ -192,6 +199,12 @@ func (s *Server) relayConverted(c *gin.Context, rec *calllog.Recorder, ep protoc
 
 	if stream {
 		s.streamConverted(c, rec, ep, cand, inCodec, outCodec, res)
+		s.warnResponseDrops(cand, outCodec)
+		return
+	}
+	if sub {
+		// 客户端要非流式而上游恒为 SSE（#213，§7.13）：不拒请求，收完聚出完整响应体。
+		s.aggregateConverted(c, rec, ep, cand, inCodec, outCodec, res)
 		s.warnResponseDrops(cand, outCodec)
 		return
 	}
@@ -326,12 +339,20 @@ func upstreamErrorMessage(raw []byte) (msg, code string) {
 			Message string `json:"message"`
 			Code    any    `json:"code"` // 有的上游写数字
 		} `json:"error"`
+		// detail 是 FastAPI 一族的错误形态：`{"detail":"<句子>"}`，没有 error 对象
+		// （订阅渠道 SIWC 的真机拒绝形态全是它，见 testdata/golden/responses-siwc-
+		// evidence/README.md；中转上游也常见）。不取它的话客户端只能看到
+		// 「上游返回 Bad Request」，上游明明说清了是哪个参数。
+		Detail string `json:"detail"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return "", ""
 	}
 	code, _ = payload.Error.Code.(string)
-	return payload.Error.Message, code
+	if payload.Error.Message != "" {
+		return payload.Error.Message, code
+	}
+	return payload.Detail, code
 }
 
 // contextTooLongRe 是各家说「输入超过模型上下文」的写法：OpenAI 的 maximum context
@@ -413,6 +434,67 @@ func (s *Server) streamConverted(c *gin.Context, rec *calllog.Recorder, ep proto
 			w.Abort(err)
 			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", upstream.Redact(err))
 		}
+	}
+}
+
+// aggregateConverted 跑订阅渠道的非流式聚合（#213，展开层 §7.13）：上游恒为 SSE
+// （出口被强制 stream:true），客户端要非流式时把事件收完，再按入口协议编码完整响应体。
+//
+// 与 bufferConverted 只差输入半边：那边上游回整包 JSON（DecodeFullBody），这边上游
+// 是 SSE（DecodeStream）；输出半边同为 EncodeFullBody，收场与记账同构——usage 出自
+// 挂在**上游原始字节**上的 Tap（SSE 模式，usage 在 response.completed 里），不由事件
+// 流回灌；三个入口协议各编各的完整响应体，不拒非流式请求。
+func (s *Server) aggregateConverted(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, inCodec, outCodec protocol.Codec, res *exchange.Result) {
+	events, err := outCodec.DecodeStream(res.Body)
+	if err != nil {
+		// 接口防御：今天三个 codec 的 DecodeStream 都恒返 nil（读断走带内 EvError
+		// 给到 EncodeFullBody），但 Codec 契约有这一格；真到那一天，失败收场与
+		// streamConverted 同一口径（#163）：落库的原文就是脱敏后的错误本身。
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("上游响应流解码失败", "channel", cand.ChannelName, "err", detail)
+		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流无法解析")
+		return
+	}
+	// 挂进收场序再收事件：EncodeFullBody 早退时（事件里带了 EvError）解码 goroutine
+	// 还在往通道里塞，Close 的排空步骤就是给它收摊的（#8）。
+	res.AttachStream(events)
+	collected := make([]protocol.Event, 0, 64)
+	for ev := range events {
+		collected = append(collected, ev)
+	}
+	out, err := inCodec.EncodeFullBody(collected)
+	if err != nil {
+		// 上游 200 开了流、中途 response.failed（事件里带 EvError），或聚合不出
+		// 响应体：非流式客户端等的是完整 JSON，改写不了只能按上游错误收场。
+		detail := upstream.Redact(err)
+		rec.Failed(calllog.UpstreamError, detail.Error())
+		s.log.Error("上游响应聚合失败", "inbound", ep.Proto, "channel", cand.ChannelName, "err", detail)
+		ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应无法聚合成完整响应体")
+		return
+	}
+	// 上游 200 开了流却没给终态（截断，或回的压根不是 SSE 字节）：不把空壳聚给
+	// 客户端——一个 200 的空响应体是查不出因的静默失败，与 bufferConverted 对非法
+	// JSON 回 502 同档。判据与 streamConverted 收尾那道同源（StreamReadReporter）；
+	// 带 EvError 的断流已在上面 EncodeFullBody 报错过，能走到这一步的只剩截断。
+	if r, ok := outCodec.(protocol.StreamReadReporter); ok {
+		if err := r.StreamReadError(); err != nil {
+			detail := upstream.Redact(err)
+			rec.Failed(calllog.UpstreamError, detail.Error())
+			s.log.Warn("上游响应流中断", "channel", cand.ChannelName, "err", detail)
+			ep.Proto.WriteError(c.Writer, http.StatusBadGateway, "上游响应流中断")
+			return
+		}
+	}
+
+	c.Writer.Header().Set("Content-Type", "application/json")
+	w := exchange.NewWriter(c.Writer, rec)
+	if err := w.WriteHeader(http.StatusOK); err != nil {
+		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
+		return
+	}
+	if _, err := w.Write(out); err != nil {
+		s.log.Warn("响应写出失败", "channel", cand.ChannelName, "err", err)
 	}
 }
 

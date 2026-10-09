@@ -21,6 +21,19 @@ import (
 // 在运行时组装才发现。
 var _ protocol.Codec = (*Codec)(nil)
 
+// Options 是建 Codec 时要从调用方注进来的东西（#213）。取显式结构体而非字段直塞，
+// 同 anthropic.Options 的理由：这个字段改变发给上游的字节，漏传的后果是静默的行为
+// 变化。变参形式是为了入口方向那批用例（DecodeRequest / 响应侧）不必逐个改。
+type Options struct {
+	// Subscription 表示本次请求发往订阅渠道（credential_type=chatgpt_account，
+	// 口径层 §2.2 v1.52「透传保真」的唯一例外）：出口按 OpenAI 文档 D6 的清单改写
+	// （强制 store:false / stream:true、丢 15 个字段、previous_response_id 拒），
+	// 判据是 credential_type、不按地址判。今天 *_account 里只有 chatgpt_account 能
+	// 落库（copilot_account 被启动闸拦着）；Copilot 实现票落地时若其改写清单与 D6
+	// 有出入，回这里分档。
+	Subscription bool
+}
+
 // Codec 带**每请求状态**，一个实例只能服务一次请求，不可复用、不可并发共享。
 //
 // 这是三个 codec 里唯一有状态的一个，代价是实打实的：Responses 的响应形态取决于
@@ -44,6 +57,11 @@ type Codec struct {
 	// 「上游传输断了」与「上游回了个错误对象」在事件流里都是 EvError，收场判不出
 	// 来，靠这一位分开（见 DecodeStream 与 server 侧 streamConverted）。
 	protocol.StreamReadFlag
+
+	// sub 是「本次请求发往订阅渠道」（Options.Subscription），由 codecs.New 按渠道的
+	// credential_type 传入。入口半边用它给 previous_response_id 的 400 换准确文案
+	// （stateful.go），出口半边用它做 D6 改写（encode_request.go）。
+	sub bool
 
 	// customTools 是本次请求声明为 custom 的工具名（摊平名），由 DecodeRequest 填。
 	customTools map[string]bool
@@ -112,7 +130,13 @@ func (c *Codec) resetResponseDrops() {
 	c.responseDrops = protocol.NameList{}
 }
 
-func NewCodec() *Codec { return &Codec{} }
+func NewCodec(opts ...Options) *Codec {
+	c := &Codec{}
+	if len(opts) > 0 {
+		c.sub = opts[0].Subscription
+	}
+	return c
+}
 
 // NamespaceTools 是本次请求的 namespace 映射表（摊平名 → 来处），没有非默认命名空间
 // 子工具时为 nil。只读：调用方拿去查，不改。

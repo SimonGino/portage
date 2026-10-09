@@ -63,6 +63,11 @@ type Summary struct {
 	// Degraded 表示 Tap 主动放弃了解析（单帧超限，或解析途中 panic 被兜住）。
 	// 它只削弱这一行日志的可信度，永远不影响转发出去的字节。
 	Degraded bool
+	// ErrorCode 是上游在流里报的错误码（Responses 的 response.failed 帧
+	// 带 response.error.code，裸 error 帧带顶层 code；Anthropic / CC 流内错误帧没有
+	// 这一格，恒空）。空串 = 上游没给。由 Tap 从原始字节里透出，**只透出、不映射**——
+	// 上游码到流水词的词表映射归记账票（#213 建管道、接口窄缝就是这一格，#215 接映射）。
+	ErrorCode string
 }
 
 // Tap 旁路观察上游响应的原始字节流，只读不改。

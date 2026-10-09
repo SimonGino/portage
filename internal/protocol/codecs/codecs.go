@@ -23,6 +23,10 @@ type Options struct {
 	// R→CC 路径上客户端没给 max_output_tokens 时，CC 上游本来不受限，填了就开始
 	// 悄悄截断。这是 Anthropic 一家的必填要求，所以只由 anthropic 包在编码时用。
 	DefaultMaxTokens int
+	// Subscription 表示本次出口是订阅渠道（*_account，#213）：openairesponses 编码侧
+	// 按 OpenAI 文档 D6 改写（强制 store:false / stream:true、丢字段清单、
+	// previous_response_id 拒），relay 按渠道的 credential_type 填这一位，不按地址判。
+	Subscription bool
 }
 
 // New 按协议挑 Codec；协议不认得时返回 nil，由调用方决定是报错还是退回透传。
@@ -42,7 +46,7 @@ func New(p protocol.Protocol, opts Options) protocol.Codec {
 	case protocol.OpenAI:
 		return openaicc.NewCodec()
 	case protocol.OpenAIResponses:
-		return openairesponses.NewCodec()
+		return openairesponses.NewCodec(openairesponses.Options{Subscription: opts.Subscription})
 	}
 	return nil
 }

@@ -24,8 +24,9 @@ import (
 // 没实现 RequestInspector 就没有可检查的东西——今天只有 Responses 有。
 func (s *Server) rejectPassthrough(c *gin.Context, rec *calllog.Recorder, ep protocol.Endpoint, cand store.Candidate, body []byte) bool {
 	// 与 relay 里那个分岔判据用同一种写法（server.go 的 `cand.Protocol != ep.Proto`）：
-	// 同一个概念不该有两种拼法。
-	if cand.Protocol != ep.Proto {
+	// 同一个概念不该有两种拼法。订阅渠道（#213）不走透传，同样让路——它根本没有
+	// 透传那半边可管，压缩 turn 与 previous_response_id 都由转换路径接管。
+	if cand.Protocol != ep.Proto || store.IsSubscriptionCredentialType(cand.CredentialType) {
 		return false
 	}
 	insp, ok := codecs.New(ep.Proto, codecs.Options{DefaultMaxTokens: s.cfg.DefaultMaxTokens}).(protocol.RequestInspector)

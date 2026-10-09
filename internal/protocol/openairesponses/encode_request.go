@@ -51,7 +51,24 @@ const (
 	// DropToolChoice 是 auto / none 落空（转换后没有工具可选）时省略掉的 tool_choice，
 	// 名单记 mode（口径层 v1.14 ⑧、v1.15：三个出口同一规则）。
 	DropToolChoice = "tool_choice"
+	// DropSIWCField 是订阅渠道（chatgpt_account，#213）按 OpenAI 文档 D6 丢掉的
+	// 顶层字段，名单记字段名（事实源展开层 §7.13，与 store/stream 的强制不同档：
+	// 强制是改写，这一档是丢弃登记）。
+	DropSIWCField = "siwc_field"
 )
+
+// siwcFields 是订阅渠道出口必丢的 Responses 顶层字段清单（OpenAI 文档 D6，逐字见
+// 展开层 §7.13）：上游收到就 400（reject-temperature 的真机证据在
+// testdata/golden/responses-siwc-evidence/）。max_output_tokens 与 temperature 在
+// canonical 里是一等字段（MaxTokens / Temperature），不在这张表里也丢——表只管住在
+// Extras 里的那十三个。
+var siwcFields = map[string]bool{
+	"background": true, "conversation": true, "max_tool_calls": true,
+	"metadata": true, "moderation": true, "multi_agent": true,
+	"prompt": true, "prompt_cache_retention": true,
+	"safety_identifier": true, "top_logprobs": true, "top_p": true,
+	"truncation": true, "user": true,
+}
 
 // EncodeRequest 把 canonical 编成 Responses 请求体。
 func (c *Codec) EncodeRequest(req *protocol.Request, stream bool) ([]byte, error) {
@@ -93,20 +110,36 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 		out["tool_choice"] = choice
 	}
 
-	if req.MaxTokens > 0 {
+	if req.MaxTokens > 0 && !c.sub {
 		// 只在客户端真的限了才发。Responses 的 max_output_tokens 可缺省，而
 		// Anthropic 出口那种「零值补一个配置默认值」的做法在这里没有理由——那是
-		// 因为 Anthropic 必填，这边不必填。
+		// 因为 Anthropic 必填，这边不必填。订阅渠道例外：D6 清单里的 max_output_tokens
+		// 带过去就被上游 400（#213）。
 		out["max_output_tokens"] = req.MaxTokens
 	}
-	if stream {
+	if req.MaxTokens > 0 && c.sub {
+		dropped.Add(DropSIWCField, "max_output_tokens")
+	}
+	if stream || c.sub {
+		// 订阅渠道强制 stream:true（D6：上游只回 SSE；reject-stream-false 的真机
+		// 证据在 responses-siwc-evidence/）。客户端要非流式时由 relay 收完 SSE 再聚出
+		// 完整响应体（server.aggregateConverted），这里只管出站体。
 		out["stream"] = true
 	}
 	// store:false 恒发：九份真实 Codex 请求都带它。不存留在上游侧是这个网关的默认
 	// 立场，省略等于把留存与否交给上游的默认值。
 	out["store"] = false
 
-	if req.Temperature != nil || len(req.Stop) > 0 {
+	if req.Temperature != nil {
+		// 订阅渠道的 temperature 在 D6 清单里，走 siwc_field 那一档；其余渠道照旧
+		// 归 DropSampling（temperature / top_p / stop 同档）。
+		if c.sub {
+			dropped.Add(DropSIWCField, "temperature")
+		} else {
+			drop(DropSampling)
+		}
+	}
+	if len(req.Stop) > 0 {
 		drop(DropSampling)
 	}
 
@@ -132,7 +165,25 @@ func (c *Codec) encodeRequest(req *protocol.Request, stream bool) ([]byte, proto
 
 	// 入口协议独有的顶层字段一律不带过去（Extras 永不外带，三个出口一致），
 	// 且**按档分类**（分档规则在 protocol.ClassifyExtrasKey，三个出口共用一份）。
+	// 订阅渠道先看 D6 清单：清单里的字段（含 metadata / user 这两个别处有专属档
+	// 的）一律记 siwc_field，让「订阅渠道为什么丢了这个」在日志里一眼可归因。store
+	// 同理由改写接管（出口恒发 store:false），不走 vendor_request 那一档——store:false
+	// 是九份真实 Codex 请求的常态，逐请求记一条只会把日志刷成噪声；翻了值的
+	// （store:true 被强改成 false）才记 siwc_field：那是 D6 清单外唯一一处「客户端
+	// 明说了、我们改掉了」的静默改写，不留痕会让人查为什么没存上。只登记、
+	// 不动 req.Extras：codec 对 canonical 请求只读，真去改它，调用方（如 retryTokenFloor
+	// 的重发）拿同一个 req 再编一次时这份登记就悄悄没了。
 	for k := range req.Extras {
+		if c.sub && siwcFields[k] {
+			dropped.Add(DropSIWCField, k)
+			continue
+		}
+		if c.sub && k == "store" {
+			if v, _ := req.Extras[k].(bool); v {
+				dropped.Add(DropSIWCField, "store")
+			}
+			continue
+		}
 		switch protocol.ClassifyExtrasKey(k) {
 		case protocol.ExtrasDropMetadata:
 			drop(DropMetadata)

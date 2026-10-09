@@ -455,20 +455,27 @@ func (st *respStreamState) event(f *respFrame, out chan<- protocol.Event) {
 		st.terminal(f, out)
 
 	case "response.failed":
-		msg := "上游响应失败"
-		if f.Response != nil && f.Response.Error != nil && f.Response.Error.Message != "" {
-			msg = f.Response.Error.Message
+		msg, code := "上游响应失败", ""
+		if f.Response != nil && f.Response.Error != nil {
+			if f.Response.Error.Message != "" {
+				msg = f.Response.Error.Message
+			}
+			// 错误码透出（#213）：词表映射归记账票（#215），解码只负责不丢。
+			code = f.Response.Error.Code
 		}
-		st.emitError(msg, out)
+		st.emitError(msg, code, out)
 
 	case "error":
 		// 裸 error 帧（不裹 response 对象）。上游 key 与 base_url 不进 Message：
 		// 只取上游自己给的 message 文本，不拼接任何本地连接信息。
-		msg := "上游响应失败"
-		if f.Error != nil && f.Error.Message != "" {
-			msg = f.Error.Message
+		msg, code := "上游响应失败", ""
+		if f.Error != nil {
+			if f.Error.Message != "" {
+				msg = f.Error.Message
+			}
+			code = f.Error.Code
 		}
-		st.emitError(msg, out)
+		st.emitError(msg, code, out)
 
 	default:
 		// knownRespEvents 里的（in_progress / content_part.added|done /
@@ -713,12 +720,12 @@ func (st *respStreamState) observeUsage(u *respUsage, out chan<- protocol.Event)
 	out <- protocol.Event{Type: protocol.EvUsage, Usage: &snapshot}
 }
 
-func (st *respStreamState) emitError(msg string, out chan<- protocol.Event) {
+func (st *respStreamState) emitError(msg, code string, out chan<- protocol.Event) {
 	if st.errSent || st.doneSent {
 		return
 	}
 	st.errSent = true
-	out <- protocol.Event{Type: protocol.EvError, Message: msg}
+	out <- protocol.Event{Type: protocol.EvError, Message: msg, Code: code}
 }
 
 func (st *respStreamState) done(out chan<- protocol.Event) {
@@ -772,11 +779,14 @@ func (c *Codec) DecodeFullBody(body []byte) ([]protocol.Event, error) {
 	}}
 
 	if payload.Status == "failed" {
-		msg := "上游响应失败"
-		if payload.Error != nil && payload.Error.Message != "" {
-			msg = payload.Error.Message
+		msg, code := "上游响应失败", ""
+		if payload.Error != nil {
+			if payload.Error.Message != "" {
+				msg = payload.Error.Message
+			}
+			code = payload.Error.Code
 		}
-		return append(events, protocol.Event{Type: protocol.EvError, Message: msg}), nil
+		return append(events, protocol.Event{Type: protocol.EvError, Message: msg, Code: code}), nil
 	}
 
 	sawTool := false

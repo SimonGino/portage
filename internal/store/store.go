@@ -926,6 +926,15 @@ const (
 	CredentialTypeCopilotAccount = "copilot_account"
 )
 
+// IsSubscriptionCredentialType 报告这个凭证类型是不是订阅渠道（*_account，
+// 口径层 §2.2 v1.52）：订阅渠道不走透传——同协议也进 decode→encode 转换，是
+// 「透传保真」硬约束的唯一例外（AGENTS / 展开层 §7.13）。relay 的分岔与透传前置闸
+// 都看这一位。今天库里只可能出现 chatgpt_account（copilot_account 被启动闸拦着），
+// 两个词一起判是把票面的「*_account」写进代码，Copilot 落地时不用回这里补。
+func IsSubscriptionCredentialType(t string) bool {
+	return t == CredentialTypeChatGPTAccount || t == CredentialTypeCopilotAccount
+}
+
 // 渠道级的凭证选取模式（口径层 v0.11）。库里的默认值是 polling，认不得的取值一律
 // 当 polling——这一列可以是手写 SQL 灌进来的，为一个拼错的模式名让请求失败不值当。
 const (

@@ -344,7 +344,9 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 
 		// 透传请求检查闸（Codex 压缩闸，口径层 v0.54；Responses 有状态续链闸，口径层
 		// v0.88）：拦在选完渠道之后、分岔之前——判据要同时用到「渠道说哪个协议」与渠道
-		// 能力位。它只管**透传**那半边，转换那半边由 codec 在 DecodeRequest 里就地处置。
+		// 能力位。它只管**透传**那半边，转换那半边由 codec 在 DecodeRequest 里就地处置；
+		// 订阅渠道（#213）不走透传，这道闸对它让路（压缩 turn 由转换路径本地合成、
+		// previous_response_id 由解码侧拒，能力位不再参与判）。
 		// 与下面的 RewriteModel 400 一样都在 rec.Dialing 之前——一个字节都没打上游。
 		// 判据本身在入口协议 codec 的 RequestInspector 里，见 inspect.go。
 		if s.rejectPassthrough(c, rec, ep, cand, body) {
@@ -382,11 +384,17 @@ func (s *Server) relay(ep protocol.Endpoint) gin.HandlerFunc {
 			cand.Credentials = creds
 		}
 
-		// 转换闸。portage-legacy#80 九宫格全开、count_tokens 又在上面拆去本地路之后，
-		// 今天没有能走到这条 501 的组合——留着它是给将来新端点兜底：既没有上游对应
-		// 端点、也没有本地路的入口，落进来该被明确拒掉而不是乱转。
-		if cand.Protocol != ep.Proto {
-			if !conversionOpen(ep, cand.Protocol) {
+		// 转换闸 + 订阅渠道分岔。portage-legacy#80 九宫格全开、count_tokens 又在上面
+		// 拆去本地路之后，今天没有能走到这条 501 的组合——留着它是给将来新端点兜底：
+		// 既没有上游对应端点、也没有本地路的入口，落进来该被明确拒掉而不是乱转。
+		//
+		// 订阅渠道（*_account，#213）不走透传——同协议也直接走转换路径：出站要按
+		// OpenAI 文档 D6 改写（强制 store:false / stream:true、丢字段、system→developer），
+		// 透传的字节原样复制做不到这些，这是「透传保真」硬约束的唯一例外（口径层
+		// §2.2 v1.52、AGENTS）。同协议那格不在 conversionOpen 的九宫格里（对角线本属
+		// 透传），所以闸只拦跨协议的组合。
+		if cand.Protocol != ep.Proto || store.IsSubscriptionCredentialType(cand.CredentialType) {
+			if cand.Protocol != ep.Proto && !conversionOpen(ep, cand.Protocol) {
 				ep.Proto.WriteError(c.Writer, http.StatusNotImplemented,
 					"该端点没有对应的转换路径："+ep.Path+" → "+string(cand.Protocol))
 				return

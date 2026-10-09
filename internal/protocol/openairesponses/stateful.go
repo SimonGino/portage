@@ -43,13 +43,24 @@ const PreviousResponseGuidance = "请把完整对话历史放进 input 重发，
 const convertPathMsg = "该请求要转换成另一套协议发往上游，Responses 的有状态续链" +
 	"（previous_response_id）在转换路径上不成立：" + PreviousResponseGuidance + "。"
 
-// PreviousResponseRejection 造转换路径那条 400。
+// subscriptionMsg 是订阅渠道那一条的完整文案（#213）：同协议也进转换，但拒绝的
+// 真因不足「转换」，而是这类渠道根本不做有状态续链（supports_stateful_responses
+// 强制否）——说「要转成另一套协议」会把人引去查一个不存在的分岔。
+const subscriptionMsg = "订阅渠道不支持 Responses 有状态续链（previous_response_id）：" +
+	PreviousResponseGuidance + "。"
+
+// PreviousResponseRejection 造那条 400。subscription 为真时用订阅渠道的文案
+// （解码侧的 codec 由 codecs.New 按渠道 credential_type 带过这个位）。
 //
 // 每次新建一个而不是暴露一个包级 var：*RequestError 是指针，共享一份等于给每个调用点
 // 一个能改掉所有人错误文案的把手。
-func PreviousResponseRejection() *protocol.RequestError {
+func PreviousResponseRejection(subscription bool) *protocol.RequestError {
+	msg := convertPathMsg
+	if subscription {
+		msg = subscriptionMsg
+	}
 	return &protocol.RequestError{
-		Message: convertPathMsg,
+		Message: msg,
 		Code:    CodePreviousResponseNotFound,
 		Param:   ParamPreviousResponseID,
 	}
