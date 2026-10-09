@@ -6,9 +6,12 @@ import { Avatar } from '../../icons'
 import { ChannelForm } from './form'
 import { filterPresets } from './derive'
 
+// 目录三组（DESIGN v0.72；v0.77 加第三组「订阅」）：组内顺序即清单顺序；没有条目的组
+// 整组不渲染（订阅组首版只有 ChatGPT 一块，Copilot 等实现跑通再上、不做占位）。
 const GROUPS: { id: ChannelPreset['group']; label: string }[] = [
   { id: 'vendor', label: '厂商 API' },
   { id: 'relay', label: '中转' },
+  { id: 'subscription', label: '订阅' },
 ]
 
 /**
@@ -39,7 +42,7 @@ export function NewChannel({
 }
 
 /**
- * PresetCatalog 是目录态：搜索 + 「厂商 API」「中转」两组 tile + 底部「自定义」行。
+ * PresetCatalog 是目录态：搜索 + 「厂商 API」「中转」「订阅」三组 tile + 底部「自定义」行。
  * 清单拉失败只挂错误条，自定义照常可走——目录是捷径，不是建渠道的前提。
  */
 function PresetCatalog({

@@ -23,17 +23,23 @@ var raw []byte
 type Preset struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
-	Group string `json:"group"` // vendor（厂商 API）/ relay（中转）
+	Group string `json:"group"` // vendor（厂商 API）/ relay（中转）/ subscription（订阅，#216）
 	// Icon 是 web/src/icons/svg 下的图标键。
 	Icon string `json:"icon"`
 	// ModelsDev 是 models.dev 快照的 provider id，即渠道 provider 标注的键；空 = 不标注。
+	// 订阅组条目一律不填（#216）：建议模型机制不服务订阅渠道，模型拉取走官方目录（#214）。
 	ModelsDev string            `json:"models_dev,omitempty"`
 	Protocols map[string]string `json:"protocols,omitempty"`
-	KeysURL   string            `json:"keys_url"`
-	Note      string            `json:"note,omitempty"`
+	// KeysURL 是 key 申请页；订阅组不填（#216）——那组没有可填的 key，凭证由账号登录产生。
+	KeysURL string `json:"keys_url,omitempty"`
+	Note    string `json:"note,omitempty"`
 	// AuthScheme 预填「认证头」：default / bearer / raw，空 = default。
 	AuthScheme string `json:"auth_scheme,omitempty"`
-	Plans      []Plan `json:"plans,omitempty"`
+	// CredentialType 只在订阅组条目上（#216，口径层 §2.2 v1.52）：选中即预填新建表单，
+	// 建成的渠道带上这个凭证类型——前端据此把凭证段换成「登录」而非 key 输入。
+	// 非订阅组条目不填（校验闸见 preset_test）。
+	CredentialType string `json:"credential_type,omitempty"`
+	Plans          []Plan `json:"plans,omitempty"`
 }
 
 // Plan 是同一家 key 不通用的一套地址（国际 / 中国、按量 / Coding Plan）。

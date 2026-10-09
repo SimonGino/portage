@@ -3,7 +3,7 @@
 // 抽成纯函数才测得动（derive.test.ts；照排行页 intervals.ts 成例，#56）。
 // 状态与网络在 useChannel.tsx，JSX 只负责摆。
 
-import { PROTOCOL_ORDER } from '../../api'
+import { PROTOCOL_ORDER, declaredProtocols } from '../../api'
 import type {
   AuthScheme,
   BaseURLs,
@@ -11,6 +11,7 @@ import type {
   ChannelModel,
   ChannelPreset,
   Credential,
+  CredentialType,
   ModelListResult,
   Protocol,
   PresetPlan,
@@ -381,4 +382,58 @@ export function preChecked(
 ): Set<string> {
   const s = new Set(suggested)
   return new Set([...upstream].filter((n) => s.has(n) && !existing.has(n)))
+}
+
+// ── 新建渠道的落库请求体（#216）──────────────────────────────────────────────
+
+/** 新建表单收出一份建渠道请求体：「登录」与「创建」两条路共用，差在后者顺手带
+ *  一份 key。字段汇集本身没什么可算的，抽成纯函数为的是把条件随行的三位钉进
+ *  测试——尤其 credential_type（订阅组预设才带）：这一项丢了渠道会静默建成
+ *  api_key，点「登录」只能吃 400，页面上什么都看不出来。 */
+export interface ChannelCreateDraft {
+  name: string
+  /** joinBaseURLs 合回的原始 map；空串项在这里剔掉（勾了协议但前缀还空着 = 未
+   *  声明，服务端 store 同判，剔掉只是不让空键走网络）。 */
+  urls: BaseURLs
+  maxConcurrency: number
+  provider: string
+  authScheme: AuthScheme
+  /** 能力位只在声明了 Responses 时才进请求体（不传 = 那一列不动）。 */
+  compaction: boolean
+  stateful: boolean
+  /** 订阅组预设的凭证类型；厂商/中转/自定义不给——请求体不带这键，渠道落
+   *  DDL 默认 api_key。 */
+  credentialType?: CredentialType
+}
+
+export interface ChannelCreatePayload {
+  name: string
+  base_url: BaseURLs
+  max_concurrency: number
+  provider: string
+  auth_scheme: AuthScheme
+  supports_compaction?: boolean
+  supports_stateful_responses?: boolean
+  credential_type?: CredentialType
+}
+
+export function channelCreatePayload(d: ChannelCreateDraft): ChannelCreatePayload {
+  const base: BaseURLs = {}
+  for (const p of PROTOCOL_ORDER) {
+    const v = (d.urls[p] ?? '').trim()
+    if (v !== '') base[p] = v
+  }
+  const out: ChannelCreatePayload = {
+    name: d.name,
+    base_url: base,
+    max_concurrency: d.maxConcurrency,
+    provider: d.provider,
+    auth_scheme: d.authScheme,
+  }
+  if (declaredProtocols(base).includes('openai_responses')) {
+    out.supports_compaction = d.compaction
+    out.supports_stateful_responses = d.stateful
+  }
+  if (d.credentialType) out.credential_type = d.credentialType
+  return out
 }

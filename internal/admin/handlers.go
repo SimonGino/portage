@@ -253,9 +253,13 @@ type channelInput struct {
 	SupportsStatefulResponses *bool `json:"supports_stateful_responses"`
 	// Provider 是 models.dev 标注（口径层 §2.10，#74）：只服务建议价与图标分组，
 	// 不参与路由。指针的 nil 同上——缺省时建成「未标注」。
-	Provider   *string `json:"provider"`
-	Disabled   bool    `json:"disabled"`
-	Credential string  `json:"credential"`
+	Provider *string `json:"provider"`
+	// CredentialType 是渠道级凭证类型（#211 一列四值；#216 起管理端建渠道入口可写，
+	// 选「订阅」组预设时前端带上 chatgpt_account）。空串 = 没提，落 DDL 默认 api_key；
+	// 值域闸在 store——拼错的类型名 400 点名，而不是静默建成 api_key。
+	CredentialType string `json:"credential_type"`
+	Disabled       bool   `json:"disabled"`
+	Credential     string `json:"credential"`
 }
 
 // parseBaseURLs 把请求体里的「协议名 → 地址」映射落到 store.BaseURLs。收 map 的
@@ -287,6 +291,7 @@ func (in channelInput) toStore() (store.ChannelInput, error) {
 		SupportsCompaction:        in.SupportsCompaction,
 		SupportsStatefulResponses: in.SupportsStatefulResponses,
 		Provider:                  in.Provider,
+		CredentialType:            strings.TrimSpace(in.CredentialType),
 		Disabled:                  in.Disabled,
 	}, nil
 }

@@ -400,15 +400,18 @@ export const AUTH_SCHEME_OPTIONS: { value: AuthScheme; label: string }[] = [
 export interface ChannelPreset {
   id: string
   name: string
-  group: 'vendor' | 'relay'
+  group: 'vendor' | 'relay' | 'subscription'
   /** web/src/icons/svg 下的图标键。 */
   icon: string
-  /** models.dev provider id，即渠道 provider 标注；空 = 不标注。 */
+  /** models.dev provider id，即渠道 provider 标注；空 = 不标注。订阅组一律不填（#216）。 */
   models_dev?: string
   protocols?: BaseURLs
-  keys_url: string
+  /** key 申请页；订阅组没有（#216）——那组的凭证由账号登录产生，无 key 可拿。 */
+  keys_url?: string
   note?: string
   auth_scheme?: AuthScheme
+  /** 只在订阅组条目上（#216）：建成的渠道带这个凭证类型，表单凭证段据此切「登录」。 */
+  credential_type?: CredentialType
   plans?: PresetPlan[]
 }
 

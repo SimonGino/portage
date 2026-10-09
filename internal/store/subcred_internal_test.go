@@ -290,3 +290,33 @@ func TestResolveDistinguishesReauthFromUnusable(t *testing.T) {
 		}
 	})
 }
+
+// #216：允许先建空渠道再登录（口径层 §2.2 v1.52，「缺凭证」标记照旧）。订阅渠道的
+// 凭证由账号登录产生，而登录弹层按渠道 id 发号——渠道得先存在。启用中的空订阅渠道
+// 因此必须是合法配置（写后校验与启动闸共用 Validate），api_key 渠道维持「零凭证即拦」：
+// 它的凭证只能粘贴，没有「先存在才能登录」的次序约束。
+func TestValidateAllowsEmptySubscriptionChannel(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	if _, err := CreateChannel(ctx, db, ChannelInput{
+		Name: "chatgpt", BaseURLs: BaseURLs{OpenAIResponses: "https://api.openai.com"},
+		CredentialType: CredentialTypeChatGPTAccount}); err != nil {
+		t.Fatalf("建空订阅渠道: %v", err)
+	}
+	if err := Validate(ctx, db); err != nil {
+		t.Errorf("启用中的空订阅渠道该过校验（先建后登的中间态）: %v", err)
+	}
+
+	// 对照组：api_key 渠道零凭证仍拦——豁免只给「凭证由登录产生」的那两类。
+	if _, err := CreateChannel(ctx, db, ChannelInput{
+		Name: "plain", BaseURLs: BaseURLs{OpenAIResponses: "https://api.openai.com"}}); err != nil {
+		t.Fatalf("建空 key 渠道: %v", err)
+	}
+	err := Validate(ctx, db)
+	if err == nil || !strings.Contains(err.Error(), "plain") {
+		t.Fatalf("api_key 渠道零凭证该被拦并点名, got %v", err)
+	}
+	if strings.Contains(err.Error(), "chatgpt") {
+		t.Errorf("空订阅渠道不该进零凭证报数: %v", err)
+	}
+}
