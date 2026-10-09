@@ -18,9 +18,9 @@ import (
 const siwcRequest = `{"model":"` + accessPointModel + `","stream":false,` +
 	`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"ping"}]}]}`
 
-// seedSubscriptionGateway 种一个 chatgpt_account 渠道（openai_responses 透传）+
-// 一把 expires_at 过会儿就到期的凭证，把订阅引擎指向 token 端点。回的 *atomic.Int64
-// 是 token 端点的命中计数。
+// seedSubscriptionGateway 种一个 chatgpt_account 渠道（openai_responses；#213 起
+// 同协议也进转换）+ 一把 expires_at 由调用方定的凭证，把订阅引擎指向 token 端点。
+// 回的 *atomic.Int64 是 token 端点的命中计数。
 func seedSubscriptionGateway(t *testing.T, expiresAt time.Time, token func(w http.ResponseWriter, r *http.Request)) (*gatewaytest.Gateway, *gatewaytest.Upstream, *atomic.Int64, int64) {
 	t.Helper()
 	up := gatewaytest.NewUpstream(t)
@@ -49,7 +49,8 @@ func seedSubscriptionGateway(t *testing.T, expiresAt time.Time, token func(w htt
 }
 
 // TestSubscriptionRelayRefreshesBeforeUpstream：出站前懒刷新，上游收到的 Bearer 是
-// 刷新后的 access，轮换的 refresh token 落了库。
+// 刷新后的 access，轮换的 refresh token 落了库。上游回真机 SSE，顺带钉住刷新之后
+// 客户端（非流式）拿到的是聚合出的完整响应体（#213）。
 func TestSubscriptionRelayRefreshesBeforeUpstream(t *testing.T) {
 	gw, up, hits, credID := seedSubscriptionGateway(t,
 		time.Now().Add(time.Minute),
@@ -58,10 +59,14 @@ func TestSubscriptionRelayRefreshesBeforeUpstream(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"at-new","token_type":"Bearer","expires_in":3600,` +
 				`"scope":"chatgpt.tokens.use.direct","id_token":"idt-2","refresh_token":"rt-new"}`))
 		})
+	serveSIWCGolden(t, up)
 
 	resp := gw.Post(t, "/v1/responses", siwcRequest, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("状态码 = %d, 期望 200；body=%s", resp.StatusCode, gatewaytest.ReadBody(t, resp))
+	}
+	if body := gatewaytest.ReadBody(t, resp); !strings.Contains(body, "pong") {
+		t.Errorf("聚合体里没有正文 pong: %s", body)
 	}
 
 	got := up.Last(t)

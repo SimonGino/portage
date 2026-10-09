@@ -168,7 +168,7 @@ func TestConvertedRequestWarnsAboutDroppedFields(t *testing.T) {
 
 	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", convertRequest, nil))
 
-	lines := gw.Lines("跨协议转换丢弃字段")
+	lines := gw.Lines("转换路径丢弃字段")
 	if len(lines) == 0 {
 		t.Fatalf("没有丢弃警告日志；已落日志: %s", gw.RawLog())
 	}
@@ -194,7 +194,7 @@ func TestConvertedDropWarningNamesEveryServerTool(t *testing.T) {
 		`"messages":[{"role":"user","content":"hi"}]}`
 	gatewaytest.ReadBody(t, gw.Post(t, "/v1/messages", body, nil))
 
-	if len(gw.Lines("跨协议转换丢弃字段")) == 0 {
+	if len(gw.Lines("转换路径丢弃字段")) == 0 {
 		t.Fatalf("没有丢弃警告日志；已落日志: %s", gw.RawLog())
 	}
 	raw := gw.RawLog()
@@ -233,7 +233,7 @@ func TestConvertedRejectsToolChoiceLeftEmpty(t *testing.T) {
 		t.Errorf("请求不该到达上游，却收到 %d 次", up.Count())
 	}
 	// 拒之前先把丢弃日志打出来，看日志的人才知道 required 为什么会落空。
-	if len(gw.Lines("跨协议转换丢弃字段")) == 0 {
+	if len(gw.Lines("转换路径丢弃字段")) == 0 {
 		t.Errorf("拒收前没出丢弃警告；已落日志: %s", gw.RawLog())
 	}
 	if len(gw.Lines("转换后的请求被拒")) == 0 {

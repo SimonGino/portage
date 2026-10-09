@@ -26,6 +26,11 @@ type response struct {
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
+	// Error 是终态事件里的错误对象：response.failed 带 {code, message}。code 由
+	// apply 透出到 Summary.ErrorCode（词表映射归记账票 #215，这里只透出）。
+	Error *struct {
+		Code string `json:"code"`
+	} `json:"error"`
 	Usage *struct {
 		InputTokens        int `json:"input_tokens"`
 		OutputTokens       int `json:"output_tokens"`
@@ -52,10 +57,11 @@ type response struct {
 }
 
 // 流式下每个生命周期事件都裹一层 response 对象，最终值来自 response.completed /
-// response.incomplete / response.failed。
+// response.incomplete / response.failed。裸 error 帧不裹 response，code 在顶层。
 type event struct {
 	Type     string    `json:"type"`
 	Response *response `json:"response"`
+	Code     string    `json:"code"`
 }
 
 // observeEvent 返回这一帧是不是收尾帧：response.completed / incomplete，或流内错误
@@ -73,6 +79,11 @@ func observeEvent(sum *protocol.Summary, sseEvent string, data []byte) bool {
 	// output_text.delta 之类的增量事件没有 response 字段，不取值。
 	if e.Response != nil {
 		apply(sum, e.Response)
+	}
+	// 裸 error 帧（不裹 response 对象）的 code 在顶层；response.failed 的 code 在
+	// response.error 里，由 apply 取。两路都只透出，不在此做任何词表映射。
+	if e.Type == "error" && e.Code != "" {
+		sum.ErrorCode = e.Code
 	}
 	switch e.Type {
 	case "response.completed", "response.incomplete", "response.failed", "error":
@@ -92,6 +103,12 @@ func observeBody(sum *protocol.Summary, body []byte) {
 func apply(sum *protocol.Summary, r *response) {
 	if r.Model != "" {
 		sum.Model = r.Model
+	}
+	// 流内错误码透出（#213）：记账票拿它做词表映射（如撞限 → plan_limit_exceeded，
+	// #215），这里一个字都不改。拒绝形态（HTTP 层 {"detail":…}）没有 error.code，
+	// 这一格恒空，那是 #215 从错误体里自己取的落点。
+	if r.Error != nil && r.Error.Code != "" {
+		sum.ErrorCode = r.Error.Code
 	}
 	// Responses 没有独立的 stop_reason 字段，终止信息在 status 上；截断时具体原因
 	// （max_output_tokens 等）在 incomplete_details.reason 里，取更具体的那个。

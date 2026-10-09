@@ -61,7 +61,8 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		req.System = []protocol.Block{{Kind: protocol.BlockText, Text: instructions}}
 	}
 
-	// previous_response_id 无条件拒（口径层 v0.88 推翻 v1 的「静默丢弃」）。
+	// previous_response_id 无条件拒（口径层 v0.88 推翻 v1 的「静默丢弃」；订阅渠道自
+	// #213 起同协议也进转换，同一条闸接管——该类型 supports_stateful_responses 强制否）。
 	//
 	// DecodeRequest 只跑在**转换路径**上，而那条路上有状态续链物理不成立：这个 id 是
 	// 某个 Responses 上游发的句柄，转出去的 Anthropic / CC 上游不认；网关又不存会话
@@ -73,7 +74,7 @@ func (c *Codec) DecodeRequest(body []byte, stream bool) (*protocol.Request, erro
 		return nil, err
 	}
 	if previousResponseID != "" {
-		return nil, PreviousResponseRejection()
+		return nil, PreviousResponseRejection(c.sub)
 	}
 
 	// 工具声明住在两个容器里：ADE 走顶层 tools，Codex 走 input 里的 additional_tools

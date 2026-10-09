@@ -229,6 +229,10 @@ type Event struct {
 	// EvError
 	Status  int
 	Message string
+	// Code 是上游错误体里自带的错误码（如 Responses 流中 response.failed 的
+	// error.code），空串 = 上游没给。由解码侧从原始字节里透出，记账侧的词表映射
+	// （上游码 → 流水词）另归记账票（#215），这里只负责不丢。
+	Code string
 
 	// Extras 存协议独有、跨协议无处安放的事件级字段（如 Responses 的
 	// encrypted_content）。同协议路径不经过本模型，所以这里的住户远少于 Request。
