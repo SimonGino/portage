@@ -149,7 +149,10 @@ type Channel struct {
 	// Provider 是 models.dev 的 provider id 标注（口径层 §2.10，#74）：只服务填价
 	// 建议与图标分组，不参与路由。空串 = 未标注。
 	Provider string `json:"provider"`
-	Disabled bool   `json:"disabled"`
+	// CredentialType 是渠道级凭证类型（#211，一列四值；#212 起随渠道行下发——
+	// 登录弹层、凭证行显示都要按它切形态，见 DESIGN v0.77）。
+	CredentialType string `json:"credential_type"`
+	Disabled       bool   `json:"disabled"`
 	// Headers 是渠道级额外出站头（#137；#167 起管理端可读可写）：键和值都照发——额外头
 	// 不是凭证。没有时是空对象不是 null，前端不用判空。
 	Headers map[string]string `json:"headers"`
@@ -167,7 +170,7 @@ type Channel struct {
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
-		       ch.key_mode, ch.auth_scheme, ch.max_concurrency,
+		       ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.credential_type,
 		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled, ch.headers,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled <> 0)
@@ -183,7 +186,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var c Channel
 		var headers string
 		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
-			&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency,
+			&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.CredentialType,
 			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled, &headers,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
 			return nil, err

@@ -22,6 +22,7 @@ import {
   splitModelNames,
   staleProtocols,
   suggestProtocols,
+  subscriptionSummary,
 } from './derive'
 
 function ch(over: Partial<Channel>): Channel {
@@ -262,5 +263,65 @@ describe('额外出站头', () => {
     expect(headersDirty(saved, [{ name: 'x-a', value: '1' }])).toBe(true)
     expect(headersDirty(saved, [...headerRows(saved), { name: 'x-c', value: '3' }])).toBe(true)
     expect(headersDirty({}, [{ name: '', value: '' }])).toBe(false)
+  })
+})
+
+// ── 订阅渠道的凭证行（#212，DESIGN v0.77）──────────────────────────────
+
+/** 签一枚假 JWT：只在意 payload 段（展示层不验签）。 */
+function jwt(claims: Record<string, unknown>): string {
+  const b64 = (o: unknown) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${b64({ alg: 'RS256' })}.${b64(claims)}.sig`
+}
+
+function siwcValue(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    client_id: 'oaiapp-1',
+    host_id: 'urn:uuid:h',
+    sub: 'user-123',
+    email: 'po@example.com',
+    id_token: jwt({
+      iss: 'https://auth.openai.com',
+      aud: 'oaiapp-1',
+      'https://api.openai.com/auth': { chatgpt_plan_type: 'pro' },
+    }),
+    access_token: 'at',
+    refresh_token: 'rt',
+    expires_at: 1791470000,
+    scopes: ['chatgpt.tokens.use.direct'],
+    ...over,
+  })
+}
+
+describe('订阅凭证行读数', () => {
+  it('解出账号（email）· 套餐（ID token claims）· 过期时刻', () => {
+    const s = subscriptionSummary(siwcValue())
+    expect(s).not.toBeNull()
+    expect(s!.account).toBe('po@example.com')
+    expect(s!.plan).toBe('pro')
+    expect(s!.expiresAt).toBe(1791470000)
+  })
+
+  it('ID token 没有套餐时退化到 access token 的 claims（magpie siwcPlan 同判）', () => {
+    const s = subscriptionSummary(
+      siwcValue({
+        id_token: 'not-a-jwt',
+        access_token: jwt({ 'https://api.openai.com/auth': { chatgpt_plan_type: 'plus' } }),
+      }),
+    )
+    expect(s!.plan).toBe('plus')
+  })
+
+  it('email 缺了用 sub 兜底，两边都没有才空串', () => {
+    expect(subscriptionSummary(siwcValue({ email: '' }))!.account).toBe('user-123')
+    expect(subscriptionSummary(siwcValue({ email: '', sub: '' }))!.account).toBe('')
+  })
+
+  it('值不是 JSON / 不是凭证形状时回 null，不抛', () => {
+    expect(subscriptionSummary('sk-不是JSON')).toBeNull()
+    expect(subscriptionSummary('123')).toBeNull()
+    expect(subscriptionSummary('{}')).toBeNull()
+    expect(subscriptionSummary('')).toBeNull()
   })
 })

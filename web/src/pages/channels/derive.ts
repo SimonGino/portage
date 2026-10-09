@@ -211,6 +211,69 @@ export function credentialLines(bulk: string): string[] {
     .filter(Boolean)
 }
 
+// ── 订阅渠道的凭证行（#212，DESIGN v0.77）─────────────────────────────
+
+/** 订阅凭证行的读数：账号（email，兜底 sub）· 套餐 · access 过期时刻（unix 秒）。
+ *  值解不动（老库里贴了别的、或手改过）不抛——行上还有值本身的显示/复制兜底。 */
+export interface SubscriptionSummary {
+  account: string
+  plan: string
+  expiresAt: number
+}
+
+/** 解一份 chatgpt_account 凭证 JSON 整包，取行显示要用的三样。
+ *  套餐不在凭证 JSON 的字段表里（§7.13 钉死九字段）：它住在 ID token（兑不到再
+ *  退化到 access token）的 JWT claims 里——`https://api.openai.com/auth` 命名空间下
+ *  的 `chatgpt_plan_type`，与 magpie 的 siwcPlan 同判。这里只解 base64 摆读数，
+ *  不验签——验签是服务端登录链的事，展示层伪造不了任何事实。 */
+export function subscriptionSummary(value: string): SubscriptionSummary | null {
+  let cred: { email?: string; sub?: string; id_token?: string; access_token?: string; expires_at?: number }
+  try {
+    cred = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!cred || typeof cred.expires_at !== 'number') return null
+  let plan = ''
+  for (const t of [cred.id_token ?? '', cred.access_token ?? '']) {
+    plan = jwtClaim(t, ['https://api.openai.com/auth', 'chatgpt_plan_type'])
+    if (plan) break
+  }
+  return {
+    account: cred.email || cred.sub || '',
+    plan,
+    expiresAt: cred.expires_at,
+  }
+}
+
+/** 从一枚 JWT 的 payload 里取一条按命名空间嵌的字符串 claim；解不动回空串。 */
+function jwtClaim(jwt: string, path: string[]): string {
+  const part = jwt.split('.')[1]
+  if (!part) return ''
+  try {
+    let node: unknown = JSON.parse(atobUrl(part))
+    for (const k of path) {
+      if (node == null || typeof node !== 'object') return ''
+      node = (node as Record<string, unknown>)[k]
+    }
+    return typeof node === 'string' ? node : ''
+  } catch {
+    return ''
+  }
+}
+
+/** base64url 的 payload 段解回字符串（浏览器 atob 只认标准 base64，补齐对齐与字符表）。 */
+function atobUrl(part: string): string {
+  const b64 = part.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+  return decodeURIComponent(
+    atob(padded)
+      .split('')
+      .map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+      .join(''),
+  )
+}
+
 // ── 上游设置表单 ──────────────────────────────────────────────────────────
 
 /** 并发上限输入：空串与非数字都归 0（= 不限）。 */

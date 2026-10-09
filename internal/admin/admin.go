@@ -227,6 +227,12 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.POST("/channels/:id/credentials", h.addCredentials)
 	cw.PUT("/credentials/:id", h.updateCredential)
 	cw.DELETE("/credentials/:id", h.deleteCredential)
+	// 订阅渠道的登录弹层（#212，展开层 §7.13）：start / complete / poll 三只。都在
+	// cw 写闸里——complete 要落凭证，声明文件形态下落不进去（且 declcfg 对 *_account
+	// 整份拒启，声明实例上根本不会有订阅渠道），start 不该发出一个注定 409 的登录。
+	cw.POST("/channels/:id/login/start", h.loginStart)
+	cw.POST("/channels/:id/login/complete", h.loginComplete)
+	cw.GET("/channels/:id/login/poll", h.loginPoll)
 	adm.POST("/channels/:id/probe", h.probeChannel)
 	// 拉上游模型列表给表单做预勾选（口径层 v0.40）。POST 而不是 GET：它会朝上游
 	// 发真请求、花上游的配额，不该被浏览器或中间层当成可缓存的读操作重放。
@@ -372,47 +378,51 @@ func fail(c *gin.Context, status int, msg string) {
 // 复用 store.Validate 而不是在前端另写一套校验，是为了让「UI 认」和「启动认」不会
 // 各自漂移。
 //
+// 回 bool 表示这笔写是否提交成功——只有 deleteCredential 的收尾在乎它（#212 起删
+// 凭证后还要 best-effort 撤销，只在真删成了才做），其余调用方一律忽略。
+//
 // Validate 必须对着 tx 跑，不能对着 h.db：连接池是 1，事务开着的时候再问 db 要连接
 // 会永远等下去（不是报错，是挂住）。
-func (h *Handler) write(c *gin.Context, fn func(ctx context.Context, tx *sql.Tx) error) {
-	h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
+func (h *Handler) write(c *gin.Context, fn func(ctx context.Context, tx *sql.Tx) error) bool {
+	return h.writeResult(c, func(ctx context.Context, tx *sql.Tx) (any, error) {
 		return nil, fn(ctx, tx)
 	})
 }
 
 // writeResult 同 write，但把 fn 的返回值作为 200 的响应体。新建类接口用它——
 // 前端需要拿到新记录的 id，以及新 key 的明文（那一份**只此一次**）。
-func (h *Handler) writeResult(c *gin.Context, fn func(ctx context.Context, tx *sql.Tx) (any, error)) {
+func (h *Handler) writeResult(c *gin.Context, fn func(ctx context.Context, tx *sql.Tx) (any, error)) bool {
 	ctx := c.Request.Context()
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		h.log.Error("管理端开事务失败", "err", err)
 		fail(c, http.StatusInternalServerError, "数据库忙，请重试")
-		return
+		return false
 	}
 	defer tx.Rollback() //nolint:errcheck // 提交成功后这里是 no-op
 
 	result, err := fn(ctx, tx)
 	if err != nil {
 		h.writeError(c, err)
-		return
+		return false
 	}
 	if err := store.Validate(ctx, tx); err != nil {
 		// 回滚由 defer 完成。校验原文直接回前端：它已经写成了「哪个记录、
 		// 为什么不合法、怎么补」的样子，重新包装只会丢信息。
 		fail(c, http.StatusBadRequest, err.Error())
-		return
+		return false
 	}
 	if err := tx.Commit(); err != nil {
 		h.log.Error("管理端提交事务失败", "err", err)
 		fail(c, http.StatusInternalServerError, "保存失败")
-		return
+		return false
 	}
 	if result == nil {
 		c.Status(http.StatusNoContent)
-		return
+	} else {
+		c.JSON(http.StatusOK, result)
 	}
-	c.JSON(http.StatusOK, result)
+	return true
 }
 
 // writeError 把 store 层的错误翻成 HTTP。

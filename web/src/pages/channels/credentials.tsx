@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
-import { Confirm, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle } from '../../ui'
+import { Confirm, CopyButton, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle } from '../../ui'
 import { IconEye, IconEyeOff, IconKey, IconPulse, IconRows } from '../../icons/acts'
 import { Segmented } from '../../fields'
 import { ProbeDialog } from './probe'
+import { LoginDialog } from './login'
 import { useChannel } from './useChannel'
-import { cascadesToChannel, credentialLines, primaryCredential } from './derive'
+import { cascadesToChannel, credentialLines, primaryCredential, subscriptionSummary } from './derive'
 
 /**
  * CredentialBlock 是渠道凭证在模型页上的区块（PO 2026-08-20 裁决从「上游设置」井
@@ -26,10 +27,19 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
   // 检测弹层预选的那把凭证；null = 没开弹层。从「管理」进来时把管理框关掉——
   // 两个弹框叠着，Esc 会把两层一起带走。
   const [probing, setProbing] = useState<Credential | null>(null)
+  // 登录弹层（#212）：loginOpen 管开关，loginReplace 是「重新登录」针对的那一行
+  // （null = 新增一把）。从「管理」进来时同样只开一层。
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [loginReplace, setLoginReplace] = useState<Credential | null>(null)
   const enabled = list.filter((c) => !c.disabled)
-  // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表——
-  // 完整的池子在弹框里，行尾的计数提醒着「不止这一把」。
+  // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表。
   const primary = primaryCredential(list)
+  const subscription = channel.credential_type === 'chatgpt_account'
+
+  function openLogin(replace: Credential | null) {
+    setLoginReplace(replace)
+    setLoginOpen(true)
+  }
 
   return (
     <DetailBlock
@@ -60,8 +70,19 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
     >
       <ErrorBar message={credentialsError} />
       {list.length === 0 ? (
-        /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
-        <AddCredentials channelID={channel.id} />
+        /* 空态：订阅渠道的「加一份」是登录（DESIGN v0.77），不是贴 key。 */
+        subscription ? (
+          <div className="cred-add">
+            <button type="button" className="act" onClick={() => openLogin(null)}>
+              <IconKey />
+              登录
+            </button>
+            <span className="muted">订阅渠道的凭证由账号登录产生；也可以建完渠道稍后再登（「缺凭证」标记照旧）</span>
+          </div>
+        ) : (
+          /* 空态直接摆添加行：贴一份 key 是此刻唯一要做的事，不必先进弹框。 */
+          <AddCredentials channelID={channel.id} />
+        )
       ) : (
         <div className="cred-inline">
           {primary ? (
@@ -83,6 +104,10 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
             setManaging(false)
             setProbing(c)
           }}
+          onLogin={(c) => {
+            setManaging(false)
+            openLogin(c)
+          }}
         />
       )}
       {probing && (
@@ -91,6 +116,13 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
           credentials={list}
           initial={probing}
           onClose={() => setProbing(null)}
+        />
+      )}
+      {loginOpen && (
+        <LoginDialog
+          channel={channel}
+          replaceCred={loginReplace}
+          onClose={() => setLoginOpen(false)}
         />
       )}
     </DetailBlock>
@@ -110,16 +142,20 @@ function CredentialsDialog({
   list,
   onClose,
   onProbe,
+  onLogin,
 }: {
   channel: Channel
   list: Credential[]
   onClose: () => void
   /** 这一行的检测：关掉管理框、开检测弹层并预选这把（含已停用的）。 */
   onProbe: (c: Credential) => void
+  /** 订阅渠道的登录（新增传 null，重新登录传那行）：关掉管理框、开登录弹层。 */
+  onLogin: (c: Credential | null) => void
 }) {
   const { mutate } = useChannel(channel.id)
   const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
   const enabled = list.filter((c) => !c.disabled).length
+  const subscription = channel.credential_type === 'chatgpt_account'
 
   /** 改选取模式立即落库，走单字段的意图写（#48 批2），别的列碰不到。 */
   function saveKeyMode(mode: KeyMode) {
@@ -139,7 +175,11 @@ function CredentialsDialog({
         <p className="muted">名字是归因依据，它会出现在流水与用量里。换 key 就是加一份新的、把旧的停掉。</p>
 
         {list.length === 0 ? (
-          <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
+          subscription ? (
+            <Empty>这个渠道还没有凭证。点「登录」用 ChatGPT 账号授权一次就有了。</Empty>
+          ) : (
+            <Empty>这个渠道还没有凭证。启用中的渠道没有可用凭证会连启动都过不去。</Empty>
+          )
         ) : (
           <div className="cred-list">
             {list.map((c) => (
@@ -149,12 +189,25 @@ function CredentialsDialog({
                 channel={channel}
                 enabledCount={enabled}
                 onProbe={() => onProbe(c)}
+                onRelogin={() => onLogin(c)}
               />
             ))}
           </div>
         )}
 
-        <AddCredentials channelID={channel.id} />
+        {/* 新增那一段按凭证类型切（DESIGN v0.77）：订阅渠道的「新增」开登录弹层
+            而非贴 key；粘贴 JSON 入口在登录弹层里（兼换机迁移）。 */}
+        {subscription ? (
+          <div className="cred-add">
+            <button type="button" className="act" onClick={() => onLogin(null)}>
+              <IconKey />
+              登录
+            </button>
+            <span className="muted">订阅渠道的「新增」是登录，不贴 key；迁移用凭证 JSON 走登录弹层里的「粘贴凭证 JSON」</span>
+          </div>
+        ) : (
+          <AddCredentials channelID={channel.id} />
+        )}
 
         {/* 选取模式只在 ≥2 把（含停用）时出现（v0.44 修订 v0.38 ⑨ 的位置）：它描述
             的是「多把 key 之间怎么轮」，单 key 渠道从头到尾不该看到这个概念；含停用
@@ -171,6 +224,18 @@ function CredentialsDialog({
         {list.length > 0 && (
           <div className="muted cred-dialog-foot">
             {enabled} / {list.length} 已启用
+            {subscription && (
+              <>
+                {' · 订阅额度与用量见'}
+                <a
+                  href="https://chatgpt.com/settings/usage"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  chatgpt.com/settings/usage
+                </a>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -179,23 +244,31 @@ function CredentialsDialog({
 }
 
 /** CredentialRow 是池子里的一行：值、改名、检测、停用/启用、删除。值能看能复制
- *  （v0.47），但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。 */
+ *  （v0.47），但改不了——换 key 就是加一份新的、把旧的停掉，那样停用的现场还留着。
+ *
+ *  订阅渠道（#212，DESIGN v0.77）的值不摆掩码而是摆读数：账号（email）· 套餐 ·
+ *  access 过期时间，「复制」复制整包 JSON（迁移/备份用）；reauth_required 的行尾
+ *  摆「重新登录」——成功后原行替换、名字不变。 */
 function CredentialRow({
   cred,
   channel,
   enabledCount,
   onProbe,
+  onRelogin,
 }: {
   cred: Credential
   channel: Channel
   /** 池子里启用凭证的总数——判断「这是最后一把」要看全池，不是看这一行。 */
   enabledCount: number
   onProbe: () => void
+  /** 「重新登录」：开登录弹层、替换这一行。 */
+  onRelogin: () => void
 }) {
   const { mutate } = useChannel(channel.id)
   const [name, setName] = useState(cred.name)
   // 停用最后一把的举起态：同 Confirm 的两击，3 秒不按第二下自动放下。
   const [armedOff, setArmedOff] = useState(false)
+  const subscription = channel.credential_type === 'chatgpt_account'
 
   useEffect(() => {
     if (!armedOff) return
@@ -233,7 +306,11 @@ function CredentialRow({
           }
         }}
       />
-      <SecretValue value={cred.credential} />
+      {subscription ? (
+        <SubscriptionCredValue cred={cred} />
+      ) : (
+        <SecretValue value={cred.credential} />
+      )}
       <div className="cred-state">
         {cred.disabled ? (
           /* 停用原因与时刻要一直摆着——它就是「这把为什么不转了」的唯一记录。 */
@@ -249,6 +326,13 @@ function CredentialRow({
         )}
       </div>
       <div className="row-actions">
+        {/* 重新登录只在待重登的行上（reauth_required）：刷新链路的死亡码停用
+            就是它的来路，成功后原行替换、名字不变（口径层 §2.2 v1.52）。 */}
+        {subscription && cred.disabled && cred.disabled_reason === 'reauth_required' && (
+          <button type="button" className="act" onClick={onRelogin}>
+            重新登录
+          </button>
+        )}
         {/* 停用的也给检测（口径层 v0.96 承接 v0.38）：恢复是纯人工的，「这把还
             坏不坏」除了发一次请求没有别的办法回答。 */}
         <button
@@ -383,5 +467,26 @@ function AddCredentials({ channelID }: { channelID: number }) {
         )}
       </div>
     </form>
+  )
+}
+
+/**
+ * SubscriptionCredValue 是订阅凭证行的那一段「值」：不摆掩码串（一长串 JSON 打码
+ * 读不出任何事实），摆账号（email，兑不到用 sub）· 套餐 · access 过期时间（DESIGN
+ * v0.77）。「复制」复制整包 JSON——迁移/备份用的就是它（回读口径 v0.47 不动）。
+ * 值解不动（老数据、手改过）时退回掩码显示，至少「复制」还能拿走原值。
+ */
+function SubscriptionCredValue({ cred }: { cred: Credential }) {
+  const summary = subscriptionSummary(cred.credential)
+  if (!summary) return <SecretValue value={cred.credential} />
+  return (
+    <span className="cred-sub">
+      <span className="cred-account">{summary.account || '（没有账号信息）'}</span>
+      {summary.plan && <span className="tag">{summary.plan}</span>}
+      <span className="muted" title={`access token 过期时刻（unix 秒 ${summary.expiresAt}）`}>
+        过期 {new Date(summary.expiresAt * 1000).toLocaleString()}
+      </span>
+      <CopyButton value={cred.credential} />
+    </span>
   )
 }
