@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Empty, ErrorBar, PageTitle } from '../ui'
+import { Card, Empty, ErrorBar } from '../ui'
 import { CHANNEL_TABS } from '../routes'
 import { ChannelIcon } from '../icons'
 import { ChannelDetail } from './channels/detail'
@@ -47,17 +47,18 @@ function ChannelsPage() {
   const visible = filterChannels(channels, query)
 
   // 零渠道：整页就是预设目录（DESIGN v0.71/v0.72，同 magpie 零供应商形态）——左列
-  // 此刻只有一句「还没有渠道」和一颗与目录重复的「新建渠道」，不摆。
+  // 此刻只有一句「还没有渠道」和一颗与目录重复的「新建渠道」，不摆。页头走 Card 同构
+  // 于定价子 tab：单列页不继承主从两栏的 .detail-col（那条竖线与 24px 内缩是两栏之间的
+  // 东西，v0.16 ①「线跟着内容走」，零态没有左列，线就是孤儿——切子 tab 还会跳宽）。
   if (channels.length === 0 && !creating) {
     return (
-      <div className="detail-col">
+      <>
         <ErrorBar message={error} />
-        <header className="page-head">
-          <PageTitle title="渠道" tabs={CHANNEL_TABS} />
-        </header>
-        <Empty>还没有渠道。选一家接入，贴上 key 就能拉模型。</Empty>
-        <NewChannel onSaved={(id) => void onCreated(id)} />
-      </div>
+        <Card title="渠道" tabs={CHANNEL_TABS}>
+          <Empty>还没有渠道。选一家接入，贴上 key 就能拉模型。</Empty>
+          <NewChannel onSaved={(id) => void onCreated(id)} />
+        </Card>
+      </>
     )
   }
 

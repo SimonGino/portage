@@ -48,7 +48,10 @@ export function BrandVersion({ version, distro, admin }: Build) {
             v{version}
           </button>
         ) : (
-          <span className="brand-ver" title={release ? undefined : '开发构建，不检查更新'}>
+          <span
+            className={'brand-ver' + (release ? '' : ' brand-dev')}
+            title={release ? undefined : '开发构建，不检查更新'}
+          >
             {release ? `v${version}` : version}
           </span>
         ))}

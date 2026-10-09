@@ -208,6 +208,17 @@ button.brand-ver:hover {
   color: var(--ink);
 }
 
+/* 非发版构建的版本不是下标而是状态徽：dev/test 挤在字标旁读成「Portagedev」，不和谐
+   （PO QA 2026-10-09）。给它 --sunken 小胶囊，与「新版」胶囊同一形制减掉褐点；发版号
+   保持 v0.65 的下标原样不动。 */
+.brand-dev {
+  margin-left: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--ink-2);
+}
+
 /* §9「胶囊标注普通元数据」的唯一例外：它是一个动作，且无新版时根本不出现。
    褐点是非颜色线索之外的那一点提示，文字本身已经说清「新版」。 */
 .brand-newpill {
