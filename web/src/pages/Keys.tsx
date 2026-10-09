@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { api } from '../api'
-import type { ApiKey, RoutableModel } from '../api'
+import type { ApiKey, CatalogModel, RoutableModel } from '../api'
 import { Card, Confirm, CopyButton, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtTime, useList } from '../ui'
 import { Chips } from '../fields'
 import type { Option } from '../fields'
 import { ModelIcon } from '../icons'
+import { AccessGuide } from '../access'
+import { ModelCatalog } from '../catalog'
 
+/** 网关页（DESIGN v0.73，#182）：三段纵排，顺序固定——API Key 表 → 接入指引 →
+ *  模型目录。Key 表即原 API Key 页的表，内容不动。 */
 export default function Keys() {
   const keys = useList(() => api.get<ApiKey[] | null>('/keys'))
   // 白名单里能写的是**客户端 model 字段那个字符串**，接入点名和纳管模型限定名两种
@@ -13,9 +17,13 @@ export default function Keys() {
   // 可选项由服务端给（#57）：与 `GET /v1/models` 同一份可路由谓词——此前拿接入点 +
   // 渠道两张表自己拼，拼出来的是它的不过滤近似，会列出打了必然 503 的名字。
   const models = useList(() => api.get<{ models: RoutableModel[] | null }>('/routable-models'))
+  // 模型目录（#189）：网关页第三段，同一份数据也喂接入指引的模型下拉。
+  const catalog = useList(() => api.get<{ models: CatalogModel[] | null }>('/model-catalog'))
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ApiKey | null>(null)
   const [fresh, setFresh] = useState('')
+  // 接入指引选中的模型：目录点行带入（受控在页这一层，两段共用）。
+  const [guideModel, setGuideModel] = useState<string | null>(null)
 
   async function mutate(fn: () => Promise<unknown>) {
     try {
@@ -40,7 +48,7 @@ export default function Keys() {
     <>
       {/* 可路由清单那一路的报错也要露出来：白名单的可选项全靠它，
           悄悄空掉的话看起来像「一个模型都没配」。 */}
-      <ErrorBar message={keys.error || models.error} />
+      <ErrorBar message={keys.error || models.error || catalog.error} />
       <Card
         title="网关"
         action={
@@ -129,6 +137,19 @@ export default function Keys() {
           </table>
         )}
       </Card>
+
+      {/* 第二段：接入指引（v0.73，#182）。key 与目录都来自本页已有数据。 */}
+      <AccessGuide
+        keys={list}
+        models={catalog.data?.models ?? []}
+        space="admin"
+        model={guideModel}
+        onModel={setGuideModel}
+        onCreateKey={() => setCreating(true)}
+      />
+
+      {/* 第三段：模型目录（v0.76，#189）。点行把模型带进上面的接入指引。 */}
+      <ModelCatalog rows={catalog.data?.models ?? []} space="admin" onPick={setGuideModel} />
 
       {creating && (
         <KeyForm
