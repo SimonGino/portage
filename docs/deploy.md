@@ -211,6 +211,22 @@ exposing just `/v1`. See [`deploy/nginx.conf.example`](../deploy/nginx.conf.exam
 **Several nginx defaults are actively hostile to SSE** and must be overridden — get it
 wrong and nothing errors, streams just hang or cut off.
 
+## Subscription channels
+
+Besides API-billed upstreams, a channel can run on your own ChatGPT or GitHub Copilot
+subscription: you authorize it by signing in to the account (Sign in with ChatGPT / the
+GitHub device-code flow) instead of pasting an API key. These channels are for the
+**account holder's own use**. Both providers restrict a login to one person — OpenAI:
+"You may not share your account credentials or make your account available to anyone
+else" ([Terms of Use](https://openai.com/policies/row-terms-of-use/)); GitHub: "Your login
+may only be used by one person — i.e., a single login may not be shared by multiple
+people" ([Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)).
+Using your own subscription through a gateway you run yourself is within the multiple-device
+use OpenAI explicitly allows; anything beyond that is between you and the provider, and
+Portage adds no lock of its own. To keep a subscription channel to yourself, use the
+ordinary mechanisms: expose its models through a dedicated access point, and give out
+API keys whose model whitelist only names that access point.
+
 ## Configuration files
 
 Two files, answering different questions.

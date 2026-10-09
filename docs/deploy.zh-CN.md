@@ -221,6 +221,18 @@ make build          # 前端产物 embed 进 bin/portage
 [`deploy/nginx.conf.example`](../deploy/nginx.conf.example)。**nginx 对 SSE 的几个默认值必须
 显式改**，漏了不报错，只表现为卡住或断流。
 
+## 订阅渠道
+
+渠道除了按 API 计费的上游，还可以跑在你自己的 ChatGPT / GitHub Copilot 订阅上：不走 API key，
+改为登录账号授权（Sign in with ChatGPT / GitHub 设备码）。订阅渠道**只供账号持有人本人使用**：
+两家都把登录限定为一人——OpenAI「You may not share your account credentials or make your account
+available to anyone else」（[Terms of Use](https://openai.com/policies/row-terms-of-use/)）；GitHub「Your
+login may only be used by one person — i.e., a single login may not be shared by multiple people」
+（[Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)）。
+自己的订阅经自己跑的网关用，落在 OpenAI 明确允许的「多设备」范围内；超出这一条的，后果在
+账号持有人与上游之间，网关不另加锁。要把订阅渠道圈起来自己用，用既有机制：模型只经专用接入点
+暴露，发出去的 API Key 用模型白名单只放这个接入点。
+
 ## 配置文件
 
 两份文件，各答各的问题。
