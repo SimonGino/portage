@@ -250,9 +250,9 @@ export function AccessGuide({
   const keyOptions: Option<number>[] = listed.map((k) => ({
     value: k.id,
     label: k.name,
-    hint: k.user_id === null ? '无主' : undefined,
+    // 无明文的旧 key 列出但禁选，副行交代原因；无主的可用 key 带「无主」副行。
+    hint: !k.key ? '无明文，新建一把再用' : k.user_id === null ? '无主' : undefined,
     disabled: !k.key,
-    keywords: k.key ? undefined : '无明文，新建一把再用',
   }))
   // 默认选第一把有明文的；无明文的旧 key 列出但禁选（副行「无明文，新建一把再用」）。
   const selected = listed.find((k) => k.id === keyID) ?? null
