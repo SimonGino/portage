@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.76
+> 状态：草案 v1.77
+
+> v1.77 变更（#191 Wave 2 四票实现落地：[#194](https://github.com/SimonGino/portage/issues/194) 预设清单与预勾、[#195](https://github.com/SimonGino/portage/issues/195) 网关页三段与共用组件、[#197](https://github.com/SimonGino/portage/issues/197) 分档价、[#198](https://github.com/SimonGino/portage/issues/198) 1h 缓存写；地图 [#177](https://github.com/SimonGino/portage/issues/177)，PO 2026-10-09 授权按实现裁量收口，修改人 jinpenga）：①`channel_models` 分档与 1h 列名定稿，`call_logs` 加 `cache_write_1h_tokens`，canonical `Usage` 与 Tap `Summary` 各带 1h 缓存写明细，计价按 TTL 拆分；②对外地址下发通道定为 `/session` 回包带 `site_url`（订正 v1.74「通过既有设置读接口」）；③`GET /panel/api/model-catalog` 新增，`/my/models` 行补胶囊字段；④§7.12 预设清单 16 条的核对事实与端点约束。落点见各节 v1.77 标注。
 
 > v1.76 变更（口径层 v1.51 / v1.52 落地：订阅渠道（ChatGPT API 先）的凭证、登录、改写与非流式聚合，地图 [#186](https://github.com/SimonGino/portage/issues/186)，裁决 [#202](https://github.com/SimonGino/portage/issues/202) ~ [#204](https://github.com/SimonGino/portage/issues/204) / [#206](https://github.com/SimonGino/portage/issues/206)，golden [#205](https://github.com/SimonGino/portage/issues/205)，修改人 jinpenga）：新增 §7.13。①凭证 JSON 两张字段表与刷新锁（懒刷新 + 每把互斥锁 + 死亡码表 → 停用 reason `reauth_required`，v0.95 例外）；②登录弹层状态机（start / complete / poll 三接口、待完成态内存 TTL 10 分钟、`ext_agent_host_id` 落 settings、粘贴 JSON 导入兼迁移、声明文件 apply 遇 `*_account` 拒启）；③Responses 编码器改写清单（强制 `store:false` / `stream:true`、丢字段走既有 Drops、`previous_response_id` 拒、`system` 改 `developer`、出站头只 Bearer）；④非流式 SSE 聚合三入口；⑤fetch-models 按 `credential_type` 切解析器（`models[]` / `visibility=="list"` / `slug`）；⑥0 价默认与两流水词。golden 样本随本票合入 main。实现拆六票（只拆 ChatGPT API，Copilot 等前者跑通另拆），见 [#210](https://github.com/SimonGino/portage/issues/210)。
 
@@ -782,7 +784,7 @@ concurrency_queue:                 # 渠道并发闸的有界排队（口径层 
   retry_after: 10s                 # 队满/超时 429 的 Retry-After，落头时换算成整秒、不足 1 秒顶成 1
 ```
 
-> **接入指引的取址规则（v1.74，[#182](https://github.com/SimonGino/portage/issues/182)）**：对外地址读「站点外部 URL」设置（与邮件链接、OAuth 回调同一处，不另加 `public_url` 配置项），只服务接入指引展示，不参与转发、路由与鉴权面。填了显示它，没填显示浏览器 `window.location.origin` 并附灰字「反代部署请在设置里填站点外部 URL」。端点按协议拼：Chat `/v1/chat/completions`、Responses `/v1/responses`、Anthropic `/v1/messages`；Claude Code 片段给根地址、Codex 片段给 `/v1`（与 README 两段 harness 配置一致）。前端通过既有设置读接口拿到它。
+> **接入指引的取址规则（v1.74，[#182](https://github.com/SimonGino/portage/issues/182)）**：对外地址读「站点外部 URL」设置（与邮件链接、OAuth 回调同一处，不另加 `public_url` 配置项），只服务接入指引展示，不参与转发、路由与鉴权面。填了显示它，没填显示浏览器 `window.location.origin` 并附灰字「反代部署请在设置里填站点外部 URL」。端点按协议拼：Chat `/v1/chat/completions`、Responses `/v1/responses`、Anthropic `/v1/messages`；Claude Code 片段给根地址、Codex 片段给 `/v1`（与 README 两段 harness 配置一致）。~~前端通过既有设置读接口拿到它~~（v1.77 订正：设置读接口是 admin-only，「我的」侧的接入指引也要这个地址——改由 `/session` 回包带 `site_url`（设置值去尾斜杠，authed 皆可读）下发，两空间一个读法；它是地址不是 secret，不在 #73 明文口径内）。
 
 > **唯一的环境变量是 `PORTAGE_ADMIN_PASSWORD`**（口径层 v0.28）：env 优先于文件，空串等于没写；配置文件整个缺席时也生效（`docker run` 不挂配置是常态）。仍然只用于**初始化**——库里已有密码就一概不动。其余配置项不做 env 覆盖：它们不是凭证，走文件更能一眼看全。
 
@@ -924,6 +926,9 @@ CREATE TABLE call_logs (
   total_ms INTEGER NOT NULL,
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+  cache_write_1h_tokens INTEGER,      -- 1h 缓存写明细（v1.77，#198，口径层 v1.49）：是 cache_write_tokens 的
+                                       -- 明细（总额 = 5 分钟 + 1h），计价时 1h 部分按 1h 价、其余按 5 分钟价。
+                                       -- 可空：NULL = 上游不细分（没带 ttl:"1h" 的真转录恒 0），0 = 报了且无 1h
   reasoning_tokens INTEGER,            -- 思考 token（口径层 v0.66）。是 output_tokens 的**明细**不是另一笔，
                                        -- 别把两者相加。**可空且必须可空**：NULL = 上游这一轮不报这个数（整个
                                        -- details 容器都不发、迁移前的老行），0 = 上游报了、这次
@@ -1165,7 +1170,7 @@ api_keys:
 
 - `api_keys`：加 `user_id INTEGER REFERENCES users(id)` **可空**（#63 拍 NOT NULL，#66 翻案：NULL = 无主，声明形态/无 admin 库的合法形态）；`name` 从全局 UNIQUE 改 `UNIQUE(user_id, name)`——SQLite 改不了约束，**迁移重建表**。
 - `channel_models`：加 `price_input` / `price_output` / `price_cache_read` / `price_cache_write`，REAL，USD/百万 token，**NULL = 未定价、0 = 真免费**（#65）；未定价提醒判据 =「价字段 NULL 且有用量」，挂条目不挂流水行。
-  - **分档价（v1.75，口径层 v1.49，[#185](https://github.com/SimonGino/portage/issues/185)）**：再加 `price_tier_above INTEGER`（token 阈值，NULL = 全程一档）+ 分档四价四列（REAL，与基础四价一一对应，列名实现时定）。阈值非 NULL 时分档某价 NULL = 沿用基础价；「未定价」只看基础四价。**判档**：毛输入（`input_tokens`，含缓存读写）**大于**阈值即整笔四项全按分档价，在 `calllog.Prices.CostUSD` 落库计价时判，改阈值不追溯；`call_logs` 不加字段。只有一档，要第二档时再迁。
+  - **分档价（v1.75，口径层 v1.49，[#185](https://github.com/SimonGino/portage/issues/185)）**：再加 `price_tier_above INTEGER`（token 阈值，NULL = 全程一档）+ 分档四价四列（REAL，与基础四价一一对应，列名实现时定）。阈值非 NULL 时分档某价 NULL = 沿用基础价；「未定价」只看基础四价。**判档**：毛输入（`input_tokens`，含缓存读写）**大于**阈值即整笔四项全按分档价，在 `calllog.Prices.CostUSD` 落库计价时判，改阈值不追溯；`call_logs` 不加字段。只有一档，要第二档时再迁。v1.77 列名定稿：`price_tier_input` / `price_tier_output` / `price_tier_cache_read` / `price_tier_cache_write`。**1h 缓存写（v1.77，[#198](https://github.com/SimonGino/portage/issues/198)，口径层 v1.49）**：另加 `price_cache_write_1h` 与 `price_tier_cache_write_1h`（基础与分档各一，REAL，NULL = 未设）；`call_logs` 加列 `cache_write_1h_tokens`，Anthropic / Responses 两 tap 解 `cache_creation.ephemeral_1h_input_tokens`，canonical `Usage` 与 Tap `Summary` 各带 1h 明细；计价按 TTL 拆分——1h 部分按 1h 价、其余缓存写按 5 分钟价，1h 价未设按 5 分钟价，不自动按 2× input 落库（那只进建议价：Claude 系模型名派生 1h = 2× 输入价，批量填价系数同乘 1h 两价）。前端填价整组从九键升十一键（`PriceBody`，空 = null、0 = 免费同组两态）。
 - `channels`：加可选 `provider` 标注（models.dev provider id，只服务建议价与图标分组，不参与路由）。
 - `call_logs`：加 `user_id INTEGER` 可空（NULL = 未鉴权或无主 key，靠 `api_key_name` 非空分辨，#64）与 `cost REAL` 可空（四项 token × 各自单价 ÷ 1e6 求和，`reasoning_tokens` 是 output 明细不另计；NULL = 无用量可计，有用量未定价记 0，#65）。
 
@@ -1207,6 +1212,7 @@ api_keys:
 - **与既有数据的衔接**：选预设 = 把这些值预填进新建渠道表单（全部可改），`models_dev` 写进渠道 provider 标注；建议模型与建议价都从快照按标注取，**零新代码**。建成后渠道与预设脱钩。
 - **地址来源**：models.dev 只有单个 `api` 字段、没有 Responses 地址，Anthropic 协议地址只少数几家有，且 `api` 是 AI SDK 的 baseURL 约定、不能直接当出站根（存的是子路径之前的前缀，§6.1）——地址一律手写，逐条对厂商文档确认。magpie `internal/provider/presets.go`（MIT）只作**核对底稿**，不整表复制；若复制须保留 MIT 版权声明与许可全文（`docs/agents/reference-repos.md`）。magpie 各家 Responses 地址未经验证，落实现前逐条验。
 - **测试**（调研建议，可选）：断言每条预设（含 plans）的 `models_dev` id 在快照里存在，快照更新后立刻发现 id 改名或下线。
+- **16 条清单的核对事实（v1.77，[#194](https://github.com/SimonGino/portage/issues/194)）**：地址逐条对厂商文档 / magpie 底稿核对；探针（无 key 发空 POST，按「目标路径非 404 且同 host 假路径 404 / 错误体是真实 API 形状」判路由存在）只作旁证，两家鉴权先行的网关（GLM、方舟）探针不作准。两家端点约束写进 note：GLM 按量 OpenAI 端点在 `/api/paas/v4`、豆包在 `/api/v3`，出站固定拼 `/v1/chat/completions` 拼不到（§6.1 不特判），GLM 预设只预填 Anthropic 兼容地址、豆包只留 Coding / Agent 两套 plans。Mistral 与 AiHubMix 的 Responses 路由探针可见、无文档佐证，未收（人可手填）；xAI Anthropic 认证头未核（缺省 default）；Kimi key 页用新域名 platform.kimi.ai / .com。测试断言 16 计数、字段完整、URL 形状（无 `/v1` 前缀 / 尾斜杠 / 查询串）、图标在 `web/src/icons/svg`、`models_dev` 在快照且含有价模型。
 
 ### 7.13 订阅渠道：凭证、登录、改写与非流式聚合（口径层 v1.51 / v1.52，地图 [#186](https://github.com/SimonGino/portage/issues/186)）
 
@@ -1244,7 +1250,7 @@ api_keys:
 |---|---|---|
 | POST | `/panel/api/login` | 验密码发会话；未设密码回 503 并说明补救动作（跟「密码错」分开说） |
 | POST | `/panel/api/logout` | |
-| GET | `/panel/api/session` | `{authenticated, password_set}`，前端加载时问一句 |
+| GET | `/panel/api/session` | `{authenticated, password_set}`，前端加载时问一句；v1.77 起登录态另带 `site_url`（「站点外部 URL」设置值去尾斜杠，authed 皆可读——接入指引两空间的对外地址一个读法；未登录一字不带） |
 | POST | `/panel/api/password` | 改密码；**已登录也要验旧密码**（cookie 可能是别人留下的），成功后吊销全部会话 |
 | GET POST | `/panel/api/channels`、~~PUT~~ DELETE `/channels/:id` | 渠道 CRUD；创建时可选带一把凭证。`base_url` 是协议名→根地址的对象（v1.12/口径层 v0.96）：填了哪个键就是声明了哪个协议，映射删到空即拒（渠道至少声明一个）；未知协议键 400 并点名（入参收 map 不收结构体，结构体会把拼错的键静默丢掉）；`protocols` 不再收，回包里仍带（派生值，省得前端每处自己算）〔v1.72 订正：整体覆盖的 `PUT /channels/:id` 自 v1.14（#48）起已不存在，拆成下列按意图的字段写，本表当时漏改；GET 每个渠道另带 `headers`（v1.68，#167）〕 |
 | PUT | `/panel/api/channels/:id/settings` | 改名 + 并发 + 能力位（v1.14，#48）；位指针缺省 = 列不动，协议集取库里现值，不含 Responses 时两位钉默认值、请求体不作数 |
@@ -1261,6 +1267,7 @@ api_keys:
 | GET POST | `/panel/api/access-points`、PUT DELETE `/access-points/:id` | 接入点 + 候选一起写（见下） |
 | GET POST | `/panel/api/keys`、PUT DELETE `/keys/:id` | 创建回 `{id, key}`，明文**只这一次** |
 | GET | `/panel/api/routable-models` | 白名单可选项 `{models:[{id, direct}]}`（v1.44，#57）：与 `/v1/models`、`/my/models` 同一份可路由谓词（`store.ListExposedModels`），前端不再拿接入点 + 渠道两张表自己拼 |
+| GET | `/panel/api/model-catalog` | 模型目录（管理侧）行数据（v1.77，[#195](https://github.com/SimonGino/portage/issues/195) / [#189](https://github.com/SimonGino/portage/issues/189)）：`store.ListCatalogModels` 与 `/v1/models` 同一可路由谓词（单候选下接入点取唯一候选、先到先得），行带 `source` / `source_id` 来源与胶囊字段——`snapshot_context`（快照 `limit.context` 建议，条目 `max_input_tokens` 已设时前端以条目为准、快照值只作建议）、`image`（`modalities.input` 含 image）、`price_cache_write_1h` / `price_tier_cache_write_1h`；`/my/models` 行同构、只去掉来源两键。接入指引的模型下拉与 Codex 片段的 `model_context_window` 同吃这份数据（一份 fetch 双用，不另打 `/routable-models`） |
 | GET | `/panel/api/logs?limit=&offset=&before=&model=&key=&endpoint=&only=bad` | 近期流水，limit 上限 500，回 `{rows, total}`（v0.60；此前是裸数组）。筛选**全在后端**（v0.53）：前端在已拉回的一页里过滤，筛出的是「这一页里的失败」。**翻页 = `before` 钉窗口上沿 + `offset` 在窗口内定位**（v0.60）：单用 offset 会错位（流水是时间序、新行插在头部，翻到第二页时已被推着往后错），单用游标跳不了页（没有逆向形式、也没有「往前数 60 条」这种形式）。管理端进页时拿第一发的最大 id 当上沿、之后每发都带 `before=anchor+1`。`total` 按**同一组条件、同一个 before** 数，于是它是页码的分母且翻页途中不变；两条语句不在一个事务里，唯一的窗口是不带 before 的第一发，下一次点击自动纠正。行里带 `upstream_request_id`（v0.70）：不可空，**空串照原样给不转 null**，前端只判空串。**没有按它筛的参数**——它逐次唯一，筛出来永远只有一行（口径层 v0.67 ⑥）。行里另带 `endpoint`（v0.86，口径层 v0.82），`endpoint=` 精确匹配那四条路径之一；**取值不校验**，与 `model`/`key` 同款原样下推——认不得的值筛出空列表，而校验后忽略等于把「筛错了」显示成「全部流水」，比空列表更误导。行里再带 `upstream_endpoint`（v0.87，口径层 v0.83），**只出不筛**：没有 `upstream_endpoint=` 这个参数，问「这批 count_tokens 怎么样」用的是客户端打的那条路径；同 `upstream_request_id` 一样不可空、空串照原样给不转 null |
 | GET | `/panel/api/logs/facets`、`/panel/api/my/logs/facets` | 流水页筛选控件的取值域 `{models:[...]}`（v1.44，#57）：出现过的请求模型名，最近出现的在前，**不带窗口**；空模型名归到 `(未记录模型)` 一档，`logs?model=` 认它；用户侧只看本人 |
 | GET | `/panel/api/usage?days=&by=model\|key\|credential&from=&to=` | 汇总，`by` 选维度：按模型（默认）、按**网关 API Key**（v0.53）或按**上游凭证**（v0.35）。后两者是两件事，标签写全称——只写「按凭证」两边都像。`from`/`to` 是 **unix 秒的半开区间 `[from, to)`**（v0.92，口径层 v0.86），两个都给时**顶掉 `days`**、`windowStart` 不参与，只给一个当没给；排行页点中节律带上某一格之后，排行列表 / 环形图 / 堆叠条用它重取那一格的构成。**顶掉 `days` 时回包也不带 `days`**（v0.94，PO 裁），改回 `from`/`to` 原值：回一个没参与计算的窗口档位是撒谎——于是这个端点有两种回包形状，`{days, by, rows}` 与 `{by, from, to, rows}`。**解析失败回 400**，见 §8.2 |
