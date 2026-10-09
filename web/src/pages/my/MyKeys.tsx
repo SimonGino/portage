@@ -5,12 +5,14 @@ import { Card, Confirm, CopyButton, Dialog, Empty, ErrorBar, Field, SecretValue,
 import { Chips } from '../../fields'
 import type { Option } from '../../fields'
 import { ModelIcon } from '../../icons'
+import { AccessGuide } from '../../access'
 import { QuotaCard, type QuotaHook } from './quota'
 
 /**
- * 「我的 Key」页（DESIGN §12）：配额卡置顶 + 本人 key 表。走 /my/keys 那组接口
- * ——归属焊死在服务端，这页永远只有自己的 key。白名单可自设（#63：自我约束工具
- * 不是权限边界），建议项来自「模型」页同一份可路由清单。
+ * 「我的 Key」页（DESIGN §12）：配额卡置顶 + 本人 key 表，key 表之下是接入指引
+ * （v0.73，#182：常驻展开，区块小标题「接入」；模型只有下拉不跨页）。走 /my/keys
+ * 那组接口——归属焊死在服务端，这页永远只有自己的 key。白名单可自设（#63：自我
+ * 约束工具不是权限边界），建议项来自模型目录同一份可路由清单。
  */
 export default function MyKeys({ quota }: { quota: QuotaHook }) {
   const keys = useList(() => api.get<ApiKey[] | null>('/my/keys'))
@@ -18,6 +20,7 @@ export default function MyKeys({ quota }: { quota: QuotaHook }) {
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ApiKey | null>(null)
   const [fresh, setFresh] = useState('')
+  const [guideModel, setGuideModel] = useState<string | null>(null)
 
   async function mutate(fn: () => Promise<unknown>) {
     try {
@@ -115,6 +118,16 @@ export default function MyKeys({ quota }: { quota: QuotaHook }) {
           </table>
         )}
       </Card>
+
+      {/* key 表之下的接入指引（v0.73，#182）：常驻展开；无 key 时它自带「新建一把」。 */}
+      <AccessGuide
+        keys={list}
+        models={models.data?.models ?? []}
+        space="my"
+        model={guideModel}
+        onModel={setGuideModel}
+        onCreateKey={() => setCreating(true)}
+      />
 
       {(creating || editing) && (
         <MyKeyForm
