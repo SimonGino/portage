@@ -30,7 +30,7 @@ gofmt -w .                # CI 有独立 gofmt 闸，未格式化即红（vet �
 
 ## 硬约束
 
-- **透传保真优先**：同协议路径不做 decode→encode 转码。
+- **透传保真优先**：同协议路径不做 decode→encode 转码。**唯一例外：订阅渠道（`chatgpt_account` / `copilot_account` 凭证）同协议也进转换**，改写清单见口径层 §2.2「订阅渠道」条（v1.52，[#204](https://github.com/SimonGino/portage/issues/204)）。
 - **上游 key 只存服务端**，错误回显不带上游 key 与 base_url。
 - **协议细节、字段语义、转换坑先查参考仓库再下结论，不凭记忆**——名单、读法与许可证义务见 [`docs/agents/reference-repos.md`](docs/agents/reference-repos.md)；本机上其他 fork 一律不参考。
 - **转换路径先备 golden 样本（真实 harness 发包 / SSE 转录）再实现**，验收对照 `docs/MVP设计草案.md` §5 坑清单与 §9 测试方案。golden 与构造样本的闸门差别见 [`testdata/fixtures/README.md`](testdata/fixtures/README.md)。

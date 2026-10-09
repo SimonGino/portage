@@ -37,6 +37,10 @@ _Avoid_: 预设模型、默认模型
 不走 API 计费、用**账号订阅额度**作上游的渠道（v1.51）：ChatGPT API（Sign in with ChatGPT）先做、GitHub Copilot（设备码）后做，凭证是登录账号，不是静态 key。口径：**只供账号持有人本人使用**——给他人用违反两家条款（OpenAI ToS、GitHub ToS B.3），后果自担；网关不做技术拦截、不设「订阅」标记，隔离用专用接入点 + API Key 白名单。预设目录的第三组「订阅」即它的建渠道入口（这组没有凭证可填，动作是「登录」）。
 _Avoid_: 订阅桥接（地图调研期的工作名）、共享订阅（那是两家禁止的用法，不是功能）、Claude 订阅（已出图不做）、Codex 后端桥接（冒充 Codex CLI，已出图不选）
 
+**「订阅」预设组**：
+渠道预设目录的第三组（v1.51 立口径、随订阅渠道实现，初版只有 ChatGPT 一块 tile，Copilot 等其实现跑通再上、不做「即将」）：只收订阅渠道的预设，这组没有凭证可填，tile / 凭证段的动作是「登录」而非贴 key；预填 `openai_responses → https://api.openai.com/v1`，地址与协议集照预设规则可改不锁。
+_Avoid_: 把订阅类上游收进「厂商 API」「中转」组、把 Claude 订阅这类已出图项挂「即将」占位
+
 **支持协议集**：
 渠道声明它能说的上游协议，如 `{openai, openai_responses}` 或 `{anthropic}`。取代 v0.33 之前的单值 `protocol` 列；v0.96 起由「哪些协议填了出站根地址」推导，不再是独立勾选字段。协议不出现在对外模型名里。
 
@@ -48,8 +52,12 @@ _Avoid_: 订阅桥接（地图调研期的工作名）、共享订阅（那是�
 _Avoid_: 上下文窗口（那是模型能力，这是网关愿意喂多大）、精确 token 上限（不承诺精确）、拿 `tokencount` 包实现它（v0.80 把那个包锁死在 count_tokens 端点）
 
 **凭证池**：
-渠道下 1..N 份上游凭证，每份带一个渠道内唯一的人写名字；类型 `api_key` / `service_account` 渠道级二选一。凭证值管理端可回读可复制（v0.47 推翻 v0.28 的「只写不回读」），但只由凭证池那一个接口发。渠道页上这一段叫「上游凭证」（不叫「API 密钥」，那会与导航上的 API Key 同形不同义）。
+渠道下 1..N 份上游凭证，每份带一个渠道内唯一的人写名字；类型 `api_key` / `service_account`（v0.17 二选一）+ `chatgpt_account` / `copilot_account`（v1.52，订阅渠道，见「OAuth 账号」），渠道级一列四值。凭证值管理端可回读可复制（v0.47 推翻 v0.28 的「只写不回读」），但只由凭证池那一个接口发。渠道页上这一段叫「上游凭证」（不叫「API 密钥」，那会与导航上的 API Key 同形不同义）。
 _Avoid_: key 池（v0.17 泛化后的旧称）、API 密钥（指这一段时）
+
+**OAuth 账号**：
+订阅渠道的凭证类型 `chatgpt_account` / `copilot_account`（v1.52，「凭证池第三种类型」）：JSON 存 `channel_keys.credential` 一列、不开新表；请求前懒刷新（过期前约 3 分钟）+ 每把凭证一把互斥锁、不保活；refresh 死亡码自动标停用、reason `reauth_required`——v0.95「状态码不改凭证状态」的明确例外（那条管上游请求状态码，refresh 是凭证生命周期事件）；声明文件形态 apply 即拒。ChatGPT 侧 ID token 验 JWKS + `iss` / `aud` / `nonce` / `exp`，scope 须含 `chatgpt.tokens.use.direct`。
+_Avoid_: 动态凭证（泛称，含 service_account）、API key（指这一段时）
 
 **key 层内环**：
 故障转移中「渠道内换凭证重试」的环节，套在候选间转移外环之内。401/403/429 只换不摘、429 不冷却——任何状态码都不改凭证状态（v0.95 推翻 v0.38 的「只有 401 摘」），停用与恢复只人工做。
@@ -83,7 +91,7 @@ _Avoid_: 模型广场、能力探测（胶囊不探，只读快照）
 _Avoid_: 错误摘要（那是 `error` 列的词表）
 
 **outcome 词表**：
-流水 `error` 列的那份固定词表，**12 个词**（v0.70 补记 10 词，v0.99 加 `request_too_large`，v1.02 加 `quota_exceeded`）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`、`request_too_large`、`quota_exceeded`。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
+流水 `error` 列的那份固定词表，**14 个词**（v0.70 补记 10 词，v0.99 加 `request_too_large`，v1.02 加 `quota_exceeded`，v1.52 加 `reauth_required` / `plan_limit_exceeded`）：`upstream_error`、`stream_aborted`、`unauthorized`、`rejected`、`queue_full`、`queue_timeout`、`queue_abandoned`、`compaction_unsupported`、`model_not_allowed`、`rate_limited`、`request_too_large`、`quota_exceeded`、`reauth_required`（订阅凭证需重新登录，请求未打到上游）、`plan_limit_exceeded`（订阅额度撞限：ChatGPT 429 `subscription_sharing_usage_limit_exceeded` / Copilot premium requests 耗尽）。成功那一档是哨兵 `ok`，**不落库**——库里留 NULL，NULL 即「这行没有错误词」；接口层对外给空串（同 `upstream_request_id` 的成例，v0.67 ⑤）。一档一个词，不叠加：一次调用只落一个。
 _Avoid_: 把 `ok` 当成词表的一员（它是哨兵，不进库）、把 NULL 与空串当两态（写侧只产生 NULL，空串是接口层的形态）
 
 ### 协议与转换

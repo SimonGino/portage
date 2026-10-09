@@ -1,6 +1,8 @@
 # 个人 AI 模型网关 MVP 设计草案
 
-> 状态：草案 v1.75
+> 状态：草案 v1.76
+
+> v1.76 变更（口径层 v1.51 / v1.52 落地：订阅渠道（ChatGPT API 先）的凭证、登录、改写与非流式聚合，地图 [#186](https://github.com/SimonGino/portage/issues/186)，裁决 [#202](https://github.com/SimonGino/portage/issues/202) ~ [#204](https://github.com/SimonGino/portage/issues/204) / [#206](https://github.com/SimonGino/portage/issues/206)，golden [#205](https://github.com/SimonGino/portage/issues/205)，修改人 jinpenga）：新增 §7.13。①凭证 JSON 两张字段表与刷新锁（懒刷新 + 每把互斥锁 + 死亡码表 → 停用 reason `reauth_required`，v0.95 例外）；②登录弹层状态机（start / complete / poll 三接口、待完成态内存 TTL 10 分钟、`ext_agent_host_id` 落 settings、粘贴 JSON 导入兼迁移、声明文件 apply 遇 `*_account` 拒启）；③Responses 编码器改写清单（强制 `store:false` / `stream:true`、丢字段走既有 Drops、`previous_response_id` 拒、`system` 改 `developer`、出站头只 Bearer）；④非流式 SSE 聚合三入口；⑤fetch-models 按 `credential_type` 切解析器（`models[]` / `visibility=="list"` / `slug`）；⑥0 价默认与两流水词。golden 样本随本票合入 main。实现拆六票（只拆 ChatGPT API，Copilot 等前者跑通另拆），见 [#210](https://github.com/SimonGino/portage/issues/210)。
 
 > v1.75 变更（口径层 v1.49 / v1.50 落地：分档价字段、判档与 models.dev 快照放宽，[#185](https://github.com/SimonGino/portage/issues/185)、[#189](https://github.com/SimonGino/portage/issues/189)，地图 [#177](https://github.com/SimonGino/portage/issues/177)，修改人 jinpenga）：落点 §7.10「既有表改造」`channel_models` 条与「models.dev 快照」段。①`channel_models` 加 `price_tier_above`（INTEGER，token 阈值，NULL = 全程一档）+ 分档四价四列（REAL，与基础四价一一对应，列名实现时定）；阈值非 NULL 时分档某价 NULL = 沿用基础价；「未定价」判据仍只看基础四价。只有一档，要第二档时再迁。②判档：整笔**毛输入**（流水 `input_tokens` 口径，含缓存读写）与阈值比，严格大于即四项全按分档价——整笔替换不是加成；判在落库计价那一刻（`calllog.Prices.CostUSD` 已收毛输入），改阈值不追溯；流水不加字段。③`internal/pricing/gen` 放宽（推翻包注释「只留四价」）：留 `cost.tiers` 中 `tier.type = context` 的第一档（`tier.size` 即阈值，档内缺价 = 沿用基础价），顺带留 `limit.context`、`limit.output`、`modalities.input` 给模型目录胶囊；不留 reasoning / release_date / 无价模型。建议价与批量填价带分档（系数同乘分档四价、阈值原样）。`cache_write_1h` 另立 issue，不在本批。
 
@@ -1205,6 +1207,20 @@ api_keys:
 - **与既有数据的衔接**：选预设 = 把这些值预填进新建渠道表单（全部可改），`models_dev` 写进渠道 provider 标注；建议模型与建议价都从快照按标注取，**零新代码**。建成后渠道与预设脱钩。
 - **地址来源**：models.dev 只有单个 `api` 字段、没有 Responses 地址，Anthropic 协议地址只少数几家有，且 `api` 是 AI SDK 的 baseURL 约定、不能直接当出站根（存的是子路径之前的前缀，§6.1）——地址一律手写，逐条对厂商文档确认。magpie `internal/provider/presets.go`（MIT）只作**核对底稿**，不整表复制；若复制须保留 MIT 版权声明与许可全文（`docs/agents/reference-repos.md`）。magpie 各家 Responses 地址未经验证，落实现前逐条验。
 - **测试**（调研建议，可选）：断言每条预设（含 plans）的 `models_dev` id 在快照里存在，快照更新后立刻发现 id 改名或下线。
+
+### 7.13 订阅渠道：凭证、登录、改写与非流式聚合（口径层 v1.51 / v1.52，地图 [#186](https://github.com/SimonGino/portage/issues/186)）
+
+口径见口径层 §2.2「订阅渠道」条（v1.51 定义与风险、v1.52 四条），页面见 DESIGN v0.77；这里只写落点。golden 已随 #210 合入：`responses-stream-siwc-text`（流式正文：usage 在 `response.completed`、`completed.output` 为空数组、正文只在 delta）与 `responses-siwc-evidence/`（拒绝形态一律 `{"detail": …}` 无 `error.code`、token 往返、models 列表）。
+
+- **凭证 JSON 字段表**：`chatgpt_account`：`{client_id, host_id, sub, email, id_token, access_token, refresh_token, expires_at, scopes}`；`copilot_account`：`{github_token, copilot_token, expires_at}`。存 `channel_keys.credential` 原文（TEXT 列本就装 JSON），`credential_type` 加两枚举值；`copilot_account` 值随 Copilot 实现票启用。
+- **刷新锁**：每把凭证一把 `sync.Mutex`；`refreshIfDue`：access 剩约 3 分钟内才动，拿锁后复查一遍过期（并发请求只刷一次）；死亡码表 `invalid_grant` / `invalid_refresh_token` / `token_expired` / `refresh_token_expired` / `refresh_token_invalidated` / `refresh_token_reused` / `invalid_client` → 标停用、`disabled_reason = reauth_required`（v0.95 例外，只对 refresh 生效）；其余错误不动凭证。不做定时保活。ID token 验签：JWKS 由 `/.well-known/openid-configuration` 取、缓存一天，验 `iss` / `aud` / `nonce` / `exp` 与 scope `chatgpt.tokens.use.direct`（magpie 不验，不照抄）。
+- **登录弹层状态机**（服务端）：`POST /panel/api/channels/:id/login/start`（ChatGPT：生成 state / nonce / PKCE verifier 拼授权 URL，`redirect_uri=http://127.0.0.1:1455/auth/callback`、`agent_name_hint=portage`；Copilot：起设备码）→ 待完成登录态存**内存** map（渠道 id → 状态，TTL 10 分钟，一个渠道同时只一个）→ `POST …/login/complete`（粘贴回调整条 URL：校 state / host / port / path → 换 token → 验签 → 落库，校验参照 magpie `signin.go` 的 `pastedCallback` / `ownCallback`，MIT 参考）→ Copilot 形态前端按 interval 打 `GET …/login/poll`。`ext_agent_host_id` 每实例一个、落 settings 表。删凭证 best-effort 撤销（OIDC `revocation_endpoint`；Copilot 无），失败不阻止。粘贴 JSON 走既有批量凭证入口校验后落库，兼换机迁移。
+- **声明文件**：apply 校验遇 `credential_type` 为 `*_account` 即整份拒启并说明原因（含「纯转发机迁移 = 本机登录 + 拷 gateway.db」一句）；含订阅渠道的库导出的声明文件在任何实例上都 apply 不了，属同一已知边界。
+- **Responses 编码器改写**（按 `credential_type == chatgpt_account` 在 `openairesponses` 编码侧生效，不按地址判；透传分支对 `*_account` 渠道直接走转换路径——AGENTS「透传保真」唯一例外）：强制 `store:false` / `stream:true`；丢字段走既有 Drops 机制新设一档（档名实现时定，如 `siwc_field`），清单（事实源 OpenAI 文档 D6）：`background` / `conversation` / `max_output_tokens` / `max_tool_calls` / `metadata` / `moderation` / `multi_agent` / `prompt` / `prompt_cache_retention` / `safety_identifier` / `temperature` / `top_logprobs` / `top_p` / `truncation` / `user`；`previous_response_id` 非空 400（§7.8 同款闸，此类型 `supports_stateful_responses` 强制否）；input 的 `system` 项改 `developer`；托管工具照 `SERVER_SIDE_TOOLS` 丢并记 type；出站头只 `Authorization: Bearer <access>`。流中 `response.failed` 的 `error.code` 由解码器透出（记到事件/Summary，词表映射见下）。
+- **非流式 SSE 聚合**：客户端要非流式时，上游 SSE 收完 → canonical 事件 → 按入口协议编码完整响应体，三个入口都做；判据在 relay 转换分支（`!clientWantsStream` 且渠道为 `*_account`），不拒非流式请求。
+- **fetch-models 解析分支**：按 `credential_type` 切解析器——`chatgpt_account` → 只认 `models[]`、留 `visibility=="list"`、建议请求名用 `slug`；其余类型照旧 `data[]`。不并入 Codex 私有目录的未列模型（§8 那条「不迎合」照旧），要用走手动添加。拉取带 Bearer access（刷新走上条）。
+- **记账**：订阅渠道纳管条目建成时四价自动落 0（真免费态，非 NULL）；cost 为 0、不计用户 USD 配额；token 照落（Tap 不改）。映射：429 `subscription_sharing_usage_limit_exceeded`（ChatGPT）与 Copilot premium requests 耗尽 → `plan_limit_exceeded`；403 `user_not_eligible`、503 `usage_unavailable` 仍落 `upstream_error`；撞限 key 层内环照旧换不摘不冷却。凭证行给 `chatgpt.com/settings/usage` 链接（随登录票的凭证行）。
+- **测试**：改写单测以 `responses-stream-siwc-text/request.json` 为输入断言出站体（强 store/stream、丢字段逐个、system→developer、previous_response_id 400）；`response.raw` 回放钉 Tap 与解码；`responses-siwc-evidence/` 的 reject-* 钉拒绝形态（构造同一形态不另采）；刷新锁并发单测（两 goroutine 同凭证只刷一次）；死亡码标停用 / 网络错误不动；聚合三入口各一条（SSE in → full body out）；fetch-models 两形状单测（golden `models.json` 为样本）；撞限映射构造样本（真实形态未采到，#205）；apply 拒启文案与导出边界断言。
 
 ## 8. 最小管理接口
 
