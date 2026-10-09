@@ -677,6 +677,10 @@ type ProbeTarget struct {
 	// AuthScheme 是渠道的认证头写法（#82）：检测与拉模型列表复用转发那套头，问的
 	// 就是「按我们发请求的方式打过去通不通」，认证档位自然也得跟着。
 	AuthScheme string
+	// CredentialType 是渠道级凭证类型（#211）：fetch-models 按它切解析器（#214，
+	// 口径层 §2.2 v1.52）——chatgpt_account 走 Bearer access + models[]，其余
+	// 照旧。检测对订阅渠道无票认领，暂不启用。
+	CredentialType string
 	// Headers 是渠道级额外出站头（#137），理由同 AuthScheme：检测与拉列表得带转发那批头。
 	Headers map[string]string
 	// Credentials 含**已停用**的凭证（口径层 v0.96 承接 v0.38 的立论）：恢复是
@@ -701,9 +705,9 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 	var t ProbeTarget
 	var headers string
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme, ch.headers
+		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme, ch.headers, ch.credential_type
 		FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme, &headers)
+		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme, &headers, &t.CredentialType)
 	t.Headers = DecodeHeaders(headers)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound

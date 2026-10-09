@@ -20,6 +20,7 @@ import (
 
 	"github.com/SimonGino/portage/internal/mail"
 	"github.com/SimonGino/portage/internal/store"
+	"github.com/SimonGino/portage/internal/subscription"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -46,20 +47,25 @@ type Handler struct {
 	mail mail.Sender
 	// version / distro 只随已登录的 /session 下发（口径层 v1.38 ③）。
 	version, distro string
-	// 一键升级（展开层 §7.11）：apply 同 mail 一样持函数，测试换桩才不会真去替换测试二进制；
-	// onUpgraded 由 main 接上，替换成功后通知它收场并 Exec；upgrading 挡并发第二次。
+	// 一键升级（展开层 §7.11）：apply 同 mail 一样持函数，测试换桩才不会真去替换
+	// 测试二进制；onUpgraded 由 main 接上，替换成功后通知它收场并 Exec；upgrading
+	// 挡并发第二次。
 	apply      func(ctx context.Context, version string) error
 	onUpgraded func(version string)
 	upgrading  atomic.Bool
+	// sub 是订阅凭证引擎（#211）：fetch-models 对 chatgpt_account 渠道要先把凭证
+	// 懒刷新成 access 再拉（#214）。**必须与转发端同一个实例**：每把凭证一把互斥
+	// 锁在引擎里，各建各的会让管理端与转发端各自刷新、撞 refresh_token_reused。
+	sub *subscription.Engine
 }
 
-func New(db *sql.DB, log *slog.Logger, declarative bool, version, distro string, onUpgraded func(version string)) *Handler {
+func New(db *sql.DB, log *slog.Logger, declarative bool, version, distro string, onUpgraded func(version string), sub *subscription.Engine) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Handler{
 		db: db, log: log, declarative: declarative, mail: mail.DefaultSender,
-		version: version, distro: distro, apply: applyUpgrade, onUpgraded: onUpgraded,
+		version: version, distro: distro, apply: applyUpgrade, onUpgraded: onUpgraded, sub: sub,
 	}
 }
 

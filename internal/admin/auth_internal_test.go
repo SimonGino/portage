@@ -80,7 +80,7 @@ func newAuthServer(t *testing.T, declarative bool, tweak ...func(*Handler)) (*ht
 	if _, err := Bootstrap(t.Context(), db, testAdminPassword); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative, "0.5.0", "binary", nil)
+	h := New(db, slog.New(slog.NewTextHandler(io.Discard, nil)), declarative, "0.5.0", "binary", nil, nil)
 	rec := &mailRec{}
 	h.mail = rec.send
 	for _, f := range tweak {

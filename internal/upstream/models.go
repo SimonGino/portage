@@ -1,8 +1,10 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -56,6 +58,28 @@ type ModelListResult struct {
 // 的 Bearer 头和带 anthropic 的 x-api-key 头打过去，聚合型中转站会回各自视角的列表。
 // `gpt-4o` 出现在前者不出现在后者，就是「它只走 openai」的依据。
 func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, scheme, credential string, headers map[string]string) ModelListResult {
+	return listModels(ctx, baseURL, p,
+		func(h http.Header) { applyHeaders(h, http.Header{}, p, scheme, credential, false, headers) },
+		parseDataModels)
+}
+
+// listSubscriptionModels 朝订阅渠道（chatgpt_account，#214，口径层 §2.2 v1.52）的一个
+// 协议侧拉官方模型目录。
+//
+// 与 ListModels 的两点差别都在渠道性质上：出站头只 `Authorization: Bearer <access>`
+// ——§7.13 对订阅渠道的出站头口径就是这个头，渠道级额外出站头（#137）刻意不带上
+// （注意与转发侧 applyHeaders 不同：那边对任何渠道都照发渠道配置的静态头）；解析
+// 只认官方 models[] 形状（见 parseSubscriptionModels）。
+func listSubscriptionModels(ctx context.Context, baseURL string, p protocol.Protocol, accessToken string) ModelListResult {
+	return listModels(ctx, baseURL, p,
+		func(h http.Header) { h.Set("Authorization", "Bearer "+accessToken) },
+		parseSubscriptionModels)
+}
+
+// listModels 是两个拉取入口共用的骨架（#214 起「按 credential_type 切解析器」）：
+// 超时、URL、状态码文案、限长全都一样，差的只有「头怎么打」与「形状怎么解」两件事，
+// 各由调用方注入。
+func listModels(ctx context.Context, baseURL string, p protocol.Protocol, auth func(http.Header), parse func([]byte) ([]string, error)) ModelListResult {
 	res := ModelListResult{Protocols: sameModelsEndpoint(p)}
 
 	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
@@ -67,7 +91,7 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, scheme
 		res.Detail = "请求构造失败"
 		return res
 	}
-	applyHeaders(req.Header, http.Header{}, p, scheme, credential, false, headers)
+	auth(req.Header)
 
 	resp, err := (&http.Client{Timeout: listModelsTimeout}).Do(req)
 	if err != nil {
@@ -92,19 +116,15 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, scheme
 		return res
 	}
 
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, listModelsLimit)).Decode(&payload); err != nil {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, listModelsLimit))
+	if err != nil {
 		res.Detail = "上游返回的不是模型列表的形状"
 		return res
 	}
-	for _, m := range payload.Data {
-		if m.ID != "" {
-			res.Models = append(res.Models, m.ID)
-		}
+	res.Models, err = parse(b)
+	if err != nil {
+		res.Detail = "上游返回的不是模型列表的形状"
+		return res
 	}
 	if len(res.Models) == 0 {
 		res.Detail = "上游回了一张空列表"
@@ -114,13 +134,88 @@ func ListModels(ctx context.Context, baseURL string, p protocol.Protocol, scheme
 	return res
 }
 
+// parseDataModels 解 OpenAI 与 Anthropic 通行的 `data[]` 形状
+// （`{"data":[{"id":…}]}`，litellm llms/anthropic/common_utils.py）。走 Decoder
+// 而不是 Unmarshal：只解第一个 JSON 值、尾部多余字节不炸——与拆出本函数之前的
+// 旧行为一致（data[] 回归零变化的验收钉的就是这条）。
+func parseDataModels(b []byte) ([]string, error) {
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range payload.Data {
+		if m.ID != "" {
+			out = append(out, m.ID)
+		}
+	}
+	return out, nil
+}
+
+// parseSubscriptionModels 解官方直连的 `models[]` 形状（#214，口径层 §2.2 v1.52：
+// 顶层是 models[] 不是 data[]，真机证据见 golden responses-siwc-evidence）。只留
+// visibility=="list" 的项、请求名用 slug——非 list 的不进候选；**只认这一种形状**，
+// 没有 models 键按形状错收场、不回退去解 data[]：把聚合中转那份写死的大列表混
+// 进官方目录，比报「拉不到」更坏。
+func parseSubscriptionModels(b []byte) ([]string, error) {
+	var payload struct {
+		Models json.RawMessage `json:"models"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if len(payload.Models) == 0 {
+		return nil, errors.New("没有 models 字段")
+	}
+	var models []struct {
+		Slug       string `json:"slug"`
+		Visibility string `json:"visibility"`
+	}
+	if err := json.Unmarshal(payload.Models, &models); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range models {
+		if m.Slug != "" && m.Visibility == "list" {
+			out = append(out, m.Slug)
+		}
+	}
+	return out, nil
+}
+
 // ListModelsFor 按渠道声明的每个协议拉模型列表，**各协议打各的出站根地址**（口径层
 // v0.96 ②，#49——此前收单个 baseURL，把回退序第一个地址打给了全部协议，多协议渠道
 // 的 anthropic 列表会拉到 openai 的根上；ProbeModel 那边一直是对的）。
+func ListModelsFor(ctx context.Context, urls store.BaseURLs, scheme, credential string, headers map[string]string) []ModelListResult {
+	return listModelsFor(ctx, urls, func(base string, p protocol.Protocol) ModelListResult {
+		return ListModels(ctx, base, p, scheme, credential, headers)
+	})
+}
+
+// ListSubscriptionModelsFor 是 ListModelsFor 的订阅版（#214）：分协议取地址、
+// 同址共享一次拉取、收窄到声明集的语义一模一样，差的只是每侧拉取走
+// Bearer access + models[] 形状。
+func ListSubscriptionModelsFor(ctx context.Context, urls store.BaseURLs, accessToken string) []ModelListResult {
+	return listModelsFor(ctx, urls, func(base string, p protocol.Protocol) ModelListResult {
+		return listSubscriptionModels(ctx, base, p, accessToken)
+	})
+}
+
+// listModelsFor 是两个入口共用的遍历骨架。
 //
 // 串行而不是并发：拉的是同一个上游同一把凭证，两三次请求并发过去省不下多少，却容易
 // 在限流严的中转站上把两次都撞成 429。这跟 Probe 逐凭证串行探是同一个取舍。
-func ListModelsFor(ctx context.Context, urls store.BaseURLs, scheme, credential string, headers map[string]string) []ModelListResult {
+//
+// 一份结果只对「同组**且同地址**」的协议成立：openai 拉过之后 openai_responses
+// 不用再打一次的前提是两者挂在同一个根下，v0.96 起它们可以各挂各的，地址不同
+// 就是两份答案、各拉各的。顺带把回给前端的 Protocols 收窄到渠道真声明了的那些
+// ——渠道只勾了 openai_responses 时，说这份列表对 openai 也成立会让表单勾出
+// 一个渠道根本不支持的协议。
+func listModelsFor(ctx context.Context, urls store.BaseURLs, fetch func(base string, p protocol.Protocol) ModelListResult) []ModelListResult {
 	set := urls.Protocols()
 	out := []ModelListResult{}
 	done := map[protocol.Protocol]bool{}
@@ -129,12 +224,7 @@ func ListModelsFor(ctx context.Context, urls store.BaseURLs, scheme, credential 
 			continue
 		}
 		base := urls.Get(p)
-		res := ListModels(ctx, base, p, scheme, credential, headers)
-		// 一份结果只对「同组**且同地址**」的协议成立：openai 拉过之后
-		// openai_responses 不用再打一次的前提是两者挂在同一个根下，v0.96 起它们
-		// 可以各挂各的，地址不同就是两份答案、各拉各的。顺带把回给前端的
-		// Protocols 收窄到渠道真声明了的那些——渠道只勾了 openai_responses 时，
-		// 说这份列表对 openai 也成立会让表单勾出一个渠道根本不支持的协议。
+		res := fetch(base, p)
 		group := res.Protocols
 		res.Protocols = nil
 		for _, q := range group {
