@@ -603,3 +603,33 @@ func collectWith(t *testing.T, c *Codec, raw string) []protocol.Event {
 	}
 	return events
 }
+
+// 1h 缓存写细分（#198）：嵌套 cache_creation 容器拆出 canonical 的明细，总数不变。
+// 容器缺席 = 没报细分，1h 落 0——两种情况在计价上同账（整笔按 5 分钟价）。
+func TestDecodeCacheWrite1hBreakdown(t *testing.T) {
+	const body = `{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-5",` +
+		`"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":2,"cache_creation_input_tokens":300,` +
+		`"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200},` +
+		`"cache_read_input_tokens":0,"output_tokens":4}}`
+	events, err := NewCodec().DecodeFullBody([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var u *protocol.Usage
+	for _, ev := range events {
+		if ev.Type == protocol.EvUsage {
+			u = ev.Usage
+		}
+	}
+	if u == nil {
+		t.Fatal("没解出 EvUsage")
+	}
+	if u.CacheWriteTokens != 300 || u.CacheWrite1hTokens != 200 {
+		t.Errorf("缓存写 = 总 %d / 1h %d, 期望 300 / 200（明细不进总量的加法）",
+			u.CacheWriteTokens, u.CacheWrite1hTokens)
+	}
+	if u.InputTokens != 302 {
+		t.Errorf("InputTokens = %d, 期望毛值 302（1h 是写入的明细，不加第二遍）", u.InputTokens)
+	}
+}

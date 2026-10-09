@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": false,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "source": "构造样本（非转录）：从 golden/anthropic-cache-write 的真实转录派生，只改 usage 里 cache_creation 的 TTL 细分数字（5m 2059 + 1h 5000 = 总写入 7059 不变，拆分依据 litellm transformation.py _resolve_cache_creation_token_details 的「总数 = 5m + 1h」语义）。真实转录里 ephemeral_1h 恒 0——请求的 cache_control 没带 ttl:\"1h\"，而本机没有官方直连凭证录不到真发生 1h 写入的轮次（golden 官方直连那一格归 #2）。1h 档 = 2× input 价是厂商定价事实（docs.anthropic.com prompt-caching#pricing），只做建议不自动落库。",
+  "synthetic": true,
+  "expect": {
+    "Model": "claude-sonnet-5",
+    "InputTokens": 37,
+    "OutputTokens": 90,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 7059,
+    "CacheWrite1hTokens": 5000,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "end_turn",
+    "ServiceTier": "standard",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 7096
+}

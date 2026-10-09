@@ -532,6 +532,16 @@ func usageBody(u protocol.Usage) map[string]any {
 	if u.ReasoningTokens != 0 {
 		body["output_tokens_details"] = map[string]any{"thinking_tokens": u.ReasoningTokens}
 	}
+	// 1h 缓存写细分（#198）有数才写回：总写入恒在顶层键里，细分容器只在真拆过时补
+	// ——与真字节的形状一致（golden/anthropic-cache-*）。当下能走到这里的上游是
+	// CC / R（它们的 usage 没有 1h 概念），这半边恒零；写它是把 A 解码侧读到的细分
+	// 能原样带回 A 出口（A→A 转换路径的保真），丢了对客户端是一个不可见的静默降档。
+	if u.CacheWrite1hTokens != 0 {
+		body["cache_creation"] = map[string]any{
+			"ephemeral_5m_input_tokens": max(u.CacheWriteTokens-u.CacheWrite1hTokens, 0),
+			"ephemeral_1h_input_tokens": u.CacheWrite1hTokens,
+		}
+	}
 	return body
 }
 

@@ -174,3 +174,17 @@ data: {"delta":"你好"}
 		t.Errorf("断在终态之前应判截断：%+v", got)
 	}
 }
+
+// 同款 Anthropic 兼容端点也可能把 TTL 细分照搬进来（#198）：1h 是 cache_creation_input_tokens
+// 的明细。官方 OpenAI 没有这个容器，缺席 = 没报细分，落 0。
+func TestTapReadsCacheWrite1hWhenPresent(t *testing.T) {
+	const body = `{"id":"resp_a","model":"claude-sonnet-4-5","status":"completed",` +
+		`"usage":{"input_tokens":100,"output_tokens":20,` +
+		`"cache_creation_input_tokens":36,` +
+		`"cache_creation":{"ephemeral_5m_input_tokens":16,"ephemeral_1h_input_tokens":20}}}`
+
+	got := feed(t, NewTap(false), body)
+	if got.CacheWriteTokens != 36 || got.CacheWrite1hTokens != 20 {
+		t.Errorf("cache write = %d / 1h %d, 期望 36 / 20", got.CacheWriteTokens, got.CacheWrite1hTokens)
+	}
+}

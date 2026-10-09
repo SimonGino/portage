@@ -27,6 +27,14 @@ type usage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// CacheCreation 是写入的 TTL 细分（#198）：5m + 1h = 上面的总数。容器缺席
+	// = 上游没报细分（老式/兼容上游），1h 落 0、整笔按 5 分钟档计。真字节里两键
+	// 恒同现（golden/anthropic-cache-*，Claude Code 的 usage 也两个都带——tokscale
+	// #1373），只读 1h：5m 那半边 = 总数 - 1h，两处各存一份只会漂。
+	CacheCreation *struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 	// service_tier / speed 都住在 usage 里（#103），不在 message 顶层。
 	ServiceTier string `json:"service_tier"`
 	Speed       string `json:"speed"`
@@ -108,6 +116,11 @@ func applyUsage(sum *protocol.Summary, u *usage) {
 	}
 	if u.CacheCreationInputTokens != 0 {
 		sum.CacheWriteTokens = u.CacheCreationInputTokens
+	}
+	// 1h 细分同上面那批「只覆盖非零」：message_start 带了容器、message_delta 只刷新
+	// output_tokens（真实字节如此），整体赋值会把 start 那份细分吃掉。
+	if c := u.CacheCreation; c != nil && c.Ephemeral1hInputTokens != 0 {
+		sum.CacheWrite1hTokens = c.Ephemeral1hInputTokens
 	}
 	if u.ServiceTier != "" {
 		sum.ServiceTier = u.ServiceTier

@@ -208,3 +208,37 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
 		t.Errorf("Summary = %+v\n期望 = %+v", got, want)
 	}
 }
+
+// 1h 缓存写细分（#198）：嵌套 cache_creation 容器把总写入拆成 5m + 1h，Tap 只取 1h
+// 那半边（5m = 总数 - 1h，不另存一份）。流式下 message_delta 不带容器（真字节如此），
+// 靠「只覆盖非零值」从 message_start 活到收尾；容器缺席的老式上游落 0、整笔按 5 分钟档。
+func TestTapCacheWrite1hBreakdown(t *testing.T) {
+	t.Run("非流式", func(t *testing.T) {
+		const body = `{"id":"msg_01","type":"message","role":"assistant",` +
+			`"model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"你好"}],` +
+			`"stop_reason":"end_turn","usage":{"input_tokens":12,"cache_creation_input_tokens":300,` +
+			`"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200},` +
+			`"cache_read_input_tokens":1024,"output_tokens":42}}`
+		want := protocol.Summary{
+			Model: "claude-sonnet-4-5-20250929", InputTokens: 12, OutputTokens: 42,
+			CacheReadTokens: 1024, CacheWriteTokens: 300, CacheWrite1hTokens: 200, StopReason: "end_turn"}
+		if got := feed(t, NewTap(false), body); got != want {
+			t.Errorf("Summary = %+v\n期望 = %+v", got, want)
+		}
+	})
+	t.Run("流式：细分只在 message_start，delta 不带容器", func(t *testing.T) {
+		const raw = `event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","content":[],"usage":{"input_tokens":12,"cache_creation_input_tokens":300,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200},"cache_read_input_tokens":1024,"output_tokens":1}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}
+
+`
+		want := protocol.Summary{
+			Model: "claude-sonnet-4-5-20250929", InputTokens: 12, OutputTokens: 42,
+			CacheReadTokens: 1024, CacheWriteTokens: 300, CacheWrite1hTokens: 200, StopReason: "end_turn"}
+		if got := feed(t, NewTap(true), raw); got != want {
+			t.Errorf("Summary = %+v\n期望 = %+v", got, want)
+		}
+	})
+}

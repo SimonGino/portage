@@ -31,6 +31,8 @@ const fixtureDir = "../../testdata/fixtures"
 var cacheHitFixtures = []string{
 	"anthropic-cache-hit",
 	"anthropic-stream-cache-hit",
+	"anthropic-cache-write-1h",
+	"anthropic-stream-cache-write-1h",
 	"cc-cache-write",
 	"cc-stream-cache-write",
 	"cc-stream-cache-write-bailian",
@@ -142,6 +144,8 @@ func TestCacheHitFixturesThroughCanonical(t *testing.T) {
 				OutputTokens:     meta.Expect.OutputTokens,
 				CacheReadTokens:  meta.Expect.CacheReadTokens,
 				CacheWriteTokens: meta.Expect.CacheWriteTokens,
+				// 1h 细分（#198）：canonical 侧与 Summary 同读法，容器缺席的样本这一格是 0。
+				CacheWrite1hTokens: meta.Expect.CacheWrite1hTokens,
 			}
 			if got != want {
 				t.Errorf("canonical Usage = %+v\n期望 = %+v", got, want)

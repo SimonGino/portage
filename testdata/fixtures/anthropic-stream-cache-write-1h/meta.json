@@ -1,0 +1,23 @@
+{
+  "direction": "upstream",
+  "protocol": "anthropic",
+  "stream": true,
+  "endpoint": "/v1/messages",
+  "status": 200,
+  "source": "构造样本（非转录）：从 golden/anthropic-stream-cache-write 的真实转录派生，只改 message_start 里 cache_creation 的 TTL 细分数字（5m 2059 + 1h 5000 = 总写入 7059 不变）；message_delta 的 usage 真字节里本就没有这个容器（只刷新 output_tokens），原样保留——1h 细分靠 Tap 的「只覆盖非零值」从 start 帧活到收尾。1h 写入要真实发生，请求的 cache_control 得带 ttl:\"1h\"，本机无转录，同非流式那份的处置。",
+  "synthetic": true,
+  "expect": {
+    "Model": "claude-sonnet-5",
+    "InputTokens": 37,
+    "OutputTokens": 73,
+    "CacheReadTokens": 0,
+    "CacheWriteTokens": 7059,
+    "CacheWrite1hTokens": 5000,
+    "ReasoningTokens": 0,
+    "HasReasoningTokens": true,
+    "StopReason": "end_turn",
+    "ServiceTier": "standard",
+    "Degraded": false
+  },
+  "expectCanonicalInputTokens": 7096
+}

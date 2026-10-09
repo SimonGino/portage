@@ -182,6 +182,11 @@ type usagePayload struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// TTL 细分（#198）：形状与语义见 tap.go 同名字段——两边各解各的，但读法只有一份。
+	CacheCreation *struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 	// 思考 token 的 Anthropic 载体（口径层 v0.79）。键名三家都不同形，见 tap.go 那份
 	// 结构体上的注释。这一侧不需要 *int：canonical 的 Usage 本就约定「零值即没报」
 	// （protocol.Usage.ReasoningTokens 的注释），报 0 与不报写给下游的字节一模一样。
@@ -217,6 +222,9 @@ func (u *usagePayload) canonical() *protocol.Usage {
 	// MergeSnapshot 非零覆盖攒到一起——与 output_tokens 同一条路径。
 	if d := u.OutputTokensDetails; d != nil {
 		out.ReasoningTokens = d.ThinkingTokens
+	}
+	if c := u.CacheCreation; c != nil {
+		out.CacheWrite1hTokens = c.Ephemeral1hInputTokens
 	}
 	if out == (protocol.Usage{}) {
 		return nil

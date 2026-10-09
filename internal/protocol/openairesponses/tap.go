@@ -37,6 +37,12 @@ type response struct {
 		// Anthropic 兼容端点把缓存写入放在顶层这一项（见 sub2api apicompat/types.go
 		// ResponsesUsage）。与上面那个键的先后同 decode_response.go：顶层非零时它说了算。
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		// 同款上游也可能把 TTL 细分照搬进来（#198）：Anthropic 兼容层（new-api 的
+		// PatchClaudeMessageDeltaUsageData 就写这两个键）在 Responses 壳里也这么发过。
+		// 容器缺席 = 没报细分，1h 落 0。
+		CacheCreation *struct {
+			Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+		} `json:"cache_creation"`
 		// ReasoningTokens 用 *int：0 与「没这个键」要分得开（见 Summary 那边的
 		// HasReasoningTokens）。
 		OutputTokensDetails *struct {
@@ -122,6 +128,9 @@ func apply(sum *protocol.Summary, r *response) {
 	}
 	if u.CacheCreationInputTokens != 0 {
 		sum.CacheWriteTokens = u.CacheCreationInputTokens
+	}
+	if c := u.CacheCreation; c != nil && c.Ephemeral1hInputTokens != 0 {
+		sum.CacheWrite1hTokens = c.Ephemeral1hInputTokens
 	}
 	// 与上面几个「非零才覆盖」不同：这里 0 是有意义的取值（这次没思考），所以按
 	// 键在不在来判，不按值。

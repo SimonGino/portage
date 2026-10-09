@@ -17,6 +17,11 @@ type Summary struct {
 	OutputTokens     int
 	CacheReadTokens  int
 	CacheWriteTokens int
+	// CacheWrite1hTokens 是 1 小时 TTL 的缓存写入（#198），CacheWriteTokens 的
+	// **明细**不是另一笔。零值两义合流（上游没报细分 / 报了 0）：两种情况在计价上
+	// 同账——1h 部分都按 0 计、整笔写入按 5 分钟价，不像 ReasoningTokens 那格要三档
+	// 分开（那边抹了会把没报显示成确凿的零思考成本，这边显示的就是上游报的数）。
+	CacheWrite1hTokens int
 	// ReasoningTokens 是上游报的思考 token 数（口径层 v0.66）。它是
 	// **OutputTokens 的明细，不是另一笔加数**——真实字节里 total 恒等于
 	// input + output，reasoning 一次都没进这个加法（CC 三份 + Responses 一份，

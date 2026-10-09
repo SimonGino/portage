@@ -108,6 +108,15 @@ type Usage struct {
 	OutputTokens     int
 	CacheReadTokens  int
 	CacheWriteTokens int
+	// CacheWrite1hTokens 是 1 小时 TTL 那部分缓存写入（#198），
+	// **CacheWriteTokens 的明细**而非另一笔加数：Anthropic 的
+	// cache_creation_input_tokens 是全部写入，嵌套的 cache_creation 容器把它
+	// 拆成 5m + 1h（litellm transformation.py `_resolve_cache_creation_token_details`、
+	// new-api dto ClaudeUsage 同读法）。零值即「上游没报细分」（容器缺席的老式/
+	// 兼容上游）——那种情况 1h 部分按 0 计、整笔写入按 5 分钟价，与报 0 同账。
+	// 承接它的只有 Anthropic 出口（有数才写回细分容器）；CC / R 出口没有这一格，
+	// 成本可见性由流水 cache_write_1h_tokens 那一列兜底（同 ReasoningTokens 的分工）。
+	CacheWrite1hTokens int
 	// ReasoningTokens 是思考 token 数（口径层 v0.66），OutputTokens 的明细。
 	//
 	// 这里**零值即「上游没报」**，不像 Tap 的 Summary 那样另立一个 Has 标志：
@@ -159,6 +168,9 @@ func (u *Usage) MergeSnapshot(next Usage) {
 	}
 	if next.CacheWriteTokens != 0 {
 		u.CacheWriteTokens = next.CacheWriteTokens
+	}
+	if next.CacheWrite1hTokens != 0 {
+		u.CacheWrite1hTokens = next.CacheWrite1hTokens
 	}
 	if next.ReasoningTokens != 0 {
 		u.ReasoningTokens = next.ReasoningTokens

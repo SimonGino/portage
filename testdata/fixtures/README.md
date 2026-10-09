@@ -93,6 +93,12 @@ pollo-sub2api——响应体逐字节透明的中转，按上面说的形状连�
 官方**直连**实测那一格仍归 [#2](https://github.com/SimonGino/portage/issues/2)——中转透明
 证明的是「这条链路没吃 usage 字段」，不是「官方就这么发」。
 
+## anthropic-cache-write-1h / anthropic-stream-cache-write-1h
+
+[#198](https://github.com/SimonGino/portage/issues/198)：Anthropic 1 小时缓存写入的 TTL 细分。两份都是**手工构造**——真实转录（golden/anthropic-cache-*，#13 采）的 usage 里 `cache_creation` 容器虽然恒在，`ephemeral_1h_input_tokens` 却恒 0：请求的 `cache_control` 没带 `ttl:"1h"`，本机无官方直连凭证，录不到真发生 1h 写入的轮次。两份从那批真实转录派生，**只改 usage 里 cache_creation 的细分数字**（5m 2059 + 1h 5000 = 总写入 7059 不变，拆分语义依据 litellm `transformation.py` `_resolve_cache_creation_token_details`：总数 = 5m + 1h）；流式那份的 message_delta 真字节本就没有这个容器，原样保留——1h 细分靠 Tap 的「只覆盖非零值」从 start 帧活到收尾。
+
+钉的是：Tap 与 Anthropic 解码读出 `Summary.CacheWrite1hTokens` / `Usage.CacheWrite1hTokens`（总数不因拆分而变），A 出口把它写回 `cache_creation` 细分容器。消费方：`internal/protocol/cachehit_fixture_test.go`、`internal/protocol/anthropic`（tap/decode/encode 各自的 1h 用例）。
+
 ## in-responses-namespace-collision / in-responses-namespace-badname
 
 [#94](https://github.com/SimonGino/portage/issues/94) Responses `type=namespace` 摊平的两道就地 400

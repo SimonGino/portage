@@ -634,3 +634,51 @@ func TestEncodeFilledResponseIDIsUnique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// 1h 缓存写细分（#198）：canonical 带了 1h 明细时，A 出口把 cache_creation 容器写回
+// ——总数仍在顶层键，细分只在真拆过时补，与真字节同形。1h 为 0（CC / R 上游恒如此）
+// 一个键都不多写。
+func TestEncodeFullBodyWritesCacheWrite1hBreakdown(t *testing.T) {
+	events := []protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
+		{Type: protocol.EvTextDelta, Text: "ok"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{
+			InputTokens: 12, OutputTokens: 4, CacheReadTokens: 2,
+			CacheWriteTokens: 300, CacheWrite1hTokens: 200,
+		}},
+		{Type: protocol.EvDone, StopReason: "end_turn"},
+	}
+	body, err := anthropic.NewCodec().EncodeFullBody(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Usage struct {
+			CacheCreation struct {
+				Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("编出来的不是合法 JSON: %v\n%s", err, body)
+	}
+	if out.Usage.CacheCreation.Ephemeral1h != 200 || out.Usage.CacheCreation.Ephemeral5m != 100 {
+		t.Errorf("cache_creation = %+v, 期望 5m 100 / 1h 200（5m = 总 300 - 1h 200）\n%s", out.Usage.CacheCreation, body)
+	}
+
+	// 1h 为 0：细分容器整个不写，多写会把「没拆过」说成「拆了且 1h 是 0」。
+	no1h, err := anthropic.NewCodec().EncodeFullBody([]protocol.Event{
+		{Type: protocol.EvMessageStart, ID: "r", Model: "m"},
+		{Type: protocol.EvUsage, Usage: &protocol.Usage{
+			InputTokens: 12, OutputTokens: 4, CacheWriteTokens: 300,
+		}},
+		{Type: protocol.EvDone, StopReason: "end_turn"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(no1h), "ephemeral_1h_input_tokens") {
+		t.Errorf("1h 为 0 时仍写了细分容器:\n%s", no1h)
+	}
+}
