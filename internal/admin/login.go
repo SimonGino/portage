@@ -112,7 +112,7 @@ func (h *Handler) loginComplete(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "保存失败")
 		return
 	}
-	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+	writeOK := h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		if replaceID > 0 {
 			// 原行替换（口径层 v1.52）：换值 + 重新启用 + 清停用现场，名字不动。
 			on := false
@@ -122,6 +122,14 @@ func (h *Handler) loginComplete(c *gin.Context) {
 		}
 		return store.AddChannelCredentials(ctx, tx, id, []store.NewCredential{{Value: string(raw)}})
 	})
+	// 落库没成时，code 已经换过、上游那份新登录态是活的，而本地没有任何行指着
+	// 它——半死态的镜像（CodeRabbit 评审）：best-effort 撤掉刚换出的这份；
+	// 撤销失败只 slog，不改动已回给前端的错误响应。
+	if !writeOK {
+		if err := h.sub.Revoke(context.WithoutCancel(c.Request.Context()), cred); err != nil {
+			h.log.Warn("登录完成但保存失败，撤销上游登录态也失败（best-effort）", "err", err)
+		}
+	}
 }
 
 // loginPoll 报一个渠道有没有进行中的登录（Copilot 形态的前端轮询口；ChatGPT 形态

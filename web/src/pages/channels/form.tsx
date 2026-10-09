@@ -6,7 +6,7 @@ import { Picker, Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
 import { LoginDialog } from './login'
-import { headerRows, headersDirty, headersOf, channelCreatePayload, maxConcurrencyOf, presetPlans, settingsDirty } from './derive'
+import { headerRows, headersDirty, headersOf, channelCreatePayload, isSubscriptionChannel, maxConcurrencyOf, presetPlans, settingsDirty } from './derive'
 import type { HeaderRow } from './derive'
 import { IconX, IconKey } from '../../icons/acts'
 import { providerOptions, useProviders } from '../../prices'
@@ -122,8 +122,11 @@ export function ChannelForm({
   // 那一列不动）。取消声明 Responses 之后不去清那一列：清了也读不到，而声明回来时
   // 人还得再想一遍这个上游支不支持压缩（真正的归位由服务端在删协议那一笔上做，#33）。
   const showCompaction = declared.includes('openai_responses')
-  // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。
-  const showStateful = showCompaction
+  // 两位一起露一起收：它们问的都是「这个 Responses 上游到底认得什么」。订阅渠道
+  // 不露有状态续链位：*_account 走转换路径，previous_response_id 无论怎么选都被
+  // 网关拒（服务端建/改两处同判链「否」，Codex 评审）——不存在「支持」的形态。
+  const subChannel = channel ? isSubscriptionChannel(channel) : subscription
+  const showStateful = showCompaction && !subChannel
 
   const settingsChanged =
     channel !== null &&
@@ -233,10 +236,11 @@ export function ChannelForm({
   }
 
   return (
-    /* 新建时 form 自己就是那一段，段标题栏在它内部——创建按钮因此能坐在标题右边。
-       编辑时它在弹框里，标题归 Dialog 画，这里不再画段头，保存沉到 foot（弹框主按钮
-       右下的通行位）。 */
-    <form className={channel ? 'form' : 'section form'} onSubmit={submit}>
+    <>
+      {/* 新建时 form 自己就是那一段，段标题栏在它内部——创建按钮因此能坐在标题右边。
+         编辑时它在弹框里，标题归 Dialog 画，这里不再画段头，保存沉到 foot（弹框主按钮
+         右下的通行位）。 */}
+      <form className={channel ? 'form' : 'section form'} onSubmit={submit}>
       {!channel && (
         <header className="section-head">
           <h2>新建渠道</h2>
@@ -472,7 +476,22 @@ export function ChannelForm({
           />
         </Field>
       )}
-      {/* 「登录」先建的那只渠道上的登录弹层：关了就跳详情（登没登成都算建成）。 */}
+
+      <ErrorBar message={error} />
+      {channel && (
+        /* 删除与保存同住一行、各占一头：删除是这个弹框里唯一不属于「设置」的动作，
+           放左边 ghost 起步（Confirm 两段式），不跟主按钮挤在一起。 */
+        <div className="settings-foot">
+          {onDelete ? <Confirm ghost label="删除渠道" onConfirm={onDelete} /> : <span />}
+          <button className="btn btn-primary" disabled={busy || !name.trim() || !dirty}>
+            {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      )}
+      </form>
+      {/* 「登录」先建的那只渠道上的登录弹层：关了就跳详情（登没登成都算建成）。
+          摆在表单外（Codex 评审）：弹层自带 <form>，嵌在表单里时提交会冒泡到
+          外层的创建动作，多发一次 POST /channels。 */}
       {!channel && loginChannelID !== null && credType && (
         <LoginDialog
           channelID={loginChannelID}
@@ -485,17 +504,6 @@ export function ChannelForm({
           }}
         />
       )}
-      <ErrorBar message={error} />
-      {channel && (
-        /* 删除与保存同住一行、各占一头：删除是这个弹框里唯一不属于「设置」的动作，
-           放左边 ghost 起步（Confirm 两段式），不跟主按钮挤在一起。 */
-        <div className="settings-foot">
-          {onDelete ? <Confirm ghost label="删除渠道" onConfirm={onDelete} /> : <span />}
-          <button className="btn btn-primary" disabled={busy || !name.trim() || !dirty}>
-            {busy ? '保存中…' : '保存'}
-          </button>
-        </div>
-      )}
-    </form>
+    </>
   )
 }

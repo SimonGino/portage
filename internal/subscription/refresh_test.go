@@ -490,3 +490,56 @@ func TestDeathCodeDoesNotDisablePastedValue(t *testing.T) {
 		t.Errorf("人粘的那份该作数, got %s", got.Credential)
 	}
 }
+
+// TestWithCredentialLockExcludesRefresh：管理端删除凭证要整段持这把锁（#212 集成
+// 评审，Codex）：在途刷新占着锁时 WithCredentialLock 进不去——不然删除会撞上
+// 「行已删、轮换 CAS 落 0 行静默作废、新换的 grant 悬在上游再也撤不掉」的窗口。
+// 刷新收场（轮换已落库）才放行，删除读到的才是轮换后的新值。
+func TestWithCredentialLockExcludesRefresh(t *testing.T) {
+	release := make(chan struct{})
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		<-release // 卡住 token 端点：模拟一次在途刷新
+		okReply(w, "at-new", "rt-new", 3600)
+	})
+	db, id := seedSubDB(t, time.Now().Add(-time.Minute).Unix()) // access 已过期 → 必走刷新
+	// 失败路径也要放行 token 端点：不关掉它，httptest 收尾会等在卡住的 handler 上
+	// （变异检查撞第一条 Fatal 时就是这副样子）。
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	e := engine(db, ts.URL)
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.Effective(context.Background(),
+			store.Credential{ID: id, Name: "主号", Value: credRow(t, db, id).Credential})
+		done <- err
+	}()
+	// 等刷新真的进到 token 端点——那时这把凭证的锁已被 Effective 拿住。
+	deadline := time.Now().Add(5 * time.Second)
+	for ts.hits.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if ts.hits.Load() == 0 {
+		t.Fatal("刷新没起来：token 端点没被打")
+	}
+	entered := make(chan struct{})
+	go e.WithCredentialLock(id, func() { close(entered) })
+	select {
+	case <-entered:
+		t.Fatal("在途刷新占着锁，WithCredentialLock 不该进得去")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("刷新收场后 WithCredentialLock 该进得去")
+	}
+}

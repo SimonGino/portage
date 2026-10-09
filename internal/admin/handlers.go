@@ -650,32 +650,38 @@ func (h *Handler) deleteCredential(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// 读不到（行不在、刚被删过）就只删不撤销，不是错误。
-	value, credType, err := store.CredentialForRevocation(c.Request.Context(), h.db, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		h.log.Error("读凭证失败", "err", err)
-		fail(c, http.StatusInternalServerError, "读取失败")
-		return
-	}
-	if !h.write(c, func(ctx context.Context, tx *sql.Tx) error {
-		return store.DeleteCredential(ctx, tx, id)
-	}) {
-		return
-	}
-	if credType != store.CredentialTypeChatGPTAccount {
-		return
-	}
-	cred, err := store.ParseChatGPTCredential(value)
-	if err != nil {
-		// 值解不动就解不动：撤销是 best-effort，别为号外的事拦删除收尾。
-		h.log.Warn("凭证已删除，但值解析不了、跳过撤销", "err", err)
-		return
-	}
-	// 客户端已拿到 204，连接随时可能断——撤销用不随请求取消的 context，与刷新
-	// 引擎的 WithoutCancel 同理（#217 评审钉过的坑）。
-	if err := h.sub.Revoke(context.WithoutCancel(c.Request.Context()), cred); err != nil {
-		h.log.Warn("撤销上游登录态失败（best-effort，凭证已删除）", "err", err)
-	}
+	// 与在途刷新串行（Engine.WithCredentialLock，#212 集成评审，Codex）：删除不
+	// 拿这把锁时，在途刷新可能刚好从 token 端点换回新的 refresh token——行已删、
+	// CAS 落 0 行轮换静默作废，新换的 grant 悬在上游再也撤不掉。锁内整段
+	// 「读值 → 删除 → 撤销」，读值与删除同事务：轮换 CAS 插不进读和删之间
+	// （CodeRabbit 同点）。读不到（行不在、刚被删过）就只删不撤销，不是错误。
+	h.sub.WithCredentialLock(id, func() {
+		var value, credType string
+		if !h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+			var err error
+			value, credType, err = store.CredentialForRevocation(ctx, tx, id)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+			return store.DeleteCredential(ctx, tx, id)
+		}) {
+			return
+		}
+		if credType != store.CredentialTypeChatGPTAccount {
+			return
+		}
+		cred, err := store.ParseChatGPTCredential(value)
+		if err != nil {
+			// 值解不动就解不动：撤销是 best-effort，别为号外的事拦删除收尾。
+			h.log.Warn("凭证已删除，但值解析不了、跳过撤销", "err", err)
+			return
+		}
+		// 客户端已拿到 204，连接随时可能断——撤销用不随请求取消的 context，与刷新
+		// 引擎的 WithoutCancel 同理（#217 评审钉过的坑）。
+		if err := h.sub.Revoke(context.WithoutCancel(c.Request.Context()), cred); err != nil {
+			h.log.Warn("撤销上游登录态失败（best-effort，凭证已删除）", "err", err)
+		}
+	})
 }
 
 func (h *Handler) addChannelModel(c *gin.Context) {

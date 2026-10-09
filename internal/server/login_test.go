@@ -542,3 +542,42 @@ func TestCreateSubscriptionChannelViaAdminThenLoginStart(t *testing.T) {
 		t.Errorf("拼错的 credential_type 该 400 点名，得到 %d：%s", status, body)
 	}
 }
+
+// TestLoginCompletePersistFailureRevokes：落库没成的 complete 要把刚换出的登录态
+// best-effort 撤掉（CodeRabbit 评审）：code 已经换过，行落不进去就是「上游活着、
+// 本地没有任何行指着它」的半死态。现场：start 之后把渠道删掉，complete 换得到
+// token、落库必撞外键——此时刚换出的 rt-new 必须打到撤销端点。
+func TestLoginCompletePersistFailureRevokes(t *testing.T) {
+	f := newSIWCIssuer(t)
+	db := gatewaytest.NewDB(t)
+	g := gatewaytest.StartWith(t, db, gatewaytest.Options{SubscriptionIssuer: f.URL})
+	a := g.LoggedIn(t)
+	ch := seedEmptySubscriptionChannel(t, db, false)
+
+	raw := startLoginOverHTTP(t, a, f, ch, `{}`)
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, body := a.Do(t, http.MethodDelete, "/panel/api/channels/"+itoa(ch), ""); status != http.StatusNoContent {
+		t.Fatalf("删空订阅渠道期望 204，得到 %d：%s", status, body)
+	}
+	state := u.Query().Get("state")
+	callback := "http://127.0.0.1:1455/auth/callback?code=ac-1&state=" +
+		url.QueryEscape(state) + "&client_id=oaiapp-1"
+	if status, _ := a.Do(t, http.MethodPost, "/panel/api/channels/"+itoa(ch)+"/login/complete",
+		`{"callback_url":`+strconvQuote(callback)+`}`); status == http.StatusNoContent {
+		t.Fatal("渠道已删，complete 不该 204")
+	}
+	select {
+	case form := <-f.revokeSeen:
+		if got := form.Get("token"); got != "rt-new" {
+			t.Errorf("撤销的 token = %q，期望刚换出的 rt-new", got)
+		}
+		if got := form.Get("token_type_hint"); got != "refresh_token" {
+			t.Errorf("token_type_hint = %q，期望 refresh_token", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("落库失败的 complete 没有 best-effort 撤销上游登录态")
+	}
+}

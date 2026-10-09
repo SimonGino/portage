@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -317,6 +318,54 @@ func TestLoginStartRejectsSecondWhilePending(t *testing.T) {
 	}
 }
 
+// TestLoginStartConcurrentSharesHostID：多渠道并发起登录，ext_agent_host_id 仍每实例
+// 一份。host_id 的取造已挪到 loginMu 之外、由 hostIDMu 自串行（#212 集成评审，
+// CodeRabbit：settings I/O 不再压着整个登录面的锁）——锁丢了的话，两个并发 start
+// 各造各的 UUID、各写各的，这条就红；并发下拿不到同一份也红。
+func TestLoginStartConcurrentSharesHostID(t *testing.T) {
+	f := newFakeIssuer(t)
+	e := NewEngine(newLoginDB(t), f.URL)
+	const n = 8
+	urls := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range urls {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			raw, err := e.StartLogin(context.Background(), int64(i+1), 0)
+			if err != nil {
+				t.Errorf("start %d 失败: %v", i+1, err)
+				return
+			}
+			urls[i] = raw
+		}(i)
+	}
+	wg.Wait()
+	if urls[0] == "" {
+		t.Fatal("第一个 start 没拿到地址")
+	}
+	u0, err := url.Parse(urls[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := u0.Query().Get("ext_agent_host_id")
+	if want == "" {
+		t.Fatal("授权 URL 里没有 ext_agent_host_id")
+	}
+	for i, raw := range urls {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("URL %d 解不开: %v", i, err)
+		}
+		if got := u.Query().Get("ext_agent_host_id"); got != want {
+			t.Errorf("start %d 的 host_id = %q，期望同一份 %q", i+1, got, want)
+		}
+	}
+}
+
 // TestLoginCompleteNonceMustMatch：id_token 的 nonce 必须是当次的——这条不验，
 // 验签就形同虚设（#211 local-reviewer 转告：登录 complete 必须传非空 nonce）。
 func TestLoginCompleteNonceMustMatch(t *testing.T) {
@@ -379,6 +428,16 @@ func TestLoginRequiresDirectScope(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), store.SIWCDirectScope) {
 		t.Errorf("错误该点名直连范围：%v", err)
+	}
+	// 换 token 之后才拒的，刚发出来的 refresh token 不能悬在上游：best-effort 撤掉
+	// （#212 审查，Codex：postTokenForm 成功后的失败路径都走 revokeIssued）。
+	select {
+	case form := <-f.revokeHits:
+		if got := form.Get("token"); got != "rt-login" {
+			t.Errorf("撤销的 token = %q，期望刚发出来的 rt-login", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("缺直连范围被拒后，没有 best-effort 撤销刚发出来的登录态")
 	}
 }
 
@@ -443,5 +502,31 @@ func TestRevokeFailureIsError(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Errorf("撤销端点该打一次，得到 %d", hits)
+	}
+}
+
+// TestLoginCompleteDetachesExchangeFromCancellation：换 token 不随请求取消（Codex
+// 评审）：code 一次性、待完成态已消费——浏览器中途断开时若交换随 ctx 取消，上游
+// 可能已发了一把自己再拿不回的 refresh token，重贴回调也换不回来。交换改走
+// WithoutCancel 后：取消的 ctx 照样打得到 token 端点；后续校验链还在原 ctx 里、
+// 会因取消而失败——失败路径该把刚发出来的 token 撤掉（revokeIssued）。
+func TestLoginCompleteDetachesExchangeFromCancellation(t *testing.T) {
+	f := newFakeIssuer(t)
+	e := NewEngine(newLoginDB(t), f.URL)
+	_, state := startLogin(t, e, f, 1, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, _ = e.CompleteLogin(ctx, 1, callbackURL(state))
+	if f.tokenHits == 0 {
+		t.Fatal("换 token 随请求取消了：上游可能已发过 token，这把会悬死")
+	}
+	select {
+	case form := <-f.revokeHits:
+		if got := form.Get("token"); got != "rt-login" {
+			t.Errorf("撤销的 token = %q，期望刚发出来的 rt-login", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("取消路径的校验失败没有撤销刚发出来的登录态")
 	}
 }

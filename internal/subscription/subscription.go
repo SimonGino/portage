@@ -72,6 +72,10 @@ type Engine struct {
 	loginMu sync.Mutex
 	pending map[int64]*pendingLogin
 
+	// hostIDMu 只串行 ext_agent_host_id 的取造（#212 集成评审）：loginMu 不再
+	// 罩着它之后，两个渠道并发起登录也会同时进来，没这把锁会各自造 UUID。
+	hostIDMu sync.Mutex
+
 	jwksMu       sync.Mutex
 	jwksKeys     []jwk
 	jwksAt       time.Time
@@ -117,6 +121,18 @@ func (e *Engine) lockFor(id int64) *sync.Mutex {
 	l := &sync.Mutex{}
 	e.locks[id] = l
 	return l
+}
+
+// WithCredentialLock 让管理端把「读值 → 删除 → 撤销」整段放在这把凭证的锁里跑
+// （#212 集成评审，Codex）：删除不拿这把锁时，在途刷新可能刚好从 token 端点换回
+// 新的 refresh token——行已删、CAS 落 0 行轮换静默作废，新换的 grant 就悬在上游
+// 再也撤不掉。刷新要么先做完（删除读到轮换后的新值、撤的就是它），要么根本
+// 没起（复查撞行已不在直接回）。
+func (e *Engine) WithCredentialLock(id int64, fn func()) {
+	l := e.lockFor(id)
+	l.Lock()
+	defer l.Unlock()
+	fn()
 }
 
 func expiry(c store.ChatGPTCredential) time.Time { return time.Unix(c.ExpiresAt, 0) }

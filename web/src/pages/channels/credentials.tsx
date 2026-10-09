@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api, KEY_MODE_OPTIONS } from '../../api'
 import type { Channel, Credential, KeyMode } from '../../api'
-import { Confirm, CopyButton, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle } from '../../ui'
+import { Confirm, CopyButton, DetailBlock, Dialog, Empty, ErrorBar, Field, SecretValue, Toggle, fmtUnix } from '../../ui'
 import { IconEye, IconEyeOff, IconKey, IconPulse, IconRows } from '../../icons/acts'
 import { Segmented } from '../../fields'
 import { ProbeDialog } from './probe'
 import { LoginDialog } from './login'
 import { useChannel } from './useChannel'
-import { cascadesToChannel, credentialLines, primaryCredential, subscriptionSummary } from './derive'
+import { cascadesToChannel, credentialLines, isSubscriptionChannel, primaryCredential, subscriptionSummary } from './derive'
 
 /**
  * CredentialBlock 是渠道凭证在模型页上的区块（PO 2026-08-20 裁决从「上游设置」井
@@ -34,7 +34,7 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
   const enabled = list.filter((c) => !c.disabled)
   // 「正在被用的那一把」按池子顺序取第一把启用的。轮询/随机模式下这只是代表。
   const primary = primaryCredential(list)
-  const subscription = channel.credential_type === 'chatgpt_account'
+  const subscription = isSubscriptionChannel(channel)
 
   function openLogin(replace: Credential | null) {
     setLoginReplace(replace)
@@ -54,16 +54,20 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
               <IconKey />
               管理
             </button>
-            <button
-              type="button"
-              className="act"
-              onClick={() => setProbing(primary)}
-              disabled={!primary}
-              title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
-            >
-              <IconPulse />
-              检测
-            </button>
+            {/* 订阅渠道不摆检测（#211 follow-up）：probe 拿整包 JSON 当 Bearer 必 401，
+                接上订阅凭证路径前摆着只会吓人。 */}
+            {!subscription && (
+              <button
+                type="button"
+                className="act"
+                onClick={() => setProbing(primary)}
+                disabled={!primary}
+                title="用这把凭证给选中的模型发带模型名的最小真实请求；只提示，不落库也不影响路由"
+              >
+                <IconPulse />
+                检测
+              </button>
+            )}
           </>
         )
       }
@@ -156,7 +160,7 @@ function CredentialsDialog({
   const { mutate } = useChannel(channel.id)
   const [keyMode, setKeyMode] = useState<KeyMode>(channel.key_mode ?? 'polling')
   const enabled = list.filter((c) => !c.disabled).length
-  const subscription = channel.credential_type === 'chatgpt_account'
+  const subscription = isSubscriptionChannel(channel)
 
   /** 改选取模式立即落库，走单字段的意图写（#48 批2），别的列碰不到。 */
   function saveKeyMode(mode: KeyMode) {
@@ -225,18 +229,6 @@ function CredentialsDialog({
         {list.length > 0 && (
           <div className="muted cred-dialog-foot">
             {enabled} / {list.length} 已启用
-            {subscription && (
-              <>
-                {' · 订阅额度与用量见'}
-                <a
-                  href="https://chatgpt.com/settings/usage"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  chatgpt.com/settings/usage
-                </a>
-              </>
-            )}
           </div>
         )}
       </div>
@@ -269,7 +261,7 @@ function CredentialRow({
   const [name, setName] = useState(cred.name)
   // 停用最后一把的举起态：同 Confirm 的两击，3 秒不按第二下自动放下。
   const [armedOff, setArmedOff] = useState(false)
-  const subscription = channel.credential_type === 'chatgpt_account'
+  const subscription = isSubscriptionChannel(channel)
 
   useEffect(() => {
     if (!armedOff) return
@@ -335,16 +327,20 @@ function CredentialRow({
           </button>
         )}
         {/* 停用的也给检测（口径层 v0.96 承接 v0.38）：恢复是纯人工的，「这把还
-            坏不坏」除了发一次请求没有别的办法回答。 */}
-        <button
-          type="button"
-          className="act"
-          onClick={onProbe}
-          title="用这把凭证检测；只提示，不落库也不影响路由"
-        >
-          <IconPulse />
-          检测
-        </button>
+            坏不坏」除了发一次请求没有别的办法回答。订阅渠道先不摆：probe 出站
+            拿整包 JSON 当 Bearer 必 401「凭证不对」（#211 follow-up，接上订阅
+            凭证路径前摆着只会吓人）。 */}
+        {!subscription && (
+          <button
+            type="button"
+            className="act"
+            onClick={onProbe}
+            title="用这把凭证检测；只提示，不落库也不影响路由"
+          >
+            <IconPulse />
+            检测
+          </button>
+        )}
         {armedOff ? (
           <button
             type="button"
@@ -474,7 +470,8 @@ function AddCredentials({ channelID }: { channelID: number }) {
 /**
  * SubscriptionCredValue 是订阅凭证行的那一段「值」：不摆掩码串（一长串 JSON 打码
  * 读不出任何事实），摆账号（email，兑不到用 sub）· 套餐 · access 过期时间（DESIGN
- * v0.77）。「复制」复制整包 JSON——迁移/备份用的就是它（回读口径 v0.47 不动）。
+ * v0.77）· 一条到 chatgpt.com/settings/usage 的用量链接（口径层 §2.2 v1.52「凭证行
+ * 给一条」）。「复制」复制整包 JSON——迁移/备份用的就是它（回读口径 v0.47 不动）。
  * 值解不动（老数据、手改过）时退回掩码显示，至少「复制」还能拿走原值。
  */
 function SubscriptionCredValue({ cred }: { cred: Credential }) {
@@ -485,8 +482,17 @@ function SubscriptionCredValue({ cred }: { cred: Credential }) {
       <span className="cred-account">{summary.account || '（没有账号信息）'}</span>
       {summary.plan && <span className="tag">{summary.plan}</span>}
       <span className="muted" title={`access token 过期时刻（unix 秒 ${summary.expiresAt}）`}>
-        过期 {new Date(summary.expiresAt * 1000).toLocaleString()}
+        过期 {fmtUnix(summary.expiresAt)}
       </span>
+      <a
+        className="muted"
+        href="https://chatgpt.com/settings/usage"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="订阅额度与用量在 chatgpt.com 看"
+      >
+        用量
+      </a>
       <CopyButton value={cred.credential} />
     </span>
   )
