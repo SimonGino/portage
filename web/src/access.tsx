@@ -190,6 +190,20 @@ export function buildSnippet(proto: Proto, kind: SnippetKind, f: SnippetFacts): 
   }
 }
 
+/** key 下拉的可见集（#182，口径层 v1.48）：只列本人的启用中 key（mine 标志在管理侧
+ *  已把无主 key 算进来，带「无主」副行）；他人的 key 不出现（#73 明文不下发），
+ *  停用的不列。无明文的照列——禁选与否交 Picker 的 disabled。 */
+export function selectableKeys(keys: ApiKey[]): ApiKey[] {
+  return keys.filter((k) => !k.disabled && k.mine)
+}
+
+/** 模型下拉按选中 key 的白名单过滤：空/`*` = 全部（后端把空白名单当 `*`）。 */
+export function whitelisted(models: GuideModel[], allowed: string): GuideModel[] {
+  if (allowed === '*' || allowed.trim() === '') return models
+  const set = allowed.split(',')
+  return models.filter((m) => set.includes(m.id))
+}
+
 const PROTO_OPTIONS: Option<Proto>[] = [
   { value: 'chat', label: 'Chat' },
   { value: 'responses', label: 'Responses' },
@@ -232,7 +246,7 @@ export function AccessGuide({
 
   // key 下拉只列本人的启用中 key（管理侧另含无主 key——mine 标志已一并算好）；
   // 他人明文本就不下发（#73），这里再滤一道 mine，停用的不列。
-  const listed = keys.filter((k) => !k.disabled && k.mine)
+  const listed = selectableKeys(keys)
   const keyOptions: Option<number>[] = listed.map((k) => ({
     value: k.id,
     label: k.name,
@@ -248,8 +262,7 @@ export function AccessGuide({
   }, [keyID, firstPlain])
 
   // 模型按选中 key 的白名单过滤（空 = 全部）；目录顺序已是接入点在前。
-  const whitelist = selected && selected.allowed_models !== '*' ? selected.allowed_models.split(',') : null
-  const routable = whitelist ? models.filter((m) => whitelist.includes(m.id)) : models
+  const routable = selected ? whitelisted(models, selected.allowed_models) : models
   const modelOptions: Option<string>[] = routable.map((m) => ({
     value: m.id,
     label: m.id,
