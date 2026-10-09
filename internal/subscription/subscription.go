@@ -52,8 +52,9 @@ var deathCodes = []string{
 
 // ErrReauthRequired 是「这把凭证需要重新登录」：死亡码标停用后回它，relay 据此
 // 落流水词 reauth_required（第 13 词）。拿锁后复查发现凭证已带着同一原因停用时
-// 也回它——那就是上一次死亡留下的现场。
-var ErrReauthRequired = errors.New("订阅凭证需要重新登录")
+// 也回它——那就是上一次死亡留下的现场。与解析层 store.ErrReauthRequired（Resolve
+// 倒下）是同一个概念、同一个值：一处定义、两层共用，别再立第二份哨兵。
+var ErrReauthRequired = store.ErrReauthRequired
 
 // Engine 是订阅凭证引擎。零散的运行期状态都在内存里：每把凭证一把锁（refresh
 // token 会轮换，两把并发刷同一凭证，后一把必撞 refresh_token_reused）、JWKS
@@ -66,9 +67,10 @@ type Engine struct {
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
 
-	jwksMu   sync.Mutex
-	jwksKeys []jwk
-	jwksAt   time.Time
+	jwksMu       sync.Mutex
+	jwksKeys     []jwk
+	jwksAt       time.Time
+	jwksForcedAt time.Time
 }
 
 // NewEngine 建引擎。issuer 空串用 DefaultIssuer；db 为 nil 时只可用验签那半边
@@ -80,8 +82,17 @@ func NewEngine(db *sql.DB, issuer string) *Engine {
 	return &Engine{
 		db:     db,
 		issuer: strings.TrimRight(issuer, "/"),
-		http:   &http.Client{Timeout: tokenTimeout},
-		locks:  map[int64]*sync.Mutex{},
+		// token 端点是定址小请求，没有合法的重定向理由：307/308 会把带 refresh_token
+		// 的 POST 原样转投 Location 目标（#217 评审），故绯掉自动跟随，3xx 按
+		// 非死亡错误收场——不动凭证，access 未过期照用。发现文档与 JWKS 的 GET
+		// 同走这个 client，同样不跟。
+		http: &http.Client{
+			Timeout: tokenTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		locks: map[int64]*sync.Mutex{},
 	}
 }
 
@@ -139,12 +150,17 @@ func (e *Engine) Effective(ctx context.Context, cred store.Credential) (string, 
 	if fresh(c) {
 		return c.AccessToken, nil
 	}
-	tok, err := e.postToken(ctx, c)
+	// 从这里起是凭证生命周期事件，不随请求走：token 端点一旦受理轮换，旧
+	// refresh_token 即作废——客户端中途断开也要把这轮刷完、落库，否则丢掉的
+	// 新值会让下一轮必撞 refresh_token_reused 死亡码（#217 评审，Codex）。时长
+	// 上界仍由 http.Client 的 Timeout 兜着，不会失控。
+	bg := context.WithoutCancel(ctx)
+	tok, err := e.postToken(bg, c)
 	var te *tokenError
 	switch {
 	case err == nil:
 	case errors.As(err, &te) && slices.Contains(deathCodes, te.Code):
-		if err := store.MarkCredentialReauth(ctx, e.db, cred.ID); err != nil {
+		if err := store.MarkCredentialReauth(bg, e.db, cred.ID, cur.Credential); err != nil {
 			return "", err
 		}
 		return "", ErrReauthRequired
@@ -166,14 +182,43 @@ func (e *Engine) Effective(ctx context.Context, cred store.Credential) (string, 
 		}
 		return "", fmt.Errorf("刷新凭证 %q 失败: %w", cred.Name, err)
 	}
+	merged, err := rotatedJSON(cur.Credential, c)
+	if err != nil {
+		return "", err
+	}
+	// 落库走 CAS：库里的值被管理端在飞行中粘贴换掉时（#212 之前的迁移正路），
+	// 轮换作废、人粘的那份作数；刚换出的 access token 本次照发，下次请求自会读新值。
+	if _, err := store.RotateCredentialValue(bg, e.db, cred.ID, cur.Credential, merged); err != nil {
+		return "", err
+	}
+	return c.AccessToken, nil
+}
+
+// rotatedJSON 把轮换结果叠回库里的那份原文：结构体只改它认识的那几个键（token
+// 三样 + expires_at + scopes；id_token 回包没带就不动），§7.13 字段表之外的键
+// （#205 现场就带过 earliest_refresh_at 这种）原样保留——「原文落库、原样回读」
+// （v0.47）不因刷了一次而缩水。
+func rotatedJSON(raw string, c store.ChatGPTCredential) (string, error) {
+	m := map[string]json.RawMessage{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return "", err
+	}
 	b, err := json.Marshal(c)
 	if err != nil {
 		return "", err
 	}
-	if err := store.UpdateCredential(ctx, e.db, cred.ID, store.CredentialUpdate{Value: string(b)}); err != nil {
+	overlay := map[string]json.RawMessage{}
+	if err := json.Unmarshal(b, &overlay); err != nil {
 		return "", err
 	}
-	return c.AccessToken, nil
+	for k, v := range overlay {
+		m[k] = v
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // EffectiveAll 给 relay 用：凭证池逐把过懒刷新，出站值全换成 access token。

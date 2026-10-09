@@ -261,13 +261,36 @@ func CredentialByID(ctx context.Context, db Queryer, id int64) (CredentialInfo, 
 // 都不改凭证状态」对凭证生命周期事件的唯一例外，那条管的是上游请求状态码）。
 //
 // 只翻启用中的行：等锁的这会儿被人工停用了的话，现场（原因、时刻）留给人写的那份，
-// 网关不覆盖。停用原因与流水词 calllog.ReauthRequired 是同一个词、同一处定义。
-func MarkCredentialReauth(ctx context.Context, db Conn, id int64) error {
+// 网关不覆盖。值也同理（#211 复审）：expectValue 是引擎拿锁复读到的那份原文，
+// 飞行中被管理端粘贴换掉时 CAS 落空——新粘的那份不背旧 refresh token 的死亡账。
+// 停用原因与流水词 calllog.ReauthRequired 是同一个词、同一处定义。
+func MarkCredentialReauth(ctx context.Context, db Conn, id int64, expectValue string) error {
 	_, err := db.ExecContext(ctx, `
 		UPDATE channel_keys
 		SET disabled = 1, disabled_reason = ?, disabled_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND disabled = 0`, calllog.ReauthRequired.String(), id)
+		WHERE id = ? AND disabled = 0 AND credential = ?`,
+		calllog.ReauthRequired.String(), id, expectValue)
 	return err
+}
+
+// RotateCredentialValue 是订阅引擎的轮换写回（#211）：newValue 只在库里的值仍是
+// 引擎拿锁复读到的那份 oldRaw 时才落——凭证值在飞行中被管理端粘粘换掉（粘贴
+// 迁移走的正是 UpdateCredential 那条路）时 affected 为 0，轮换作废、人粘的那份
+// 作数；刚换出的 access token 本次照发，下次请求自会读新值。回 false 只是
+// 「没落上」，不是错误。换值同 UpdateCredential 一道形状闸；不翻停用态：轮换
+// 落不落与启用无关。
+func RotateCredentialValue(ctx context.Context, db Conn, id int64, oldRaw, newValue string) (bool, error) {
+	if err := validateCredentialValueByID(ctx, db, id, newValue); err != nil {
+		return false, err
+	}
+	res, err := db.ExecContext(ctx, `
+		UPDATE channel_keys SET credential = ?
+		WHERE id = ? AND credential = ?`, newValue, id, oldRaw)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // DeleteCredential 删一份凭证。

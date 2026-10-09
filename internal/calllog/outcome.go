@@ -14,6 +14,8 @@ import "database/sql"
 // Outcome 是流水 `error` 列的那份固定词表（CONTEXT.md「outcome 词表」，口径层
 // v0.70 定 10 词、v0.99 加 `request_too_large`、§2.10 加 `quota_exceeded`、§2.2
 // 「订阅渠道」条加 `reauth_required`）：**13 个词**，加一个不落库的哨兵 `ok`。
+// CONTEXT.md 已先行到 14 词：第 14 词 `plan_limit_exceeded` 随 #215（记账票）
+// 落地，届时同步这里与 outcome_test 的计数。
 //
 // 封闭类型而不是裸 string，是因为这份词表的读者（`group by error` 的人）没有第二个
 // 信源：字面量写错一个字母能编译、能上线，只在有人按词聚合时才发现，而那时错的

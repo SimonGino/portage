@@ -950,6 +950,11 @@ const (
 // Name 是给人看的归因标识（渠道内唯一），会进日志与用量；Value 只在进程内流向
 // upstream，永不进任何 JSON 响应——回读走的是管理端那条独立的 CredentialInfo
 // （v0.47），热路径这个结构不该是它的出口。ID 定位库里的那一行。
+//
+// Value 在 relay 前后是两种值（#211）：库里与解析层拿到的是凭证原文
+// （chatgpt_account 渠道即凭证 JSON）；relay 前置步把出站值换成懒刷新后的
+// access token 再交给 upstream。同一个字段、两种语义，靠本注释与 EffectiveAll
+// 的文档钉住。
 type Credential struct {
 	ID    int64
 	Name  string
@@ -1124,11 +1129,18 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		// ponytail: LIMIT 1 不带 ORDER BY——多候选接入点的死因归类随 SQLite 行序；
 		// checkSingleCandidate 的「每接入点恰一候选」临时闸让它今天不可达，放开多
 		// 候选时要改成「任一候选渠道撞 reauth 即落 reauth 词」。
+		// 路由本身停用时维持通用词（#217 评审，Codex）：重登修不好停用的渠道/模型，
+		// 凭证态只在路由可用时才是「真阻塞」。
 		var chID int64
+		var cmDisabled, chDisabled bool
 		if qErr := db.QueryRowContext(ctx, `
-			SELECT cm.channel_id FROM candidates cd
+			SELECT cm.channel_id, cm.disabled, ch.disabled FROM candidates cd
 			JOIN channel_models cm ON cm.id = cd.channel_model_id
-			WHERE cd.access_point_id = ? AND cd.weight > 0 LIMIT 1`, apID).Scan(&chID); qErr == nil {
+			JOIN channels ch ON ch.id = cm.channel_id
+			WHERE cd.access_point_id = ? AND cd.weight > 0 LIMIT 1`, apID).Scan(&chID, &cmDisabled, &chDisabled); qErr == nil {
+			if cmDisabled || chDisabled {
+				return Candidate{}, ErrNoUsableCandidate
+			}
 			return Candidate{}, noUsableWhy(ctx, db, chID)
 		}
 		return Candidate{}, ErrNoUsableCandidate
@@ -1190,17 +1202,22 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 
 	// 分清「没有这个名字」和「有但现在用不了」。直连路径不进启动闸（它没有
 	// candidates 行），停用渠道 / 停用模型 / 没有启用凭证只能在请求时才发现，
-	// 一律报 404 会让人以为名字打错了。
+	// 一律报 404 会让人以为名字打错了。路由本身停用时维持通用词（#217 评审，
+	// Codex）：重登修不好停用的渠道/模型。
 	var chID int64
+	var cmDisabled, chDisabled bool
 	err = db.QueryRowContext(ctx, `
-		SELECT cm.channel_id FROM channel_models cm
+		SELECT cm.channel_id, cm.disabled, ch.disabled FROM channel_models cm
 		JOIN channels ch ON ch.id = cm.channel_id
-		WHERE ch.name || '/' || cm.upstream_model = ? LIMIT 1`, model).Scan(&chID)
+		WHERE ch.name || '/' || cm.upstream_model = ? LIMIT 1`, model).Scan(&chID, &cmDisabled, &chDisabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, ErrAccessPointNotFound
 	}
 	if err != nil {
 		return Candidate{}, err
+	}
+	if cmDisabled || chDisabled {
+		return Candidate{}, ErrNoUsableCandidate
 	}
 	return Candidate{}, noUsableWhy(ctx, db, chID)
 }
@@ -1210,19 +1227,23 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 // 名字在、用不了的两种解析路径都从这儿过一遍；定位失败不枪毙，回到通用错误。
 // 停用原因那个词走 calllog.ReauthRequired——与 MarkCredentialReauth 写进库里的
 // 是同一处定义，词表动一处这边跟着动，不留第二份字面量。
+// 只有启用凭证归零才升格：池里还有活着的凭证时用不了，真因是渠道/模型被停了，
+// 报待重登会把人引去重登一个其实活着的凭证。
 func noUsableWhy(ctx context.Context, db *sql.DB, channelID int64) error {
 	var credType string
-	var reauth int
+	var reauth, enabled int
 	if err := db.QueryRowContext(ctx, `
 		SELECT ch.credential_type,
 		       (SELECT COUNT(*) FROM channel_keys ck
 		         WHERE ck.channel_id = ch.id AND ck.disabled = 1
-		           AND ck.disabled_reason = ?)
+		           AND ck.disabled_reason = ?),
+	       (SELECT COUNT(*) FROM channel_keys ck
+		         WHERE ck.channel_id = ch.id AND ck.disabled = 0)
 		FROM channels ch WHERE ch.id = ?`,
-		calllog.ReauthRequired.String(), channelID).Scan(&credType, &reauth); err != nil {
+		calllog.ReauthRequired.String(), channelID).Scan(&credType, &reauth, &enabled); err != nil {
 		return ErrNoUsableCandidate
 	}
-	if credType == CredentialTypeChatGPTAccount && reauth > 0 {
+	if credType == CredentialTypeChatGPTAccount && reauth > 0 && enabled == 0 {
 		return ErrReauthRequired
 	}
 	return ErrNoUsableCandidate
