@@ -3,6 +3,7 @@ package subscription_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -340,5 +341,152 @@ func TestEffectiveAllSubstitutesAccessTokens(t *testing.T) {
 	if _, err := engine(db, ts.URL).EffectiveAll(context.Background(), dead); err == nil ||
 		!strings.Contains(err.Error(), "重新登录") {
 		t.Errorf("全部死亡该回需要重新登录, got %v", err)
+	}
+}
+
+func TestTokenEndpointRedirectIsNotFollowed(t *testing.T) {
+	// 307 会把带 refresh_token 的 POST 原样转投 Location 目标（#217 评审）：跟都
+	// 不跟，按非死亡错误收场——凭证不动，access 未过期照用。
+	// 剩 1 分钟：会去打 token 端点（门槛 3 分钟），撞 307 后按非死亡错误
+	// 收场——access 未过期（还剩约 1 分钟）照用，凭证不动。
+	db, id := seedSubDB(t, time.Now().Add(time.Minute).Unix())
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// 指向自己另一条路；若客户端真跟了，会再打进来（hits 变 2）。
+		w.Header().Set("Location", "/sink")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	})
+	raw := credRow(t, db, id).Credential
+	access, err := engine(db, ts.URL).Effective(context.Background(),
+		store.Credential{ID: id, Name: "主号", Value: raw})
+	if err != nil {
+		t.Fatalf("重定向 + access 未过期，该照用旧 access: %v", err)
+	}
+	if access != "at-old" {
+		t.Errorf("出站值 = %q, 期望 at-old", access)
+	}
+	if ts.hits.Load() != 1 {
+		t.Errorf("重定向不该被跟随，token 端点被打 %d 次, 期望 1", ts.hits.Load())
+	}
+	if got := credRow(t, db, id); got.Disabled || got.Credential != raw {
+		t.Error("重定向不该动凭证")
+	}
+}
+
+func TestRotationSurvivesRequestCancellation(t *testing.T) {
+	// 客户端在 token 端点已受理轮换的当口断开：轮换是凭证生命周期事件，不随请求
+	// 走——照常落库，否则旧 refresh_token 下轮必撞 refresh_token_reused 死亡码
+	//（#217 评审，Codex）。
+	db, id := seedSubDB(t, time.Now().Add(time.Minute).Unix())
+	ctx, cancel := context.WithCancel(context.Background())
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		cancel() // 回包到手前，客户端先走
+		okReply(w, "at-new", "rt-new", 3600)
+	})
+	if _, err := engine(db, ts.URL).Effective(ctx,
+		store.Credential{ID: id, Name: "主号", Value: credRow(t, db, id).Credential}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := store.ParseChatGPTCredential(credRow(t, db, id).Credential)
+	if err != nil || c.RefreshToken != "rt-new" || c.AccessToken != "at-new" {
+		t.Errorf("轮换该照常落库: access=%q refresh=%q %v", c.AccessToken, c.RefreshToken, err)
+	}
+}
+
+func TestRotationPreservesUnknownKeys(t *testing.T) {
+	// 「凭证 JSON 按 §7.13 字段表存原文」：表外字段（#205 现场带过 earliest_refresh_at）
+	// 刷新轮换后原样保留——轮换只改它认识的那几个键，不整包重编码缩水。
+	db, id := seedSubDB(t, time.Now().Add(time.Minute).Unix())
+	raw := `{"client_id":"oaiapp-1","host_id":"urn:uuid:h","sub":"u1",` +
+		`"access_token":"at-old","refresh_token":"rt-old",` +
+		`"expires_at":` + strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10) +
+		`,"scopes":["chatgpt.tokens.use.direct"],"earliest_refresh_at":123}`
+	if _, err := db.Exec(`UPDATE channel_keys SET credential = ? WHERE id = ?`, raw, id); err != nil {
+		t.Fatal(err)
+	}
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		okReply(w, "at-new", "rt-new", 3600)
+	})
+	if _, err := engine(db, ts.URL).Effective(context.Background(),
+		store.Credential{ID: id, Name: "主号", Value: raw}); err != nil {
+		t.Fatal(err)
+	}
+	stored := credRow(t, db, id).Credential
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stored), &m); err != nil {
+		t.Fatalf("落库的不足合法 JSON: %v", err)
+	}
+	if string(m["earliest_refresh_at"]) != "123" {
+		t.Errorf("表外字段 earliest_refresh_at 该原样保留, got %s", m["earliest_refresh_at"])
+	}
+	c, err := store.ParseChatGPTCredential(stored)
+	if err != nil || c.AccessToken != "at-new" || c.RefreshToken != "rt-new" {
+		t.Errorf("轮换该照常落库: %+v %v", c, err)
+	}
+}
+
+// pastedFresh 拼一份管理端粘贴迁移形态的新凭证（#212 之前的正路）：新 access、
+// 新 refresh、一小时后才过期。
+func pastedFresh() string {
+	return `{"client_id":"oaiapp-1","host_id":"urn:uuid:h",` +
+		`"access_token":"at-paste","refresh_token":"rt-paste",` +
+		`"expires_at":` + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) +
+		`,"scopes":["chatgpt.tokens.use.direct"]}`
+}
+
+func TestRotationDoesNotClobberPastedValue(t *testing.T) {
+	// 刷新飞行中管理端粘贴换值：轮换写回是 CAS，人粘的那份作数；刚换出的
+	// access token 本次照发，下次请求自会读新值。
+	db, id := seedSubDB(t, time.Now().Add(time.Minute).Unix())
+	pasted := pastedFresh()
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// 引擎已拿锁、已复读库里旧值——这会儿管理端把整份凭证粘进来。
+		if err := store.UpdateCredential(context.Background(), db, id,
+			store.CredentialUpdate{Value: pasted}); err != nil {
+			t.Errorf("飞行中粘贴该能落库: %v", err)
+			return
+		}
+		okReply(w, "at-new", "rt-new", 3600)
+	})
+	access, err := engine(db, ts.URL).Effective(context.Background(),
+		store.Credential{ID: id, Name: "主号", Value: credRow(t, db, id).Credential})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access != "at-new" {
+		t.Errorf("本次出站该用刚换出的 at-new, got %q", access)
+	}
+	got := credRow(t, db, id)
+	if got.Credential != pasted {
+		t.Errorf("人粘的那份该作数, got %s", got.Credential)
+	}
+	if got.Disabled {
+		t.Error("轮换不落库不该顺手停用")
+	}
+}
+
+func TestDeathCodeDoesNotDisablePastedValue(t *testing.T) {
+	// 老凭证撞死亡码的当口、管理端粘了份新的：停用同是 CAS——新粘的那份
+	// 不背旧 refresh token 的死亡账。
+	db, id := seedSubDB(t, time.Now().Add(time.Minute).Unix())
+	pasted := pastedFresh()
+	ts := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := store.UpdateCredential(context.Background(), db, id,
+			store.CredentialUpdate{Value: pasted}); err != nil {
+			t.Errorf("飞行中粘贴该能落库: %v", err)
+			return
+		}
+		errReply(w, 400, `{"error":"invalid_grant"}`)
+	})
+	_, err := engine(db, ts.URL).Effective(context.Background(),
+		store.Credential{ID: id, Name: "主号", Value: credRow(t, db, id).Credential})
+	if err == nil || !strings.Contains(err.Error(), "重新登录") {
+		t.Fatalf("死亡码该回需要重新登录, got %v", err)
+	}
+	got := credRow(t, db, id)
+	if got.Disabled {
+		t.Errorf("新粘的凭证不该被旧账停用: reason=%q", got.DisabledReason)
+	}
+	if got.Credential != pasted {
+		t.Errorf("人粘的那份该作数, got %s", got.Credential)
 	}
 }

@@ -237,4 +237,56 @@ func TestResolveDistinguishesReauthFromUnusable(t *testing.T) {
 			t.Errorf("人工停用该还是 ErrNoUsableCandidate, got %v", err)
 		}
 	})
+	t.Run("启用凭证在场时不升格待重登", func(t *testing.T) {
+		// 池里还有活着的凭证、真因是模型被停时，报待重登会把人引去重登一个
+		// 其实活着的凭证——维持通用词（#211 复审：启用凭证归零才升格）。
+		db = openTestDB(t)
+		for _, q := range []string{
+			`INSERT INTO channels (id, name, base_url_openai_responses, credential_type)
+			 VALUES (1, 'sub', 'https://up.example', 'chatgpt_account')`,
+			`INSERT INTO channel_keys (id, channel_id, name, credential)
+			 VALUES (1, 1, '主号', '` + siwcJSON(4102444800) + `')`,
+			`INSERT INTO channel_keys (id, channel_id, name, credential, disabled, disabled_reason)
+			 VALUES (2, 1, '二号', '` + siwcJSON(4102444800) + `', 1, 'reauth_required')`,
+			`INSERT INTO channel_models (id, channel_id, upstream_model, disabled)
+			 VALUES (1, 1, 'gpt-6.1-sol', 1)`,
+			`INSERT INTO access_points (id, model) VALUES (1, 'sub-模型')`,
+			`INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (1, 1, 100)`,
+		} {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := Resolve(ctx, db, "sub-模型", protocol.OpenAIResponses); !errors.Is(err, ErrNoUsableCandidate) {
+			t.Errorf("模型停用、启用凭证还在场, 该 ErrNoUsableCandidate, got %v", err)
+		}
+		// 直连路径同一判：不因池里留着一把死亡停用就升格。
+		if _, err := Resolve(ctx, db, "sub/gpt-6.1-sol", protocol.OpenAIResponses); !errors.Is(err, ErrNoUsableCandidate) {
+			t.Errorf("直连路径同判, got %v", err)
+		}
+	})
+	t.Run("路由停用不因死亡停用升格待重登", func(t *testing.T) {
+		// 双重受阻（#217 评审，Codex）：渠道/模型停用 + 凭证全数死亡停用——
+		// 重登修不好停用的路由，维持通用词，凭证态只在路由可用时才是真阻塞。
+		db = openTestDB(t)
+		for _, q := range []string{
+			`INSERT INTO channels (id, name, base_url_openai_responses, credential_type, disabled)
+			 VALUES (1, 'sub', 'https://up.example', 'chatgpt_account', 1)`,
+			`INSERT INTO channel_keys (id, channel_id, name, credential, disabled, disabled_reason)
+			 VALUES (1, 1, '主号', '` + siwcJSON(4102444800) + `', 1, 'reauth_required')`,
+			`INSERT INTO channel_models (id, channel_id, upstream_model) VALUES (1, 1, 'gpt-6.1-sol')`,
+			`INSERT INTO access_points (id, model) VALUES (1, 'sub-模型')`,
+			`INSERT INTO candidates (access_point_id, channel_model_id, weight) VALUES (1, 1, 100)`,
+		} {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := Resolve(ctx, db, "sub-模型", protocol.OpenAIResponses); !errors.Is(err, ErrNoUsableCandidate) {
+			t.Errorf("渠道停用 + 凭证全数死亡停用, 该 ErrNoUsableCandidate, got %v", err)
+		}
+		if _, err := Resolve(ctx, db, "sub/gpt-6.1-sol", protocol.OpenAIResponses); !errors.Is(err, ErrNoUsableCandidate) {
+			t.Errorf("直连路径同判, got %v", err)
+		}
+	})
 }

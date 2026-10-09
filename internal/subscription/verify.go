@@ -27,8 +27,14 @@ import (
 )
 
 // jwksTTL 是 JWKS 的缓存时长（口径钉「一天」）。登录是稀有动作，缓存的收益是
-// 连续两次登录不再各拉一遍发现文档；到期后下一次验签重新取，轮换密钥等得起。
+// 连续两次登录不再各拉一遍发现文档；到期后下一次验签重新取。等不起的那半——
+// 签发方中途轮换签名钥——由 kid 未命中时的强制重取补（见 jwksForceInterval）。
 const jwksTTL = 24 * time.Hour
+
+// jwksForceInterval 是 kid 未命中时强制重取 JWKS 的最小间隔：防伪造 kid 的 token
+// 拿验签入口当跳板刷签发方。语义上「约一分钟」就是设计值；做成 var 是给单测
+// 留的余地。
+var jwksForceInterval = time.Minute
 
 // expLeeway 是 exp 的宽限（与 magpie 的 siwcCheckID 同值）：签发到验证之间的
 // 时钟微小漂移不该拒人，真过期一小时仍然拒。
@@ -65,12 +71,22 @@ func (k jwk) publicKey() (crypto.PublicKey, error) {
 		if k.Crv != "P-256" {
 			return nil, fmt.Errorf("JWKS 里的 EC 曲线 %q 不支持（只认 P-256 / ES256）", k.Crv)
 		}
-		x, errX := b64Big(k.X)
-		y, errY := b64Big(k.Y)
-		if errX != nil || errY != nil || x == nil || y == nil {
+		// 坐标走点校验而非直接塞 X/Y：不在曲线上的点在这里就拒，不等到验签时
+		// 出怪相（#217 评审）；P-256 的坐标固定 32 字节，短了左补齐。
+		x, errX := base64.RawURLEncoding.DecodeString(k.X)
+		y, errY := base64.RawURLEncoding.DecodeString(k.Y)
+		if errX != nil || errY != nil || len(x) == 0 || len(x) > 32 || len(y) == 0 || len(y) > 32 {
 			return nil, errors.New("JWKS 里的 EC 公钥缺坐标")
 		}
-		return &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, nil
+		point := make([]byte, 65)
+		point[0] = 4
+		copy(point[33-len(x):33], x)
+		copy(point[65-len(y):], y)
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+		if err != nil {
+			return nil, fmt.Errorf("JWKS 里的 EC 公钥不在曲线上: %w", err)
+		}
+		return pub, nil
 	default:
 		return nil, fmt.Errorf("JWKS 里的密钥类型 %q 不支持（只认 RSA / EC）", k.Kty)
 	}
@@ -90,11 +106,23 @@ func b64Big(s string) (*big.Int, error) {
 }
 
 // jwksSet 取签发方当下的公钥集：发现文档 → jwks_uri → keys，成功后缓存一天。
-func (e *Engine) jwksSet(ctx context.Context) ([]jwk, error) {
+// force 是 kid 未命中时的那一次强制重取（OIDC Core §10.1.1：签发方轮换签名钥，
+// 新 kid 的 token 要能自愈，不能等缓存天荒地老）；它同样受分钟级限流（锚在
+// jwksForcedAt，与普通缓存的 jwksAt 各记各的）——伪造 kid 刷不出请求洪水。
+func (e *Engine) jwksSet(ctx context.Context, force bool) ([]jwk, error) {
 	e.jwksMu.Lock()
 	defer e.jwksMu.Unlock()
-	if e.jwksKeys != nil && time.Since(e.jwksAt) < jwksTTL {
+	if !force {
+		if e.jwksKeys != nil && time.Since(e.jwksAt) < jwksTTL {
+			return e.jwksKeys, nil
+		}
+	} else if e.jwksKeys != nil && time.Since(e.jwksForcedAt) < jwksForceInterval {
+		// 限流期内不再打签发方，拿缓存里这份把「kid 不在」坐实。
 		return e.jwksKeys, nil
+	}
+	if force {
+		// 按尝试计：重取本身失败也消耗本轮限流预算，不给伪造 kid 重试施压的口子。
+		e.jwksForcedAt = time.Now()
 	}
 	var doc struct {
 		JWKSURI string `json:"jwks_uri"`
@@ -136,6 +164,12 @@ func (e *Engine) fetchJSON(ctx context.Context, url string, into any) error {
 	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(into)
 }
 
+// tokenHead 是 JWT 头里验签要用的那两样。
+type tokenHead struct {
+	Alg string `json:"alg"`
+	Kid string `json:"kid"`
+}
+
 // VerifyIDToken 验一枚 id_token：签名（JWKS）+ iss / aud / exp，nonce 非空时也验。
 // 过了回 claims（#212 的登录 complete 从里面取 sub / email / 套餐）。
 //
@@ -146,10 +180,7 @@ func (e *Engine) VerifyIDToken(ctx context.Context, idToken, clientID, nonce str
 	if len(parts) != 3 {
 		return nil, errors.New("ID token 不是三段 JWT")
 	}
-	var head struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
-	}
+	var head tokenHead
 	if err := decodeJSONPart(parts[0], &head); err != nil {
 		return nil, fmt.Errorf("ID token 的头读不动: %w", err)
 	}
@@ -177,20 +208,35 @@ func decodeJSONPart(part string, into any) error {
 	return json.Unmarshal(b, into)
 }
 
-// verifySignature 用 JWKS 里的公钥验第三段签名。kid 有则按它找，找不到就是
-// 「签发方没这把钥匙」，不猜。
-func (e *Engine) verifySignature(ctx context.Context, parts []string, head struct {
-	Alg string `json:"alg"`
-	Kid string `json:"kid"`
-}) error {
-	keys, err := e.jwksSet(ctx)
-	if err != nil {
-		return err
-	}
+// verifySignature 用 JWKS 里的公钥验第三段签名。kid 有则按它找；整个 JWKS 里
+// 没有对得上的 kid 时，按 OIDC Core §10.1.1 强制重取一遍再试——签发方轮换签名钥
+// 要能自愈，不能等缓存天荒地老（重取受分钟级限流）。
+func (e *Engine) verifySignature(ctx context.Context, parts []string, head tokenHead) error {
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
 		return errors.New("ID token 的签名段不是合法的 base64url")
 	}
+	keys, err := e.jwksSet(ctx, false)
+	if err != nil {
+		return err
+	}
+	err = verifyWithKeys(keys, head, parts, sig)
+	if err == nil || !errors.Is(err, errNoMatchingKey) || head.Kid == "" {
+		return err
+	}
+	if keys, err = e.jwksSet(ctx, true); err != nil {
+		return err
+	}
+	return verifyWithKeys(keys, head, parts, sig)
+}
+
+// errNoMatchingKey 只在「整个 JWKS 里没有 kid 对得上的钥匙」时出现：它是
+// verifySignature 要再取一遍 JWKS 的信号。别的失败（签名对不上、公钥坏）不重取。
+var errNoMatchingKey = errors.New("JWKS 里没有 kid 对得上的签名公钥")
+
+// verifyWithKeys 拿一套 JWKS 试验一枚 token 的签名：过则 nil；有钥匙对上 kid 但
+// 验不过回验签错误；整个集合里没有 kid 对得上的钥匙时回 errNoMatchingKey。
+func verifyWithKeys(keys []jwk, head tokenHead, parts []string, sig []byte) error {
 	var lastErr error
 	for _, k := range keys {
 		if k.Use != "" && k.Use != "sig" {
@@ -215,7 +261,7 @@ func (e *Engine) verifySignature(ctx context.Context, parts []string, head struc
 	if lastErr != nil {
 		return fmt.Errorf("ID token 验签失败: %w", lastErr)
 	}
-	return fmt.Errorf("JWKS 里没有 kid=%q 的签名公钥", head.Kid)
+	return fmt.Errorf("JWKS 里没有 kid=%q 的签名公钥: %w", head.Kid, errNoMatchingKey)
 }
 
 // verifySig 按算法走对应的验签原语。哈希恒 SHA-256（三种算法都是 -256 档）。
@@ -257,9 +303,10 @@ func verifyECDSA(k *ecdsa.PublicKey, hash, sig []byte) error {
 	return nil
 }
 
-// checkClaims 验声明四件套：iss / aud / exp，nonce 非空也验。scope 不在 id_token
-// 里——它在 token 回包的 scope 字段上（magpie chatgpt_api.go 同判：siwcCheckID
-// 只验这四件，直连 scope 验在 token 回包），登录侧拿 ScopeHasDirect 把关。
+// checkClaims 验声明四件套：iss / aud / exp，nonce 非空也验（azp 随 aud 的形态校
+// 验，OIDC Core §3.1.3.7）。scope 不在 id_token 里——它在 token 回包的 scope 字段上
+// （magpie chatgpt_api.go 同判：siwcCheckID 只验这四件，直连 scope 验在 token 回
+// 包），登录侧拿 ScopeHasDirect 把关。
 func checkClaims(claims map[string]any, issuer, clientID, nonce string, now time.Time) error {
 	if iss, _ := claims["iss"].(string); strings.TrimRight(iss, "/") != strings.TrimRight(issuer, "/") {
 		return fmt.Errorf("ID token 的签发方 %q 不是 %q", iss, issuer)
@@ -268,6 +315,12 @@ func checkClaims(claims map[string]any, issuer, clientID, nonce string, now time
 	case string:
 		if aud != clientID {
 			return fmt.Errorf("ID token 的 aud 不是本 client（%s）", clientID)
+		}
+		// 单受众带了 azp 就必须是本 client（OIDC Core：azp 存在时等于那唯一的受众）。
+		if raw, ok := claims["azp"]; ok && raw != nil {
+			if azp, _ := raw.(string); azp != clientID {
+				return fmt.Errorf("ID token 的 azp 不是本 client（%s）", clientID)
+			}
 		}
 	case []any:
 		found := false
@@ -278,6 +331,11 @@ func checkClaims(claims map[string]any, issuer, clientID, nonce string, now time
 		}
 		if !found {
 			return fmt.Errorf("ID token 的 aud 里没有本 client（%s）", clientID)
+		}
+		// 多受众的 token 必须带等于本 client 的 azp（OIDC Core §3.1.3.7，#217 评审）：
+		// 受众列表里有我，不等于「这枚 token 是发给我的」。
+		if azp, _ := claims["azp"].(string); azp != clientID {
+			return fmt.Errorf("多受众 ID token 该带等于本 client 的 azp（%s）", clientID)
 		}
 	default:
 		return errors.New("ID token 没有 aud")
