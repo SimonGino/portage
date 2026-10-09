@@ -77,10 +77,11 @@ const (
 	// PlanLimitExceeded 是订阅额度撞限（口径层 §2.2「订阅渠道」条，第 14 词，#215）：
 	// ChatGPT 429 `subscription_sharing_usage_limit_exceeded` 与（将来）Copilot premium
 	// requests 耗尽落它；403 `user_not_eligible`、503 `usage_unavailable` 仍是
-	// UpstreamError。请求打到过上游、上游用 429 把它退了回来，所以归失败半区——
-	// 与 ReauthRequired（一个字节没到上游）恰好隔半区相望，两词不叠加、一档一个词。
-	// 撞限按这个词筛（转换路径上筛得到全部；#213 落地前同协议透传那一档 error 列按
-	// v0.28 纪律留空），余量展示与「上次撞限时间」不做（口径层钉死）。
+	// UpstreamError。请求打到过上游、被上游以 429 退回或在流中 response.failed 带码，
+	// 所以归失败半区——与 ReauthRequired（一个字节没到上游）恰好隔半区相望，两词
+	// 不叠加、一档一个词。撞限按这个词筛（订阅渠道已全量走转换、两形态都落词，
+	// #213；透传路径不解析错误体，error 列按 v0.28 纪律留空），余量展示与「上次撞限
+	// 时间」不做（口径层钉死）。
 	PlanLimitExceeded Outcome = "plan_limit_exceeded"
 	// StreamAborted 是首字节写出之后断流。状态码早已发出去了，只有这一格
 	// 能看出这次其实没说完。

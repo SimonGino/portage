@@ -57,11 +57,16 @@ type response struct {
 }
 
 // 流式下每个生命周期事件都裹一层 response 对象，最终值来自 response.completed /
-// response.incomplete / response.failed。裸 error 帧不裹 response，code 在顶层。
+// response.incomplete / response.failed。裸 error 帧不裹 response，code 有两种
+// 形状：顶层 code 与嵌套 error.code（解码侧 decode_response.go #162 起只认嵌套
+// 那种；两读法分叉会让该形态从词表映射里漏掉，见 observeEvent 那条）。
 type event struct {
 	Type     string    `json:"type"`
 	Response *response `json:"response"`
 	Code     string    `json:"code"`
+	Error    *struct {
+		Code string `json:"code"`
+	} `json:"error"`
 }
 
 // observeEvent 返回这一帧是不是收尾帧：response.completed / incomplete，或流内错误
@@ -80,10 +85,17 @@ func observeEvent(sum *protocol.Summary, sseEvent string, data []byte) bool {
 	if e.Response != nil {
 		apply(sum, e.Response)
 	}
-	// 裸 error 帧（不裹 response 对象）的 code 在顶层；response.failed 的 code 在
-	// response.error 里，由 apply 取。两路都只透出，不在此做任何词表映射。
-	if e.Type == "error" && e.Code != "" {
-		sum.ErrorCode = e.Code
+	// 裸 error 帧（不裹 response 对象）的 code 两种形状都认：顶层 code 与嵌套
+	// error.code——解码侧只认嵌套那种，这里少认一种就会让该形态从词表映射
+	// （#215 收场改判）里漏掉。response.failed 的 code 在 response.error 里，
+	// 由 apply 取。两路都只透出，不在此做任何词表映射。
+	if e.Type == "error" {
+		if e.Code == "" && e.Error != nil {
+			e.Code = e.Error.Code
+		}
+		if e.Code != "" {
+			sum.ErrorCode = e.Code
+		}
 	}
 	switch e.Type {
 	case "response.completed", "response.incomplete", "response.failed", "error":

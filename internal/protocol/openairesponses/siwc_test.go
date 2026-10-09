@@ -156,6 +156,24 @@ var siwcForbiddenFields = map[string]any{
 // TestSIWCEncodeDropsForbiddenFields：15 个字段逐个注入真机请求，逐个断言——出站体
 // 没有它、siwc_field 档登记了它的字段名。
 func TestSIWCEncodeDropsForbiddenFields(t *testing.T) {
+	// 名单 parity：测试表是手抄的，必须与生产表 siwcFields + 两个一等字段
+	// （max_output_tokens / temperature）逐字对齐——生产表加字段而测试没跟上时，
+	// 丢弃方向的用例全照绿（出站体少了谁、名单少了谁，逐字段断言都测不出），
+	// 靠这条当场红。
+	for k := range siwcFields {
+		if _, ok := siwcForbiddenFields[k]; !ok {
+			t.Errorf("siwcFields 里的 %s 没进测试表——生产名单加了字段、用例没跟上", k)
+		}
+	}
+	for k := range siwcForbiddenFields {
+		if k == "max_output_tokens" || k == "temperature" {
+			continue // 一等字段：canonical 里拦，不在 siwcFields 表里也丢
+		}
+		if !siwcFields[k] {
+			t.Errorf("测试表里的 %s 不在 siwcFields——两份名单漂了", k)
+		}
+	}
+
 	sample := siwcGoldenRequest(t)
 	var base map[string]any
 	if err := json.Unmarshal(sample, &base); err != nil {

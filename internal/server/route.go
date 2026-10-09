@@ -16,12 +16,21 @@ func routeOf(cand store.Candidate) upstream.Route {
 	for i, c := range cand.Credentials {
 		creds[i] = upstream.Credential{Name: c.Name, Value: c.Value}
 	}
+	// 订阅渠道（*_account）的出站鉴权头是 D6 逐字契约：Authorization: Bearer <access>。
+	// auth_scheme 是给 api_key 渠道配的「上游认证头写法」（v1.13，#82，如 PAI-EAS 只认
+	// 裸 token）——订阅渠道的 access 由凭证票自动换出、上游固定是 ChatGPT 后端，渠道
+	// 上配了 raw 也轮不到它说了算：照抄的话裸 access 出站、上游当场 401。渠道额外
+	// 静态头不在此拦（运维配置自担，handoff-213 已求既接受边界）。
+	scheme := cand.AuthScheme
+	if store.IsSubscriptionCredentialType(cand.CredentialType) {
+		scheme = store.AuthSchemeBearer
+	}
 	return upstream.Route{
 		ChannelID:      cand.ChannelID,
 		ChannelName:    cand.ChannelName,
 		Protocol:       cand.Protocol,
 		BaseURL:        cand.BaseURL,
-		AuthScheme:     cand.AuthScheme,
+		AuthScheme:     scheme,
 		Headers:        cand.Headers,
 		KeyMode:        cand.KeyMode,
 		Credentials:    creds,
