@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, AUTH_SCHEME_OPTIONS, PROTOCOL_ORDER, declaredProtocols, firstBaseURL, joinBaseURLs, splitBaseURLs } from '../../api'
-import type { AuthScheme, BaseURLDraft, BaseURLs, Channel, ChannelPreset } from '../../api'
+import { api, AUTH_SCHEME_OPTIONS, declaredProtocols, firstBaseURL, joinBaseURLs, splitBaseURLs } from '../../api'
+import type { AuthScheme, BaseURLDraft, Channel, ChannelPreset } from '../../api'
 import { Confirm, ErrorBar, Field } from '../../ui'
 import { Picker, Segmented } from '../../fields'
 import { Avatar, vendorForChannel } from '../../icons'
 import { BaseURLFields } from './baseurl'
-import { headerRows, headersDirty, headersOf, maxConcurrencyOf, presetPlans, settingsDirty } from './derive'
+import { LoginDialog } from './login'
+import { headerRows, headersDirty, headersOf, channelCreatePayload, maxConcurrencyOf, presetPlans, settingsDirty } from './derive'
 import type { HeaderRow } from './derive'
-import { IconX } from '../../icons/acts'
+import { IconX, IconKey } from '../../icons/acts'
 import { providerOptions, useProviders } from '../../prices'
 
 /**
@@ -68,6 +69,10 @@ export function ChannelForm({
   const plans = preset ? presetPlans(preset) : []
   const [planID, setPlanID] = useState(plans[0]?.id ?? '')
   const plan = plans.find((p) => p.id === planID)
+  // 订阅组预设（#216，DESIGN v0.77）：这组没有可填的 key，凭证段是「登录」而非
+  // key 输入；建成的渠道带上这个凭证类型。地址与协议集照预设规则可改不锁。
+  const credType = preset?.credential_type
+  const subscription = credType !== undefined
   const [name, setName] = useState(channel?.name ?? preset?.id ?? '')
   // API 地址是一份共用前缀 + 协议勾选（DESIGN v0.46，口径层 v1.04）；落库前由
   // joinBaseURLs 合回那份「协议 → 地址」map，声明语义照旧由「哪些协议填了地址」
@@ -98,6 +103,9 @@ export function ChannelForm({
   const [authScheme, setAuthScheme] = useState<AuthScheme>(channel?.auth_scheme ?? preset?.auth_scheme ?? 'default')
   // 额外出站头（#137 / #167）：只在编辑态出现，单独一笔 PUT，其余字段写不碰它。
   const [headerList, setHeaderList] = useState<HeaderRow[]>(() => headerRows(channel?.headers ?? {}))
+  // 「登录」开弹层前先建的那只渠道（#216）：null = 还没建。登录弹层按渠道 id 发号，
+  // 渠道得先存在——点「登录」就用当前表单值先把渠道建出来，弹层关了再走 onSaved。
+  const [loginChannelID, setLoginChannelID] = useState<number | null>(null)
   // 拉失败就只剩「未标注」和当前值可选——标注是可选项，别为它挂错误条。
   const providers = useProviders().list
   const [error, setError] = useState('')
@@ -145,15 +153,40 @@ export function ChannelForm({
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
 
-  // 新建落库前把空值剔掉：勾了协议但共用前缀还空着的项落空串 = 未声明，
-  // 服务端 store 那边同判，这里剔掉只是不让空键走网络。
-  function payloadURLs(): BaseURLs {
-    const out: BaseURLs = {}
-    for (const p of PROTOCOL_ORDER) {
-      const v = (urls[p] ?? '').trim()
-      if (v !== '') out[p] = v
+  // 预设来源条的 key 页（#181）：这套地址的 key 在另一个页面申请时用 plan 那份；
+  // 订阅组没有 key 页（#216）——整段链接不渲染。
+  const keysURL = plan?.keys_url || preset?.keys_url
+
+  // 点「登录」= 先建渠道再开登录弹层（#216）：弹层按渠道 id 发号，渠道得先存在。
+  // 弹层关了（登没登成都算）走 onSaved 跳详情——空渠道在详情页的凭证区块照旧能登
+  // （「缺凭证」标记摆着，那儿的「登录」开的是同一个弹层）。
+  async function loginAndCreate() {
+    setBusy(true)
+    setError('')
+    try {
+      const created = await api.post<{ id: number }>('/channels', createPayload())
+      setLoginChannelID(created.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
-    return out
+  }
+
+  // 建渠道那笔请求体：「登录」与「创建」共用（#216），差在要不要顺手带 key。
+  // 字段汇集在 derive.channelCreatePayload——抽出去为把「订阅预设带
+  // credential_type」钉进测试：这一项丢了渠道会静默建成 api_key，登录就开不了。
+  function createPayload() {
+    return channelCreatePayload({
+      name,
+      urls,
+      maxConcurrency: maxConcValue,
+      provider,
+      authScheme,
+      compaction,
+      stateful,
+      credentialType: credType,
+    })
   }
 
   async function submit(e: React.FormEvent) {
@@ -186,13 +219,7 @@ export function ChannelForm({
         onSaved(channel.id)
       } else {
         const created = await api.post<{ id: number }>('/channels', {
-          name,
-          base_url: payloadURLs(),
-          max_concurrency: maxConcValue,
-          provider,
-          auth_scheme: authScheme,
-          ...(showCompaction ? { supports_compaction: compaction } : {}),
-          ...(showStateful ? { supports_stateful_responses: stateful } : {}),
+          ...createPayload(),
           credential,
         })
         onSaved(created.id)
@@ -243,9 +270,11 @@ export function ChannelForm({
                 换一个
               </button>
               <span className="spacer" />
-              <a href={plan?.keys_url || preset.keys_url} target="_blank" rel="noreferrer">
-                去拿 key
-              </a>
+              {keysURL && (
+                <a href={keysURL} target="_blank" rel="noreferrer">
+                  去拿 key
+                </a>
+              )}
             </>
           ) : (
             <>
@@ -407,9 +436,31 @@ export function ChannelForm({
           />
         </Field>
       )}
-      {/* 提示语里曾有「只写不回读：保存之后页面上再也看不到它」，v0.47 之后那是假话
-          ——建完在「上游凭证」段里能看能复制。 */}
-      {!channel && (
+      {/* 凭证段按预设切（#216，DESIGN v0.77）：订阅组没有可填的 key，是同一颗「登录」
+          （与渠道页凭证区块那颗同形制）——点它先用当前表单值建渠道，再开登录弹层；
+          也可以先「创建」空渠道稍后登（「缺凭证」标记照旧）。 */}
+      {!channel && subscription && credType && (
+        <div className="field">
+          <span className="field-label">上游凭证</span>
+          <div className="cred-add">
+            <button
+              type="button"
+              className="act"
+              disabled={busy || !name.trim() || declared.length === 0}
+              onClick={() => void loginAndCreate()}
+            >
+              <IconKey />
+              登录
+            </button>
+            <span className="muted">
+              订阅渠道的凭证由账号登录产生，不贴 key；点「登录」先建渠道再弹登录弹层，也可以先建空渠道稍后登
+            </span>
+          </div>
+        </div>
+      )}
+      {!channel && !subscription && (
+        /* 提示语里曾有「只写不回读：保存之后页面上再也看不到它」，v0.47 之后那是
+           假话——建完在「上游凭证」段里能看能复制。 */
         <Field label="上游凭证" hint="先给一份，渠道建完可以在「上游凭证」段里继续加；多给几份就是凭证池，按选取模式轮着用">
           <input
             // 选了预设，表单里只剩凭证要人补（口径层 v1.47），焦点直接落这儿。
@@ -420,6 +471,19 @@ export function ChannelForm({
             onChange={(e) => setCredential(e.target.value)}
           />
         </Field>
+      )}
+      {/* 「登录」先建的那只渠道上的登录弹层：关了就跳详情（登没登成都算建成）。 */}
+      {!channel && loginChannelID !== null && credType && (
+        <LoginDialog
+          channelID={loginChannelID}
+          credentialType={credType}
+          replaceCred={null}
+          onClose={() => {
+            const id = loginChannelID
+            setLoginChannelID(null)
+            onSaved(id)
+          }}
+        />
       )}
       <ErrorBar message={error} />
       {channel && (

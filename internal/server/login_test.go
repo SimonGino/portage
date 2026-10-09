@@ -134,8 +134,9 @@ func strconvQuote(s string) string {
 }
 
 // seedEmptySubscriptionChannel 直接落一个启用中、没有凭证的 chatgpt_account 渠道
-// （「允许先建空渠道再登录」的现场）。启用中零凭证过不了启动闸，所以只能在网关
-// 起来之后种——这正是那个中间态在现实里的来路：先建渠道、人还没来得及登录。
+// （「允许先建空渠道再登录」的现场）。#216 起这个状态过得了校验闸（写后校验与
+// 启动闸共用 Validate），种在网关起来之后只是沿用 #212 时代的种法——那时它还过
+// 不了启动闸，只能事后种。
 func seedEmptySubscriptionChannel(t *testing.T, db *sql.DB, disabled bool) int64 {
 	t.Helper()
 	res, err := db.Exec(`INSERT INTO channels
@@ -310,11 +311,12 @@ func TestReLoginReplacesDeadCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 死亡现场：别的管理写（改名）被写后校验打回——已知背景，PO 待裁；重新登录
-	// 的入口必须照样能用。
-	if status, _ := a.Do(t, http.MethodPut, "/panel/api/channels/"+itoa(ch)+"/settings",
-		`{"name":"改名试试"}`); status != http.StatusBadRequest {
-		t.Errorf("全灭渠道的普通管理写期望被校验打回 400，得到 %d——这道闸不是本票动的", status)
+	// 死亡现场：#216 起启用中的空订阅渠道（含凭证全灭）是合法中间态，普通管理写
+	// （改名）照过——此前被 checkChannelHasCredential 打回的闸随「先建空渠道再登录」
+	// 口径落地而豁免；重新登录的入口必须照样能用（救活路径是这条用例的主角）。
+	if status, body := a.Do(t, http.MethodPut, "/panel/api/channels/"+itoa(ch)+"/settings",
+		`{"name":"改名试试"}`); status != http.StatusNoContent {
+		t.Errorf("全灭渠道的普通管理写期望 204，得到 %d：%s", status, body)
 	}
 
 	// start 带 credential_id（「重新登录」的入口形态），complete 用返回的 state。
@@ -483,5 +485,60 @@ func TestDeleteCredentialRevokesBestEffort(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("撤销端点没被打到")
+	}
+}
+
+// TestCreateSubscriptionChannelViaAdminThenLoginStart：#216 验收链（tile → 表单 →
+// 「登录」→ 弹层）在 HTTP 面的半边——管理端建渠道入口带上 credential_type 后，空
+// 订阅渠道从 UI 一路建得出（#212 时代只能 DB 种子构造），login/start 随即能用。此前
+// 这个请求撞 checkChannelHasCredential 直接 400，是「先建空渠道再登录」的唯一缺口。
+func TestCreateSubscriptionChannelViaAdminThenLoginStart(t *testing.T) {
+	f := newSIWCIssuer(t)
+	db := gatewaytest.NewDB(t)
+	g := gatewaytest.StartWith(t, db, gatewaytest.Options{SubscriptionIssuer: f.URL})
+	a := g.LoggedIn(t)
+
+	status, body := a.Do(t, http.MethodPost, "/panel/api/channels",
+		`{"name":"chatgpt","base_url":{"openai_responses":"https://api.openai.com"},"credential_type":"chatgpt_account"}`)
+	if status != http.StatusOK {
+		t.Fatalf("空订阅渠道建不出来，得到 %d：%s", status, body)
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("回包不是 {id}：%s（%v）", body, err)
+	}
+
+	// 渠道行回读：credential_type 随行下发、enabled_keys=0——「缺凭证」标记的现场，
+	// 前端按前者把凭证段切成「登录」。
+	var channels []struct {
+		Name           string `json:"name"`
+		CredentialType string `json:"credential_type"`
+		EnabledKeys    int    `json:"enabled_keys"`
+	}
+	a.JSONInto(t, http.MethodGet, "/panel/api/channels", "", &channels)
+	var seeded bool
+	for _, c := range channels {
+		if c.Name == "chatgpt" && c.CredentialType == "chatgpt_account" && c.EnabledKeys == 0 {
+			seeded = true
+		}
+	}
+	if !seeded {
+		t.Errorf("清单里该有一个零凭证的 chatgpt_account 渠道：%+v", channels)
+	}
+
+	// 建完立刻能起登录：「先建渠道再登录」不必再绕 DB 种子。
+	authURL := startLoginOverHTTP(t, a, f, created.ID, `{}`)
+	if !strings.HasPrefix(authURL, f.URL+"/api/accounts/authorize") {
+		t.Errorf("授权页地址该在假签发方：%s", authURL)
+	}
+
+	// 认不得的取值点名叫拒：拼错的类型名若被静默吞掉，渠道会建成 api_key，
+	// 表单的凭证段就切错形态。
+	status, body = a.Do(t, http.MethodPost, "/panel/api/channels",
+		`{"name":"typo","base_url":{"openai_responses":"https://api.openai.com"},"credential_type":"chatgpt-acount"}`)
+	if status != http.StatusBadRequest || !strings.Contains(body, "凭证类型") {
+		t.Errorf("拼错的 credential_type 该 400 点名，得到 %d：%s", status, body)
 	}
 }

@@ -120,7 +120,8 @@ export function CredentialBlock({ channel }: { channel: Channel }) {
       )}
       {loginOpen && (
         <LoginDialog
-          channel={channel}
+          channelID={channel.id}
+          credentialType={channel.credential_type}
           replaceCred={loginReplace}
           onClose={() => setLoginOpen(false)}
         />

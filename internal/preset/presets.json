@@ -317,5 +317,16 @@
     },
     "keys_url": "https://aihubmix.com/token",
     "auth_scheme": "bearer"
+  },
+  {
+    "id": "chatgpt",
+    "name": "ChatGPT",
+    "group": "subscription",
+    "icon": "openai",
+    "credential_type": "chatgpt_account",
+    "protocols": {
+      "openai_responses": "https://api.openai.com"
+    },
+    "note": "Sign in with ChatGPT 的订阅额度直连官方 Responses 端点；凭证由账号登录产生，不贴 key"
   }
 ]

@@ -1585,12 +1585,19 @@ func checkSingleCandidate(ctx context.Context, db Queryer) ([]string, error) {
 // 上限那一半（临时闸的「恰好 1 份」）已于口径层 v0.38 放开，凭证池聚合前移到 M3；
 // 下限留着，它不是临时闸而是 v0.18 的可达性通则：零凭证的渠道每个请求都会失败，
 // 而这是启动时就判定得了的。
+//
+// 订阅渠道（*_account，#216）豁免：它们的凭证由账号登录产生，而登录弹层按渠道
+// id 发号——渠道必须先存在，「先建空渠道再登录」是口径层 §2.2 v1.52 定下的合法
+// 中间态（页面上摆「缺凭证」标记）；api_key / service_account 渠道维持原闸，它们
+// 的凭证只能粘贴，零凭证就是死配置。判断与 IsSubscriptionCredentialType 同源，
+// 这儿是 SQL 字面量：两个词一起写，Copilot 落地不用回这里补。
 func checkChannelHasCredential(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
 		SELECT ch.id, ch.name
 		FROM channels ch
 		LEFT JOIN channel_keys ck ON ck.channel_id = ch.id AND ck.disabled = 0
 		WHERE ch.disabled = 0
+		  AND ch.credential_type NOT IN ('chatgpt_account', 'copilot_account')
 		GROUP BY ch.id
 		HAVING COUNT(ck.id) = 0`,
 		func(rows *sql.Rows) (string, error) {
