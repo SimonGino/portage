@@ -35,6 +35,10 @@ const (
 	SettingGitHubClientSecret = "oauth_github_client_secret"
 	SettingGoogleClientID     = "oauth_google_client_id"
 	SettingGoogleClientSecret = "oauth_google_client_secret"
+	// SettingExtAgentHostID 是 Sign in with ChatGPT 在 OpenAI 侧认的本实例名
+	//（#212，口径层 §2.2 v1.52）：每实例一个、落 settings 表，授权 URL 的
+	// ext_agent_host_id 带它。非 secret：它是名字不是凭证。
+	SettingExtAgentHostID = "ext_agent_host_id"
 )
 
 // DeleteSetting 删掉一项设置。清空 secret 类配置（比如撤掉 OAuth client）走它，

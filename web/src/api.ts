@@ -316,9 +316,18 @@ export interface ModelListResult {
   detail: string
 }
 
+/**
+ * 渠道级凭证类型（#211 一列四值；#212 起随渠道行下发）：决定「新增凭证」开什么
+ * 形态——api_key / service_account 贴 key，chatgpt_account 开登录弹层（DESIGN v0.77
+ * 按 credential_type 切形态，copilot_account 是同一弹层的设备码第二形态、随其
+ * 实现票启用）。
+ */
+export type CredentialType = 'api_key' | 'service_account' | 'chatgpt_account' | 'copilot_account'
+
 export interface Channel {
   id: number
   name: string
+  credential_type: CredentialType
   /**
    * 这个渠道能说的上游协议集（口径层 v0.33）。选哪个由入站端点定——能透传就透传，
    * 所以协议不出现在对外模型名里。v0.96 起是**派生值**：由 base_url 里填了哪些键

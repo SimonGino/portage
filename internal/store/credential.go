@@ -302,6 +302,42 @@ func DeleteCredential(ctx context.Context, db Conn, id int64) error {
 	return affectedOne(res, err)
 }
 
+// CredentialForRevocation 取一份凭证的值与它渠道的凭证类型（#212：删凭证前要做
+// best-effort 撤销——只有 chatgpt_account 有撤销，且要用到值里的 refresh_token
+// 与 client_id）。行不在了回 ErrNotFound，调用方跳过撤销、照删。
+func CredentialForRevocation(ctx context.Context, db Queryer, id int64) (value, credentialType string, err error) {
+	err = db.QueryRowContext(ctx, `
+		SELECT ck.credential, ch.credential_type FROM channel_keys ck
+		JOIN channels ch ON ch.id = ck.channel_id WHERE ck.id = ?`, id).
+		Scan(&value, &credentialType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	return value, credentialType, err
+}
+
+// CredentialChannelID 取一份凭证属于哪个渠道（#212：login/start 带 credential_id
+// 重新登录时，校验这把凭证就是这个渠道的行）。行不在了回 ErrNotFound。
+func CredentialChannelID(ctx context.Context, db Queryer, id int64) (int64, error) {
+	var channelID int64
+	err := db.QueryRowContext(ctx, `SELECT channel_id FROM channel_keys WHERE id = ?`, id).Scan(&channelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return channelID, err
+}
+
+// ChannelCredentialType 取渠道的凭证类型（#212：登录弹层按它切形态、只对订阅
+// 渠道开放）。渠道不在了回 ErrNotFound。
+func ChannelCredentialType(ctx context.Context, db Queryer, id int64) (string, error) {
+	var t string
+	err := db.QueryRowContext(ctx, `SELECT credential_type FROM channels WHERE id = ?`, id).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return t, err
+}
+
 // credentialNameConflict 把唯一索引的冲突翻成一句人话。
 //
 // 不靠上层那条通用的「名称重复，或引用了不存在的渠道/模型」：凭证名重复是这里最

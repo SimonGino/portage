@@ -67,6 +67,11 @@ type Engine struct {
 	mu    sync.Mutex
 	locks map[int64]*sync.Mutex
 
+	// loginMu 管待完成登录态（#212）：渠道 id → 状态，TTL 10 分钟、一个渠道
+	// 同时只一个。跟刷新锁分开一把：登录是管理面的稀有动作，不该跟刷新抢锁。
+	loginMu sync.Mutex
+	pending map[int64]*pendingLogin
+
 	jwksMu       sync.Mutex
 	jwksKeys     []jwk
 	jwksAt       time.Time
@@ -92,7 +97,8 @@ func NewEngine(db *sql.DB, issuer string) *Engine {
 				return http.ErrUseLastResponse
 			},
 		},
-		locks: map[int64]*sync.Mutex{},
+		locks:   map[int64]*sync.Mutex{},
+		pending: map[int64]*pendingLogin{},
 	}
 }
 
@@ -290,6 +296,13 @@ func (e *Engine) postToken(ctx context.Context, c store.ChatGPTCredential) (toke
 		"refresh_token": {c.RefreshToken},
 		"resource":      {siwcResource},
 	}
+	return e.postTokenForm(ctx, form)
+}
+
+// postTokenForm 是 token 端点的公共半边：发表单、判状态码、解回包（refresh 与
+// 登录的 authorization_code 两个 grant 共用它，拒绝形态同一套：#205 现场error 字段
+// 字符串与 {code,message} 对象两种都出现过）。
+func (e *Engine) postTokenForm(ctx context.Context, form url.Values) (tokenReply, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.tokenURL(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return tokenReply{}, err

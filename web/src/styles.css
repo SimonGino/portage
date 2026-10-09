@@ -3252,6 +3252,33 @@ h3.form-section {
   min-width: 0;
 }
 
+/* 订阅凭证行的值段（#212）：掩码串读不出任何事实，摆的是账号 · 套餐 · access 过期
+   的读数（DESIGN v0.77）。「复制」钉在尾上复制整包 JSON——迁移/备份用的就是它。 */
+.cred .cred-sub {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cred-account {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cred-sub > .tag,
+.cred-sub > .muted,
+.cred-sub > .btn {
+  flex: none;
+}
+
+.cred-sub > .muted {
+  font-size: 12px;
+}
+
 .cred-state {
   flex-shrink: 0;
   font-size: 12px;

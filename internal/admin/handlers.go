@@ -636,14 +636,41 @@ func (h *Handler) updateCredential(c *gin.Context) {
 	})
 }
 
+// deleteCredential 删一份凭证。chatgpt_account 渠道删前先把值读出来，删完提交后
+// best-effort 撤销（口径层 §2.2 v1.52：OIDC 发现文档的 revocation_endpoint，失败
+// 不阻止删除——只 slog，删照删）；撤销在**提交之后**做：反过来会出现「refresh
+// token 已作废、凭证却还在池子里」的半死态——删失败重试时那把凭证已被撤销打死。
 func (h *Handler) deleteCredential(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
 		return
 	}
-	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+	// 读不到（行不在、刚被删过）就只删不撤销，不是错误。
+	value, credType, err := store.CredentialForRevocation(c.Request.Context(), h.db, id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.log.Error("读凭证失败", "err", err)
+		fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	if !h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		return store.DeleteCredential(ctx, tx, id)
-	})
+	}) {
+		return
+	}
+	if credType != store.CredentialTypeChatGPTAccount {
+		return
+	}
+	cred, err := store.ParseChatGPTCredential(value)
+	if err != nil {
+		// 值解不动就解不动：撤销是 best-effort，别为号外的事拦删除收尾。
+		h.log.Warn("凭证已删除，但值解析不了、跳过撤销", "err", err)
+		return
+	}
+	// 客户端已拿到 204，连接随时可能断——撤销用不随请求取消的 context，与刷新
+	// 引擎的 WithoutCancel 同理（#217 评审钉过的坑）。
+	if err := h.sub.Revoke(context.WithoutCancel(c.Request.Context()), cred); err != nil {
+		h.log.Warn("撤销上游登录态失败（best-effort，凭证已删除）", "err", err)
+	}
 }
 
 func (h *Handler) addChannelModel(c *gin.Context) {
