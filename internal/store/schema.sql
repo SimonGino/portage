@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS channels (
   base_url_openai TEXT NOT NULL DEFAULT '',
   base_url_openai_responses TEXT NOT NULL DEFAULT '',
   base_url_anthropic TEXT NOT NULL DEFAULT '',
+  -- 渠道级消息端点路径覆盖（path_override，#175）：消息端点不在 /v1/<protocol>
+  -- 形状的上游（如 ChatGPT Codex 后端 …/backend-api/codex/responses），按协议填
+  -- 完整子路径；空串 = 未覆盖，出站拼接不变。只覆盖三个消息端点，/v1/models 与
+  -- count_tokens 不受影响。
+  path_override_openai TEXT NOT NULL DEFAULT '',
+  path_override_openai_responses TEXT NOT NULL DEFAULT '',
+  path_override_anthropic TEXT NOT NULL DEFAULT '',
   credential_type TEXT NOT NULL DEFAULT 'api_key',
   key_mode TEXT NOT NULL DEFAULT 'polling',
   -- 上游认证头写法（口径层 v1.13，#82）：default = 按协议惯例（anthropic 发

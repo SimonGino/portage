@@ -220,6 +220,8 @@ func (h *Handler) Mount(r *gin.Engine) {
 	cw.PUT("/channels/:id/disabled", h.putChannelDisabled)
 	cw.PUT("/channels/:id/settings", h.putChannelSettings)
 	cw.PUT("/channels/:id/headers", h.putChannelHeaders)
+	// 路径覆盖单独一笔（#175）：与地址一样是「改了哪个控件写哪一笔」的形状。
+	cw.PUT("/channels/:id/path-override", h.putChannelPathOverride)
 	cw.DELETE("/channels/:id", h.deleteChannel)
 	// 凭证池：逐条 CRUD + 追加式批量粘贴（口径层 v0.38 改写 v0.28 的整把替换）。
 	// 依旧**没有任何读凭证值的接口**——GET 回的是名字与状态。

@@ -59,9 +59,15 @@ type Channel struct {
 	// Headers 是渠道级额外出站头（#137）：有的上游不给固定头就拒（opencode-go 缺
 	// x-opencode-session 回 400）。静态值，转发、检测、拉模型列表三条路都带。紧跟
 	// base_url（导出按字段声明序写）；omitempty——没声明的渠道导出物与老文件逐字节相同。
-	Headers        map[string]string `yaml:"headers,omitempty"`
-	CredentialType string            `yaml:"credential_type"`
-	KeyMode        string            `yaml:"key_mode"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+	// PathOverride 是渠道级消息端点路径覆盖（path_override，#175）：消息端点不在
+	// /v1/<protocol> 形状的上游（如 ChatGPT Codex 后端 …/backend-api/codex/responses），
+	// 按协议填完整子路径；声明覆盖的协议必须同时在该协议的 base_url 里填地址。
+	// 紧跟 headers（导出按字段声明序写）；omitempty——零值结构体整个略过，没声明覆盖
+	// 的渠道导出物与老文件逐字节相同。
+	PathOverride   store.PathOverrides `yaml:"path_override,omitempty"`
+	CredentialType string              `yaml:"credential_type"`
+	KeyMode        string              `yaml:"key_mode"`
 	// AuthScheme 是上游认证头写法 default/bearer/raw（口径层 v1.13，#82）。omitempty
 	// ——default 是绝大多数渠道的常态，导出时写空（不背一行）、apply 落 default，
 	// 往返闸两边对得上。

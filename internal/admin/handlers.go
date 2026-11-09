@@ -236,6 +236,10 @@ type channelInput struct {
 	// 收 map 而不是直接收 store.BaseURLs：结构体对认不得的键是静默丢弃，而这里拼错
 	// 协议名的下场该是一条点名的 400，不是一个悄悄少了协议的渠道。
 	BaseURL map[string]string `json:"base_url"`
+	// PathOverride 是每协议消息端点路径覆盖（path_override，#175）：键是协议名，值是
+	// 完整子路径。收 map 的理由同上：拼错的协议名该是一条点名的 400，不是一个悄悄
+	// 少了覆盖的渠道。
+	PathOverride map[string]string `json:"path_override"`
 	// KeyMode 是凭证选取模式 polling/random（口径层 v0.44 起露在凭证池弹窗里，不在渠道表单）。
 	KeyMode string `json:"key_mode"`
 	// AuthScheme 是上游认证头写法 default/bearer/raw（口径层 v1.13，#82）。空串 =
@@ -277,14 +281,35 @@ func parseBaseURLs(m map[string]string) (store.BaseURLs, error) {
 	return urls, nil
 }
 
+// parsePathOverrides 把请求体里的「协议名 → 路径覆盖」映射落到 store.PathOverrides。
+// 收 map 的理由同 parseBaseURLs：拼错协议名该是点名的 400，而不是静默丢掉一条覆盖。
+// 值域闸（首斜杠、无尾斜杠、无查询串）在 store.ValidatePathOverrides，与声明文件同闸。
+func parsePathOverrides(m map[string]string) (store.PathOverrides, error) {
+	var overrides store.PathOverrides
+	for key, path := range m {
+		p := protocol.Normalize(protocol.Protocol(strings.TrimSpace(key)))
+		if !p.Valid() {
+			return store.PathOverrides{}, store.InvalidInput{
+				Reason: "path_override 的键 " + strconv.Quote(key) + " 不是 anthropic/openai/openai_responses 之一"}
+		}
+		overrides.Set(p, strings.TrimSpace(path))
+	}
+	return overrides, nil
+}
+
 func (in channelInput) toStore() (store.ChannelInput, error) {
 	urls, err := parseBaseURLs(in.BaseURL)
+	if err != nil {
+		return store.ChannelInput{}, err
+	}
+	overrides, err := parsePathOverrides(in.PathOverride)
 	if err != nil {
 		return store.ChannelInput{}, err
 	}
 	return store.ChannelInput{
 		Name:                      strings.TrimSpace(in.Name),
 		BaseURLs:                  urls,
+		PathOverrides:             overrides,
 		KeyMode:                   strings.TrimSpace(in.KeyMode),
 		AuthScheme:                strings.TrimSpace(in.AuthScheme),
 		MaxConcurrency:            in.MaxConcurrency,
@@ -415,6 +440,30 @@ func (h *Handler) putChannelHeaders(c *gin.Context) {
 	}
 	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
 		return store.UpdateChannelHeaders(ctx, tx, id, in.Headers)
+	})
+}
+
+// putChannelPathOverride 整组覆盖渠道消息端点路径覆盖（#175）。值域闸（首斜杠、
+// 无尾斜杠、无查询串）与「声明的协议必须有地址」都在 store，与声明文件同一道闸，
+// 拒因原文回前端。
+func (h *Handler) putChannelPathOverride(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		PathOverride map[string]string `json:"path_override"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	h.write(c, func(ctx context.Context, tx *sql.Tx) error {
+		overrides, err := parsePathOverrides(in.PathOverride)
+		if err != nil {
+			return err
+		}
+		return store.UpdateChannelPathOverrides(ctx, tx, id, overrides)
 	})
 }
 

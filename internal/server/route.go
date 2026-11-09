@@ -30,6 +30,7 @@ func routeOf(cand store.Candidate) upstream.Route {
 		ChannelName:    cand.ChannelName,
 		Protocol:       cand.Protocol,
 		BaseURL:        cand.BaseURL,
+		PathOverride:   cand.PathOverride,
 		AuthScheme:     scheme,
 		Headers:        cand.Headers,
 		KeyMode:        cand.KeyMode,

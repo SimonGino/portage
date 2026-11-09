@@ -75,7 +75,7 @@ func TestProbeAndListModelsSendExtraHeaders(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	extra := map[string]string{"x-opencode-session": "s1"}
-	ProbeModel(context.Background(), srv.URL, protocol.OpenAI, "", "sk-x", "m", extra)
+	ProbeModel(context.Background(), srv.URL, "", protocol.OpenAI, "", "sk-x", "m", extra)
 	ListModelsFor(context.Background(), store.BaseURLs{OpenAI: srv.URL}, "", "sk-x", extra)
 	if len(got) != 2 || got[0] != "s1" || got[1] != "s1" {
 		t.Errorf("上游收到的 x-opencode-session = %q，期望两次都是 s1", got)
