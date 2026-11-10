@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/SimonGino/portage/internal/protocol"
@@ -63,8 +64,10 @@ func (o PathOverrides) Protocols() []protocol.Protocol {
 	return out
 }
 
-// trimmed 去掉每份值两端的空白，返回新值。
-func (o PathOverrides) trimmed() PathOverrides {
+// Trimmed 去掉每份值两端的空白，返回新值。三个写入口（管理端 ChannelInput、意图写
+// UpdateChannelPathOverrides、声明文件 apply 与 selfCheck）都先过它再校验，三道闸看到
+// 的才是同一份值——各写一份 TrimSpace 迟早漂移。
+func (o PathOverrides) Trimmed() PathOverrides {
 	return PathOverrides{
 		OpenAI:          strings.TrimSpace(o.OpenAI),
 		OpenAIResponses: strings.TrimSpace(o.OpenAIResponses),
@@ -73,11 +76,15 @@ func (o PathOverrides) trimmed() PathOverrides {
 }
 
 // ValidatePathOverrides 是路径覆盖的写侧闸（writer 与声明文件 selfCheck 共用一份）：
-// 每份非空值必须以 `/` 开头，且不带尾随 `/`、不带查询串。
+// 每份非空值必须以 `/` 开头，不带尾随 `/`、不带查询串、不带片段（`#`），百分号转义
+// 必须是合法的 `%XX`。
 //
-// 它是子路径：TrimRight(base, "/") 之后直接进 URL。漏了首斜杠，两段路径直接黏成
-// 一段；带尾斜杠，URL 里多出一个 `/`；带查询串，与 buildURL 在路径之后拼上的客户端
-// 查询串相撞（两个 `?`，后者赢、前者静默消失）。
+// 它是子路径：TrimRight(base, "/") 之后直接进 URL。漏了首斜杠，两段路径直接黏成一段；
+// 带尾斜杠，URL 里多出一个 `/`；带查询串，与 buildURL 在路径之后拼上的客户端查询串相撞
+// （两个 `?`，后者赢、前者静默消失）；带 `#`，`#` 之后整段被当片段丢掉，上游收到的是
+// 截断后的路径（与 `?` 那条同一类错位）；`%` 后面不是两位十六进制，`url.Parse` 在构造
+// 请求时就报错、请求根本没发出去，人看到的只剩「上游请求失败」。要字面量的 `#` / `%`
+// 就写 `%23` / `%25`。
 func ValidatePathOverrides(o PathOverrides) error {
 	for _, f := range []struct {
 		name string
@@ -97,7 +104,21 @@ func ValidatePathOverrides(o PathOverrides) error {
 			return InvalidInput{Reason: fmt.Sprintf("path_override.%s %q 带了结尾的 /", f.name, f.val)}
 		case strings.Contains(f.val, "?"):
 			return InvalidInput{Reason: fmt.Sprintf("path_override.%s %q 带了查询串", f.name, f.val)}
+		case strings.Contains(f.val, "#"):
+			return InvalidInput{Reason: fmt.Sprintf("path_override.%s %q 带了 #：拼进 URL 后 # 之后整段被当片段丢掉，"+
+				"上游收到的是截断后的路径。要字面量的 # 写成 %%23", f.name, f.val)}
+		case !percentEscapesOK(f.val):
+			return InvalidInput{Reason: fmt.Sprintf("path_override.%s %q 带了非法的 %% 转义：只有 %%XX（两位十六进制）"+
+				"拼得出 URL，其余会让请求构造当场失败、根本没发出去。要字面量的 %% 写成 %%25", f.name, f.val)}
 		}
 	}
 	return nil
+}
+
+// percentEscapesOK 判串里每个 % 是不是合法的 %XX。判据直接交给 net/url：PathUnescape 对
+// `%zz` 报 url.EscapeError，而那正是请求构造时 url.Parse 用的同一条规则——自己再扫一遍
+// 十六进制就是第二份规则，迟早与 net/url 漂移。
+func percentEscapesOK(s string) bool {
+	_, err := url.PathUnescape(s)
+	return err == nil
 }

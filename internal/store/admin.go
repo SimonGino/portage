@@ -345,7 +345,7 @@ func (in ChannelInput) normalized() (BaseURLs, PathOverrides, error) {
 		return BaseURLs{}, PathOverrides{}, InvalidInput{Reason: "至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，" +
 			"一个都不填的渠道永远路由不到"}
 	}
-	overrides := in.PathOverrides.trimmed()
+	overrides := in.PathOverrides.Trimmed()
 	if err := ValidatePathOverrides(overrides); err != nil {
 		return BaseURLs{}, PathOverrides{}, err
 	}
@@ -619,7 +619,7 @@ func UpdateChannelPathOverrides(ctx context.Context, db Conn, id int64, o PathOv
 	if err != nil {
 		return err
 	}
-	override := o.trimmed()
+	override := o.Trimmed()
 	if err := ValidatePathOverrides(override); err != nil {
 		return err
 	}

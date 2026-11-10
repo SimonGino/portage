@@ -592,6 +592,26 @@ func TestChannelPathOverrideApplyAndReject(t *testing.T) {
 	}
 }
 
+// 引号里带空格的 path_override：apply 落库前先 Trimmed，selfCheck 校验的必须是同一份值
+// （#175）。校验原值的后果是这种文件写得进、启不来——apply 能收下，启动闸却拒启。
+func TestChannelPathOverrideWhitespacePassesSelfCheck(t *testing.T) {
+	db := openDB(t)
+	file := strings.Replace(goodFile,
+		"      openai: https://example.internal/v1\n",
+		"      openai: https://example.internal/v1\n"+
+			"      openai_responses: https://example.internal/codex\n"+
+			"    path_override:\n      openai_responses: \"  /responses  \"\n", 1)
+	mustApply(t, db, file)
+	var got string
+	if err := db.QueryRow(`SELECT path_override_openai_responses FROM channels WHERE name = 'qwen'`).
+		Scan(&got); err != nil {
+		t.Fatalf("读 path_override: %v", err)
+	}
+	if got != "/responses" {
+		t.Errorf("库里 path_override = %q，期望去空格后的 /responses", got)
+	}
+}
+
 // 已有渠道的 headers 变化单报一条（#160）：旧文件导入把 headers 清空时，试算清单是
 // 唯一当场能看见的地方。清单不带头名与头值；Preview 与 Apply 走同一个 eval，清单一致。
 func TestChannelHeadersChangeIsListed(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/SimonGino/portage/internal/protocol"
 )
 
-// ValidatePathOverrides 的形状闸（#175）：首斜杠、无尾斜杠、无查询串。
+// ValidatePathOverrides 的形状闸（#175）：首斜杠、无尾斜杠、无查询串、无片段、% 转义合法。
 func TestValidatePathOverrides(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -18,9 +18,13 @@ func TestValidatePathOverrides(t *testing.T) {
 	}{
 		{"空", PathOverrides{}, true},
 		{"合法", PathOverrides{OpenAIResponses: "/responses"}, true},
+		{"合法的 %23", PathOverrides{OpenAI: "/backend%23codex"}, true},
 		{"缺首斜杠", PathOverrides{OpenAI: "responses"}, false},
 		{"尾斜杠", PathOverrides{OpenAI: "/responses/"}, false},
 		{"带查询串", PathOverrides{OpenAI: "/responses?x=1"}, false},
+		{"带片段", PathOverrides{OpenAI: "/backend#codex/responses"}, false},
+		{"非法百分号转义", PathOverrides{OpenAI: "/responses%zz"}, false},
+		{"被截断的百分号转义", PathOverrides{OpenAI: "/responses%2"}, false},
 		{"anthropic 也过闸", PathOverrides{Anthropic: "/custom/"}, false},
 	} {
 		err := ValidatePathOverrides(tc.o)
