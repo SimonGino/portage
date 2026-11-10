@@ -73,6 +73,17 @@ var (
 	EndpointResponses = Endpoint{"/v1/responses", OpenAIResponses}
 )
 
+// IsMessageEndpoint 报这条端点路径是不是三个协议消息端点之一：渠道级端点路径覆盖
+// （path_override，#175）只替换它们，共用的 /v1/models 与 count_tokens 保持原形状
+// ——覆盖是为「消息端点不在 /v1/<protocol> 形状」开的例外，共享端点没有这个问题。
+func IsMessageEndpoint(path string) bool {
+	switch path {
+	case EndpointMessages.Path, EndpointChatCompletions.Path, EndpointResponses.Path:
+		return true
+	}
+	return false
+}
+
 // UpstreamEndpoint 给出「向这个协议的渠道发请求时打哪个子路径」。
 //
 // 转换路径必须用**出口**协议的端点，不能沿用入口的：Anthropic 入口进来的请求转成

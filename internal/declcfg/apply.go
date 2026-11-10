@@ -226,6 +226,7 @@ func applyChannels(ctx context.Context, tx *sql.Tx, list []Channel) (map[string]
 				OpenAIResponses: strings.TrimSpace(ch.BaseURL.OpenAIResponses),
 				Anthropic:       strings.TrimSpace(ch.BaseURL.Anthropic),
 			},
+			PathOverrides:             ch.PathOverride.Trimmed(),
 			CredentialType:            orDefault(ch.CredentialType, "api_key"),
 			KeyMode:                   orDefault(ch.KeyMode, store.KeyModePolling),
 			AuthScheme:                orDefault(ch.AuthScheme, store.AuthSchemeDefault),

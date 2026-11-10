@@ -20,6 +20,9 @@ type Route struct {
 	Protocol protocol.Protocol
 	// BaseURL 是协议子路径之前的那一段（见 buildURL）。
 	BaseURL string
+	// PathOverride 是渠道级端点路径覆盖（path_override，#175）：非空时替换消息端点
+	// 的固定子路径（见 buildURL）。空串 = 不覆盖，拼接与既有行为逐字节一致。
+	PathOverride string
 	// AuthScheme 是认证头写法（口径层 v1.13）：default / bearer / raw，词表在 store。
 	AuthScheme string
 	// Headers 是渠道级额外出站头（#137），applyHeaders 原样带上；nil = 没有。

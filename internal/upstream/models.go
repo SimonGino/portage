@@ -86,7 +86,7 @@ func listModels(ctx context.Context, baseURL string, p protocol.Protocol, auth f
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		buildURL(baseURL, protocol.Endpoint{Path: modelsPath, Proto: p}, ""), nil)
+		buildURL(baseURL, "", protocol.Endpoint{Path: modelsPath, Proto: p}, ""), nil)
 	if err != nil {
 		res.Detail = "请求构造失败"
 		return res

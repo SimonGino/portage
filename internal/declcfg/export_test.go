@@ -30,6 +30,8 @@ const exampleFile = "../../channels.example.yaml"
 //     裸 float64 或丢 omitempty 都会在这里翻车。
 //   - 渠道带**两个**额外出站头、键故意不按字母序给（#137）——库里存排序 JSON、
 //     导出按键排，往返两侧才字节稳定。
+//   - 渠道带**协议级路径覆盖**（#175）——填了才进导出物，没填的渠道一个键都不多；
+//     定长三字段而不是 map，为的就是往返两侧字节稳定。
 func roundtripFixture() *declcfg.File {
 	f := declcfg.Example()
 	// 示范里那把是出厂占位 key，直接 apply 会被 #28 的闸拒掉。往返要的是**结构**
@@ -50,6 +52,9 @@ func roundtripFixture() *declcfg.File {
 		// 部分分档（#185）：只写分档 output，其余沿用基础价（nil 不写）——分档 1h 照写（#198）。
 		PriceTierAbove: &tierAbove, PriceTierOutput: &tierOut, PriceTierCacheWrite1H: &tierOneHour,
 	})
+	// 路径覆盖挂在自建渠道上：只有它 openai 与 openai_responses 两个地址都给了，
+	// 而「覆盖的协议必须有同协议地址」那道闸不允许凭空覆盖。
+	f.Channels[1].PathOverride = store.PathOverrides{OpenAI: "/custom/chat", OpenAIResponses: "/custom/responses"}
 	f.Channels = append(f.Channels, declcfg.Channel{
 		Name:           "停用的旧渠道",
 		BaseURL:        store.BaseURLs{OpenAI: "https://old.example.internal"},
@@ -114,7 +119,7 @@ func TestExportRoundtripsByteForByte(t *testing.T) {
 		t.Errorf("两次导出不相等\n--- 第一次 ---\n%s\n--- 第二次 ---\n%s", one, two)
 	}
 	// 防呆：往返相等这条断言在两边都是空文件时也成立。
-	for _, want := range []string{"anthropic", "自建-vllm", "停用的接入点", "sk-ptg-roundtrip", "x-opencode-session"} {
+	for _, want := range []string{"anthropic", "自建-vllm", "停用的接入点", "sk-ptg-roundtrip", "x-opencode-session", "path_override", "/custom/chat"} {
 		if !strings.Contains(string(one), want) {
 			t.Errorf("导出物里没有 %q，往返闸测的是两份空文件相等", want)
 		}
@@ -293,5 +298,20 @@ func TestExportWritesFile0600(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Errorf("声明文件权限该是 0600，实得 %o", got)
+	}
+}
+
+// 没声明覆盖的渠道，导出物里连 path_override 这个键都不许多（#175）。
+//
+// omitempty 一旦漏掉，每个存量渠道都会多出一行空覆盖——「未填覆盖的渠道导出物逐字节
+// 不变」这条承诺就是从这里破的，而在纯转发机上它的表现是每次重新导出都多出一份无意义
+// 的 diff，没人看得出是键被吞了还是配置真的变了。
+func TestExportOmitsUndeclaredPathOverride(t *testing.T) {
+	db := openDB(t)
+	f := declcfg.Example()
+	f.APIKeys[0].Key = "sk-ptg-no-override-真值"
+	applyFile(t, db, f)
+	if raw := string(mustExport(t, db)); strings.Contains(raw, "path_override") {
+		t.Errorf("没声明覆盖的渠道不该在导出物里出现 path_override：\n%s", raw)
 	}
 }

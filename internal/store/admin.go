@@ -156,6 +156,9 @@ type Channel struct {
 	// Headers 是渠道级额外出站头（#137；#167 起管理端可读可写）：键和值都照发——额外头
 	// 不是凭证。没有时是空对象不是 null，前端不用判空。
 	Headers map[string]string `json:"headers"`
+	// PathOverrides 是渠道级消息端点路径覆盖（#175；同 Headers，管理端可读可写）：
+	// 消息端点不在 /v1/<protocol> 形状的上游按协议填完整子路径。没有时是空对象。
+	PathOverrides PathOverrides `json:"path_override"`
 	// 可用/停用凭证计数（口径层 v0.38，原为「有无凭证」一个布尔）：摘光不设特例，
 	// 「可用凭证归零」就是渠道从能用变不能用的唯一运行期路径，而列表页是唯一会被
 	// 一眼扫过的地方；布尔在 3 把里坏了 2 把时显示的仍是「有凭证」，把最该被看见
@@ -170,6 +173,7 @@ type Channel struct {
 func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT ch.id, ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
+		       ch.path_override_openai, ch.path_override_openai_responses, ch.path_override_anthropic,
 		       ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.credential_type,
 		       ch.supports_compaction, ch.supports_stateful_responses, ch.provider, ch.disabled, ch.headers,
 		       (SELECT COUNT(*) FROM channel_keys ck WHERE ck.channel_id = ch.id AND ck.disabled = 0),
@@ -186,6 +190,7 @@ func ListChannels(ctx context.Context, db Queryer) ([]Channel, error) {
 		var c Channel
 		var headers string
 		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURLs.OpenAI, &c.BaseURLs.OpenAIResponses, &c.BaseURLs.Anthropic,
+			&c.PathOverrides.OpenAI, &c.PathOverrides.OpenAIResponses, &c.PathOverrides.Anthropic,
 			&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.CredentialType,
 			&c.SupportsCompaction, &c.SupportsStatefulResponses, &c.Provider, &c.Disabled, &headers,
 			&c.EnabledKeys, &c.DisabledKeys); err != nil {
@@ -277,6 +282,10 @@ type ChannelInput struct {
 	// BaseURLs 是每协议出站根地址（口径层 v0.96 ②）：填了哪个协议就是声明了哪个，
 	// 至少要有一个；从映射里去掉一个协议就是取消声明，服务端拒绝删空（normalized）。
 	BaseURLs BaseURLs `json:"base_url"`
+	// PathOverrides 是每协议消息端点路径覆盖（#175）：消息端点不在 /v1/<protocol>
+	// 形状的上游填完整子路径；空串 = 不覆盖。声明覆盖的协议必须已在 BaseURLs 里
+	// 声明（normalized 交叉拦）——前缀在那一侧，缺了无从推断。
+	PathOverrides PathOverrides `json:"path_override"`
 	// CredentialType 是渠道级凭证类型（#211，一列四值）：api_key（默认）/
 	// service_account / chatgpt_account（Sign in with ChatGPT 的账号登录态，凭证值是
 	// JSON、存 channel_keys.credential 原文）/ copilot_account（随 Copilot 实现票启用）。
@@ -314,27 +323,39 @@ type ChannelInput struct {
 	Headers map[string]string `json:"-"`
 }
 
-// normalized 校验并归一化每协议地址：去空格，一个协议都没填直接拒——「删掉最后
-// 一行地址」造出来的是一个没有任何协议、永远路由不到的渠道（口径层 v0.96）。
+// normalized 校验并归一化每协议地址与路径覆盖：去空格，一个协议都没填直接拒——「删掉
+// 最后一行地址」造出来的是一个没有任何协议、永远路由不到的渠道（口径层 v0.96）；
+// 声明了覆盖的协议必须有同协议的地址（#175），拼接是覆盖接到 base 尾部，缺了前缀
+// 无从推断。
 //
 // 在写库之前拦，不指望启动闸——管理端的保存走的是「写完在同一事务里 Validate，
 // 不过就回滚」，那条路能拦住，但报出来的是一句启动闸口吻的话；这里拦能就地说清楚。
-func (in ChannelInput) normalized() (BaseURLs, error) {
+func (in ChannelInput) normalized() (BaseURLs, PathOverrides, error) {
 	// 判空看 trim 后的值（#144）：调用方都先 trim，但这道闸不能指望它——`"  "` 过了
 	// handler 再 trim 成空串落库，就是一个没名字、限定名也跟着坏的渠道。
 	if strings.TrimSpace(in.Name) == "" {
-		return BaseURLs{}, InvalidInput{Reason: "渠道名不能为空"}
+		return BaseURLs{}, PathOverrides{}, InvalidInput{Reason: "渠道名不能为空"}
 	}
 	if strings.Contains(in.Name, "/") {
-		return BaseURLs{}, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
+		return BaseURLs{}, PathOverrides{}, InvalidInput{Reason: "渠道名不能含 `/`：限定名是 `渠道名/纳管模型名`，而纳管模型名本身常带 `/`" +
 			"（`anthropic/claude-3` 这种），两边都能带的话 `a/b/c` 到底是渠道 a 的模型 b/c 还是渠道 a/b 的模型 c 就说不清了"}
 	}
 	urls := in.BaseURLs.trimmed()
 	if len(urls.Protocols()) == 0 {
-		return BaseURLs{}, InvalidInput{Reason: "至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，" +
+		return BaseURLs{}, PathOverrides{}, InvalidInput{Reason: "至少给一个协议填上出站根地址：填了哪个协议的地址就是声明了哪个协议，" +
 			"一个都不填的渠道永远路由不到"}
 	}
-	return urls, nil
+	overrides := in.PathOverrides.Trimmed()
+	if err := ValidatePathOverrides(overrides); err != nil {
+		return BaseURLs{}, PathOverrides{}, err
+	}
+	for _, p := range overrides.Protocols() {
+		if urls.Get(p) == "" {
+			return BaseURLs{}, PathOverrides{}, InvalidInput{Reason: fmt.Sprintf(
+				"path_override 声明了 %s 协议的覆盖，但 base_url 里没给该协议填地址；拼接无法推断前缀", p)}
+		}
+	}
+	return urls, overrides, nil
 }
 
 // keyMode 归一化选取模式，**空串原样返回**表示「这次请求没提这个字段」——建渠道时
@@ -391,7 +412,7 @@ func (in ChannelInput) maxConcurrency() (*int, error) {
 
 // CreateChannel 建一个渠道并返回它的 id。
 func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error) {
-	urls, err := in.normalized()
+	urls, overrides, err := in.normalized()
 	if err != nil {
 		return 0, err
 	}
@@ -453,10 +474,13 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO channels (name, base_url_openai, base_url_openai_responses, base_url_anthropic,
+		                      path_override_openai, path_override_openai_responses, path_override_anthropic,
 		                      credential_type, key_mode, auth_scheme, max_concurrency,
 		                      supports_compaction, supports_stateful_responses, provider, disabled, headers)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, credType, mode, scheme, conc,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic,
+		overrides.OpenAI, overrides.OpenAIResponses, overrides.Anthropic,
+		credType, mode, scheme, conc,
 		boolInt(compaction), boolInt(stateful), provider, boolInt(in.Disabled), encodeHeaders(in.Headers))
 	if err != nil {
 		return 0, err
@@ -467,7 +491,7 @@ func CreateChannel(ctx context.Context, db Conn, in ChannelInput) (int64, error)
 // UpdateChannel 覆盖渠道的可写字段，改名也走这里（合并渠道之后要给它起个不带协议
 // 后缀的新名字，口径层 v0.33 不做旧限定名的兼容期）。
 func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) error {
-	urls, err := in.normalized()
+	urls, overrides, err := in.normalized()
 	if err != nil {
 		return err
 	}
@@ -487,8 +511,8 @@ func UpdateChannel(ctx context.Context, db Conn, id int64, in ChannelInput) erro
 	// key_mode / max_concurrency 缺省时整列不写（分别见 keyMode 与 MaxConcurrency
 	// 的注释）。其余字段仍是整体覆盖——它们从第一版起就在表单里，请求体里没有等于
 	// 人真把它清空了。
-	sets := `name = ?, base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?, disabled = ?`
-	args := []any{in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, boolInt(in.Disabled)}
+	sets := `name = ?, base_url_openai = ?, base_url_openai_responses = ?, base_url_anthropic = ?, path_override_openai = ?, path_override_openai_responses = ?, path_override_anthropic = ?, disabled = ?`
+	args := []any{in.Name, urls.OpenAI, urls.OpenAIResponses, urls.Anthropic, overrides.OpenAI, overrides.OpenAIResponses, overrides.Anthropic, boolInt(in.Disabled)}
 	if credType, err := in.credentialType(); err != nil {
 		return err
 	} else if credType != "" {
@@ -578,6 +602,36 @@ func UpdateChannelBaseURLs(ctx context.Context, db Conn, id int64, urls BaseURLs
 	sets, args = appendCapabilityBits(sets, args, trimmed.Protocols().Has(protocol.OpenAIResponses), nil, nil)
 	args = append(args, id)
 	res, err := db.ExecContext(ctx, `UPDATE channels SET `+sets+` WHERE id = ?`, args...)
+	return affectedOne(res, err)
+}
+
+// UpdateChannelPathOverrides 单写每协议消息端点路径覆盖（path_override，#175）：整组
+// 覆盖，空值即「该协议不覆盖」。闸与声明文件那条路同一个 ValidatePathOverrides，
+// 外加「声明覆盖的协议必须已有 base_url」——那条前缀在另一列，缺了无从推断。
+func UpdateChannelPathOverrides(ctx context.Context, db Conn, id int64, o PathOverrides) error {
+	var urls BaseURLs
+	err := db.QueryRowContext(ctx,
+		`SELECT base_url_openai, base_url_openai_responses, base_url_anthropic FROM channels WHERE id = ?`, id).
+		Scan(&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	override := o.Trimmed()
+	if err := ValidatePathOverrides(override); err != nil {
+		return err
+	}
+	for _, p := range override.Protocols() {
+		if urls.Get(p) == "" {
+			return InvalidInput{Reason: fmt.Sprintf(
+				"path_override 声明了 %s 协议的覆盖，但该协议的出站根地址没填；拼接无法推断前缀", p)}
+		}
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE channels SET path_override_openai = ?, path_override_openai_responses = ?, path_override_anthropic = ? WHERE id = ?`,
+		override.OpenAI, override.OpenAIResponses, override.Anthropic, id)
 	return affectedOne(res, err)
 }
 
@@ -697,6 +751,9 @@ type ProbeTarget struct {
 	CredentialType string
 	// Headers 是渠道级额外出站头（#137），理由同 AuthScheme：检测与拉列表得带转发那批头。
 	Headers map[string]string
+	// PathOverrides 是渠道级消息端点路径覆盖（#175），理由同 Headers：检测得按转发的
+	// 方式打过去，打的路径也得是转发会打的那条。
+	PathOverrides PathOverrides
 	// Credentials 含**已停用**的凭证（口径层 v0.96 承接 v0.38 的立论）：恢复是
 	// 纯人工的，「这把停用的凭证还坏不坏」除了发一次请求没有别的办法回答——
 	// 检测就得能选中它。
@@ -719,9 +776,13 @@ func ChannelProbeTarget(ctx context.Context, db Queryer, id int64) (ProbeTarget,
 	var t ProbeTarget
 	var headers string
 	err := db.QueryRowContext(ctx, `
-		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.auth_scheme, ch.headers, ch.credential_type
+		SELECT ch.name, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic,
+		       ch.path_override_openai, ch.path_override_openai_responses, ch.path_override_anthropic,
+		       ch.auth_scheme, ch.headers, ch.credential_type
 		FROM channels ch WHERE ch.id = ?`, id).
-		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic, &t.AuthScheme, &headers, &t.CredentialType)
+		Scan(&t.Name, &t.BaseURLs.OpenAI, &t.BaseURLs.OpenAIResponses, &t.BaseURLs.Anthropic,
+			&t.PathOverrides.OpenAI, &t.PathOverrides.OpenAIResponses, &t.PathOverrides.Anthropic,
+			&t.AuthScheme, &headers, &t.CredentialType)
 	t.Headers = DecodeHeaders(headers)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeTarget{}, ErrNotFound

@@ -179,7 +179,7 @@ func (c *Client) send(ctx context.Context, req Request, cred Credential, at *Att
 		// 客户端 ctx（重试、换凭证都还要接着用它）。err!=nil 时没有 body 可挂
 		// cancel，这里立刻调用；resp!=nil 时 cancel 交给 idleTimeoutBody 的 Close。
 		reqCtx, cancel := context.WithCancel(ctx)
-		hr, err := http.NewRequestWithContext(reqCtx, http.MethodPost, buildURL(rt.BaseURL, req.Endpoint, req.RawQuery), bytes.NewReader(req.Body))
+		hr, err := http.NewRequestWithContext(reqCtx, http.MethodPost, buildURL(rt.BaseURL, rt.PathOverride, req.Endpoint, req.RawQuery), bytes.NewReader(req.Body))
 		if err != nil {
 			cancel()
 			return nil, err
@@ -359,8 +359,18 @@ func drain(resp *http.Response) {
 // base_url（internal/store/store.go:295），所以这里不会拼出两个 "?"。
 // rawQuery 为空时不产生裸 "?"——`/v1/messages?` 与 `/v1/messages` 语义相同，
 // 凭空多一个问号只会让日志与样本对不上。
-func buildURL(baseURL string, ep protocol.Endpoint, rawQuery string) string {
-	u := strings.TrimRight(baseURL, "/") + ep.Path
+//
+// pathOverride 是渠道级的端点路径覆盖（#175）：非空且端点是三个消息端点之一时，
+// 用它替换协议固定子路径——消息端点不在 /v1/<protocol> 形状的上游（ChatGPT Codex
+// 后端 …/backend-api/codex/responses）靠它。写侧闸（store.ValidatePathOverrides）
+// 已保证它带首斜杠、不带尾斜杠与查询串，这里直接拼。共享端点（/v1/models、
+// count_tokens）不覆盖：覆盖是给形状不对的消息端点开的例外。
+func buildURL(baseURL, pathOverride string, ep protocol.Endpoint, rawQuery string) string {
+	p := ep.Path
+	if pathOverride != "" && protocol.IsMessageEndpoint(ep.Path) {
+		p = pathOverride
+	}
+	u := strings.TrimRight(baseURL, "/") + p
 	if rawQuery != "" {
 		u += "?" + rawQuery
 	}

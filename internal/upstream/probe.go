@@ -49,7 +49,7 @@ type ModelProbeResult struct {
 //
 // 结论沿 v0.33 血统：只提示、不落库、不进路由——检测结果会过期，把一个可能撒谎
 // 的缓存放进请求路径是更坏的失败模式。
-func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, scheme, credential, model string, headers map[string]string) ModelProbeResult {
+func ProbeModel(ctx context.Context, baseURL, pathOverride string, p protocol.Protocol, scheme, credential, model string, headers map[string]string) ModelProbeResult {
 	res := ModelProbeResult{Protocol: p, State: ProbeUnclear}
 	ep, ok := protocol.UpstreamEndpoint(p)
 	if !ok {
@@ -61,7 +61,7 @@ func ProbeModel(ctx context.Context, baseURL string, p protocol.Protocol, scheme
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		buildURL(baseURL, ep, ""), strings.NewReader(modelProbeBody(p, model)))
+		buildURL(baseURL, pathOverride, ep, ""), strings.NewReader(modelProbeBody(p, model)))
 	if err != nil {
 		res.Detail = "本次检测失败：请求构造失败"
 		return res

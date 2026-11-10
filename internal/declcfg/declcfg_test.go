@@ -555,6 +555,63 @@ func TestChannelHeadersApplyAndReject(t *testing.T) {
 	}
 }
 
+// 路径覆盖 apply / 清空 / 点名拒（#175）。
+func TestChannelPathOverrideApplyAndReject(t *testing.T) {
+	codex := strings.Replace(goodFile,
+		"      openai: https://example.internal/v1\n",
+		"      openai: https://example.internal/v1\n"+
+			"      openai_responses: https://example.internal/codex\n"+
+			"    path_override:\n      openai_responses: /responses\n", 1)
+	db := openDB(t)
+	read := func() (string, string) {
+		t.Helper()
+		var resp, anthropic string
+		if err := db.QueryRow(`SELECT path_override_openai_responses, path_override_anthropic
+			FROM channels WHERE name = 'qwen'`).Scan(&resp, &anthropic); err != nil {
+			t.Fatalf("读 path_override: %v", err)
+		}
+		return resp, anthropic
+	}
+	mustApply(t, db, codex)
+	if resp, anthropic := read(); resp != "/responses" || anthropic != "" {
+		t.Fatalf("path_override = %q/%q", resp, anthropic)
+	}
+	mustApply(t, db, goodFile)
+	if resp, anthropic := read(); resp != "" || anthropic != "" {
+		t.Fatalf("文件里删掉 path_override 后库里该清空，实得 %q/%q", resp, anthropic)
+	}
+
+	// 形状闸与「覆盖没有地址」都是点名拒（一次报全，不等 writer 首错即停）。
+	msg := applyErr(t, openDB(t), strings.Replace(codex, "      openai_responses: /responses", "      openai_responses: responses", 1))
+	if !strings.Contains(msg, "path_override") || !strings.Contains(msg, "缺少开头的 /") {
+		t.Errorf("缺首斜杠该被点名拒，实际报文：\n%s", msg)
+	}
+	msg = applyErr(t, openDB(t), strings.Replace(codex, "      openai_responses: https://example.internal/codex\n", "", 1))
+	if !strings.Contains(msg, "path_override") || !strings.Contains(msg, "没给该协议填地址") {
+		t.Errorf("覆盖缺地址该被点名拒，实际报文：\n%s", msg)
+	}
+}
+
+// 引号里带空格的 path_override：apply 落库前先 Trimmed，selfCheck 校验的必须是同一份值
+// （#175）。校验原值的后果是这种文件写得进、启不来——apply 能收下，启动闸却拒启。
+func TestChannelPathOverrideWhitespacePassesSelfCheck(t *testing.T) {
+	db := openDB(t)
+	file := strings.Replace(goodFile,
+		"      openai: https://example.internal/v1\n",
+		"      openai: https://example.internal/v1\n"+
+			"      openai_responses: https://example.internal/codex\n"+
+			"    path_override:\n      openai_responses: \"  /responses  \"\n", 1)
+	mustApply(t, db, file)
+	var got string
+	if err := db.QueryRow(`SELECT path_override_openai_responses FROM channels WHERE name = 'qwen'`).
+		Scan(&got); err != nil {
+		t.Fatalf("读 path_override: %v", err)
+	}
+	if got != "/responses" {
+		t.Errorf("库里 path_override = %q，期望去空格后的 /responses", got)
+	}
+}
+
 // 已有渠道的 headers 变化单报一条（#160）：旧文件导入把 headers 清空时，试算清单是
 // 唯一当场能看见的地方。清单不带头名与头值；Preview 与 Apply 走同一个 eval，清单一致。
 func TestChannelHeadersChangeIsListed(t *testing.T) {

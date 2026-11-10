@@ -111,6 +111,9 @@ func migrate(db *sql.DB) error {
 	if err := addChannelHeaders(db); err != nil {
 		return err
 	}
+	if err := addPathOverrideColumns(db); err != nil {
+		return err
+	}
 	if err := addSupportsStatefulResponses(db); err != nil {
 		return err
 	}
@@ -899,6 +902,10 @@ type Candidate struct {
 	// 拼子路径、挑 codec、挑 tap，都只关心选定的这一个。
 	Protocol protocol.Protocol
 	BaseURL  string
+	// PathOverride 是命中协议的消息端点路径覆盖（path_override，#175）：上游消息
+	// 端点不在 /v1/<protocol> 形状（如 ChatGPT Codex 后端）时，buildURL 用这个值
+	// 替换协议固定子路径。跟随命中协议，同 BaseURL；空串 = 未覆盖，拼接不变。
+	PathOverride string
 	// Credentials 是该渠道当下全部**启用**凭证，按 id 升序（口径层 v0.38）。
 	// 用哪一份、失败了换不换，由 upstream 的 key 层内环决定——store 只负责把候选
 	// 集交出去，选取策略与轮询游标都不落在这一层。
@@ -1004,7 +1011,7 @@ func Resolve(ctx context.Context, db *sql.DB, model string, inbound protocol.Pro
 // 这一份——v0.40 那次漏对齐正是各算各的结果。
 const (
 	// candidateCols 是候选读点的公共投影，列序与 scanCandidate 一一对应。
-	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_cache_write_1h, cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, cm.price_tier_cache_write_1h, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers, ch.credential_type`
+	candidateCols = `cm.upstream_model, ch.id, ch.name, cm.protocols, cm.max_input_tokens, cm.price_input, cm.price_output, cm.price_cache_read, cm.price_cache_write, cm.price_cache_write_1h, cm.price_tier_above, cm.price_tier_input, cm.price_tier_output, cm.price_tier_cache_read, cm.price_tier_cache_write, cm.price_tier_cache_write_1h, ch.base_url_openai, ch.base_url_openai_responses, ch.base_url_anthropic, ch.path_override_openai, ch.path_override_openai_responses, ch.path_override_anthropic, ch.key_mode, ch.auth_scheme, ch.max_concurrency, ch.supports_compaction, ch.supports_stateful_responses, ch.headers, ch.credential_type`
 
 	// candidateUsable 是谓词的 SQL 半边，作用在 cm×ch 的 join 上。
 	candidateUsable = `cm.disabled = 0 AND ch.disabled = 0
@@ -1012,28 +1019,29 @@ const (
 	              WHERE ck.channel_id = ch.id AND ck.disabled = 0)`
 )
 
-// scanCandidate 按 candidateCols 的列序扫一行。urls 与 modelProtocols 单拿出来，
+// scanCandidate 按 candidateCols 的列序扫一行。urls、overrides 与 modelProtocols 单拿出来，
 // 是因为它们还要喂给谓词的 Go 半边（finishCandidate），不属于 Candidate 本身。
 //
 // 四价直接扫进 *float64（driver 对 REAL 的 NULL 会置 nil）——calllog.Prices 的
 // 指针语义与列的可空性正好是同一件事，不必过一手 sql.NullFloat64 再翻。
-func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, modelProtocols *string) error {
+func scanCandidate(row *sql.Row, c *Candidate, urls *BaseURLs, overrides *PathOverrides, modelProtocols *string) error {
 	var headers string
 	err := row.Scan(&c.UpstreamModel, &c.ChannelID, &c.ChannelName, modelProtocols,
 		&c.MaxInputTokens,
 		&c.Prices.Input, &c.Prices.Output, &c.Prices.CacheRead, &c.Prices.CacheWrite, &c.Prices.CacheWrite1H,
 		&c.Prices.TierAbove, &c.Prices.TierInput, &c.Prices.TierOutput, &c.Prices.TierCacheRead, &c.Prices.TierCacheWrite, &c.Prices.TierCacheWrite1H,
 		&urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
+		&overrides.OpenAI, &overrides.OpenAIResponses, &overrides.Anthropic,
 		&c.KeyMode, &c.AuthScheme, &c.MaxConcurrency, &c.SupportsCompaction, &c.SupportsStatefulResponses, &headers, &c.CredentialType)
 	c.Headers = DecodeHeaders(headers)
 	return err
 }
 
-// finishCandidate 是谓词的 Go 半边加收尾：凭证复查、协议交集、定出站根地址。
+// finishCandidate 是谓词的 Go 半边加收尾：凭证复查、协议交集、定出站根地址与端点路径覆盖。
 //
 // candidateUsable 的 EXISTS 与这一趟之间隔着一次人工停用的可能——那时凭证刚好
 // 归零，与「渠道没有启用凭证」是同一种收场，交给 503 而不是发一个不带凭证的请求。
-func finishCandidate(ctx context.Context, db *sql.DB, c Candidate, urls BaseURLs, modelProtocols string, inbound protocol.Protocol, kind string) (Candidate, error) {
+func finishCandidate(ctx context.Context, db *sql.DB, c Candidate, urls BaseURLs, overrides PathOverrides, modelProtocols string, inbound protocol.Protocol, kind string) (Candidate, error) {
 	var err error
 	if c.Credentials, err = loadCredentials(ctx, db, c.ChannelID); err != nil {
 		return Candidate{}, err
@@ -1046,6 +1054,8 @@ func finishCandidate(ctx context.Context, db *sql.DB, c Candidate, urls BaseURLs
 	}
 	// 出站根地址跟着命中协议走（口径层 v0.96）：同渠道各协议的地址可以不同。
 	c.BaseURL = urls.Get(c.Protocol)
+	// 端点路径覆盖同样跟着命中协议走（#175）：按协议填，空串即拼接不变。
+	c.PathOverride = overrides.Get(c.Protocol)
 	return c, nil
 }
 
@@ -1124,6 +1134,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 
 	c := Candidate{RequestedModel: model}
 	var urls BaseURLs
+	var overrides PathOverrides
 	var modelProtocols string
 	err = scanCandidate(db.QueryRowContext(ctx, `
 		SELECT `+candidateCols+`
@@ -1132,7 +1143,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 		JOIN channels ch       ON ch.id = cm.channel_id
 		WHERE cd.access_point_id = ? AND cd.weight > 0
 		  AND `+candidateUsable+`
-		LIMIT 1`, apID), &c, &urls, &modelProtocols)
+		LIMIT 1`, apID), &c, &urls, &overrides, &modelProtocols)
 	if errors.Is(err, sql.ErrNoRows) {
 		// 名字在、候选用不了：订阅凭证全数因需重新登录被停用时升格成 ErrReauthRequired。
 		// ponytail: LIMIT 1 不带 ORDER BY——多候选接入点的死因归类随 SQLite 行序；
@@ -1157,7 +1168,7 @@ func resolveAccessPoint(ctx context.Context, db *sql.DB, model string, inbound p
 	if err != nil {
 		return Candidate{}, err
 	}
-	return finishCandidate(ctx, db, c, urls, modelProtocols, inbound, "接入点")
+	return finishCandidate(ctx, db, c, urls, overrides, modelProtocols, inbound, "接入点")
 }
 
 // loadCredentials 取渠道当下全部启用凭证，按 id 升序。
@@ -1194,6 +1205,7 @@ func loadCredentials(ctx context.Context, db *sql.DB, channelID int64) ([]Creden
 func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protocol.Protocol) (Candidate, error) {
 	c := Candidate{RequestedModel: model, Direct: true}
 	var urls BaseURLs
+	var overrides PathOverrides
 	var modelProtocols string
 	err := scanCandidate(db.QueryRowContext(ctx, `
 		SELECT `+candidateCols+`
@@ -1201,9 +1213,9 @@ func resolveDirect(ctx context.Context, db *sql.DB, model string, inbound protoc
 		JOIN channels ch ON ch.id = cm.channel_id
 		WHERE ch.name || '/' || cm.upstream_model = ?
 		  AND `+candidateUsable+`
-		LIMIT 1`, model), &c, &urls, &modelProtocols)
+		LIMIT 1`, model), &c, &urls, &overrides, &modelProtocols)
 	if err == nil {
-		return finishCandidate(ctx, db, c, urls, modelProtocols, inbound, "纳管模型")
+		return finishCandidate(ctx, db, c, urls, overrides, modelProtocols, inbound, "纳管模型")
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Candidate{}, err
@@ -1663,17 +1675,38 @@ func checkCandidateReachable(ctx context.Context, db Queryer) ([]string, error) 
 		})
 }
 
+// addPathOverrideColumns 补三个 path_override_* 列（path_override，#175）：
+// CREATE TABLE IF NOT EXISTS 不补列。新列默认空串 = 未覆盖，存量行出站拼接不变。
+func addPathOverrideColumns(db *sql.DB) error {
+	for _, col := range []string{"path_override_openai", "path_override_openai_responses", "path_override_anthropic"} {
+		exists, err := hasColumn(db, "channels", col)
+		if err != nil {
+			return fmt.Errorf("检查 channels.%s: %w", col, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("补列 channels.%s: %w", col, err)
+		}
+	}
+	return nil
+}
+
 // checkChannelFields catches typos in hand-written SQL, which is how channels
 // are maintained until the admin UI lands in M3.
 func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 	return collect(ctx, db, `
-		SELECT id, name, credential_type, base_url_openai, base_url_openai_responses, base_url_anthropic
+		SELECT id, name, credential_type, base_url_openai, base_url_openai_responses, base_url_anthropic,
+		       path_override_openai, path_override_openai_responses, path_override_anthropic
 		FROM channels WHERE disabled = 0`,
 		func(rows *sql.Rows) (string, error) {
 			var id int64
 			var name, credType string
 			var urls BaseURLs
-			if err := rows.Scan(&id, &name, &credType, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic); err != nil {
+			var overrides PathOverrides
+			if err := rows.Scan(&id, &name, &credType, &urls.OpenAI, &urls.OpenAIResponses, &urls.Anthropic,
+				&overrides.OpenAI, &overrides.OpenAIResponses, &overrides.Anthropic); err != nil {
 				return "", err
 			}
 			// 渠道名不能含 `/`：限定名 `渠道名/纳管模型名` 是拼起来比对的，两边都
@@ -1713,6 +1746,18 @@ func checkChannelFields(ctx context.Context, db Queryer) ([]string, error) {
 					return fmt.Sprintf("渠道 %q (id=%d) 的 %s 协议地址%s；它要填到「协议子路径之前」，"+
 						"例如 https://api.anthropic.com。按不泄露上游地址的约定这里不回显实际值，"+
 						"请查 channels 表核对", name, id, p, why), nil
+				}
+			}
+			// 覆盖闸（#175）：声明覆盖的协议必须有同协议 base_url——拼接是覆盖接到
+			// base 尾部，缺了前缀无从推断。写侧闸（normalized / selfCheck）已拦过，
+			// 启动闸为手写 SQL 灌的库复查。
+			if err := ValidatePathOverrides(overrides); err != nil {
+				return fmt.Sprintf("渠道 %q (id=%d) %v", name, id, err), nil
+			}
+			for _, p := range overrides.Protocols() {
+				if urls.Get(p) == "" {
+					return fmt.Sprintf("渠道 %q (id=%d) 的 %s 协议声明了路径覆盖，但没填该协议的出站根地址；"+
+						"拼接无法推断前缀，给 base_url 补上该协议的地址或去掉覆盖", name, id, p), nil
 				}
 			}
 			return "", nil

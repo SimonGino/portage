@@ -160,6 +160,7 @@ func Snapshot(ctx context.Context, db store.Queryer) (*File, []string, error) {
 func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, name, base_url_openai, base_url_openai_responses, base_url_anthropic,
+		       path_override_openai, path_override_openai_responses, path_override_anthropic,
 		       credential_type, key_mode, auth_scheme,
 		       max_concurrency, supports_compaction, supports_stateful_responses, provider, disabled, headers
 		FROM channels ORDER BY name`)
@@ -175,7 +176,9 @@ func exportChannels(ctx context.Context, db store.Queryer) ([]Channel, error) {
 		var compaction, stateful, disabled int
 		var headers string
 		if err := rows.Scan(&id, &ch.Name, &ch.BaseURL.OpenAI, &ch.BaseURL.OpenAIResponses,
-			&ch.BaseURL.Anthropic, &ch.CredentialType,
+			&ch.BaseURL.Anthropic,
+			&ch.PathOverride.OpenAI, &ch.PathOverride.OpenAIResponses, &ch.PathOverride.Anthropic,
+			&ch.CredentialType,
 			&ch.KeyMode, &ch.AuthScheme, &ch.MaxConcurrency, &compaction, &stateful, &ch.Provider, &disabled, &headers); err != nil {
 			return nil, err
 		}

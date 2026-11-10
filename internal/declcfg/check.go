@@ -78,6 +78,25 @@ func checkChannels(f *File) []string {
 		if err := store.ValidateHeaders(ch.Headers); err != nil {
 			p = append(p, fmt.Sprintf("渠道 %q 的 headers：%v", name, err))
 		}
+		// 校验的必须是 apply 真正落库的那份值：apply 落库前先 Trimmed()（apply.go），
+		// 管理端写入同一条。拿原值校验会让「引号里带空格」的文件被误拒——那样它是写得进、
+		// 启不来的。三道闸共用的就是 Trimmed 之后的这一份。
+		ov := ch.PathOverride.Trimmed()
+		if err := store.ValidatePathOverrides(ov); err != nil {
+			p = append(p, fmt.Sprintf("渠道 %q 的 path_override：%v", name, err))
+		}
+		// 覆盖的协议必须有同协议地址（#175）：拼接是覆盖接到 base 尾部，缺了前缀无从
+		// 推断。写侧（normalized）与启动闸同一条，这里一次报全。
+		for _, ob := range []struct{ proto, base, override string }{
+			{"openai", ch.BaseURL.OpenAI, ov.OpenAI},
+			{"openai_responses", ch.BaseURL.OpenAIResponses, ov.OpenAIResponses},
+			{"anthropic", ch.BaseURL.Anthropic, ov.Anthropic},
+		} {
+			if ob.override != "" && strings.TrimSpace(ob.base) == "" {
+				p = append(p, fmt.Sprintf("渠道 %q 的 path_override 声明了 %s 协议的覆盖，但 base_url 里没给该协议填地址："+
+					"覆盖接在地址尾部，缺了前缀无从推断", name, ob.proto))
+			}
+		}
 		p = append(p, checkCredentials(name, ch.Credentials)...)
 		p = append(p, checkModels(name, ch.Models)...)
 	}
